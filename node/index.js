@@ -581,7 +581,7 @@ async function httpRequest(method, url, headers, body, opts) {
  *
  * Usage:
  *   // @atomic http=get:events auth=none stream=sse
- *   const drift = require("@drift/sdk");
+ *   const drift = require("@ondrift/sdk");
  *   drift.runSSE(async (req, emit) => {
  *     for (let i = 0; i < 10; i++) {
  *       emit("counter", { value: i });
@@ -675,7 +675,7 @@ function _runLocalSSE(handler) {
  *
  * Usage:
  *   // @atomic http=get:chat auth=none stream=ws
- *   const drift = require("@drift/sdk");
+ *   const drift = require("@ondrift/sdk");
  *   drift.runWS(async (req, conn) => {
  *     while (true) {
  *       const msg = await conn.read();
@@ -750,7 +750,7 @@ function runWS(handler) {
 // Per-slice SQLite databases addressed by name. Wire shape: one JSON envelope
 // per call ({db, sql, args, tx?}). See docs/memos/backbone-sql.md.
 //
-//   const db = drift.sql('clinic');
+//   const db = drift.backbone.sql('clinic');
 //   const rows = await db.query('SELECT * FROM appointments WHERE slot >= ?', [from]);
 //   await db.execute('INSERT INTO appointments(...) VALUES(?, ?)', ['alice', '10:00']);
 //   await db.transaction(async (tx) => {
@@ -768,22 +768,28 @@ function _sqlRows(resp) {
   });
 }
 
+// Every method goes through `_call`, the same helper the other seven
+// primitives use. It was the only primitive calling `_backboneRequest`
+// directly, and got three things wrong by doing so:
+//
+//   1. `_backboneRequest` resolves `{status, body}`, not a Buffer — so
+//      `resp.toString('utf8')` produced the literal string "[object Object]"
+//      and every call died on `JSON.parse` with "Unexpected token o in JSON at
+//      position 1". The whole Node SQL API was unusable.
+//   2. Paths were passed with a leading slash while `_backboneRequest` prepends
+//      one itself, producing `//sql/query`.
+//   3. No status check, so a 4xx body would have been parsed as data — the
+//      exact bug `_call`'s own comment was added to fix for everyone else.
 function sql(name) {
   return {
     async query(sqlText, args = []) {
-      const resp = await _backboneRequest('POST', '/sql/query',
-        Buffer.from(JSON.stringify({ db: name, sql: sqlText, args })), 'application/json');
-      return _sqlRows(JSON.parse(resp.toString('utf8') || '{}'));
+      return _sqlRows(await _call('POST', 'sql/query', { db: name, sql: sqlText, args }));
     },
     async execute(sqlText, args = []) {
-      const resp = await _backboneRequest('POST', '/sql/execute',
-        Buffer.from(JSON.stringify({ db: name, sql: sqlText, args })), 'application/json');
-      return JSON.parse(resp.toString('utf8') || '{}');
+      return (await _call('POST', 'sql/execute', { db: name, sql: sqlText, args })) || {};
     },
     async begin() {
-      const resp = await _backboneRequest('POST', '/sql/begin',
-        Buffer.from(JSON.stringify({ db: name })), 'application/json');
-      const { tx } = JSON.parse(resp.toString('utf8') || '{}');
+      const { tx } = (await _call('POST', 'sql/begin', { db: name })) || {};
       return _sqlTx(name, tx);
     },
     async transaction(fn) {
@@ -803,22 +809,16 @@ function sql(name) {
 function _sqlTx(db, token) {
   return {
     async query(sqlText, args = []) {
-      const resp = await _backboneRequest('POST', '/sql/query',
-        Buffer.from(JSON.stringify({ db, sql: sqlText, args, tx: token })), 'application/json');
-      return _sqlRows(JSON.parse(resp.toString('utf8') || '{}'));
+      return _sqlRows(await _call('POST', 'sql/query', { db, sql: sqlText, args, tx: token }));
     },
     async execute(sqlText, args = []) {
-      const resp = await _backboneRequest('POST', '/sql/execute',
-        Buffer.from(JSON.stringify({ db, sql: sqlText, args, tx: token })), 'application/json');
-      return JSON.parse(resp.toString('utf8') || '{}');
+      return (await _call('POST', 'sql/execute', { db, sql: sqlText, args, tx: token })) || {};
     },
     async commit() {
-      await _backboneRequest('POST', '/sql/commit',
-        Buffer.from(JSON.stringify({ tx: token })), 'application/json');
+      await _call('POST', 'sql/commit', { tx: token });
     },
     async rollback() {
-      await _backboneRequest('POST', '/sql/rollback',
-        Buffer.from(JSON.stringify({ tx: token })), 'application/json');
+      await _call('POST', 'sql/rollback', { tx: token });
     },
   };
 }
