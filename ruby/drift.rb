@@ -1,7 +1,33 @@
 # Drift SDK for Ruby Atomic functions.
 #
+# == HOW A DEPLOYED FUNCTION IS CALLED
+#
+# `drift atomic deploy` generates a wrapper that requires your file and calls
+# your method BY NAME. So a deployed function must:
+#
+#   1. be a top-level `def` — the `@atomic` annotation has to sit directly
+#      above it, or it is reported as an orphan and never deployed.
+#   2. return the 3-element array `[status, message, payload]`.
+#
+# The signature differs by method, because the wrapper unwraps the body for
+# you on writes:
+#
+#   GET                      def my_handler(req)
+#   POST/PUT/DELETE/PATCH    def my_handler(body, req)
+#
+#   require 'drift'
+#
+#   # @atomic http=get:expenses auth=none
+#   def get_expenses(req)
+#     rows = Drift::Backbone.sql('ledger').query('SELECT * FROM expenses')
+#     [200, 'OK', { 'count' => rows.length, 'expenses' => rows }]
+#   end
+#
+# You do NOT call Drift.run yourself — the generated wrapper does.
+# `drift atomic new` scaffolds exactly this shape.
+#
 # This single-file SDK provides:
-#   - Drift.run(handler): Entry point that dispatches to deployed or local mode.
+#   - Drift.run(handler): the entry point the generated wrapper calls.
 #   - Drift::Backbone — the B of the sacred A·B·C triad; the SOLE entrypoint for
 #     every STATE primitive: Secret, Cache, Nosql, queue, Blob, Lock, sql,
 #     Realtime. (There is no top-level Drift::Secret etc. — go through

@@ -2,12 +2,57 @@
  * Drift SDK for Node.js Atomic functions.
  *
  * Provides:
- *   - run(handler): Entry point (deployed or local mode).
- *   - Backbone helpers: secret, cache, nosql, queue, blob, lock.
+ *   - Backbone helpers: drift.backbone.{secret,cache,nosql,queue,blob,lock,sql,realtime}
+ *   - Deed helpers:     drift.deed.{keyauth,jwt,vault,link,pocket}
  *   - log(msg): Writes to stderr (captured by runner).
  *   - httpRequest(): Outbound HTTP from within a function.
+ *   - run(handler): the entry point the CLI's generated wrapper calls. You do
+ *     NOT call this yourself — see the contract below.
  *
  * Uses only built-in APIs (process, fetch, http). Zero dependencies.
+ *
+ * ── HOW A DEPLOYED FUNCTION IS CALLED ──────────────────────────────────────
+ *
+ * `drift atomic deploy` generates a wrapper (app.js) that requires your file
+ * and calls your function BY NAME. So a deployed function must:
+ *
+ *   1. be a NAMED function — the `@atomic` annotation has to sit directly
+ *      above `function myHandler(...)`. An arrow function assigned to a const
+ *      is not matched, and the annotation is then reported as an orphan.
+ *   2. be EXPORTED — `module.exports = { myHandler }`.
+ *   3. return the 3-tuple `[status, message, payload]` — NOT an object.
+ *
+ * The signature differs by method, because the wrapper unwraps the body for
+ * you on writes:
+ *
+ *   GET                        function myHandler(req)
+ *   POST/PUT/DELETE/PATCH      function myHandler(body, req)
+ *   queue trigger              function myHandler(body, req)
+ *
+ * A complete GET function:
+ *
+ *   const drift = require('@ondrift/sdk');
+ *
+ *   // @atomic http=get:expenses auth=none
+ *   async function getExpenses(req) {
+ *     const rows = await drift.backbone.sql('ledger').query('SELECT * FROM expenses');
+ *     return [200, 'OK', { count: rows.length, expenses: rows }];
+ *   }
+ *
+ *   module.exports = { getExpenses };
+ *
+ * And a POST, which receives the decoded body first:
+ *
+ *   // @atomic http=post:expense auth=none
+ *   async function postExpense(body, req) {
+ *     if (!body.payer) return [400, 'Bad Request', { error: 'payer is required' }];
+ *     return [200, 'OK', { ok: true }];
+ *   }
+ *
+ *   module.exports = { postExpense };
+ *
+ * `drift atomic new` scaffolds exactly this shape — start from it rather than
+ * from memory.
  */
 
 "use strict";

@@ -2,12 +2,52 @@
 Drift SDK for Python Atomic functions.
 
 This single-file SDK provides:
-  - run(handler): Entry point that dispatches to deployed or local mode.
-  - Backbone helpers: secret, cache, nosql, queue, blob, lock.
+  - Backbone helpers: secret, cache, nosql, queue, blob, lock, sql, realtime.
+  - Deed helpers: keyauth, jwt, vault, link, pocket.
   - log(msg): Writes to stderr (captured by the runner as function logs).
   - http_request(): Outbound HTTP from within a function.
+  - run(handler): the entry point the CLI's generated wrapper calls. You do NOT
+    call this yourself -- see the contract below.
 
 All backbone helpers use only stdlib (urllib.request) -- zero external dependencies.
+
+-- HOW A DEPLOYED FUNCTION IS CALLED ---------------------------------------
+
+`drift atomic deploy` generates a wrapper that imports your module and calls
+your function BY NAME (`from <your_module> import <your_func>`). So a deployed
+function must:
+
+  1. be a top-level `def` -- the `@atomic` annotation has to sit directly above
+     it. A lambda, or a def nested inside another def, is not matched, and the
+     annotation is then reported as an orphan.
+  2. return the 3-tuple `(status, message, payload)`.
+
+The signature differs by method, because the wrapper unwraps the body for you
+on writes:
+
+    GET                        def my_handler(req)
+    POST/PUT/DELETE/PATCH      def my_handler(body, req)
+    queue trigger              def my_handler(body, req)
+
+A complete GET function:
+
+    import drift
+
+    # @atomic http=get:expenses auth=none
+    def get_expenses(req):
+        rows = drift.backbone.sql("ledger").query("SELECT * FROM expenses")
+        return 200, "OK", {"count": len(rows), "expenses": rows}
+
+And a POST, which receives the decoded body first:
+
+    # @atomic http=post:expense auth=none
+    def post_expense(body, req):
+        if not body.get("payer"):
+            return 400, "Bad Request", {"error": "payer is required"}
+        return 200, "OK", {"ok": True}
+
+`drift atomic new` scaffolds exactly this shape -- start from it rather than
+from memory.
 """
 
 import http.client

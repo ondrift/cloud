@@ -2,8 +2,32 @@
 /**
  * Drift SDK for PHP Atomic functions.
  *
+ * == HOW A DEPLOYED FUNCTION IS CALLED
+ *
+ * `drift atomic deploy` generates a wrapper that require_once's your file and
+ * calls your function BY NAME. So a deployed function must:
+ *
+ *   1. be a top-level `function` — the `@atomic` annotation has to sit
+ *      directly above it, or it is reported as an orphan and never deployed.
+ *   2. return the 3-element array `[$status, $message, $payload]`.
+ *
+ * The signature differs by method, because the wrapper unwraps the body for
+ * you on writes:
+ *
+ *   GET                      function my_handler($req)
+ *   POST/PUT/DELETE/PATCH    function my_handler($body, $req)
+ *
+ *   // @atomic http=get:expenses auth=none
+ *   function get_expenses($req) {
+ *       $rows = \Drift\Backbone\sql('ledger')->query('SELECT * FROM expenses');
+ *       return [200, 'OK', ['count' => count($rows), 'expenses' => $rows]];
+ *   }
+ *
+ * You do NOT call \Drift\run yourself — the generated wrapper does.
+ * `drift atomic new` scaffolds exactly this shape.
+ *
  * This single-file SDK provides:
- *   - \Drift\run($handler): Entry point that dispatches to deployed or local mode.
+ *   - \Drift\run($handler): the entry point the generated wrapper calls.
  *   - \Drift\Backbone\* — the B of the sacred A·B·C triad; the SOLE entrypoint
  *     for every STATE primitive: Secret, Cache, Nosql, queue, Blob, Lock,
  *     sql, Realtime. (There is no \Drift\Secret etc. — go through the
