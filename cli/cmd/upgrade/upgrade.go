@@ -42,9 +42,20 @@ func GetCmd() *cobra.Command {
 }
 
 func runUpgrade(current, requested string) error {
+	// How this binary was installed decides how it is upgraded, and the two
+	// paths do not mix: `go install` over a Homebrew-managed binary does not
+	// replace it. It writes a second drift into GOPATH/bin, leaves Homebrew
+	// reporting the old version, and which one wins depends on PATH order.
+	if method, path := DetectInstallMethod(); method == MethodHomebrew {
+		return homebrewUpgradeNotice(path, requested)
+	}
+
 	if _, err := exec.LookPath("go"); err != nil {
-		return fmt.Errorf("`go` isn't on your PATH — the drift CLI installs with `go install`, " +
-			"so you need Go to upgrade it. Get it from https://go.dev/dl and try again")
+		return fmt.Errorf("`go` isn't on your PATH, and this copy of drift wasn't installed by " +
+			"Homebrew either, so there's nothing to upgrade with.\n\n" +
+			"  Install it with Homebrew instead:\n" +
+			"    brew install ondrift/tap/drift\n\n" +
+			"  or install Go from https://go.dev/dl and run this again")
 	}
 
 	// Resolve the version label that goes after the "@" in `go install`.
