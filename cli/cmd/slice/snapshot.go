@@ -367,7 +367,20 @@ func getSnapshotRestoreCmd() *cobra.Command {
 			}
 			json.Unmarshal(respBody, &result) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 
-			fmt.Printf("%s Snapshot %s restored.\n", common.Check(), id)
+			// The headline reflects the RESULT, not the HTTP status.
+			//
+			// This printed a green ✓ unconditionally, because a partial restore is
+			// still a 200 — the per-component errors are in the body. On alpha that
+			// produced "✓ Snapshot restored." above a list of five functions that
+			// had not been restored, which is the single most misleading thing this
+			// command could say: a restore is the one operation you run when the
+			// snapshot is the only copy left (#PLATFORM-CORE-OPERATOR-7CCX8J).
+			if len(result.Errors) > 0 {
+				fmt.Printf("%s Snapshot %s restored WITH ERRORS — %d component(s) did not come back.\n",
+					common.Cross(), id, len(result.Errors))
+			} else {
+				fmt.Printf("%s Snapshot %s restored.\n", common.Check(), id)
+			}
 			fmt.Println()
 			r := result.Restored
 			fmt.Printf("  Secrets:     %d\n", r.Secrets)
@@ -387,6 +400,14 @@ func getSnapshotRestoreCmd() *cobra.Command {
 				for _, e := range result.Errors {
 					fmt.Printf("    - %s\n", e)
 				}
+				fmt.Println()
+				fmt.Println("  A function listed above is NOT running. Check `restorable` in the")
+				fmt.Println("  snapshot's atomic-manifest.json — a function deployed before its entry")
+				fmt.Println("  point was recorded cannot be rebuilt from the archive, and redeploying")
+				fmt.Println("  it from source is the fix.")
+				// Non-zero exit, so a script that restores and carries on cannot
+				// mistake a partial restore for a whole one.
+				return fmt.Errorf("restore incomplete: %d component(s) failed", len(result.Errors))
 			}
 
 			return nil
