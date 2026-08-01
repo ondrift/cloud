@@ -1,3 +1,3 @@
-module github.com/ondrift/sdk/v4
+module github.com/ondrift/cloud/sdk
 
 go 1.26.2

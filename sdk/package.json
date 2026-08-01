@@ -1,6 +1,6 @@
 {
   "name": "@ondrift/sdk",
-  "version": "4.1.2",
+  "version": "0.1.0",
   "description": "Drift SDK for Node.js.",
   "main": "node/index.js",
   "type": "commonjs",
@@ -18,10 +18,10 @@
   "homepage": "https://ondrift.eu",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ondrift/sdk.git"
+    "url": "git+https://github.com/ondrift/cloud/sdk.git"
   },
   "bugs": {
-    "url": "https://github.com/ondrift/sdk/issues"
+    "url": "https://github.com/ondrift/cloud/sdk/issues"
   },
   "files": [
     "node/index.js",

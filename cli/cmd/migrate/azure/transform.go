@@ -12,8 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ondrift/cli/v2/cmd/project"
-	"github.com/ondrift/cli/v2/common"
+	"github.com/ondrift/cloud/cli/cmd/project"
+	"github.com/ondrift/cloud/cli/common"
 )
 
 func getTransformCmd() *cobra.Command {

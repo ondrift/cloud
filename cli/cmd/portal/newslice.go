@@ -20,7 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ondrift/cli/v2/common"
+	"github.com/ondrift/cloud/cli/common"
 	"golang.org/x/term"
 )
 

@@ -21,7 +21,7 @@ import (
 	"regexp"
 	"strings"
 
-	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
+	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/spf13/cobra"
@@ -367,7 +367,7 @@ func manifest(lang, name string) (string, string) {
 	case "go":
 		return "go.mod", fmt.Sprintf("module atomic/%s\n\ngo 1.26.2\n", name)
 	case "python":
-		return "requirements.txt", "drift-sdk @ git+https://github.com/ondrift/sdk.git#subdirectory=python\n"
+		return "requirements.txt", "drift-sdk @ git+https://github.com/ondrift/cloud/sdk.git#subdirectory=python\n"
 	case "node":
 		return "package.json", fmt.Sprintf("{\n"+
 			"  \"name\": \"atomic-%s\",\n"+
@@ -378,11 +378,11 @@ func manifest(lang, name string) (string, string) {
 			"  }\n}\n", name)
 	case "ruby":
 		return "Gemfile", "source \"https://rubygems.org\"\n\n" +
-			"gem \"drift-sdk\", git: \"https://github.com/ondrift/sdk\", branch: \"master\", glob: \"ruby/*.gemspec\"\n"
+			"gem \"drift-sdk\", git: \"https://github.com/ondrift/cloud/sdk\", branch: \"master\", glob: \"ruby/*.gemspec\"\n"
 	case "php":
 		return "composer.json", "{\n" +
 			"  \"repositories\": [\n" +
-			"    { \"type\": \"vcs\", \"url\": \"https://github.com/ondrift/sdk\" }\n" +
+			"    { \"type\": \"vcs\", \"url\": \"https://github.com/ondrift/cloud/sdk\" }\n" +
 			"  ],\n" +
 			"  \"require\": {\n" +
 			"    \"ondrift/sdk\": \"*\"\n" +
@@ -403,7 +403,7 @@ name = "atomic-function"
 path = "src/main.rs"
 
 [dependencies]
-drift-sdk = { git = "https://github.com/ondrift/sdk" }
+drift-sdk = { git = "https://github.com/ondrift/cloud/sdk" }
 serde_json = "1"
 
 [profile.release]

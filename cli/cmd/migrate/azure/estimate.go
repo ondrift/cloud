@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ondrift/cli/v2/common"
+	"github.com/ondrift/cloud/cli/common"
 )
 
 // EstimateResult is the full output of `estimate`, also the --json shape.

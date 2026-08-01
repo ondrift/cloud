@@ -3,5 +3,5 @@ name = "atomic-function"
 edition = "2021"
 
 [dependencies]
-drift-sdk = { git = "https://github.com/ondrift/sdk" }
+drift-sdk = { git = "https://github.com/ondrift/cloud/sdk" }
 serde_json = "1"

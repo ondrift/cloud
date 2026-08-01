@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ondrift/cli/v2/common"
+	"github.com/ondrift/cloud/cli/common"
 )
 
 // DetectLanguage scans dir for the file containing the @atomic annotation and

@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name          = "drift-sdk"
-  spec.version       = "4.1.2"
+  spec.version       = "0.1.0"
   spec.authors       = ["Drift"]
 
   spec.summary       = "Drift SDK for Ruby Atomic functions"
@@ -8,9 +8,9 @@ Gem::Specification.new do |spec|
   spec.homepage      = "https://ondrift.eu"
   spec.license       = "MIT"
   spec.metadata = {
-    "source_code_uri" => "https://github.com/ondrift/sdk",
+    "source_code_uri" => "https://github.com/ondrift/cloud/sdk",
     "documentation_uri" => "https://ondrift.eu/docs",
-    "bug_tracker_uri" => "https://github.com/ondrift/sdk/issues",
+    "bug_tracker_uri" => "https://github.com/ondrift/cloud/sdk/issues",
   }
 
   spec.required_ruby_version = ">= 3.0"

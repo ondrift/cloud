@@ -14,7 +14,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/ondrift/cli/v2/common"
+	"github.com/ondrift/cloud/cli/common"
 )
 
 type liveDomain struct {

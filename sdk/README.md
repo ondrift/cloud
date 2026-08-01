@@ -1,6 +1,6 @@
 # The Drift SDK
 
-The SDK is what user-written code imports to talk to [Drift](https://ondrift.eu). It exists in six languages — **Go, Python, Node.js, Ruby, PHP, and Rust** — and every one exposes the same API surface, follows the same wire protocol, and provides the same local-development experience. This repository (`github.com/ondrift/sdk`) is the single authoritative source for all six; one tag per release versions them together.
+The SDK is what user-written code imports to talk to [Drift](https://ondrift.eu). It exists in six languages — **Go, Python, Node.js, Ruby, PHP, and Rust** — and every one exposes the same API surface, follows the same wire protocol, and provides the same local-development experience. This repository (`github.com/ondrift/cloud/sdk`) is the single authoritative source for all six; one tag per release versions them together.
 
 ## Contents
 
@@ -25,14 +25,14 @@ No version is pinned anywhere — reference the SDK unversioned and every build 
 # Go — name the ROOT module (NOT …/sdk/v4/go: the repo's early history had a
 # nested …/sdk/go module whose stale pseudo-versions still resolve first).
 # The /v4 segment is Go's own semantic-import-versioning rule for a v2+
-# module — a plain `github.com/ondrift/sdk@latest` (no /v4) stays on the v1
+# module — a plain `github.com/ondrift/cloud/sdk@latest` (no /v4) stays on the v1
 # line forever, by design: existing v1 consumers never see a breaking change
 # land under their feet.
-go get github.com/ondrift/sdk/v4@latest      # then: import drift "github.com/ondrift/sdk/v4/go"
+go get github.com/ondrift/cloud/sdk@latest      # then: import drift "github.com/ondrift/cloud/sdk/go"
 ```
 ```text
 # Python (requirements.txt)
-drift-sdk @ git+https://github.com/ondrift/sdk.git#subdirectory=python
+drift-sdk @ git+https://github.com/ondrift/cloud/sdk.git#subdirectory=python
 ```
 ```bash
 # Node.js (package.json dependency) — #semver:* = latest tag
@@ -41,16 +41,16 @@ npm i "github:ondrift/sdk#semver:*"
 ```ruby
 # Ruby (Gemfile) — branch:master is the repo default (and bundler's default
 # for git gems); glob locates the gemspec in ruby/
-gem "drift-sdk", git: "https://github.com/ondrift/sdk", branch: "master", glob: "ruby/*.gemspec"
+gem "drift-sdk", git: "https://github.com/ondrift/cloud/sdk", branch: "master", glob: "ruby/*.gemspec"
 ```
 ```bash
 # PHP — VCS repo + the "*" constraint tracks the latest tag
-composer config repositories.drift vcs https://github.com/ondrift/sdk
+composer config repositories.drift vcs https://github.com/ondrift/cloud/sdk
 composer require "ondrift/sdk:*"
 ```
 ```toml
 # Rust (Cargo.toml)
-drift-sdk = { git = "https://github.com/ondrift/sdk" }
+drift-sdk = { git = "https://github.com/ondrift/cloud/sdk" }
 ```
 
 ---
@@ -76,7 +76,7 @@ The Backbone and Deed primitives are each identical across languages; every sect
 ### Go
 
 ```go
-import drift "github.com/ondrift/sdk/v4/go"
+import drift "github.com/ondrift/cloud/sdk/go"
 ```
 
 ```go
@@ -296,7 +296,7 @@ $db = \Drift\Backbone\sql('clinic'); $db->query('SELECT …', $args);   // ->exe
 
 ```toml
 [dependencies]
-drift-sdk  = { git = "https://github.com/ondrift/sdk" }
+drift-sdk  = { git = "https://github.com/ondrift/cloud/sdk" }
 serde_json = "1"
 ```
 
@@ -347,7 +347,7 @@ drift_sdk::log("msg"); drift_sdk::http_request("GET", url, None, None);
 
 > **Outbound HTTPS is opt-in.** By default the SDK is pure Rust (`http_request` does plain HTTP), so a Rust function cross-compiles to the runner with **just rustup — no C toolchain**. To call `https://` URLs, enable the `tls` feature:
 > ```toml
-> drift-sdk = { git = "https://github.com/ondrift/sdk", features = ["tls"] }
+> drift-sdk = { git = "https://github.com/ondrift/cloud/sdk", features = ["tls"] }
 > ```
 > That pulls `ring` (C/assembly), so deploying then needs a C cross-toolchain — install [`zig`](https://ziglang.org) and `cargo install cargo-zigbuild`, or a musl cross-gcc. Calling `https://` without the feature returns a clear error rather than failing silently.
 

@@ -1,4 +1,4 @@
-module github.com/ondrift/cli/v2
+module github.com/ondrift/cloud/cli
 
 go 1.26.2
 

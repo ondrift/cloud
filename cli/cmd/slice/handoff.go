@@ -28,7 +28,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ondrift/cli/v2/common"
+	"github.com/ondrift/cloud/cli/common"
 )
 
 // handoffMode mirrors configurator.routes.SessionMode. We do not import

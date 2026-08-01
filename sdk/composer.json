@@ -10,8 +10,8 @@
         }
     ],
     "support": {
-        "issues": "https://github.com/ondrift/sdk/issues",
-        "source": "https://github.com/ondrift/sdk"
+        "issues": "https://github.com/ondrift/cloud/sdk/issues",
+        "source": "https://github.com/ondrift/cloud/sdk"
     },
     "keywords": ["drift", "serverless", "atomic", "sdk"],
     "require": {

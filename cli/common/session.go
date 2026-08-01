@@ -18,7 +18,7 @@ const SessionFile = "~/.drift/session.json"
 // public production gateway so a plain `go install` works out of the box; a
 // local/dev build points it elsewhere via:
 //
-//	go build -ldflags "-X github.com/ondrift/cli/common.APIBaseURL=http://api.localhost:30036"
+//	go build -ldflags "-X github.com/ondrift/cloud/cli/common.APIBaseURL=http://api.localhost:30036"
 //
 // At runtime, the DRIFT_API_URL environment variable takes precedence over
 // the compiled-in default (useful for self-hosted instances or staging).

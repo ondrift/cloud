@@ -143,7 +143,7 @@ func TestInstallPythonDeps_SDKOnlyNeedsNoDocker(t *testing.T) {
 
 	elem, stage := t.TempDir(), t.TempDir()
 	writeFile(t, filepath.Join(elem, "requirements.txt"),
-		"drift-sdk @ git+https://github.com/ondrift/sdk.git#subdirectory=python\n")
+		"drift-sdk @ git+https://github.com/ondrift/cloud/sdk.git#subdirectory=python\n")
 
 	if err := installPythonDeps(elem, stage); err != nil {
 		t.Fatalf("installPythonDeps failed with no Docker on PATH: %v", err)
@@ -162,7 +162,7 @@ func TestInstallRubyDeps_SDKOnlyNeedsNoDocker(t *testing.T) {
 
 	elem, stage := t.TempDir(), t.TempDir()
 	writeFile(t, filepath.Join(elem, "Gemfile"),
-		"source \"https://rubygems.org\"\n\ngem \"drift-sdk\", git: \"https://github.com/ondrift/sdk\", branch: \"master\"\n")
+		"source \"https://rubygems.org\"\n\ngem \"drift-sdk\", git: \"https://github.com/ondrift/cloud/sdk\", branch: \"master\"\n")
 
 	if err := installRubyDeps(elem, stage); err != nil {
 		t.Fatalf("installRubyDeps failed with no Docker on PATH: %v", err)
@@ -181,7 +181,7 @@ func TestInstallPHPDeps_SDKOnlyNeedsNoDocker(t *testing.T) {
 
 	elem, stage := t.TempDir(), t.TempDir()
 	writeFile(t, filepath.Join(elem, "composer.json"),
-		`{"repositories":[{"type":"vcs","url":"https://github.com/ondrift/sdk"}],`+
+		`{"repositories":[{"type":"vcs","url":"https://github.com/ondrift/cloud/sdk"}],`+
 			`"require":{"php":">=8.1","ondrift/sdk":"*"}}`)
 
 	if err := installPHPDeps(elem, stage); err != nil {
@@ -266,7 +266,7 @@ func TestSDKOnlyDetection(t *testing.T) {
 			`{"dependencies":{"express":"^4"}}`, false},
 
 		{"python: scaffolded git URL", "python", "requirements.txt",
-			"drift-sdk @ git+https://github.com/ondrift/sdk.git#subdirectory=python\n", true},
+			"drift-sdk @ git+https://github.com/ondrift/cloud/sdk.git#subdirectory=python\n", true},
 		{"python: comments and blanks", "python", "requirements.txt",
 			"# the drift sdk\n\ndrift-sdk\n", true},
 		{"python: pinned version", "python", "requirements.txt", "drift-sdk==4.1.2\n", true},
@@ -276,7 +276,7 @@ func TestSDKOnlyDetection(t *testing.T) {
 			"-r other.txt\ndrift-sdk\n", false},
 
 		{"ruby: scaffolded Gemfile", "ruby", "Gemfile",
-			"source \"https://rubygems.org\"\n\ngem \"drift-sdk\", git: \"https://github.com/ondrift/sdk\"\n", true},
+			"source \"https://rubygems.org\"\n\ngem \"drift-sdk\", git: \"https://github.com/ondrift/cloud/sdk\"\n", true},
 		{"ruby: a second gem", "ruby", "Gemfile",
 			"source \"https://rubygems.org\"\ngem \"drift-sdk\"\ngem \"nokogiri\"\n", false},
 		{"ruby: gemspec directive", "ruby", "Gemfile",

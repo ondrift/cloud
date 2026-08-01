@@ -14,7 +14,7 @@ import (
 	"net/url"
 	"os"
 
-	"github.com/ondrift/cli/v2/common"
+	"github.com/ondrift/cloud/cli/common"
 )
 
 // LiveSlice is a CLI-local mirror of the fields we actually use from

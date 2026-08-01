@@ -94,11 +94,11 @@ func TestVerifySDKManifest_PerLanguageManifestNeedles(t *testing.T) {
 		lang, src, srcName, manifest, manifestName string
 	}{
 		{"ruby", "require 'drift'\ndef h; end\n", "h.rb",
-			`gem "drift-sdk", git: "https://github.com/ondrift/sdk"`, "Gemfile"},
+			`gem "drift-sdk", git: "https://github.com/ondrift/cloud/sdk"`, "Gemfile"},
 		{"php", "<?php\nuse Drift\\Backbone;\n", "h.php",
 			`{"require":{"ondrift/sdk":"*"}}`, "composer.json"},
 		{"python", "import drift\n", "h.py",
-			"drift-sdk @ git+https://github.com/ondrift/sdk.git#subdirectory=python", "requirements.txt"},
+			"drift-sdk @ git+https://github.com/ondrift/cloud/sdk.git#subdirectory=python", "requirements.txt"},
 	}
 	for _, c := range cases {
 		dir := writeFn(t, map[string]string{c.srcName: c.src, c.manifestName: c.manifest})

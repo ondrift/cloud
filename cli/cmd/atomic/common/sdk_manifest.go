@@ -24,7 +24,7 @@ var sdkManifestSpecs = map[string]sdkManifestSpec{
 	"python": {
 		manifest: "requirements.txt", ext: ".py",
 		needles:     []string{"import drift"},
-		declaration: "drift-sdk @ git+https://github.com/ondrift/sdk.git#subdirectory=python",
+		declaration: "drift-sdk @ git+https://github.com/ondrift/cloud/sdk.git#subdirectory=python",
 	},
 	"node": {
 		manifest: "package.json", ext: ".js",
@@ -34,12 +34,12 @@ var sdkManifestSpecs = map[string]sdkManifestSpec{
 	"ruby": {
 		manifest: "Gemfile", ext: ".rb",
 		needles:     []string{"require 'drift'", "require \"drift\""},
-		declaration: "gem \"drift-sdk\", git: \"https://github.com/ondrift/sdk\", branch: \"master\", glob: \"ruby/*.gemspec\"",
+		declaration: "gem \"drift-sdk\", git: \"https://github.com/ondrift/cloud/sdk\", branch: \"master\", glob: \"ruby/*.gemspec\"",
 	},
 	"php": {
 		manifest: "composer.json", ext: ".php",
 		needles:     []string{`Drift\`},
-		declaration: `{ "repositories": [{ "type": "vcs", "url": "https://github.com/ondrift/sdk" }], "require": { "ondrift/sdk": "*" } }`,
+		declaration: `{ "repositories": [{ "type": "vcs", "url": "https://github.com/ondrift/cloud/sdk" }], "require": { "ondrift/sdk": "*" } }`,
 	},
 }
 

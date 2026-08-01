@@ -1,10 +1,10 @@
 [package]
 name = "drift-sdk"
-version = "4.1.2"
+version = "0.1.0"
 edition = "2021"
 description = "Drift SDK for Rust Atomic functions — minimal dependency footprint."
 license = "MIT"
-repository = "https://github.com/ondrift/sdk"
+repository = "https://github.com/ondrift/cloud/sdk"
 homepage = "https://ondrift.eu"
 documentation = "https://ondrift.eu/docs"
 authors = ["Drift <hello@ondrift.eu>"]

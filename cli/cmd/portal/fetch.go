@@ -16,7 +16,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/ondrift/cli/v2/common"
+	"github.com/ondrift/cloud/cli/common"
 )
 
 // ─── Atomic functions ───────────────────────────────────────────────────────

@@ -25,7 +25,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ondrift/cli/v2/common"
+	"github.com/ondrift/cloud/cli/common"
 )
 
 // liveEgressView is the JSON shape returned by GET /ops/atomic/egress.

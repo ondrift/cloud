@@ -5,17 +5,17 @@ import (
 	"fmt"
 	"os"
 
-	account "github.com/ondrift/cli/v2/cmd/account"
-	atomic "github.com/ondrift/cli/v2/cmd/atomic"
-	backbone "github.com/ondrift/cli/v2/cmd/backbone"
-	canvas "github.com/ondrift/cli/v2/cmd/canvas"
-	deed "github.com/ondrift/cli/v2/cmd/deed"
-	migrate "github.com/ondrift/cli/v2/cmd/migrate"
-	portal "github.com/ondrift/cli/v2/cmd/portal"
-	project "github.com/ondrift/cli/v2/cmd/project"
-	slice "github.com/ondrift/cli/v2/cmd/slice"
-	upgrade "github.com/ondrift/cli/v2/cmd/upgrade"
-	"github.com/ondrift/cli/v2/common"
+	account "github.com/ondrift/cloud/cli/cmd/account"
+	atomic "github.com/ondrift/cloud/cli/cmd/atomic"
+	backbone "github.com/ondrift/cloud/cli/cmd/backbone"
+	canvas "github.com/ondrift/cloud/cli/cmd/canvas"
+	deed "github.com/ondrift/cloud/cli/cmd/deed"
+	migrate "github.com/ondrift/cloud/cli/cmd/migrate"
+	portal "github.com/ondrift/cloud/cli/cmd/portal"
+	project "github.com/ondrift/cloud/cli/cmd/project"
+	slice "github.com/ondrift/cloud/cli/cmd/slice"
+	upgrade "github.com/ondrift/cloud/cli/cmd/upgrade"
+	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -24,7 +24,7 @@ import (
 // version is set at build time via:
 //
 //	go build -ldflags "-X main.version=v1.0.0"
-var version = "v2.10.0"
+var version = "v0.1.0"
 
 func main() {
 	rootCmd := &cobra.Command{

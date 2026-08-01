@@ -8,7 +8,7 @@
 package project
 
 import (
-	atomic_cmd "github.com/ondrift/cli/v2/cmd/atomic/cmd/deploy"
+	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 )
 
 // declaredSchedules maps function name → cron expression for every Driftfile

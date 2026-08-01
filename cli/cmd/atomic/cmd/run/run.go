@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
+	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"

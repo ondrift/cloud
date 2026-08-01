@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ondrift/cli/v2/common"
+	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
 )

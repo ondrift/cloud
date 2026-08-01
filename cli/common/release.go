@@ -26,9 +26,9 @@ const CLIRepo = "ondrift/cli"
 // CLIModuleBase is the CLI's module path WITHOUT the major-version suffix.
 // Deliberately not the full install path: from v2 on, Go's semantic import
 // versioning puts the major version in the module path itself
-// (github.com/ondrift/cli/v2/...), so the go-installable path is a function of
+// (github.com/ondrift/cloud/cli/...), so the go-installable path is a function of
 // the version being installed, not a constant. Build it with CLIInstallPath.
-const CLIModuleBase = "github.com/ondrift/cli"
+const CLIModuleBase = "github.com/ondrift/cloud/cli"
 
 // MajorVersion returns the major component of a "vMAJOR.MINOR.PATCH" string, or
 // 0 when v carries no version at all (a branch name, a commit SHA, "latest").
@@ -37,7 +37,7 @@ func MajorVersion(v string) int { return parseSemver(v)[0] }
 // CLIInstallPath returns the go-installable path of the drift binary for the
 // version about to be installed.
 //
-// This MUST track the major version: `go install github.com/ondrift/cli/cmd/drift@v2.2.0`
+// This MUST track the major version: `go install github.com/ondrift/cloud/cli/cmd/drift@v2.2.0`
 // fails, because at v2.2.0 the module declares itself as ".../cli/v2" and Go
 // then can't match the requested path to any module — it falls through to
 // looking for a nested `cmd/drift/v2.2.0` subdirectory tag that doesn't exist.

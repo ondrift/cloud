@@ -84,7 +84,7 @@ func TestLatestSemverTag(t *testing.T) {
 }
 
 func TestCLIInstallPath(t *testing.T) {
-	const base = "github.com/ondrift/cli"
+	const base = "github.com/ondrift/cloud/cli"
 	cases := []struct {
 		name         string
 		target, from string

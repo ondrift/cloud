@@ -3,8 +3,8 @@ package project
 import (
 	"path/filepath"
 
-	atomic_cmd "github.com/ondrift/cli/v2/cmd/atomic/cmd/deploy"
-	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
+	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
+	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 )
 
 // CountAtomicFunctions returns the total number of `@atomic`-decorated
