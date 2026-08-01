@@ -1,0 +1,149 @@
+# pr.yml — what every pull request must pass before it can be merged.
+#
+# Path-aware on purpose: cli/ and sdk/ are separate modules on separate version
+# lines, so a PR touching only one should not be gated on the other. A docs-only
+# PR runs neither and passes immediately.
+#
+# The summary this writes to the job log is not decoration — the PR body is
+# required to state what was tested and what the results were, and this is where
+# those results come from.
+
+name: PR
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    outputs:
+      cli: ${{ steps.filter.outputs.cli }}
+      sdk: ${{ steps.filter.outputs.sdk }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: filter
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          changed=$(git diff --name-only "$base" "$head")
+          echo "$changed" | grep -q '^cli/'  && echo "cli=true"  >> "$GITHUB_OUTPUT" || echo "cli=false"  >> "$GITHUB_OUTPUT"
+          echo "$changed" | grep -q '^sdk/'  && echo "sdk=true"  >> "$GITHUB_OUTPUT" || echo "sdk=false"  >> "$GITHUB_OUTPUT"
+          {
+            echo "### Changed paths"
+            echo '```'
+            echo "$changed"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  branch-name:
+    name: Branch name declares the bump
+    runs-on: ubuntu-latest
+    steps:
+      # The branch prefix is what the release workflow reads to decide the
+      # version bump. A PR whose branch says nothing releases nothing, so an
+      # unrecognised prefix is caught HERE rather than silently shipping no
+      # release after the merge.
+      - run: |
+          ref="${{ github.event.pull_request.head.ref }}"
+          case "$ref" in
+            feature/*|bugfix/*|breaking/*)
+              echo "✓ '$ref' will produce a release" ;;
+            chore/*|docs/*|ci/*|test/*)
+              echo "✓ '$ref' is a no-release branch — nothing will be tagged or published" ;;
+            *)
+              echo "✗ branch '$ref' has no recognised prefix."
+              echo ""
+              echo "  releases:    feature/  bugfix/  breaking/"
+              echo "  no release:  chore/  docs/  ci/  test/"
+              exit 1 ;;
+          esac
+
+  cli:
+    name: CLI — build, vet, test
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: cli/go.mod, cache-dependency-path: cli/go.sum }
+      - name: gofmt
+        working-directory: cli
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "not gofmt'd:"; echo "$unformatted"; exit 1; fi
+      - name: build
+        working-directory: cli
+        run: go build ./...
+      - name: vet
+        working-directory: cli
+        run: go vet ./...
+      - name: test
+        working-directory: cli
+        run: |
+          set -o pipefail
+          go test ./... 2>&1 | tee /tmp/cli-test.log
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### CLI test results"
+            echo '```'
+            cat /tmp/cli-test.log 2>/dev/null || echo "(tests did not run)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  sdk:
+    name: SDK — build, vet, test
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: sdk/go.mod, cache-dependency-path: sdk/go.sum }
+      - name: gofmt
+        working-directory: sdk
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "not gofmt'd:"; echo "$unformatted"; exit 1; fi
+      - name: build
+        working-directory: sdk
+        run: go build ./...
+      - name: vet
+        working-directory: sdk
+        run: go vet ./...
+      - name: test
+        working-directory: sdk
+        run: |
+          set -o pipefail
+          go test ./... 2>&1 | tee /tmp/sdk-test.log
+      - name: version consistency
+        working-directory: sdk
+        # Six languages, ONE version. A manifest left behind is the failure this
+        # catches — it is invisible until someone installs the odd one out.
+        run: |
+          v_py=$(grep -m1 '^version' python/pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
+          v_rs=$(grep -m1 '^version' rust/Cargo.toml     | sed 's/.*"\(.*\)".*/\1/')
+          v_npm=$(grep -m1 '"version"' package.json      | sed 's/.*"version"[: ]*"\(.*\)".*/\1/')
+          v_gem=$(grep -m1 'spec.version' ruby/drift.gemspec | sed 's/.*"\(.*\)".*/\1/')
+          echo "python=$v_py rust=$v_rs npm=$v_npm gem=$v_gem"
+          if [ "$v_py" != "$v_rs" ] || [ "$v_py" != "$v_npm" ] || [ "$v_py" != "$v_gem" ]; then
+            echo "✗ SDK manifests disagree — all six languages share one version"; exit 1
+          fi
+          echo "✓ all manifests agree on $v_py"
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### SDK test results"
+            echo '```'
+            cat /tmp/sdk-test.log 2>/dev/null || echo "(tests did not run)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
