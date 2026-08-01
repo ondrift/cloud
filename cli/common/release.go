@@ -21,7 +21,21 @@ import (
 )
 
 // CLIRepo is the GitHub owner/repo the drift CLI is released from.
-const CLIRepo = "ondrift/cli"
+//
+// The CLI moved into the ondrift/cloud monorepo on 2026-08-01; this used to
+// read "ondrift/cli", which still exists but is frozen. A stale value here
+// does not fail loudly — it queries a real repository that simply never gains
+// another tag, so `drift upgrade` would report "you're up to date" forever.
+const CLIRepo = "ondrift/cloud"
+
+// CLITagPrefix is what the CLI's release tags carry in the monorepo.
+//
+// Go resolves a subdirectory module by PREFIXED tag, so the CLI is released as
+// `cli/v0.1.0`, not `v0.1.0` — and the SDK's `sdk/v0.1.0` tags sit in the same
+// namespace. Tag selection has to strip this before parsing a version AND
+// ignore anything carrying a different prefix, or the CLI would happily offer
+// an SDK release as its own next version.
+const CLITagPrefix = "cli/"
 
 // CLIModuleBase is the CLI's module path WITHOUT the major-version suffix.
 // Deliberately not the full install path: from v2 on, Go's semantic import
@@ -102,9 +116,12 @@ func FetchLatestCLIRelease() (LatestRelease, error) {
 	if best == "" {
 		return LatestRelease{}, fmt.Errorf("no version tags found")
 	}
+	// Tag is the bare version because that is what `go install …@VERSION` wants:
+	// Go maps module github.com/ondrift/cloud/cli at v0.1.0 onto the `cli/v0.1.0`
+	// tag itself. The browsable URL needs the real tag name, prefix and all.
 	return LatestRelease{
 		Tag: best,
-		URL: "https://github.com/" + CLIRepo + "/releases/tag/" + best,
+		URL: "https://github.com/" + CLIRepo + "/releases/tag/" + CLITagPrefix + best,
 	}, nil
 }
 
@@ -115,11 +132,18 @@ func FetchLatestCLIRelease() (LatestRelease, error) {
 func latestSemverTag(names []string) string {
 	best := ""
 	for _, name := range names {
-		if !isSemverTag(name) {
-			continue
-		}
-		if best == "" || CompareVersions(name, best) > 0 {
-			best = name
+		// In the monorepo every release tag is prefixed by its module
+		// directory. Accept only this module's, so an `sdk/v9.0.0` can never be
+		// selected as the CLI's next version. A bare `vX.Y.Z` is still accepted
+		// so tags cut before the move keep resolving.
+		v := strings.TrimPrefix(name, CLITagPrefix)
+		if v != name || !strings.Contains(name, "/") {
+			if !isSemverTag(v) {
+				continue
+			}
+			if best == "" || CompareVersions(v, best) > 0 {
+				best = v
+			}
 		}
 	}
 	return best
