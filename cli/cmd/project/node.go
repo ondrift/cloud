@@ -1,36 +1,50 @@
-// node.go — the Driftfile as data rather than as a Go type.
+// node.go — the Driftfile as data, for the one job that needs it.
 //
-// The Driftfile used to be decoded into a tree of structs that mirrored the
-// format field for field. That mirror was the reason every new Driftfile field
-// needed a CLI release: an unrecognised key was a hard error (ParseDriftfile
-// re-decoded with KnownFields(true) precisely to reject one), so the platform
-// could not add anything the installed CLI had not been taught.
+// # What this is used for TODAY
 //
-// Now the file is carried as what it is — a document. The platform owns the
-// format and serves the schema that says which documents are legal; this side
-// reads the handful of values it genuinely acts on locally and passes the rest
-// through untouched.
+// The ENVIRONMENT OVERLAY, and nothing else. `Manifest.mergeEnvironment` merges an
+// environment's block onto the base as a document and decodes the result, because
+// two bugs are unfixable in a typed merge and disappear in a document one:
 //
-// Two bug classes went with the structs, and both were live:
+//   - **Values that could not be overridden to zero.** Four hand-written mergers
+//     gated on `if overlay.X != ""` / `!= 0`, so `deploy_history: 0` or
+//     `wildcard: false` in an environment block was indistinguishable from an
+//     absent key and was discarded — the Driftfile said one thing and the slice
+//     was another, with no error anywhere. YAML gives key PRESENCE; a struct does
+//     not (#CLI-STANDARDUSAGE-T9914R).
+//   - **Merges that silently forgot.** Those mergers went field by field, so a new
+//     Driftfile field was not overridable until someone added a clause — no
+//     compiler error, no failing test. `mergeCanvas` covered two fields.
+//     DeepMerge cannot have that bug because it does not know what a field is.
 //
-//   - **Merges that silently forgot.** Environment overrides were applied by
-//     four hand-written functions, field by field. Adding a field to a section
-//     without adding the matching clause meant overrides quietly ignored it —
-//     no compiler error, no failing test. DeepMerge cannot have that bug
-//     because it does not know what a field is.
-//   - **Values that could not be overridden to zero.** Those mergers gated on
-//     `if overlay.X != ""` / `!= 0`, so `deploy_history: 0` or
-//     `wildcard: false` in an environment block was discarded. A map
-//     distinguishes absent from present-and-zero, because YAML gives key
-//     presence and a struct does not. (The lone `Egress *EgressSection`
-//     pointer was someone hitting this and working around it in one place.)
+// # What this is NOT, however much the shape suggests it
+//
+// The Driftfile is still **decoded into typed structs**, and `ParseDriftfile` still
+// re-decodes with `KnownFields(true)` to reject an unrecognised key. Carrying the
+// whole file as a document — so the platform could add a field an installed CLI has
+// never been taught, instead of that being a hard error — is a plausible direction
+// and is NOT what happens.
+//
+// Nor is anything validated against the schema. The CLI fetches and caches it
+// (`common/driftfile.go`) and reads it for no purpose yet; there is no JSON-schema
+// library in this module. `drift file lint` (#CLI-STANDARDUSAGE-RKN51F) is where
+// that would land.
+//
+// This paragraph exists because the file previously described both of those as
+// already true. A comment in the present tense about work that has not happened is
+// worse than no comment: it tells the next reader that the bug in front of them
+// cannot exist.
 package project
 
-// Node is one object in the Driftfile document. Accessors are total: a missing
-// or wrongly-typed path yields the zero value rather than an error, because a
-// Driftfile is validated as a whole against the schema before anything reads
-// it, and threading errors through every field read would obscure the code
-// without catching anything the schema does not already.
+// Node is one object in the Driftfile document.
+//
+// Accessors are total — a missing or wrongly-typed path yields the zero value
+// rather than an error. That is safe for the overlay merge, which reads no values
+// (DeepMerge only walks keys), and it is why these accessors have no callers on the
+// deploy path: the typed parse is what reads values, and it errors properly.
+//
+// Anything that starts READING through these accessors needs validation in front of
+// it first, or a typo becomes a silent zero.
 type Node map[string]any
 
 // Get walks a path and returns the raw value, or nil.
