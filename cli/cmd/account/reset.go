@@ -16,6 +16,7 @@ package account
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -34,7 +35,7 @@ func GetResetPasswordCmd() *cobra.Command {
 		Example: `  drift account reset-password
   drift account reset-password --username alice`,
 		Args: cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if username == "" {
 				username = common.PromptForInput("Username")
 			}
@@ -45,14 +46,12 @@ func GetResetPasswordCmd() *cobra.Command {
 			client := &http.Client{Timeout: 30 * time.Second}
 			resp, err := client.Post(common.APIBaseURL+"/reset/initiate", "application/json", bytes.NewBuffer(initiatePayload))
 			if err != nil {
-				fmt.Println(common.TransportError("request a password reset", err))
-				return
+				return common.TransportError("request a password reset", err)
 			}
 			_, err = common.CheckResponse(resp, "request a password reset")
 			resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 			if err != nil {
-				fmt.Println(err)
-				return
+				return err
 			}
 
 			fmt.Println("If that account exists, a reset code has been emailed to it.")
@@ -61,12 +60,10 @@ func GetResetPasswordCmd() *cobra.Command {
 			newPassword := common.PromptForInputHidden("New password")
 			repeatPassword := common.PromptForInputHidden("Repeat new password")
 			if newPassword != repeatPassword {
-				fmt.Println("Those passwords don't match. Try again.")
-				return
+				return errors.New("those passwords don't match — nothing was changed")
 			}
 			if len(newPassword) < 8 {
-				fmt.Println("Password must be at least 8 characters.")
-				return
+				return errors.New("password must be at least 8 characters — nothing was changed")
 			}
 
 			verifyPayload, _ := json.Marshal(map[string]string{
@@ -76,14 +73,12 @@ func GetResetPasswordCmd() *cobra.Command {
 			})
 			resp, err = client.Post(common.APIBaseURL+"/reset/verify", "application/json", bytes.NewBuffer(verifyPayload))
 			if err != nil {
-				fmt.Println(common.TransportError("verify the reset code", err))
-				return
+				return common.TransportError("verify the reset code", err)
 			}
 			_, err = common.CheckResponse(resp, "verify the reset code")
 			resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 			if err != nil {
-				fmt.Println(err)
-				return
+				return err
 			}
 
 			fmt.Println("Password reset. Every existing session for this account has been signed out.")
@@ -91,7 +86,10 @@ func GetResetPasswordCmd() *cobra.Command {
 			// The reset revokes every refresh token server-side and issues no
 			// new one — log back in immediately so this doesn't leave you
 			// signed out of your own CLI session.
-			DoLogin(username, newPassword)
+			// The reset itself succeeded; a failure to log back in is still a
+			// failure of this command, because it leaves the user signed out
+			// (#CLI-STANDARDUSAGE-3F5TDV).
+			return DoLogin(username, newPassword)
 		},
 	}
 

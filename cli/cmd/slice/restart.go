@@ -32,8 +32,7 @@ func getRestartCmd() *cobra.Command {
 			_, err = common.CheckResponse(resp, "restart slice")
 			s.Stop()
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 
 			fmt.Printf("Slice %s is restarting. It may take a few seconds to become available again.\n", common.Highlight(slice))

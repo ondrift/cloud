@@ -62,8 +62,7 @@ func getLinkAddCmd() *cobra.Command {
 			defer resp.Body.Close()
 			respBody, err := common.CheckResponse(resp, "add link")
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 			var l linkResponse
 			_ = json.Unmarshal(respBody, &l)
@@ -91,8 +90,7 @@ func getLinkListCmd() *cobra.Command {
 			defer resp.Body.Close()
 			respBody, err := common.CheckResponse(resp, "list links")
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 			var links []linkResponse
 			_ = json.Unmarshal(respBody, &links)
