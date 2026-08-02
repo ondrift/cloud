@@ -1,9 +1,17 @@
 // Package upgrade implements `drift upgrade [version]` — the CLI self-update.
 //
-// The drift CLI is installed with `go install`, so upgrading is just running it
-// again at a newer version. With no argument it installs the latest published
-// release; with a version it pins an exact one (selective upgrade — or a
-// rollback, e.g. `drift upgrade v1.8.1`).
+// How the binary was installed decides how it is upgraded, and the two paths do
+// not mix — see DetectInstallMethod:
+//
+//   - `go install`: upgrading is running it again at a newer version. With no
+//     argument that is the latest published release; with a version it pins an
+//     exact one (selective upgrade — or a rollback, e.g. `drift upgrade v1.8.1`).
+//   - Homebrew: the command checks the version and prints `brew upgrade drift`
+//     rather than running somebody's package manager for them.
+//
+// BOTH paths must answer "am I already on the latest?" the same way. They did
+// not: the Homebrew half told everyone to upgrade regardless, because the check
+// lived in resolveLabel, which it returns before reaching.
 package upgrade
 
 import (
@@ -47,7 +55,7 @@ func runUpgrade(current, requested string) error {
 	// replace it. It writes a second drift into GOPATH/bin, leaves Homebrew
 	// reporting the old version, and which one wins depends on PATH order.
 	if method, path := DetectInstallMethod(); method == MethodHomebrew {
-		return homebrewUpgradeNotice(path, requested)
+		return homebrewUpgradeNotice(os.Stdout, path, current, requested)
 	}
 
 	if _, err := exec.LookPath("go"); err != nil {
