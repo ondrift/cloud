@@ -217,7 +217,9 @@ func TestParseDriftfile_UnknownNestedField(t *testing.T) {
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
 name: hello
 backbone:
-  nosql: [widgets]
+  nosql:
+    - name: widgets
+      size: 50MB
   qeues: [jobs]
 canvas: ./canvas
 `)
@@ -531,8 +533,17 @@ environments:
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
 
 	_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
-	if err == nil || !contains(err.Error(), "must not set name") {
-		t.Errorf("expected a 'must not set name' error, got: %v", err)
+	if err == nil {
+		t.Fatal("an environment override set `name` and was accepted")
+	}
+	// The SCHEMA owns this rule now, so the assertion is on the rule being
+	// enforced and on the message pointing at the right place — not on the local
+	// pass's old wording. Pinning "must not set name" here would mean the CLI
+	// still had to phrase a rule the platform defines
+	// (#CLI-STANDARDUSAGE-ERF1CV).
+	msg := err.Error()
+	if !contains(msg, "name") || !contains(msg, "environments/staging") {
+		t.Errorf("the error should name the offending field and where it is, got: %v", err)
 	}
 }
 

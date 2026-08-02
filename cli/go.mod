@@ -9,6 +9,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+require github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

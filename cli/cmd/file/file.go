@@ -87,6 +87,14 @@ func getLintCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Refuse rather than report a pass we cannot stand behind. The platform
+			// owns the format and this machine has never fetched it, so the only
+			// honest answer is "I don't know" — and `lint` printing ✓ after
+			// validating nothing is precisely the false green a CI gate must never
+			// give (#CLI-STANDARDUSAGE-ERF1CV).
+			if !project.SchemaAvailable() {
+				return project.ErrNoSchema
+			}
 			m, perr := project.ParseDriftfile(path)
 			if perr != nil {
 				return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), perr)

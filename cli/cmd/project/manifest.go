@@ -33,7 +33,6 @@ package project
 //     to the slice envelope's defaults.
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -361,31 +360,28 @@ func ParseDriftfile(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("Driftfile: %w", err)
 	}
 
-	// raw.Decode above is lenient about unrecognized keys — a typo'd field
-	// name (e.g. "mane:" instead of "name:") is silently dropped, not
-	// rejected, because yaml.Node.Decode has no strict/KnownFields option
-	// (only the streaming Decoder type does). Re-decode the same
-	// (already shorthand-expanded) content through that streaming decoder,
-	// purely to catch this — its result is discarded; `m` above remains
-	// the one true parse.
-	normalized, err := yaml.Marshal(&raw)
-	if err != nil {
-		return nil, fmt.Errorf("Driftfile: %w", err)
-	}
-	dec := yaml.NewDecoder(bytes.NewReader(normalized))
-	dec.KnownFields(true)
-	var strict Manifest
-	if err := dec.Decode(&strict); err != nil {
-		return nil, fmt.Errorf("Driftfile: %w", err)
-	}
-
 	m.baseDir = filepath.Dir(path)
 
-	// Keep the shorthand-expanded document alongside the typed parse.
+	// Keep the shorthand-expanded document alongside the typed read model.
 	// SelectEnvironment merges the overlay against THIS, because presence is the
-	// signal an override needs and only the document has it.
+	// signal an override needs and only the document has it — and the schema
+	// validates THIS, because the document is what the platform defines.
 	if err := raw.Decode(&m.raw); err != nil {
 		return nil, fmt.Errorf("Driftfile: %w", err)
+	}
+
+	// The PLATFORM decides what a legal Driftfile is (#CLI-STANDARDUSAGE-ERF1CV).
+	// This runs before the local checks so a structural problem is reported in the
+	// schema's terms rather than as whatever the local pass makes of a value it
+	// could not decode.
+	//
+	// A machine that has never fetched the schema gets nil back, and parsing
+	// continues on the local checks alone. That is deliberate: refusing to parse
+	// would make a never-online CLI useless for `project run`, which needs no
+	// platform at all. `drift file lint` states the gap explicitly instead, because
+	// there "I validated nothing" must not read as "it is valid".
+	if errs := validateAgainstSchema(m.raw); len(errs) > 0 {
+		return nil, errs
 	}
 
 	if err := resolveSecretEnvRefs(&m); err != nil {
@@ -396,6 +392,22 @@ func ParseDriftfile(path string) (*Manifest, error) {
 		return nil, errs
 	}
 	return &m, nil
+}
+
+// Raw is the Driftfile as a document — shorthand-expanded, schema-validated, and
+// carrying every key the file had, including ones this binary has no field for.
+//
+// It is the read path the typed Slice is being retired in favour of
+// (#CLI-STANDARDUSAGE-ERF1CV): the struct can only expose what this release was
+// compiled to know, while the document is what the platform actually defines. Its
+// accessors are total, which is safe precisely because the schema has already run.
+func (m *Manifest) Raw() Node { return m.raw }
+
+// SchemaAvailable reports whether this machine holds the platform's Driftfile
+// schema, so a caller that must not silently validate nothing can say so.
+func SchemaAvailable() bool {
+	sch, err := loadSchema()
+	return err == nil && sch != nil
 }
 
 // ─── Hooks (cheap pre-build parse) ──────────────────────────────────
