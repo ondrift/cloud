@@ -16,9 +16,12 @@ package project
 //      environment override block.
 //   2. Resolves `$ENVREF` shorthands in secrets to their literal
 //      values from the deployer's environment.
-//   3. Validates every field against the spec's binding validation
-//      table, collecting all errors into one ParseErrors return so
-//      the user sees the whole picture in a single block.
+//   3. Validates the document against the JSON Schema the PLATFORM serves
+//      (schema.go) — the only authority on what a legal Driftfile is — and
+//      then asks the filesystem the one question a schema cannot answer:
+//      do the paths this document names exist here? Errors from either
+//      collect into one ParseErrors return so the user sees the whole
+//      picture in a single block.
 //
 // Environment selection + merge (SelectEnvironment) happens AFTER parse,
 // driven by the deploy command, so a single parse serves every environment.
@@ -33,6 +36,7 @@ package project
 //     to the slice envelope's defaults.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -194,17 +198,11 @@ func ParseDriftfile(path string) (*Manifest, error) {
 		delete(m.slice, sibling)
 	}
 
-	// The PLATFORM decides what a legal Driftfile is (#CLI-STANDARDUSAGE-ERF1CV).
-	// This runs before the local checks so a structural problem is reported in the
-	// schema's terms rather than as whatever the local pass makes of a value it
-	// could not decode.
-	//
-	// A machine that has never fetched the schema gets nil back, and parsing
-	// continues on the local checks alone. That is deliberate: refusing to parse
-	// would make a never-online CLI useless for `project run`, which needs no
-	// platform at all. `drift file lint` states the gap explicitly instead, because
-	// there "I validated nothing" must not read as "it is valid".
-	if errs := validateAgainstSchema(m.doc); len(errs) > 0 {
+	// The one class of check the schema CANNOT own: whether the paths a valid
+	// document names actually exist on THIS machine. A schema describes the
+	// document; only the laptop knows if `atomic/get-menu/` is there. This is not
+	// a second opinion on the format — it never inspects a value's shape.
+	if errs := checkLocalPaths(&m); len(errs) > 0 {
 		return nil, errs
 	}
 
@@ -216,6 +214,97 @@ func ParseDriftfile(path string) (*Manifest, error) {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// checkLocalPaths verifies that every path the document names resolves on this
+// machine. It is the ONE pass that survived the schema taking over the format
+// (#CLI-STANDARDUSAGE-ERF1CV), and it survived for a reason that will not change:
+// a JSON Schema validates a document, and no document can state whether
+// `./canvas` exists in the directory the operator is standing in.
+//
+// The distinction to hold on to when adding anything here: this may ask the
+// FILESYSTEM a question. It may never ask whether a value is well-formed — that
+// is the schema's, and duplicating it is the exact fault this card removed.
+func checkLocalPaths(m *Manifest) ParseErrors {
+	var errs ParseErrors
+
+	// A function whose source directory is missing otherwise fails much later,
+	// inside the per-function build, as a compiler error about no input files.
+	for i, fn := range m.slice.Entries("name", "atomic", "functions") {
+		dir := fn.Str("dir")
+		if dir == "" {
+			dir = filepath.Join("atomic", fn.Str("name"))
+		}
+		dir = resolveBaseDir(m, dir)
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			errs = append(errs, fmt.Sprintf("atomic.functions[%d]: function %q not found at %s", i, fn.Str("name"), dir))
+		}
+	}
+
+	for i, site := range m.slice.Entries("dir", "canvas", "sites") {
+		dir := resolveBaseDir(m, site.Str("dir"))
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			errs = append(errs, fmt.Sprintf("canvas.sites[%d]: directory not found at %s", i, dir))
+		}
+	}
+
+	for i, c := range m.slice.Entries("name", "backbone", "nosql") {
+		seed := c.Str("seed")
+		if seed == "" {
+			continue
+		}
+		seedPath := resolveBaseDir(m, seed)
+		if _, err := os.Stat(seedPath); err != nil {
+			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q seed file not found at %s", i, c.Str("name"), seedPath))
+			continue
+		}
+		errs = append(errs, validateJSONLSeed(c.Str("name"), seedPath)...)
+	}
+
+	for k, e := range m.slice.EntryMap("value", "backbone", "cache") {
+		if f := e.Str("file"); f != "" {
+			fp := resolveBaseDir(m, f)
+			if _, err := os.Stat(fp); err != nil {
+				errs = append(errs, fmt.Sprintf("cache %q file not found at %s", k, fp))
+			}
+		}
+	}
+
+	sort.Strings(errs) // map iteration above; a stable message order is testable
+	return errs
+}
+
+// validateJSONLSeed reads a seed file and reports the records that cannot be
+// loaded. Also filesystem-only: the schema knows the seed is a path string, and
+// nothing more can be known about it without opening the file.
+func validateJSONLSeed(collection, path string) []string {
+	data, err := os.ReadFile(path) // #nosec G304 — CLI reads the user's manifest by design
+	if err != nil {
+		return []string{fmt.Sprintf("nosql %q seed: read %s: %v", collection, path, err)}
+	}
+
+	var errs []string
+	for i, ln := range strings.Split(string(data), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(ln), &doc); err != nil {
+			errs = append(errs, fmt.Sprintf("nosql %q seed: %s:%d: invalid JSON: %v", collection, path, i+1, err))
+			continue
+		}
+		id, ok := doc["_id"]
+		if !ok {
+			errs = append(errs, fmt.Sprintf("nosql %q seed: %s:%d: missing _id", collection, path, i+1))
+			continue
+		}
+		// Treat empty string and nil as "missing".
+		if s, isStr := id.(string); (isStr && s == "") || id == nil {
+			errs = append(errs, fmt.Sprintf("nosql %q seed: %s:%d: empty _id", collection, path, i+1))
+		}
+	}
+	return errs
 }
 
 // ParseHooks decodes ONLY the `hooks:` block, with no validation and no schema.

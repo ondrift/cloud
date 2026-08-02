@@ -326,6 +326,98 @@ func mustWrite(t *testing.T, path, content string) {
 	}
 }
 
+// The schema owns the format; it cannot own the filesystem. A document can be
+// perfectly legal and still name a directory that is not on this machine, and the
+// checks that catch that are the one local pass that survives
+// (#CLI-STANDARDUSAGE-ERF1CV).
+//
+// Written because the suite was green with them DELETED: nothing else parses a
+// valid Driftfile whose paths are missing, so their removal cost only the error
+// message — a declared-but-absent function surfaces much later as a compiler
+// complaint about no input files, from inside a build the user did not ask about.
+func TestParseDriftfile_LocalPathsMustExist(t *testing.T) {
+	cases := []struct {
+		name      string
+		driftfile string
+		// present is created before the parse; whatever the Driftfile names and
+		// this omits is the missing path under test.
+		present []string
+		want    string
+	}{
+		{
+			name:      "function directory",
+			driftfile: "name: hello\natomic:\n  functions:\n    - name: get-menu\n",
+			want:      `atomic.functions[0]: function "get-menu" not found at`,
+		},
+		{
+			name:      "function explicit dir",
+			driftfile: "name: hello\natomic:\n  functions:\n    - name: get-menu\n      dir: ./src/menu\n",
+			present:   []string{"atomic/get-menu"}, // the conventional path exists; the declared one does not
+			want:      `atomic.functions[0]: function "get-menu" not found at`,
+		},
+		{
+			name:      "canvas site directory",
+			driftfile: "name: hello\ncanvas: ./site\n",
+			want:      `canvas.sites[0]: directory not found at`,
+		},
+		{
+			name:      "nosql seed file",
+			driftfile: "name: hello\nbackbone:\n  nosql:\n    - name: menu\n      size: 10MB\n      seed: ./seeds/menu.jsonl\n",
+			want:      `backbone.nosql[0]: "menu" seed file not found at`,
+		},
+		{
+			name:      "cache file",
+			driftfile: "name: hello\nbackbone:\n  cache:\n    greeting:\n      file: ./data/greeting.txt\n",
+			want:      `cache "greeting" file not found at`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			mustWrite(t, filepath.Join(tmp, "Driftfile"), tc.driftfile)
+			for _, d := range tc.present {
+				mustMkdir(t, filepath.Join(tmp, filepath.FromSlash(d)))
+			}
+
+			_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+			if err == nil {
+				t.Fatalf("a Driftfile naming a path that is not on this machine must not parse")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error must name the field and the resolved path.\n got: %v\nwant substring: %s", err, tc.want)
+			}
+		})
+	}
+}
+
+// The seed file existing is not the same as the seed file being loadable, and a
+// record with no _id is dropped on ingest rather than rejected — so the parse is
+// the last place it can be reported.
+func TestParseDriftfile_SeedRecordsMustBeLoadable(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"),
+		"name: hello\nbackbone:\n  nosql:\n    - name: menu\n      size: 10MB\n      seed: ./seeds/menu.jsonl\n")
+	mustWrite(t, filepath.Join(tmp, "seeds", "menu.jsonl"),
+		`{"_id":"pizza","price":9}`+"\n"+
+			`{"price":11}`+"\n"+ // no _id
+			`{"_id":"","price":12}`+"\n"+ // empty _id
+			`{"_id":"soup",`+"\n") // truncated JSON
+
+	_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err == nil {
+		t.Fatal("a seed file whose records cannot be loaded must not parse")
+	}
+	for _, want := range []string{":2: missing _id", ":3: empty _id", ":4: invalid JSON"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("every bad record must be reported with its line number, missing %q\ngot: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), ":1:") {
+		t.Errorf("the one valid record must not be reported\ngot: %v", err)
+	}
+}
+
 func mustMkdir(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
