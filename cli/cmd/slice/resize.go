@@ -115,20 +115,20 @@ func resizeFromDriftfile(path string, allowDestructive, autoYes bool, billingMon
 		return fmt.Errorf("price target config: %w", err)
 	}
 
-	live, err := project.FetchLiveSlice(m.Slice.Name)
+	live, err := project.FetchLiveSlice(m.Name())
 	if err != nil {
 		return fmt.Errorf("fetch slice: %w", err)
 	}
 	if live == nil {
-		return fmt.Errorf("slice %q does not exist; create it first with `drift project deploy`", m.Slice.Name)
+		return fmt.Errorf("slice %q does not exist; create it first with `drift project deploy`", m.Name())
 	}
 
-	d := project.Diff(m.Slice.Name, manifestCfg, &live.Config, live.Tier, live.MonthlyCostCents, wantedCost)
+	d := project.Diff(m.Name(), manifestCfg, &live.Config, live.Tier, live.MonthlyCostCents, wantedCost)
 	d.WantedItems = wantedItems
 
 	switch d.Verdict {
 	case project.VerdictMatch:
-		fmt.Printf("Slice %q already matches the Driftfile. Nothing to do.\n", m.Slice.Name)
+		fmt.Printf("Slice %q already matches the Driftfile. Nothing to do.\n", m.Name())
 		return nil
 
 	case project.VerdictGrow:
@@ -138,7 +138,7 @@ func resizeFromDriftfile(path string, allowDestructive, autoYes bool, billingMon
 		if !confirmYesNo(autoYes, "Apply?") {
 			return fmt.Errorf("aborted by user")
 		}
-		return project.ResizeSlice(m.Slice.Name, manifestCfg, billingMonths)
+		return project.ResizeSlice(m.Name(), manifestCfg, billingMonths)
 
 	case project.VerdictAbort:
 		// VerdictAbort here means the manifest is *smaller* in some
@@ -146,7 +146,7 @@ func resizeFromDriftfile(path string, allowDestructive, autoYes bool, billingMon
 		// handle — but ONLY with --allow-destructive.
 		if !allowDestructive {
 			fmt.Println()
-			fmt.Printf("✘ Refusing to shrink slice %q without --allow-destructive.\n\n", m.Slice.Name)
+			fmt.Printf("✘ Refusing to shrink slice %q without --allow-destructive.\n\n", m.Name())
 			fmt.Printf("  The Driftfile declares smaller limits than the slice currently has:\n")
 			for _, s := range d.Shrinks {
 				fmt.Printf("    %s   %s → %s\n", s.Path,
@@ -161,7 +161,7 @@ func resizeFromDriftfile(path string, allowDestructive, autoYes bool, billingMon
 		}
 
 		fmt.Println()
-		fmt.Printf("⚠ Shrinking slice %q (--allow-destructive set):\n\n", m.Slice.Name)
+		fmt.Printf("⚠ Shrinking slice %q (--allow-destructive set):\n\n", m.Name())
 		if len(d.Grows) > 0 {
 			fmt.Println("  Grows:")
 			for _, g := range d.Grows {
@@ -184,7 +184,7 @@ func resizeFromDriftfile(path string, allowDestructive, autoYes bool, billingMon
 		if !confirmYesNo(autoYes, "Apply destructive resize?") {
 			return fmt.Errorf("aborted by user")
 		}
-		return project.ResizeSlice(m.Slice.Name, manifestCfg, billingMonths)
+		return project.ResizeSlice(m.Name(), manifestCfg, billingMonths)
 	}
 
 	return fmt.Errorf("unexpected verdict: %s", d.Verdict)

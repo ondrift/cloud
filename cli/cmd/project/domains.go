@@ -29,8 +29,8 @@ type liveDomain struct {
 // hostname.
 func applyDomains(m *Manifest) error {
 	declared := map[string]Manifest{}
-	for _, d := range m.Slice.Domains {
-		host := strings.ToLower(strings.TrimSpace(d.Host))
+	for _, d := range m.Slice().Entries("host", "domains") {
+		host := strings.ToLower(strings.TrimSpace(d.Str("host")))
 		if host == "" {
 			continue
 		}

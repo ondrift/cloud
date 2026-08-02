@@ -135,15 +135,15 @@ func createFromDriftfile(path string, autoYes bool, billingMonths int) error {
 	}
 
 	// Refuse rather than silently no-op or resize: this command creates.
-	live, err := project.FetchLiveSlice(m.Slice.Name)
+	live, err := project.FetchLiveSlice(m.Name())
 	if err != nil {
 		return fmt.Errorf("fetch slice: %w", err)
 	}
 	if live != nil {
-		return fmt.Errorf("slice %q already exists — use `drift project deploy` to deploy into it, or `drift slice resize --from %s` to change its shape", m.Slice.Name, path)
+		return fmt.Errorf("slice %q already exists — use `drift project deploy` to deploy into it, or `drift slice resize --from %s` to change its shape", m.Name(), path)
 	}
 
-	d := project.Diff(m.Slice.Name, manifestCfg, nil, "", 0, wantedCost)
+	d := project.Diff(m.Name(), manifestCfg, nil, "", 0, wantedCost)
 	d.WantedItems = wantedItems
 
 	fmt.Println()
@@ -158,8 +158,8 @@ func createFromDriftfile(path string, autoYes bool, billingMonths int) error {
 		tier = project.TierHacker
 	}
 
-	fmt.Printf("\n  Creating slice %q...\n", m.Slice.Name)
-	if err := project.CreateSlice(m.Slice.Name, tier, manifestCfg, billingMonths); err != nil {
+	fmt.Printf("\n  Creating slice %q...\n", m.Name())
+	if err := project.CreateSlice(m.Name(), tier, manifestCfg, billingMonths); err != nil {
 		return err
 	}
 	// Wait for provisioning, exactly as `project deploy`'s own create path
@@ -167,14 +167,14 @@ func createFromDriftfile(path string, autoYes bool, billingMonths int) error {
 	// it, and without the wait that deploy races the slice coming up and fails
 	// with "runner unreachable" — a platform-fault message for what is really
 	// just impatience. Observed on alpha before this was added.
-	if err := project.WaitForSliceReady(m.Slice.Name); err != nil {
-		return fmt.Errorf("slice %q was created but did not become ready: %w", m.Slice.Name, err)
+	if err := project.WaitForSliceReady(m.Name()); err != nil {
+		return fmt.Errorf("slice %q was created but did not become ready: %w", m.Name(), err)
 	}
 
-	if err := common.SaveActiveSlice(m.Slice.Name); err != nil {
+	if err := common.SaveActiveSlice(m.Name()); err != nil {
 		fmt.Println("Warning: couldn't mark the new slice as active —", err)
 	}
-	fmt.Printf("Slice '%s' created and set as active.\n", m.Slice.Name)
+	fmt.Printf("Slice '%s' created and set as active.\n", m.Name())
 	return nil
 }
 

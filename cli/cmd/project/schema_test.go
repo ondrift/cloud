@@ -61,8 +61,8 @@ func TestSchema_AcceptsAFieldThisBinaryPredates(t *testing.T) {
 		t.Fatalf("a field the SCHEMA allows was rejected, so the platform still cannot "+
 			"add a field without a CLI release:\n%v", err)
 	}
-	if m.Slice.Name != "hello" {
-		t.Errorf("name = %q, want hello", m.Slice.Name)
+	if m.Name() != "hello" {
+		t.Errorf("name = %q, want hello", m.Name())
 	}
 	// And it survives in the document, so nothing downstream has silently dropped it.
 	if got := m.Raw().Str("a_future_field"); got != "whatever" {

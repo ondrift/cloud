@@ -30,8 +30,8 @@ func TestNew_ScaffoldPassesTheRealParser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the scaffold does not survive the parser it is meant to precede:\n%v", err)
 	}
-	if m.Slice.Name != "demo" {
-		t.Errorf("name = %q, want demo", m.Slice.Name)
+	if m.Name() != "demo" {
+		t.Errorf("name = %q, want demo", m.Name())
 	}
 }
 
@@ -54,7 +54,7 @@ func TestNew_ScaffoldFillsTheRequiredInPracticeKnobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Slice.Atomic.FunctionMemory == "" {
+	if m.Slice().Str("atomic", "function_memory") == "" {
 		t.Error("the scaffold's BASE slice omits function_memory — a Driftfile that " +
 			"declares a function without it is rejected on create and resize with " +
 			"'function_memory must be between 32MB and 256MB (got 0MB)', which is the " +

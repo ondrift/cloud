@@ -8,7 +8,7 @@ import (
 
 // projectWith writes a throwaway project tree and returns a Manifest rooted at
 // it. files is path→contents, relative to the project root.
-func projectWith(t *testing.T, fns []AtomicEntry, files map[string]string) *Manifest {
+func projectWith(t *testing.T, fns []Node, files map[string]string) *Manifest {
 	t.Helper()
 	dir := t.TempDir()
 	for name, body := range files {
@@ -20,9 +20,12 @@ func projectWith(t *testing.T, fns []AtomicEntry, files map[string]string) *Mani
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	m := &Manifest{Slice: Slice{Name: "test", Atomic: AtomicSection{Functions: fns}}}
-	m.baseDir = dir
-	return m
+	items := make([]any, len(fns))
+	for i, fn := range fns {
+		items[i] = map[string]any(fn)
+	}
+	slice := Node{"name": "test", "atomic": map[string]any{"functions": items}}
+	return &Manifest{doc: slice, slice: slice, baseDir: dir}
 }
 
 // THE bug. A Driftfile declaring `cron:` sized its envelope at ZERO scheduled
@@ -31,10 +34,10 @@ func projectWith(t *testing.T, fns []AtomicEntry, files map[string]string) *Mani
 // `max <= 0` as "no quota to enforce", so the slice was billed for none AND
 // gated at none.
 func TestCountScheduledFunctions_CountsTheDriftfileField(t *testing.T) {
-	m := projectWith(t, []AtomicEntry{
-		{Name: "get-menu"},
-		{Name: "nightly-rollup", Cron: "0 2 * * *"},
-		{Name: "hourly-cleanup", Cron: "0 * * * *"},
+	m := projectWith(t, []Node{
+		{"name": "get-menu"},
+		{"name": "nightly-rollup", "cron": "0 2 * * *"},
+		{"name": "hourly-cleanup", "cron": "0 * * * *"},
 	}, map[string]string{
 		"atomic/get-menu/main.go":       "// @atomic http=get:/get-menu\nfunc GetMenu() {}\n",
 		"atomic/nightly-rollup/main.go": "// @atomic http=post:/nightly-rollup\nfunc Rollup() {}\n",
@@ -54,13 +57,11 @@ func TestCountScheduledFunctions_CountsTheDriftfileField(t *testing.T) {
 // runs before any deploy, and returning zero there would size a slice for no
 // scheduled jobs and then let it register them unmetered.
 func TestCountScheduledFunctions_SurvivesAnUnreadableTree(t *testing.T) {
-	m := &Manifest{Slice: Slice{Name: "test", Atomic: AtomicSection{
-		Functions: []AtomicEntry{
-			{Name: "nightly-rollup", Cron: "0 2 * * *"},
-			{Name: "get-menu"},
-		},
+	slice := Node{"name": "test", "atomic": map[string]any{"functions": []any{
+		map[string]any{"name": "nightly-rollup", "cron": "0 2 * * *"},
+		map[string]any{"name": "get-menu"},
 	}}}
-	m.baseDir = filepath.Join(t.TempDir(), "does-not-exist")
+	m := &Manifest{doc: slice, slice: slice, baseDir: filepath.Join(t.TempDir(), "does-not-exist")}
 
 	got, _ := CountScheduledFunctions(m)
 	if got != 1 {
@@ -70,8 +71,8 @@ func TestCountScheduledFunctions_SurvivesAnUnreadableTree(t *testing.T) {
 
 // A function carrying BOTH declarations is one scheduled job, not two.
 func TestCountScheduledFunctions_DoesNotDoubleCount(t *testing.T) {
-	m := projectWith(t, []AtomicEntry{
-		{Name: "nightly-rollup", Cron: "0 2 * * *"},
+	m := projectWith(t, []Node{
+		{"name": "nightly-rollup", "cron": "0 2 * * *"},
 	}, map[string]string{
 		"atomic/nightly-rollup/main.go": "// @atomic cron=\"0 2 * * *\"\nfunc Rollup() {}\n",
 	})
@@ -88,7 +89,7 @@ func TestCountScheduledFunctions_DoesNotDoubleCount(t *testing.T) {
 // A project with no schedules sizes at zero — which is correct here, and means
 // "nothing to enforce" rather than "enforced at nothing".
 func TestCountScheduledFunctions_NoSchedulesIsZero(t *testing.T) {
-	m := projectWith(t, []AtomicEntry{{Name: "get-menu"}}, map[string]string{
+	m := projectWith(t, []Node{{"name": "get-menu"}}, map[string]string{
 		"atomic/get-menu/main.go": "// @atomic http=get:/get-menu\nfunc GetMenu() {}\n",
 	})
 
@@ -105,11 +106,12 @@ func TestCountScheduledFunctions_NoSchedulesIsZero(t *testing.T) {
 // function NAME because that is what the operator resolves the trigger target
 // from — for an HTTP function the deployed name IS its route.
 func TestDeclaredSchedules_KeyedByFunctionName(t *testing.T) {
-	m := &Manifest{Slice: Slice{Atomic: AtomicSection{Functions: []AtomicEntry{
-		{Name: "get-menu"},
-		{Name: "nightly-rollup", Cron: "0 2 * * *"},
-		{Name: "", Cron: "0 5 * * *"}, // nameless: unroutable, must be dropped
-	}}}}
+	slice := Node{"atomic": map[string]any{"functions": []any{
+		map[string]any{"name": "get-menu"},
+		map[string]any{"name": "nightly-rollup", "cron": "0 2 * * *"},
+		map[string]any{"name": "", "cron": "0 5 * * *"}, // nameless: unroutable, must be dropped
+	}}}
+	m := &Manifest{doc: slice, slice: slice}
 
 	got := declaredSchedules(m)
 	if len(got) != 1 {
@@ -122,9 +124,9 @@ func TestDeclaredSchedules_KeyedByFunctionName(t *testing.T) {
 
 // The envelope the slice is actually sized with.
 func TestManifestToSliceConfig_SizesTheScheduledJobEnvelope(t *testing.T) {
-	m := projectWith(t, []AtomicEntry{
-		{Name: "a"},
-		{Name: "nightly", Cron: "0 2 * * *"},
+	m := projectWith(t, []Node{
+		{"name": "a"},
+		{"name": "nightly", "cron": "0 2 * * *"},
 	}, map[string]string{
 		"atomic/a/main.go":       "// @atomic http=get:/a\nfunc A() {}\n",
 		"atomic/nightly/main.go": "// @atomic http=post:/nightly\nfunc N() {}\n",

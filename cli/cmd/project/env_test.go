@@ -117,7 +117,7 @@ func TestHardcodedAndRefSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secs := m.Slice.Backbone.Secrets
+	secs := m.Slice().StrMap("backbone", "secrets")
 	if secs["LITERAL"] != "hardcoded123" {
 		t.Errorf("LITERAL = %q, want hardcoded123 (hardcoded, tier 1)", secs["LITERAL"])
 	}

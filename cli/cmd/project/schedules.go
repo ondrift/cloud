@@ -20,9 +20,9 @@ import (
 // `http://atomic:8000/api/<name>`), so no path plumbing is needed here.
 func declaredSchedules(m *Manifest) map[string]string {
 	out := map[string]string{}
-	for _, fn := range m.Slice.Atomic.Functions {
-		if fn.Cron != "" && fn.Name != "" {
-			out[fn.Name] = fn.Cron
+	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+		if fn.Str("cron") != "" && fn.Str("name") != "" {
+			out[fn.Str("name")] = fn.Str("cron")
 		}
 	}
 	return out
@@ -32,9 +32,9 @@ func declaredSchedules(m *Manifest) map[string]string {
 // for the deploy summary.
 func ScheduledFunctionNames(m *Manifest) []string {
 	var names []string
-	for _, fn := range m.Slice.Atomic.Functions {
-		if fn.Cron != "" && fn.Name != "" {
-			names = append(names, fn.Name)
+	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+		if fn.Str("cron") != "" && fn.Str("name") != "" {
+			names = append(names, fn.Str("name"))
 		}
 	}
 	return names

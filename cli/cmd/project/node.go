@@ -241,3 +241,64 @@ func asNode(v any) (Node, bool) {
 	}
 	return nil, false
 }
+
+// Entries reads a list whose elements may be a bare STRING or a map, and yields
+// them uniformly as Nodes — a bare string becoming {scalarKey: value}.
+//
+// The schema permits both shapes for `atomic.functions` and `backbone.queues`
+// (their definitions are a `oneOf` over string and object), so a reader has to
+// cope with both. This used to be four custom UnmarshalYAML methods hanging off
+// four struct types; with the structs gone the normalisation belongs here, next to
+// the document it normalises.
+//
+// scalarKey is what a bare string MEANS for that list, which differs by section:
+// a function or queue string is a `name`, a canvas string is a `dir`, a cache
+// string is a `file`. Naming it at the call site keeps that knowledge with the
+// caller that has it, rather than in a table here that would need updating for
+// every new section.
+func (n Node) Entries(scalarKey string, path ...string) []Node {
+	items := n.List(path...)
+	out := make([]Node, 0, len(items))
+	for _, it := range items {
+		if sub, ok := asNode(it); ok {
+			out = append(out, sub)
+			continue
+		}
+		if s, ok := it.(string); ok {
+			out = append(out, Node{scalarKey: s})
+		}
+	}
+	return out
+}
+
+// StrMap reads a map whose values are plain strings — `backbone.secrets`.
+// A non-string value is skipped rather than coerced, because the schema has
+// already decided what belongs there.
+func (n Node) StrMap(path ...string) map[string]string {
+	src := n.Sub(path...)
+	out := make(map[string]string, len(src))
+	for k, v := range src {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
+}
+
+// EntryMap is Entries for a MAP whose VALUES may be a bare string or a map —
+// `backbone.cache`, where `menu: ./menu.json` is the short form of
+// `menu: {file: ./menu.json}`.
+func (n Node) EntryMap(scalarKey string, path ...string) map[string]Node {
+	src := n.Sub(path...)
+	out := make(map[string]Node, len(src))
+	for k, v := range src {
+		if sub, ok := asNode(v); ok {
+			out[k] = sub
+			continue
+		}
+		if s, ok := v.(string); ok {
+			out[k] = Node{scalarKey: s}
+		}
+	}
+	return out
+}

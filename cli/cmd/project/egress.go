@@ -70,14 +70,14 @@ func applyEgress(m *Manifest) error {
 // (mode, hosts) tuple the rest of this file works in. Default
 // (block absent or mode unset) is "open" with no hosts.
 func desiredEgress(m *Manifest) (mode string, hosts []string) {
-	if m.Slice.Atomic.Egress == nil {
+	if m.Slice().Sub("atomic", "egress") == nil {
 		return "open", nil
 	}
-	mode = strings.ToLower(strings.TrimSpace(m.Slice.Atomic.Egress.Mode))
+	mode = strings.ToLower(strings.TrimSpace(m.Slice().Str("atomic", "egress", "mode")))
 	if mode == "" {
 		mode = "open"
 	}
-	hosts = append(hosts, m.Slice.Atomic.Egress.Hosts...)
+	hosts = append(hosts, m.Slice().Strings("atomic", "egress", "hosts")...)
 	return mode, hosts
 }
 
