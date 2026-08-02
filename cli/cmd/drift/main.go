@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	account "github.com/ondrift/cloud/cli/cmd/account"
 	atomic "github.com/ondrift/cloud/cli/cmd/atomic"
@@ -22,16 +23,47 @@ import (
 	"golang.org/x/term"
 )
 
-// version is set at build time via:
+// version is stamped by the release build:
 //
 //	go build -ldflags "-X main.version=v1.0.0"
-var version = "v0.1.1"
+//
+// Empty is the honest default, because `go install` does NOT apply ldflags —
+// and `drift upgrade` on a go-install binary runs exactly that. This used to
+// default to a hardcoded "v0.1.1", so every upgraded binary reported v0.1.1
+// forever: `drift upgrade` compared that against the latest release, found it
+// behind, reinstalled, and produced another binary reporting v0.1.1. The
+// command never converged, and the "you're already on the latest" branch was
+// unreachable for every user who installed the documented way.
+var version = ""
+
+// resolveVersion reports what this binary actually is.
+//
+// The release stamp wins when present. Failing that, Go records the module
+// version it installed inside the binary itself, which is precisely the case
+// ldflags cannot cover — `go install ...@v0.4.0` yields Main.Version "v0.4.0".
+// A build from a working tree has neither and says so rather than inventing a
+// release number (#CLI-STANDARDUSAGE-ZMMKC6).
+func resolveVersion() string {
+	if version != "" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return "dev"
+}
 
 func main() {
+	// Resolved once, so `--version`, the dashboard header and `drift upgrade`
+	// cannot disagree about which binary this is.
+	shownVersion := resolveVersion()
+
 	rootCmd := &cobra.Command{
 		Use:     "drift",
 		Short:   "Drift is a minimalist cloud hosting service.",
-		Version: version,
+		Version: shownVersion,
 		// Two numbers, because they move independently. The CLI version is
 		// this binary; the Driftfile version is the manifest format it
 		// implements, which the platform serves and can be ahead of. Reporting
@@ -51,12 +83,12 @@ func main() {
 			if !term.IsTerminal(int(os.Stdin.Fd())) {
 				return cmd.Help()
 			}
-			return portal.Run(version, nil)
+			return portal.Run(shownVersion, nil)
 		},
 	}
 
 	rootCmd.SetVersionTemplate(fmt.Sprintf(
-		"drift %s\ndriftfile schema %s\n", version, common.DriftfileSchemaVersionOrNone()))
+		"drift %s\ndriftfile schema %s\n", shownVersion, common.DriftfileSchemaVersionOrNone()))
 
 	rootCmd.AddGroup(&cobra.Group{
 		ID:    "services",
