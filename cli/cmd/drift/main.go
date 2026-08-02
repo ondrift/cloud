@@ -10,6 +10,7 @@ import (
 	backbone "github.com/ondrift/cloud/cli/cmd/backbone"
 	canvas "github.com/ondrift/cloud/cli/cmd/canvas"
 	deed "github.com/ondrift/cloud/cli/cmd/deed"
+	file "github.com/ondrift/cloud/cli/cmd/file"
 	migrate "github.com/ondrift/cloud/cli/cmd/migrate"
 	portal "github.com/ondrift/cloud/cli/cmd/portal"
 	project "github.com/ondrift/cloud/cli/cmd/project"
@@ -75,6 +76,9 @@ func main() {
 	rootCmd.AddCommand(
 		// Project (Driftfile-driven deploy + diff)
 		project.GetCmd(),
+
+		// File (work on a Driftfile without deploying it)
+		file.GetCmd(),
 
 		// Migrate (read-only lift-off from another cloud, e.g. Azure)
 		migrate.GetCmd(),
