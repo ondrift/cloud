@@ -57,11 +57,21 @@ func applyEgress(m *Manifest) error {
 		return nil
 	}
 
+	// No check mark, and the wording says what actually happened.
+	//
+	// A ✓ beside "egress allowlist applied" reads as a security control now in
+	// force. It is not: the platform stores no egress declaration — the field is
+	// schema-only, so nothing a Driftfile declares here reaches the workload that
+	// would enforce it. Reporting success for a control that does not exist is
+	// worse than reporting nothing, because it is the reason someone stops
+	// checking.
+	//
+	// This becomes a ✓ when the declaration is stored and enforced end to end.
 	if declaredMode == "allowlist" {
-		fmt.Printf("  %s egress allowlist applied (%d host%s)\n",
-			common.Check(), len(declaredHosts), pluralS(len(declaredHosts)))
+		fmt.Printf("  %s egress allowlist declared (%d host%s) — not yet enforced by the platform\n",
+			common.Hint("·"), len(declaredHosts), pluralS(len(declaredHosts)))
 	} else {
-		fmt.Printf("  %s egress mode set to open\n", common.Check())
+		fmt.Printf("  %s egress mode open\n", common.Hint("·"))
 	}
 	return nil
 }
