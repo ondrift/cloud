@@ -47,11 +47,8 @@ fail, or error out.`,
 			}
 			projectDir := filepath.Dir(manifestPath)
 
-			tests, err := ParseTests(manifestPath)
-			if err != nil {
-				return err
-			}
-			if len(tests.E2E) == 0 {
+			tests := ParseTests(manifestPath)
+			if len(tests) == 0 {
 				return fmt.Errorf("no tests declared — add a `tests:` block to your Driftfile:\n\n  tests:\n    e2e:\n      - npx playwright test\n")
 			}
 
@@ -81,7 +78,7 @@ fail, or error out.`,
 			if err := os.Setenv("DRIFT_TEST_URL", url); err != nil {
 				return err
 			}
-			if err := runHooks("tests.e2e", tests.E2E, projectDir); err != nil {
+			if err := runHooks("tests.e2e", tests, projectDir); err != nil {
 				return err
 			}
 			fmt.Printf("\n  %s all tests passed\n\n", common.Check())

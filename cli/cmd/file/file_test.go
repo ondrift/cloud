@@ -9,6 +9,22 @@ import (
 	"github.com/ondrift/cloud/cli/cmd/project"
 )
 
+// The scaffold tests below round-trip through the real parser, and the parser's
+// only authority is the schema the platform serves. With none cached, that parse
+// checks nothing and the round trip proves nothing — this package went green on a
+// fresh CI runner for exactly that reason while `cmd/project` failed loudly.
+//
+// Same guard as `cmd/project`, for the same reason: make the absence loud rather
+// than let it read as a pass (#CLI-STANDARDUSAGE-ERF1CV).
+func TestSchemaMustBePresentOrTheScaffoldTestsProveNothing(t *testing.T) {
+	if !project.SchemaAvailable() {
+		t.Fatal("no Driftfile schema on this machine, so the scaffold round trips below " +
+			"would pass without validating anything.\n" +
+			"Fetch it once and it stays: `drift slice list` while online, or\n" +
+			"  mkdir -p ~/.drift && curl -fsS https://api.ondrift.eu/driftfile/schema -o ~/.drift/driftfile.schema.json")
+	}
+}
+
 // ─── new ────────────────────────────────────────────────────────────────────
 
 // The scaffold's whole claim is that it produces a file that DEPLOYS, not one
@@ -30,8 +46,8 @@ func TestNew_ScaffoldPassesTheRealParser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the scaffold does not survive the parser it is meant to precede:\n%v", err)
 	}
-	if m.Slice.Name != "demo" {
-		t.Errorf("name = %q, want demo", m.Slice.Name)
+	if m.Name() != "demo" {
+		t.Errorf("name = %q, want demo", m.Name())
 	}
 }
 
@@ -54,7 +70,7 @@ func TestNew_ScaffoldFillsTheRequiredInPracticeKnobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Slice.Atomic.FunctionMemory == "" {
+	if m.Slice().Str("atomic", "function_memory") == "" {
 		t.Error("the scaffold's BASE slice omits function_memory — a Driftfile that " +
 			"declares a function without it is rejected on create and resize with " +
 			"'function_memory must be between 32MB and 256MB (got 0MB)', which is the " +

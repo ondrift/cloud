@@ -26,7 +26,7 @@ type liveSQL struct {
 }
 
 func applySQL(m *Manifest) error {
-	if len(m.Slice.Backbone.SQL) == 0 {
+	if len(m.Slice().Entries("name", "backbone", "sql")) == 0 {
 		return nil
 	}
 
@@ -35,32 +35,32 @@ func applySQL(m *Manifest) error {
 		fmt.Printf("  %s sql reconcile skipped: %v\n", common.Hint("·"), err)
 		return nil
 	}
-	declared := map[string]SQLEntry{}
-	for _, e := range m.Slice.Backbone.SQL {
-		name := strings.ToLower(strings.TrimSpace(e.Name))
+	declared := map[string]Node{}
+	for _, e := range m.Slice().Entries("name", "backbone", "sql") {
+		name := strings.ToLower(strings.TrimSpace(e.Str("name")))
 		if name == "" {
 			continue
 		}
-		e.Name = name
+		e["name"] = name
 		declared[name] = e
 	}
 
 	for name, entry := range declared {
-		if entry.Schema != "" {
-			if err := uploadSchema(m.baseDir, name, entry.Schema); err != nil {
+		if entry.Str("schema") != "" {
+			if err := uploadSchema(m.baseDir, name, entry.Str("schema")); err != nil {
 				fmt.Printf("  %s sql %s schema: %v\n", common.Hint("·"), name, err)
 				continue
 			}
 			fmt.Printf("  %s sql schema applied: %s ← %s\n",
-				common.Check(), name, entry.Schema)
+				common.Check(), name, entry.Str("schema"))
 		}
-		if entry.Seed != "" {
-			if err := uploadSeed(m.baseDir, name, entry.Seed); err != nil {
+		if entry.Str("seed") != "" {
+			if err := uploadSeed(m.baseDir, name, entry.Str("seed")); err != nil {
 				fmt.Printf("  %s sql %s seed: %v\n", common.Hint("·"), name, err)
 				continue
 			}
 			fmt.Printf("  %s sql seed applied (if empty): %s ← %s\n",
-				common.Check(), name, entry.Seed)
+				common.Check(), name, entry.Str("seed"))
 		}
 	}
 

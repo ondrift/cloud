@@ -7,24 +7,27 @@ import (
 // TestManifestToSliceConfig_Counts verifies that resource lists are
 // counted correctly and land in the right Max… fields.
 func TestManifestToSliceConfig_Counts(t *testing.T) {
-	m := &Manifest{
-		Slice: Slice{
-			Name: "test",
-			Atomic: AtomicSection{
-				Functions: []AtomicEntry{
-					{Name: "a"},
-					{Name: "b"},
-					{Name: "c", Cron: "0 * * * *"}, // scheduled
-				},
+	m := manifestFrom(Node{
+		"name": "test",
+		"atomic": map[string]any{"functions": []any{
+			map[string]any{"name": "a"},
+			map[string]any{"name": "b"},
+			map[string]any{"name": "c", "cron": "0 * * * *"}, // scheduled
+		}},
+		"backbone": map[string]any{
+			"nosql": []any{
+				map[string]any{"name": "x", "size": "10MB"},
+				map[string]any{"name": "y", "size": "20MB"},
 			},
-			Backbone: BackboneSection{
-				NoSQL:               []NoSQLEntry{{Name: "x", Size: "10MB"}, {Name: "y", Size: "20MB"}},
-				Queues:              []QueueEntry{{Name: "q1"}, {Name: "q2"}, {Name: "q3"}},
-				Secrets:             map[string]string{"A": "1", "B": "2"},
-				RealtimeConnections: 200,
+			"queues": []any{
+				map[string]any{"name": "q1"},
+				map[string]any{"name": "q2"},
+				map[string]any{"name": "q3"},
 			},
+			"secrets":              map[string]any{"A": "1", "B": "2"},
+			"realtime_connections": 200,
 		},
-	}
+	})
 	cfg, err := ManifestToSliceConfig(m)
 	if err != nil {
 		t.Fatal(err)
@@ -52,24 +55,22 @@ func TestManifestToSliceConfig_Counts(t *testing.T) {
 // TestManifestToSliceConfig_EnvelopeKnobs verifies that envelope
 // strings parse into the right integer values.
 func TestManifestToSliceConfig_EnvelopeKnobs(t *testing.T) {
-	m := &Manifest{
-		Slice: Slice{
-			Name: "test",
-			Atomic: AtomicSection{
-				FunctionMemory:  "256MB",
-				FunctionTimeout: "60s",
-				RateLimit:       "1000/min",
-			},
-			Backbone: BackboneSection{
-				NoSQL:         []NoSQLEntry{{Name: "events", Size: "500MB"}},
-				BlobMaxSize:   "5MB",
-				QueueMaxDepth: 1000,
-			},
-			Canvas:          CanvasSection{CanvasSize: "100MB"},
-			LogRetention:    "7d",
-			BackupRetention: "14d",
+	m := manifestFrom(Node{
+		"name": "test",
+		"atomic": map[string]any{
+			"function_memory":  "256MB",
+			"function_timeout": "60s",
+			"rate_limit":       "1000/min",
 		},
-	}
+		"backbone": map[string]any{
+			"nosql":           []any{map[string]any{"name": "events", "size": "500MB"}},
+			"blob_max_size":   "5MB",
+			"queue_max_depth": 1000,
+		},
+		"canvas":           map[string]any{"canvas_size": "100MB"},
+		"log_retention":    "7d",
+		"backup_retention": "14d",
+	})
 	cfg, err := ManifestToSliceConfig(m)
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +113,7 @@ func TestManifestToSliceConfig_RatePerS(t *testing.T) {
 		{"60000/h", 1000},
 	}
 	for _, c := range cases {
-		m := &Manifest{Slice: Slice{Name: "t", Atomic: AtomicSection{RateLimit: c.in}}}
+		m := manifestFrom(Node{"name": "t", "atomic": map[string]any{"rate_limit": c.in}})
 		cfg, err := ManifestToSliceConfig(m)
 		if err != nil {
 			t.Errorf("%s: %v", c.in, err)
@@ -242,4 +243,11 @@ func TestRenderDiff_AbortMessage(t *testing.T) {
 			t.Errorf("abort message missing %q\nfull output:\n%s", want, out)
 		}
 	}
+}
+
+// manifestFrom builds a Manifest directly from a document, for tests that want a
+// shape without writing a Driftfile to disk. There is no struct to populate any
+// more — the document IS the manifest.
+func manifestFrom(slice Node) *Manifest {
+	return &Manifest{doc: slice, slice: slice}
 }

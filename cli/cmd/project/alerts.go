@@ -36,11 +36,12 @@ type alertSpec struct {
 // surfaced but don't abort the deploy.
 func applyAlerts(m *Manifest) error {
 	declared := map[string]alertSpec{}
-	for _, fn := range m.Slice.Atomic.Functions {
-		for i, a := range fn.Alerts {
-			spec, err := alertEntryToSpec(fn.Name, i, a)
+	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+		name := fn.Str("name")
+		for i, a := range fn.Entries("on", "alerts") {
+			spec, err := alertEntryToSpec(name, i, a)
 			if err != nil {
-				fmt.Printf("  %s alert on %s skipped: %v\n", common.Hint("·"), fn.Name, err)
+				fmt.Printf("  %s alert on %s skipped: %v\n", common.Hint("·"), name, err)
 				continue
 			}
 			declared[spec.Name] = spec
@@ -93,29 +94,30 @@ func applyAlerts(m *Manifest) error {
 	return nil
 }
 
-func alertEntryToSpec(function string, idx int, a AlertEntry) (alertSpec, error) {
-	if a.On == "" {
-		a.On = "errors"
+func alertEntryToSpec(function string, idx int, a Node) (alertSpec, error) {
+	on := a.Str("on")
+	if on == "" {
+		on = "errors"
 	}
-	if a.On != "errors" {
-		return alertSpec{}, fmt.Errorf("trigger %q reserved but not yet implemented (v1: errors)", a.On)
+	if on != "errors" {
+		return alertSpec{}, fmt.Errorf("trigger %q reserved but not yet implemented (v1: errors)", on)
 	}
-	windowSec, err := parseDriftfileWindow(a.Window)
+	windowSec, err := parseDriftfileWindow(a.Str("window"))
 	if err != nil {
 		return alertSpec{}, err
 	}
-	ntype, ntarget, err := parseDriftfileNotify(a.Notify)
+	ntype, ntarget, err := parseDriftfileNotify(a.Str("notify"))
 	if err != nil {
 		return alertSpec{}, err
 	}
-	threshold := a.Threshold
+	threshold := a.Int("threshold")
 	if threshold < 1 {
 		threshold = 1
 	}
 	return alertSpec{
 		Name:         fmt.Sprintf("%s-%d", function, idx),
 		Function:     function,
-		Trigger:      a.On,
+		Trigger:      on,
 		Threshold:    threshold,
 		WindowSec:    windowSec,
 		NotifyType:   ntype,

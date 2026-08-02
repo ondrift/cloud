@@ -57,9 +57,9 @@ func getExplainCmd() *cobra.Command {
 }
 
 func printResolved(m *project.Manifest, env string) {
-	s := m.Slice
+	s := m.Slice()
 
-	title := fmt.Sprintf("slice %s", s.Name)
+	title := fmt.Sprintf("slice %s", s.Str("name"))
 	if env != "" {
 		title += fmt.Sprintf("  (environment %s)", env)
 	}
@@ -71,17 +71,17 @@ func printResolved(m *project.Manifest, env string) {
 	// default here would be this command inventing a second answer to
 	// "what will I get" — which is the confusion it exists to remove.
 	rows := [][2]string{
-		{"log retention", s.LogRetention},
-		{"backup retention", s.BackupRetention},
-		{"function memory", s.Atomic.FunctionMemory},
-		{"function timeout", s.Atomic.FunctionTimeout},
-		{"rate limit", s.Atomic.RateLimit},
+		{"log retention", s.Str("log_retention")},
+		{"backup retention", s.Str("backup_retention")},
+		{"function memory", s.Str("atomic", "function_memory")},
+		{"function timeout", s.Str("atomic", "function_timeout")},
+		{"rate limit", s.Str("atomic", "rate_limit")},
 	}
-	if s.Atomic.DeployHistory != 0 {
-		rows = append(rows, [2]string{"deploy history", fmt.Sprintf("%d", s.Atomic.DeployHistory)})
+	if dh := s.Int("atomic", "deploy_history"); dh != 0 {
+		rows = append(rows, [2]string{"deploy history", fmt.Sprintf("%d", dh)})
 	}
-	if s.Canvas.CanvasSize != "" {
-		rows = append(rows, [2]string{"canvas size", s.Canvas.CanvasSize})
+	if cs := s.Str("canvas", "canvas_size"); cs != "" {
+		rows = append(rows, [2]string{"canvas size", cs})
 	}
 
 	fmt.Println()
@@ -93,26 +93,26 @@ func printResolved(m *project.Manifest, env string) {
 		fmt.Printf("  %-18s %s\n", r[0], val)
 	}
 
-	if n := len(s.Atomic.Functions); n > 0 {
-		fmt.Printf("\n  functions (%d)\n", n)
-		for _, f := range s.Atomic.Functions {
-			fmt.Printf("    · %s\n", f.Name)
+	if fns := s.Entries("name", "atomic", "functions"); len(fns) > 0 {
+		fmt.Printf("\n  functions (%d)\n", len(fns))
+		for _, f := range fns {
+			fmt.Printf("    · %s\n", f.Str("name"))
 		}
 	}
-	if n := len(s.Canvas.Sites); n > 0 {
-		fmt.Printf("\n  canvas sites (%d)\n", n)
-		for _, site := range s.Canvas.Sites {
-			fmt.Printf("    · %s\n", site.Dir)
+	if sites := s.Entries("dir", "canvas", "sites"); len(sites) > 0 {
+		fmt.Printf("\n  canvas sites (%d)\n", len(sites))
+		for _, site := range sites {
+			fmt.Printf("    · %s\n", site.Str("dir"))
 		}
 	}
-	if n := len(s.Domains); n > 0 {
-		fmt.Printf("\n  domains (%d)\n", n)
-		for _, d := range s.Domains {
+	if domains := s.Entries("host", "domains"); len(domains) > 0 {
+		fmt.Printf("\n  domains (%d)\n", len(domains))
+		for _, d := range domains {
 			suffix := ""
-			if d.Wildcard {
+			if d.Bool("wildcard") {
 				suffix = "  (wildcard)"
 			}
-			fmt.Printf("    · %s%s\n", d.Host, suffix)
+			fmt.Printf("    · %s%s\n", d.Str("host"), suffix)
 		}
 	}
 
@@ -120,25 +120,20 @@ func printResolved(m *project.Manifest, env string) {
 	// this point, and a command whose whole job is "print the resolved shape"
 	// must not be the thing that puts a live credential on a terminal or into a
 	// CI log.
-	if n := len(s.Backbone.Secrets); n > 0 {
-		names := make([]string, 0, n)
-		for k := range s.Backbone.Secrets {
+	if secrets := s.Sub("backbone", "secrets"); len(secrets) > 0 {
+		names := make([]string, 0, len(secrets))
+		for k := range secrets {
 			names = append(names, k)
 		}
 		sort.Strings(names)
-		fmt.Printf("\n  secrets (%d, names only)\n", n)
+		fmt.Printf("\n  secrets (%d, names only)\n", len(names))
 		for _, k := range names {
 			fmt.Printf("    · %s\n", k)
 		}
 	}
 
-	if len(m.Environments) > 0 {
-		names := make([]string, 0, len(m.Environments))
-		for k := range m.Environments {
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		fmt.Printf("\n  %s %s\n", common.Hint("environments:"), strings.Join(names, ", "))
+	if envs := m.EnvironmentNames(); len(envs) > 0 {
+		fmt.Printf("\n  %s %s\n", common.Hint("environments:"), strings.Join(envs, ", "))
 	}
 	fmt.Printf("\n  %s\n", common.Hint("cost comes from the server — drift project deploy --plan"))
 }

@@ -140,7 +140,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	} else {
 		// Source not readable (e.g. manifest preflight before deploy);
 		// fall back to one function per directory entry.
-		cfg.Atomic.MaxNumberOfFunctions = len(m.Slice.Atomic.Functions)
+		cfg.Atomic.MaxNumberOfFunctions = len(m.Slice().Entries("name", "atomic", "functions"))
 	}
 
 	// Scheduled-job count spans BOTH declaration sites — `atomic.functions[].cron`
@@ -150,21 +150,21 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	// schedule; its error return carries that partial count rather than zero.
 	sc, _ := CountScheduledFunctions(m)
 	cfg.Atomic.MaxNumberOfScheduledJobs = sc
-	if v := m.Slice.Atomic.DeployHistory; v > 0 {
+	if v := m.Slice().Int("atomic", "deploy_history"); v > 0 {
 		cfg.Atomic.MaxNumberOfDeploymentsInHistory = v
 	}
 
-	cfg.Backbone.NoSQL.MaxCollections = len(m.Slice.Backbone.NoSQL)
-	cfg.Backbone.SQL.MaxDatabases = len(m.Slice.Backbone.SQL)
-	cfg.Backbone.Queues.MaxQueues = len(m.Slice.Backbone.Queues)
-	cfg.Backbone.Secrets.MaxCount = len(m.Slice.Backbone.Secrets)
+	cfg.Backbone.NoSQL.MaxCollections = len(m.Slice().Entries("name", "backbone", "nosql"))
+	cfg.Backbone.SQL.MaxDatabases = len(m.Slice().Entries("name", "backbone", "sql"))
+	cfg.Backbone.Queues.MaxQueues = len(m.Slice().Entries("name", "backbone", "queues"))
+	cfg.Backbone.Secrets.MaxCount = len(m.Slice().Sub("backbone", "secrets"))
 
 	// Realtime is a scalar knob (a connection budget), not a list of named
 	// resources — declared directly. Omitted → 0 → realtime disabled.
-	cfg.Backbone.Realtime.MaxConcurrentConnections = m.Slice.Backbone.RealtimeConnections
+	cfg.Backbone.Realtime.MaxConcurrentConnections = m.Slice().Int("backbone", "realtime_connections")
 
 	// ── Atomic envelope knobs ───────────────────────────────────────
-	if v := m.Slice.Atomic.FunctionMemory; v != "" {
+	if v := m.Slice().Str("atomic", "function_memory"); v != "" {
 		bytes, err := parseSizeBytes(v)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("atomic.function_memory: %v", err))
@@ -172,7 +172,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 			cfg.Atomic.MaxFunctionMemoryBytes = bytes
 		}
 	}
-	if v := m.Slice.Atomic.FunctionTimeout; v != "" {
+	if v := m.Slice().Str("atomic", "function_timeout"); v != "" {
 		secs, err := parseDurationSeconds(v)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("atomic.function_timeout: %v", err))
@@ -180,7 +180,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 			cfg.Atomic.MaxFunctionRuntimeInSeconds = secs
 		}
 	}
-	if v := m.Slice.Atomic.RateLimit; v != "" {
+	if v := m.Slice().Str("atomic", "rate_limit"); v != "" {
 		rpm, err := parseRatePerMinute(v)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("atomic.rate_limit: %v", err))
@@ -195,18 +195,18 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	// Validation already guarantees every entry has a non-empty Size by the
 	// time translation runs; a parse failure here would be an internal bug
 	// (a size that passed sizeRe but parseSizeBytes rejects), not user error.
-	if len(m.Slice.Backbone.NoSQL) > 0 {
-		cfg.Backbone.NoSQL.Collections = make(map[string]int, len(m.Slice.Backbone.NoSQL))
-		for _, c := range m.Slice.Backbone.NoSQL {
-			bytes, err := parseSizeBytes(c.Size)
+	if len(m.Slice().Entries("name", "backbone", "nosql")) > 0 {
+		cfg.Backbone.NoSQL.Collections = make(map[string]int, len(m.Slice().Entries("name", "backbone", "nosql")))
+		for _, c := range m.Slice().Entries("name", "backbone", "nosql") {
+			bytes, err := parseSizeBytes(c.Str("size"))
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("backbone.nosql[%s].size: %v", c.Name, err))
+				errs = append(errs, fmt.Sprintf("backbone.nosql[%s].size: %v", c.Str("name"), err))
 				continue
 			}
-			cfg.Backbone.NoSQL.Collections[c.Name] = bytes
+			cfg.Backbone.NoSQL.Collections[c.Str("name")] = bytes
 		}
 	}
-	if v := m.Slice.Backbone.BlobMaxSize; v != "" {
+	if v := m.Slice().Str("backbone", "blob_max_size"); v != "" {
 		bytes, err := parseSizeBytes(v)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("backbone.blob_max_size: %v", err))
@@ -214,35 +214,35 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 			cfg.Backbone.Blobs.MaxSizeInBytesEach = bytes
 		}
 	}
-	if len(m.Slice.Backbone.Blobs) > 0 {
-		cfg.Backbone.Blobs.Buckets = make(map[string]int, len(m.Slice.Backbone.Blobs))
-		for _, bk := range m.Slice.Backbone.Blobs {
-			bytes, err := parseSizeBytes(bk.Size)
+	if blobs := m.Slice().Entries("name", "backbone", "blobs"); len(blobs) > 0 {
+		cfg.Backbone.Blobs.Buckets = make(map[string]int, len(blobs))
+		for _, bk := range blobs {
+			bytes, err := parseSizeBytes(bk.Str("size"))
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("backbone.blobs[%s].size: %v", bk.Name, err))
+				errs = append(errs, fmt.Sprintf("backbone.blobs[%s].size: %v", bk.Str("name"), err))
 				continue
 			}
-			cfg.Backbone.Blobs.Buckets[bk.Name] = bytes
+			cfg.Backbone.Blobs.Buckets[bk.Str("name")] = bytes
 		}
 	}
-	if v := m.Slice.Backbone.BlobMaxCount; v > 0 {
+	if v := m.Slice().Int("backbone", "blob_max_count"); v > 0 {
 		cfg.Backbone.Blobs.MaxCount = v
 	}
-	if v := m.Slice.Backbone.QueueMaxDepth; v > 0 {
+	if v := m.Slice().Int("backbone", "queue_max_depth"); v > 0 {
 		cfg.Backbone.Queues.MaxDepthEach = v
 	}
-	if len(m.Slice.Backbone.SQL) > 0 {
-		cfg.Backbone.SQL.Databases = make(map[string]int, len(m.Slice.Backbone.SQL))
-		for _, d := range m.Slice.Backbone.SQL {
-			bytes, err := parseSizeBytes(d.Size)
+	if len(m.Slice().Entries("name", "backbone", "sql")) > 0 {
+		cfg.Backbone.SQL.Databases = make(map[string]int, len(m.Slice().Entries("name", "backbone", "sql")))
+		for _, d := range m.Slice().Entries("name", "backbone", "sql") {
+			bytes, err := parseSizeBytes(d.Str("size"))
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("backbone.sql[%s].size: %v", d.Name, err))
+				errs = append(errs, fmt.Sprintf("backbone.sql[%s].size: %v", d.Str("name"), err))
 				continue
 			}
-			cfg.Backbone.SQL.Databases[d.Name] = bytes
+			cfg.Backbone.SQL.Databases[d.Str("name")] = bytes
 		}
 	}
-	if v := m.Slice.Backbone.SecretMaxSize; v != "" {
+	if v := m.Slice().Str("backbone", "secret_max_size"); v != "" {
 		bytes, err := parseSizeBytes(v)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("backbone.secret_max_size: %v", err))
@@ -250,12 +250,12 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 			cfg.Backbone.Secrets.MaxSizeInBytesEach = bytes
 		}
 	}
-	if v := m.Slice.Backbone.Locks; v > 0 {
+	if v := m.Slice().Int("backbone", "locks"); v > 0 {
 		cfg.Backbone.Locks.MaxConcurrent = v
 	}
 
 	// ── Canvas envelope ─────────────────────────────────────────────
-	if v := m.Slice.Canvas.CanvasSize; v != "" {
+	if v := m.Slice().Str("canvas", "canvas_size"); v != "" {
 		bytes, err := parseSizeBytes(v)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("canvas.canvas_size: %v", err))
@@ -265,7 +265,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	}
 
 	// ── Operational ─────────────────────────────────────────────────
-	if v := m.Slice.LogRetention; v != "" {
+	if v := m.Slice().Str("log_retention"); v != "" {
 		hours, err := parseDurationHours(v)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("log_retention: %v", err))
@@ -273,7 +273,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 			cfg.Atomic.MaxNumberOfHoursForLogRetention = hours
 		}
 	}
-	if v := m.Slice.BackupRetention; v != "" {
+	if v := m.Slice().Str("backup_retention"); v != "" {
 		days, err := parseDurationDays(v)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("backup_retention: %v", err))

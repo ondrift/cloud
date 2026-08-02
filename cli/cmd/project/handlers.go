@@ -29,10 +29,10 @@ func CountAtomicFunctions(m *Manifest) (int, error) {
 		return total, nil
 	}
 	total := 0
-	for _, fn := range m.Slice.Atomic.Functions {
-		dir := fn.Dir
+	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+		dir := fn.Str("dir")
 		if dir == "" {
-			dir = filepath.Join("atomic", fn.Name)
+			dir = filepath.Join("atomic", fn.Str("name"))
 		}
 		dir = m.ResolvePath(dir)
 		metas, err := atomic_common.ParseAllAtomicMetadataFromDir(dir)
@@ -67,9 +67,9 @@ func CountScheduledFunctions(m *Manifest) (int, error) {
 	// unconditionally — a preflight that cannot read the tree still sizes the
 	// envelope for every declared schedule.
 	declared := map[string]bool{}
-	for _, fn := range m.Slice.Atomic.Functions {
-		if fn.Cron != "" {
-			declared[fn.Name] = true
+	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+		if fn.Str("cron") != "" {
+			declared[fn.Str("name")] = true
 		}
 	}
 
@@ -90,10 +90,10 @@ func CountScheduledFunctions(m *Manifest) (int, error) {
 		return total, nil
 	}
 	total := len(declared)
-	for _, fn := range m.Slice.Atomic.Functions {
-		dir := fn.Dir
+	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+		dir := fn.Str("dir")
 		if dir == "" {
-			dir = filepath.Join("atomic", fn.Name)
+			dir = filepath.Join("atomic", fn.Str("name"))
 		}
 		dir = m.ResolvePath(dir)
 		metas, err := atomic_common.ParseAllAtomicMetadataFromDir(dir)
@@ -101,7 +101,7 @@ func CountScheduledFunctions(m *Manifest) (int, error) {
 			return total, err
 		}
 		for _, meta := range metas {
-			if meta.Trigger == "cron" && !declared[fn.Name] {
+			if meta.Trigger == "cron" && !declared[fn.Str("name")] {
 				total++
 			}
 		}

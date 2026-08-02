@@ -112,12 +112,9 @@ single slice otherwise.`,
 			// pre_deploy hooks run BEFORE the full parse so a build can produce
 			// the artifacts (e.g. a canvas dist dir) the parse then validates.
 			// Skipped in --plan (a dry run never builds).
-			hooks, err := ParseHooks(manifestPath)
-			if err != nil {
-				return err
-			}
+			preHooks, postHooks := ParseHooks(manifestPath)
 			if !planOnly {
-				if err := runHooks("pre_deploy", hooks.PreDeploy, projectDir); err != nil {
+				if err := runHooks("pre_deploy", preHooks, projectDir); err != nil {
 					return err
 				}
 			}
@@ -135,7 +132,7 @@ single slice otherwise.`,
 				return err
 			}
 			if resolvedEnv != "" {
-				fmt.Printf("  %s environment %s → slice %s\n", common.Hint("·"), resolvedEnv, common.Highlight(m.Slice.Name))
+				fmt.Printf("  %s environment %s → slice %s\n", common.Hint("·"), resolvedEnv, common.Highlight(m.Name()))
 			}
 
 			// Loud, pre-network preflight: reject route collisions before the
@@ -161,12 +158,12 @@ single slice otherwise.`,
 
 			// At this point the slice exists at >= the declared shape.
 			// Set it as the active slice for subsequent api calls.
-			if err := common.SaveActiveSlice(m.Slice.Name); err != nil {
+			if err := common.SaveActiveSlice(m.Name()); err != nil {
 				return fmt.Errorf("set active slice: %w", err)
 			}
 
 			start := time.Now()
-			fmt.Printf("\n  Deploying %s...\n\n", common.Highlight(m.Slice.Name))
+			fmt.Printf("\n  Deploying %s...\n\n", common.Highlight(m.Name()))
 
 			// Atomic, Backbone, and Canvas are independent slice subsystems —
 			// deploy all three concurrently (wall-clock = slowest, not sum).
@@ -192,7 +189,7 @@ single slice otherwise.`,
 			// post_deploy hooks run against the now-live slice (typically a
 			// smoke test). A failure leaves the slice deployed — it's already
 			// live — but returns non-zero so CI and the user see it.
-			if err := runHooks("post_deploy", hooks.PostDeploy, projectDir); err != nil {
+			if err := runHooks("post_deploy", postHooks, projectDir); err != nil {
 				fmt.Printf("\n  %s the slice is deployed and live, but a post_deploy hook failed\n", common.Cross())
 				return err
 			}
@@ -289,12 +286,12 @@ func reconcileSlice(m *Manifest, autoYes bool, billingMonths int) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("\n  Creating slice %q...\n", m.Slice.Name)
-		if err := CreateSlice(m.Slice.Name, tier, manifestCfg, billingMonths); err != nil {
+		fmt.Printf("\n  Creating slice %q...\n", m.Name())
+		if err := CreateSlice(m.Name(), tier, manifestCfg, billingMonths); err != nil {
 			return err
 		}
 		// Wait for the slice to provision before we deploy code into it.
-		if err := waitForSliceReady(m.Slice.Name); err != nil {
+		if err := waitForSliceReady(m.Name()); err != nil {
 			return fmt.Errorf("slice did not become ready: %w", err)
 		}
 		return nil
@@ -309,8 +306,8 @@ func reconcileSlice(m *Manifest, autoYes bool, billingMonths int) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("\n  Growing slice %q...\n", m.Slice.Name)
-		if err := ResizeSlice(m.Slice.Name, manifestCfg, billingMonths); err != nil {
+		fmt.Printf("\n  Growing slice %q...\n", m.Name())
+		if err := ResizeSlice(m.Name(), manifestCfg, billingMonths); err != nil {
 			return err
 		}
 		// Wait before deploying functions into it (#PLATFORM-CORE-OPERATOR-KG3TKF).
@@ -331,7 +328,7 @@ func reconcileSlice(m *Manifest, autoYes bool, billingMonths int) error {
 		// first poll and announcing a wait that did not happen is its own small
 		// lie.
 		fmt.Println("  Checking the slice is ready...")
-		if err := waitForSliceReady(m.Slice.Name); err != nil {
+		if err := waitForSliceReady(m.Name()); err != nil {
 			return fmt.Errorf("slice did not become ready after the grow: %w", err)
 		}
 		return nil
@@ -353,7 +350,7 @@ func computeDiff(m *Manifest) (DiffResult, error) {
 		return DiffResult{}, fmt.Errorf("price manifest config: %w", err)
 	}
 
-	live, err := FetchLiveSlice(m.Slice.Name)
+	live, err := FetchLiveSlice(m.Name())
 	if err != nil {
 		return DiffResult{}, fmt.Errorf("fetch live slice: %w", err)
 	}
@@ -369,7 +366,7 @@ func computeDiff(m *Manifest) (DiffResult, error) {
 		liveCost = live.MonthlyCostCents
 	}
 
-	d := Diff(m.Slice.Name, manifestCfg, liveCfg, liveTier, liveCost, wantedCost)
+	d := Diff(m.Name(), manifestCfg, liveCfg, liveTier, liveCost, wantedCost)
 	d.WantedItems = wantedItems
 	return d, nil
 }
@@ -449,10 +446,10 @@ func checkRouteCollisions(m *Manifest) error {
 
 	type routeRef struct{ fn, methodPath string }
 	byKey := map[string][]routeRef{}
-	for _, fn := range m.Slice.Atomic.Functions {
-		dir := fn.Dir
+	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+		dir := fn.Str("dir")
 		if dir == "" {
-			dir = filepath.Join("atomic", fn.Name)
+			dir = filepath.Join("atomic", fn.Str("name"))
 		}
 		dir = m.ResolvePath(dir)
 		key, err := atomic_cmd.FunctionName(dir)
@@ -463,7 +460,7 @@ func checkRouteCollisions(m *Manifest) error {
 		if meta, mErr := atomic_common.ParseAtomicMetadataFromDir(dir); mErr == nil && meta.Method != "" {
 			mp = strings.ToLower(meta.Method) + ":" + meta.Path
 		}
-		byKey[key] = append(byKey[key], routeRef{fn: fn.Name, methodPath: mp})
+		byKey[key] = append(byKey[key], routeRef{fn: fn.Str("name"), methodPath: mp})
 	}
 
 	var collisions []string
@@ -508,8 +505,8 @@ func applyAtomic(m *Manifest, out io.Writer) error {
 		return applyAtomicElements(elements, out)
 	}
 
-	a := m.Slice.Atomic
-	if len(a.Functions) == 0 {
+	fns := m.Slice().Entries("name", "atomic", "functions")
+	if len(fns) == 0 {
 		return nil
 	}
 
@@ -517,18 +514,18 @@ func applyAtomic(m *Manifest, out io.Writer) error {
 
 	// Resolve dir + display name for every function up front, preserving
 	// manifest order. The order drives the ordered result output below.
-	jobs := make([]atomicJob, len(a.Functions))
-	for i, fn := range a.Functions {
-		dir := fn.Dir
+	jobs := make([]atomicJob, len(fns))
+	for i, fn := range fns {
+		dir := fn.Str("dir")
 		if dir == "" {
-			dir = filepath.Join("atomic", fn.Name)
+			dir = filepath.Join("atomic", fn.Str("name"))
 		}
 		dir = m.ResolvePath(dir)
-		display := fn.Name
+		display := fn.Str("name")
 		if meta, err := atomic_common.ParseAtomicMetadataFromDir(dir); err == nil && meta.Path != "" {
 			display = meta.Path
 		}
-		jobs[i] = atomicJob{name: fn.Name, dir: dir, element: fn.Element, display: display}
+		jobs[i] = atomicJob{name: fn.Str("name"), dir: dir, element: fn.Str("element"), display: display}
 	}
 
 	// Skip functions whose source is unchanged versus what's deployed. The
@@ -790,28 +787,28 @@ func deployAtomicJobsWith(jobs []atomicJob, deploy func(atomicJob) error) []erro
 // ─── Backbone ───────────────────────────────────────────────────────
 
 func applyBackbone(m *Manifest, out io.Writer) error {
-	b := m.Slice.Backbone
-	if len(b.NoSQL)+len(b.Queues)+len(b.Cache)+len(b.Secrets) == 0 {
+	b := m.Slice().Sub("backbone")
+	if len(b.List("nosql"))+len(b.List("queues"))+len(b.Sub("cache"))+len(b.Sub("secrets")) == 0 {
 		return nil
 	}
 
 	fmt.Fprintf(out, "  %s\n", common.BackboneHeader())
 
-	for key, e := range b.Cache {
+	for key, e := range b.EntryMap("file", "cache") {
 		label := fmt.Sprintf("Cache: %s", key)
 		var value string
 		var hint string
-		if e.File != "" {
-			raw, err := os.ReadFile(m.ResolvePath(e.File)) // #nosec G304
+		if e.Str("file") != "" {
+			raw, err := os.ReadFile(m.ResolvePath(e.Str("file"))) // #nosec G304
 			if err != nil {
-				return fmt.Errorf("cache %q: read file %s: %w", key, e.File, err)
+				return fmt.Errorf("cache %q: read file %s: %w", key, e.Str("file"), err)
 			}
 			value = string(raw)
-			hint = fmt.Sprintf("(seeded from %s)", filepath.Base(e.File))
+			hint = fmt.Sprintf("(seeded from %s)", filepath.Base(e.Str("file")))
 		} else {
-			value = e.Value
+			value = e.Str("value")
 		}
-		if err := cacheSet(key, value, e.TTL); err != nil {
+		if err := cacheSet(key, value, e.Int("ttl")); err != nil {
 			return fmt.Errorf("cache set %q failed: %w", key, err)
 		}
 		line := fmt.Sprintf("    %s %s", common.Check(), label)
@@ -821,29 +818,29 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 		fmt.Fprintln(out, line)
 	}
 
-	for _, c := range b.NoSQL {
-		label := fmt.Sprintf("NoSQL: %s", c.Name)
+	for _, c := range b.Entries("name", "nosql") {
+		label := fmt.Sprintf("NoSQL: %s", c.Str("name"))
 		var ttlSecs int64
-		if c.TTL != "" {
+		if c.Str("ttl") != "" {
 			var err error
-			ttlSecs, err = parseTTLSeconds(c.TTL)
+			ttlSecs, err = parseTTLSeconds(c.Str("ttl"))
 			if err != nil {
-				return fmt.Errorf("nosql %q ttl: %w", c.Name, err)
+				return fmt.Errorf("nosql %q ttl: %w", c.Str("name"), err)
 			}
 		}
-		if err := nosqlInit(c.Name, ttlSecs); err != nil {
-			return fmt.Errorf("nosql init %q failed: %w", c.Name, err)
+		if err := nosqlInit(c.Str("name"), ttlSecs); err != nil {
+			return fmt.Errorf("nosql init %q failed: %w", c.Str("name"), err)
 		}
 		seeded := 0
-		if c.Seed != "" {
-			n, err := nosqlSeedJSONL(c.Name, m.ResolvePath(c.Seed), ttlSecs)
+		if c.Str("seed") != "" {
+			n, err := nosqlSeedJSONL(c.Str("name"), m.ResolvePath(c.Str("seed")), ttlSecs)
 			if err != nil {
-				return fmt.Errorf("nosql seed %q failed: %w", c.Name, err)
+				return fmt.Errorf("nosql seed %q failed: %w", c.Str("name"), err)
 			}
 			seeded = n
 		}
-		if c.TTL != "" {
-			label += fmt.Sprintf(" (ttl %s)", c.TTL)
+		if c.Str("ttl") != "" {
+			label += fmt.Sprintf(" (ttl %s)", c.Str("ttl"))
 		}
 		line := fmt.Sprintf("    %s %s", common.Check(), label)
 		if seeded > 0 {
@@ -852,17 +849,17 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 		fmt.Fprintln(out, line)
 	}
 
-	for _, q := range b.Queues {
-		label := fmt.Sprintf("Queue: %s", q.Name)
-		if err := queueInit(q.Name); err != nil {
-			return fmt.Errorf("queue init %q failed: %w", q.Name, err)
+	for _, q := range b.Entries("name", "queues") {
+		label := fmt.Sprintf("Queue: %s", q.Str("name"))
+		if err := queueInit(q.Str("name")); err != nil {
+			return fmt.Errorf("queue init %q failed: %w", q.Str("name"), err)
 		}
 		fmt.Fprintf(out, "    %s %s\n", common.Check(), label)
 	}
 
-	if len(b.Secrets) > 0 {
+	if len(b.Sub("secrets")) > 0 {
 		injected := 0
-		for k, v := range b.Secrets {
+		for k, v := range b.StrMap("secrets") {
 			if err := secretSet(k, v); err != nil {
 				return fmt.Errorf("secret set %q failed: %w", k, err)
 			}
@@ -880,7 +877,7 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 // ─── Canvas ─────────────────────────────────────────────────────────
 
 func applyCanvas(m *Manifest, out io.Writer) error {
-	sites := m.Slice.Canvas.Sites
+	sites := m.Slice().Entries("dir", "canvas", "sites")
 	if len(sites) == 0 {
 		return nil
 	}
@@ -888,12 +885,12 @@ func applyCanvas(m *Manifest, out io.Writer) error {
 	fmt.Fprintf(out, "  %s\n", common.CanvasHeader())
 	keep := make([]string, 0, len(sites))
 	for _, s := range sites {
-		dir := m.ResolvePath(s.Dir)
-		route := canonicalRoute(s.Route)
+		dir := m.ResolvePath(s.Str("dir"))
+		route := canonicalRoute(s.Str("route"))
 		slug := SlugifyRoute(route)
-		label := fmt.Sprintf("%s → %s", s.Dir, route)
+		label := fmt.Sprintf("%s → %s", s.Str("dir"), route)
 		if err := deployCanvas(dir, slug, route); err != nil {
-			return fmt.Errorf("canvas deploy failed for %s: %w", s.Dir, err)
+			return fmt.Errorf("canvas deploy failed for %s: %w", s.Str("dir"), err)
 		}
 		fmt.Fprintf(out, "    %s %s\n", common.Check(), label)
 		keep = append(keep, slug)

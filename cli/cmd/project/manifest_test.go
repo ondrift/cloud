@@ -25,53 +25,53 @@ func TestParseDriftfile_RestaurantTemplate(t *testing.T) {
 		t.Fatalf("ParseDriftfile failed: %v", err)
 	}
 
-	if m.Slice.Name != "la-cucina" {
-		t.Errorf("slice.name = %q, want %q", m.Slice.Name, "la-cucina")
+	if m.Name() != "la-cucina" {
+		t.Errorf("slice.name = %q, want %q", m.Name(), "la-cucina")
 	}
 
 	// atomic — bare-list shorthand expands to functions:[...]
-	if len(m.Slice.Atomic.Functions) != 3 {
-		t.Fatalf("atomic.functions count = %d, want 3", len(m.Slice.Atomic.Functions))
+	if len(m.Slice().Entries("name", "atomic", "functions")) != 3 {
+		t.Fatalf("atomic.functions count = %d, want 3", len(m.Slice().Entries("name", "atomic", "functions")))
 	}
 	wantFns := []string{"get-menu", "submit-reservation", "confirm-reservation"}
-	for i, fn := range m.Slice.Atomic.Functions {
-		if fn.Name != wantFns[i] {
-			t.Errorf("atomic.functions[%d].name = %q, want %q", i, fn.Name, wantFns[i])
+	for i, fn := range m.Slice().Entries("name", "atomic", "functions") {
+		if fn.Str("name") != wantFns[i] {
+			t.Errorf("atomic.functions[%d].name = %q, want %q", i, fn.Str("name"), wantFns[i])
 		}
 	}
 
 	// backbone.nosql — flat-list of strings
-	if len(m.Slice.Backbone.NoSQL) != 1 || m.Slice.Backbone.NoSQL[0].Name != "reservations" {
-		t.Errorf("backbone.nosql = %+v, want one entry named reservations", m.Slice.Backbone.NoSQL)
+	if len(m.Slice().Entries("name", "backbone", "nosql")) != 1 || m.Slice().Entries("name", "backbone", "nosql")[0].Str("name") != "reservations" {
+		t.Errorf("backbone.nosql = %+v, want one entry named reservations", m.Slice().Entries("name", "backbone", "nosql"))
 	}
 
 	// backbone.queues — flat-list of strings
-	if len(m.Slice.Backbone.Queues) != 1 || m.Slice.Backbone.Queues[0].Name != "reservation-queue" {
-		t.Errorf("backbone.queues = %+v, want [reservation-queue]", m.Slice.Backbone.Queues)
+	if len(m.Slice().Entries("name", "backbone", "queues")) != 1 || m.Slice().Entries("name", "backbone", "queues")[0].Str("name") != "reservation-queue" {
+		t.Errorf("backbone.queues = %+v, want [reservation-queue]", m.Slice().Entries("name", "backbone", "queues"))
 	}
 
 	// backbone.cache — short-form `<key>: <path>` becomes File
-	cache := m.Slice.Backbone.Cache
+	cache := m.Slice().EntryMap("file", "backbone", "cache")
 	if e, ok := cache["menu"]; !ok {
 		t.Errorf("backbone.cache.menu missing")
-	} else if e.File != "./backbone/menu.json" {
-		t.Errorf("backbone.cache.menu.file = %q, want ./backbone/menu.json", e.File)
+	} else if e.Str("file") != "./backbone/menu.json" {
+		t.Errorf("backbone.cache.menu.file = %q, want ./backbone/menu.json", e.Str("file"))
 	}
 
 	// backbone.secrets — $ENVREFs are resolved before validation.
-	if got := m.Slice.Backbone.Secrets["RESTAURANT_NAME"]; got != "La Cucina" {
+	if got := m.Slice().StrMap("backbone", "secrets")["RESTAURANT_NAME"]; got != "La Cucina" {
 		t.Errorf("secret RESTAURANT_NAME = %q, want La Cucina", got)
 	}
-	if got := m.Slice.Backbone.Secrets["RESEND_API_KEY"]; got != "test-resend-key-xyz" {
+	if got := m.Slice().StrMap("backbone", "secrets")["RESEND_API_KEY"]; got != "test-resend-key-xyz" {
 		t.Errorf("secret RESEND_API_KEY = %q, want resolved env value", got)
 	}
-	if got := m.Slice.Backbone.Secrets["SENDER_EMAIL"]; got != "noreply@la-cucina.test" {
+	if got := m.Slice().StrMap("backbone", "secrets")["SENDER_EMAIL"]; got != "noreply@la-cucina.test" {
 		t.Errorf("secret SENDER_EMAIL = %q, want resolved env value", got)
 	}
 
 	// canvas — bare-string shorthand becomes sites:[{dir: ./canvas}]
-	if len(m.Slice.Canvas.Sites) != 1 || m.Slice.Canvas.Sites[0].Dir != "./canvas" {
-		t.Errorf("canvas.sites = %+v, want one entry at ./canvas", m.Slice.Canvas.Sites)
+	if len(m.Slice().Entries("dir", "canvas", "sites")) != 1 || m.Slice().Entries("dir", "canvas", "sites")[0].Str("dir") != "./canvas" {
+		t.Errorf("canvas.sites = %+v, want one entry at ./canvas", m.Slice().Entries("dir", "canvas", "sites"))
 	}
 }
 
@@ -124,8 +124,8 @@ canvas: ./canvas
 	if err != nil {
 		t.Fatalf("ParseDriftfile failed: %v", err)
 	}
-	if len(m.Slice.Canvas.Sites) != 1 || m.Slice.Canvas.Sites[0].Dir != "./canvas" {
-		t.Errorf("canvas.sites = %+v, want one entry at ./canvas", m.Slice.Canvas.Sites)
+	if len(m.Slice().Entries("dir", "canvas", "sites")) != 1 || m.Slice().Entries("dir", "canvas", "sites")[0].Str("dir") != "./canvas" {
+		t.Errorf("canvas.sites = %+v, want one entry at ./canvas", m.Slice().Entries("dir", "canvas", "sites"))
 	}
 }
 
@@ -148,43 +148,41 @@ canvas: ./canvas
 	if err != nil {
 		t.Fatalf("ParseDriftfile failed: %v", err)
 	}
-	if len(m.Slice.Atomic.Functions) != 2 {
-		t.Fatalf("atomic.functions count = %d, want 2", len(m.Slice.Atomic.Functions))
+	if len(m.Slice().Entries("name", "atomic", "functions")) != 2 {
+		t.Fatalf("atomic.functions count = %d, want 2", len(m.Slice().Entries("name", "atomic", "functions")))
 	}
-	if m.Slice.Atomic.Functions[0].Name != "foo" || m.Slice.Atomic.Functions[1].Name != "bar" {
-		t.Errorf("atomic.functions = %+v, want [foo bar]", m.Slice.Atomic.Functions)
+	if m.Slice().Entries("name", "atomic", "functions")[0].Str("name") != "foo" || m.Slice().Entries("name", "atomic", "functions")[1].Str("name") != "bar" {
+		t.Errorf("atomic.functions = %+v, want [foo bar]", m.Slice().Entries("name", "atomic", "functions"))
 	}
 }
 
-// TestParseDriftfile_SQLShorthandString verifies the bare-string SQL
-// shorthand parses (regression: SQLEntry used to reject `sql: [ledger]`
-// with "cannot unmarshal !!str into project.SQLEntry"). It mirrors the
-// nosql short form — a bare string is a database with no schema/seed,
-// created lazily on first use.
-// TestParseDriftfile_SQLShorthandString checks the SQLEntry.UnmarshalYAML
-// shape acceptance directly (bare string vs. long form) rather than through
-// a full ParseDriftfile round trip: a bare-string entry can never carry a
-// `size`, and size is now mandatory, so a full Driftfile using the bare
-// form would fail validation regardless of whether the shorthand itself
-// parsed correctly. Decoding directly isolates the thing this test actually
-// verifies — the unmarshal shape — from that unrelated validation rule.
-func TestParseDriftfile_SQLShorthandString(t *testing.T) {
-	var sql []SQLEntry
-	if err := yaml.Unmarshal([]byte(`
-- ledger
-- name: audit
-  schema: ./sql/audit.sql
-`), &sql); err != nil {
-		t.Fatalf("unmarshal failed: %v", err)
-	}
-	if len(sql) != 2 {
-		t.Fatalf("backbone.sql count = %d, want 2", len(sql))
-	}
-	if sql[0].Name != "ledger" || sql[0].Schema != "" {
-		t.Errorf("sql[0] = %+v, want bare {Name: ledger}", sql[0])
-	}
-	if sql[1].Name != "audit" || sql[1].Schema != "./sql/audit.sql" {
-		t.Errorf("sql[1] = %+v, want {Name: audit, Schema: ./sql/audit.sql}", sql[1])
+// The bare-string `sql: [ledger]` / `nosql: [widgets]` / `blobs: [assets]` forms
+// are NOT legal, and the CLI no longer pretends otherwise.
+//
+// This test used to assert the opposite — that SQLEntry.UnmarshalYAML accepted a
+// bare string — and its own comment conceded the contradiction: "a bare-string
+// entry can never carry a `size`, and size is now mandatory, so a full Driftfile
+// using the bare form would fail validation regardless". It decoded the type
+// directly to dodge the validation that would have caught it.
+//
+// That is what two definitions of a format look like from the inside: the schema
+// requires `name` and `size` because size both prices and enforces the quota, the
+// CLI accepted a form that can carry neither, and a test was written around the
+// gap rather than closing it (#CLI-STANDARDUSAGE-ERF1CV).
+func TestParseDriftfile_BareStringResourceEntriesAreRejected(t *testing.T) {
+	for _, section := range []string{"sql", "nosql", "blobs"} {
+		t.Run(section, func(t *testing.T) {
+			tmp := t.TempDir()
+			mustWrite(t, filepath.Join(tmp, "Driftfile"),
+				"name: hello\ncanvas: ./canvas\nbackbone:\n  "+section+": [thing]\n")
+			mustMkdir(t, filepath.Join(tmp, "canvas"))
+
+			_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+			if err == nil {
+				t.Fatalf("backbone.%s accepted a bare string, which the platform rejects "+
+					"because size is required and a bare string cannot carry one", section)
+			}
+		})
 	}
 }
 
@@ -217,7 +215,9 @@ func TestParseDriftfile_UnknownNestedField(t *testing.T) {
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
 name: hello
 backbone:
-  nosql: [widgets]
+  nosql:
+    - name: widgets
+      size: 50MB
   qeues: [jobs]
 canvas: ./canvas
 `)
@@ -326,6 +326,98 @@ func mustWrite(t *testing.T, path, content string) {
 	}
 }
 
+// The schema owns the format; it cannot own the filesystem. A document can be
+// perfectly legal and still name a directory that is not on this machine, and the
+// checks that catch that are the one local pass that survives
+// (#CLI-STANDARDUSAGE-ERF1CV).
+//
+// Written because the suite was green with them DELETED: nothing else parses a
+// valid Driftfile whose paths are missing, so their removal cost only the error
+// message — a declared-but-absent function surfaces much later as a compiler
+// complaint about no input files, from inside a build the user did not ask about.
+func TestParseDriftfile_LocalPathsMustExist(t *testing.T) {
+	cases := []struct {
+		name      string
+		driftfile string
+		// present is created before the parse; whatever the Driftfile names and
+		// this omits is the missing path under test.
+		present []string
+		want    string
+	}{
+		{
+			name:      "function directory",
+			driftfile: "name: hello\natomic:\n  functions:\n    - name: get-menu\n",
+			want:      `atomic.functions[0]: function "get-menu" not found at`,
+		},
+		{
+			name:      "function explicit dir",
+			driftfile: "name: hello\natomic:\n  functions:\n    - name: get-menu\n      dir: ./src/menu\n",
+			present:   []string{"atomic/get-menu"}, // the conventional path exists; the declared one does not
+			want:      `atomic.functions[0]: function "get-menu" not found at`,
+		},
+		{
+			name:      "canvas site directory",
+			driftfile: "name: hello\ncanvas: ./site\n",
+			want:      `canvas.sites[0]: directory not found at`,
+		},
+		{
+			name:      "nosql seed file",
+			driftfile: "name: hello\nbackbone:\n  nosql:\n    - name: menu\n      size: 10MB\n      seed: ./seeds/menu.jsonl\n",
+			want:      `backbone.nosql[0]: "menu" seed file not found at`,
+		},
+		{
+			name:      "cache file",
+			driftfile: "name: hello\nbackbone:\n  cache:\n    greeting:\n      file: ./data/greeting.txt\n",
+			want:      `cache "greeting" file not found at`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			mustWrite(t, filepath.Join(tmp, "Driftfile"), tc.driftfile)
+			for _, d := range tc.present {
+				mustMkdir(t, filepath.Join(tmp, filepath.FromSlash(d)))
+			}
+
+			_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+			if err == nil {
+				t.Fatalf("a Driftfile naming a path that is not on this machine must not parse")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error must name the field and the resolved path.\n got: %v\nwant substring: %s", err, tc.want)
+			}
+		})
+	}
+}
+
+// The seed file existing is not the same as the seed file being loadable, and a
+// record with no _id is dropped on ingest rather than rejected — so the parse is
+// the last place it can be reported.
+func TestParseDriftfile_SeedRecordsMustBeLoadable(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"),
+		"name: hello\nbackbone:\n  nosql:\n    - name: menu\n      size: 10MB\n      seed: ./seeds/menu.jsonl\n")
+	mustWrite(t, filepath.Join(tmp, "seeds", "menu.jsonl"),
+		`{"_id":"pizza","price":9}`+"\n"+
+			`{"price":11}`+"\n"+ // no _id
+			`{"_id":"","price":12}`+"\n"+ // empty _id
+			`{"_id":"soup",`+"\n") // truncated JSON
+
+	_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err == nil {
+		t.Fatal("a seed file whose records cannot be loaded must not parse")
+	}
+	for _, want := range []string{":2: missing _id", ":3: empty _id", ":4: invalid JSON"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("every bad record must be reported with its line number, missing %q\ngot: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), ":1:") {
+		t.Errorf("the one valid record must not be reported\ngot: %v", err)
+	}
+}
+
 func mustMkdir(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
@@ -350,8 +442,8 @@ canvas: ./canvas
 	if err != nil {
 		t.Fatalf("ParseDriftfile failed: %v", err)
 	}
-	if m.Slice.Name != "staging-hello" {
-		t.Errorf("slice.name = %q, want staging-hello", m.Slice.Name)
+	if m.Name() != "staging-hello" {
+		t.Errorf("slice.name = %q, want staging-hello", m.Name())
 	}
 }
 
@@ -417,11 +509,11 @@ environments:
 	if env, err := m.SelectEnvironment("prod", true); err != nil || env != "prod" {
 		t.Fatalf("select prod: env=%q err=%v", env, err)
 	}
-	if m.Slice.Name != "snip" {
-		t.Errorf("prod name = %q, want snip", m.Slice.Name)
+	if m.Name() != "snip" {
+		t.Errorf("prod name = %q, want snip", m.Name())
 	}
-	if m.Slice.Atomic.RateLimit != "5000/min" || m.Slice.LogRetention != "30d" {
-		t.Errorf("prod values changed: rate=%q retention=%q", m.Slice.Atomic.RateLimit, m.Slice.LogRetention)
+	if m.Slice().Str("atomic", "rate_limit") != "5000/min" || m.Slice().Str("log_retention") != "30d" {
+		t.Errorf("prod values changed: rate=%q retention=%q", m.Slice().Str("atomic", "rate_limit"), m.Slice().Str("log_retention"))
 	}
 
 	// staging → suffixed name; scalar overrides applied; resource set shared.
@@ -429,20 +521,20 @@ environments:
 	if _, err := m.SelectEnvironment("staging", true); err != nil {
 		t.Fatal(err)
 	}
-	if m.Slice.Name != "snip-staging" {
-		t.Errorf("staging name = %q, want snip-staging", m.Slice.Name)
+	if m.Name() != "snip-staging" {
+		t.Errorf("staging name = %q, want snip-staging", m.Name())
 	}
-	if m.Slice.Atomic.RateLimit != "200/min" || m.Slice.Atomic.FunctionMemory != "64MB" {
-		t.Errorf("staging atomic overrides not applied: %+v", m.Slice.Atomic)
+	if m.Slice().Str("atomic", "rate_limit") != "200/min" || m.Slice().Str("atomic", "function_memory") != "64MB" {
+		t.Errorf("staging atomic overrides not applied: %+v", m.Slice().Sub("atomic"))
 	}
-	if m.Slice.LogRetention != "3d" {
-		t.Errorf("staging overrides not applied: retention=%q", m.Slice.LogRetention)
+	if m.Slice().Str("log_retention") != "3d" {
+		t.Errorf("staging overrides not applied: retention=%q", m.Slice().Str("log_retention"))
 	}
-	if len(m.Slice.Atomic.Functions) != 1 || m.Slice.Atomic.Functions[0].Name != "redirect" {
-		t.Errorf("staging functions = %+v, want shared [redirect]", m.Slice.Atomic.Functions)
+	if len(m.Slice().Entries("name", "atomic", "functions")) != 1 || m.Slice().Entries("name", "atomic", "functions")[0].Str("name") != "redirect" {
+		t.Errorf("staging functions = %+v, want shared [redirect]", m.Slice().Entries("name", "atomic", "functions"))
 	}
-	if len(m.Slice.Backbone.NoSQL) != 1 || m.Slice.Backbone.NoSQL[0].Name != "links" || m.Slice.Backbone.NoSQL[0].Size != "50MB" {
-		t.Errorf("staging nosql = %+v, want shared [links] with overridden size 50MB", m.Slice.Backbone.NoSQL)
+	if len(m.Slice().Entries("name", "backbone", "nosql")) != 1 || m.Slice().Entries("name", "backbone", "nosql")[0].Str("name") != "links" || m.Slice().Entries("name", "backbone", "nosql")[0].Str("size") != "50MB" {
+		t.Errorf("staging nosql = %+v, want shared [links] with overridden size 50MB", m.Slice().Entries("name", "backbone", "nosql"))
 	}
 
 	// dev → only rate overridden; everything else inherits the base.
@@ -450,11 +542,11 @@ environments:
 	if _, err := m.SelectEnvironment("dev", true); err != nil {
 		t.Fatal(err)
 	}
-	if m.Slice.Name != "snip-dev" || m.Slice.Atomic.RateLimit != "20/min" {
-		t.Errorf("dev name/rate = %q/%q", m.Slice.Name, m.Slice.Atomic.RateLimit)
+	if m.Name() != "snip-dev" || m.Slice().Str("atomic", "rate_limit") != "20/min" {
+		t.Errorf("dev name/rate = %q/%q", m.Name(), m.Slice().Str("atomic", "rate_limit"))
 	}
-	if m.Slice.Atomic.FunctionMemory != "128MB" || m.Slice.LogRetention != "30d" {
-		t.Errorf("dev should inherit base mem/retention: mem=%q retention=%q", m.Slice.Atomic.FunctionMemory, m.Slice.LogRetention)
+	if m.Slice().Str("atomic", "function_memory") != "128MB" || m.Slice().Str("log_retention") != "30d" {
+		t.Errorf("dev should inherit base mem/retention: mem=%q retention=%q", m.Slice().Str("atomic", "function_memory"), m.Slice().Str("log_retention"))
 	}
 
 	// Default (no arg) resolves to prod when present.
@@ -485,14 +577,14 @@ environments: [prod, staging]
 	if err != nil {
 		t.Fatalf("ParseDriftfile: %v", err)
 	}
-	if len(m.Environments) != 2 {
-		t.Fatalf("environments count = %d, want 2", len(m.Environments))
+	if len(m.EnvironmentNames()) != 2 {
+		t.Fatalf("environments count = %d, want 2", len(m.EnvironmentNames()))
 	}
 	if _, err := m.SelectEnvironment("staging", true); err != nil {
 		t.Fatal(err)
 	}
-	if m.Slice.Name != "hello-staging" {
-		t.Errorf("name = %q, want hello-staging", m.Slice.Name)
+	if m.Name() != "hello-staging" {
+		t.Errorf("name = %q, want hello-staging", m.Name())
 	}
 }
 
@@ -510,8 +602,8 @@ func TestSelectEnvironmentNoEnvironments(t *testing.T) {
 	if env, err := m.SelectEnvironment("", false); err != nil || env != "" {
 		t.Errorf("no-env default: env=%q err=%v", env, err)
 	}
-	if m.Slice.Name != "solo" {
-		t.Errorf("name = %q, want solo", m.Slice.Name)
+	if m.Name() != "solo" {
+		t.Errorf("name = %q, want solo", m.Name())
 	}
 	if _, err := m.SelectEnvironment("staging", true); err == nil {
 		t.Error("expected error: explicit env on a project that declares none")
@@ -531,8 +623,17 @@ environments:
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
 
 	_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
-	if err == nil || !contains(err.Error(), "must not set name") {
-		t.Errorf("expected a 'must not set name' error, got: %v", err)
+	if err == nil {
+		t.Fatal("an environment override set `name` and was accepted")
+	}
+	// The SCHEMA owns this rule now, so the assertion is on the rule being
+	// enforced and on the message pointing at the right place — not on the local
+	// pass's old wording. Pinning "must not set name" here would mean the CLI
+	// still had to phrase a rule the platform defines
+	// (#CLI-STANDARDUSAGE-ERF1CV).
+	msg := err.Error()
+	if !contains(msg, "name") || !contains(msg, "environments/staging") {
+		t.Errorf("the error should name the offending field and where it is, got: %v", err)
 	}
 }
 
@@ -550,15 +651,12 @@ hooks:
   post_deploy: [./smoke.sh]
 `)
 	// Note: ./dist does NOT exist — ParseHooks must not care.
-	h, err := ParseHooks(filepath.Join(tmp, "Driftfile"))
-	if err != nil {
-		t.Fatalf("ParseHooks: %v", err)
+	pre, post := ParseHooks(filepath.Join(tmp, "Driftfile"))
+	if len(pre) != 2 || pre[0] != "npm run build" {
+		t.Errorf("pre_deploy = %+v", pre)
 	}
-	if len(h.PreDeploy) != 2 || h.PreDeploy[0] != "npm run build" {
-		t.Errorf("pre_deploy = %+v", h.PreDeploy)
-	}
-	if len(h.PostDeploy) != 1 || h.PostDeploy[0] != "./smoke.sh" {
-		t.Errorf("post_deploy = %+v", h.PostDeploy)
+	if len(post) != 1 || post[0] != "./smoke.sh" {
+		t.Errorf("post_deploy = %+v", post)
 	}
 }
 
@@ -573,20 +671,22 @@ hooks:
 // like max_receives are still unimplemented, and accepting a knob that does
 // nothing would be a worse lie than rejecting it.
 func TestParseDriftfile_QueueShorthandStringOrMap(t *testing.T) {
-	var queues []QueueEntry
+	var doc Node
 	if err := yaml.Unmarshal([]byte(`
-- reservation-queue
-- { name: email-nudges }
-`), &queues); err != nil {
+queues:
+  - reservation-queue
+  - { name: email-nudges }
+`), &doc); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
+	queues := doc.Entries("name", "queues")
 	if len(queues) != 2 {
 		t.Fatalf("queues count = %d, want 2", len(queues))
 	}
-	if queues[0].Name != "reservation-queue" {
+	if queues[0].Str("name") != "reservation-queue" {
 		t.Errorf("queues[0] = %+v, want bare {Name: reservation-queue}", queues[0])
 	}
-	if queues[1].Name != "email-nudges" {
+	if queues[1].Str("name") != "email-nudges" {
 		t.Errorf("queues[1] = %+v, want {Name: email-nudges}", queues[1])
 	}
 }
@@ -607,11 +707,11 @@ backbone:
 	if err != nil {
 		t.Fatalf("the spec's own queue example does not parse: %v", err)
 	}
-	if len(m.Slice.Backbone.Queues) != 2 {
-		t.Fatalf("queues = %+v, want 2 entries", m.Slice.Backbone.Queues)
+	if len(m.Slice().Entries("name", "backbone", "queues")) != 2 {
+		t.Fatalf("queues = %+v, want 2 entries", m.Slice().Entries("name", "backbone", "queues"))
 	}
-	if m.Slice.Backbone.Queues[1].Name != "email-nudges" {
-		t.Errorf("queues[1].name = %q, want email-nudges", m.Slice.Backbone.Queues[1].Name)
+	if m.Slice().Entries("name", "backbone", "queues")[1].Str("name") != "email-nudges" {
+		t.Errorf("queues[1].name = %q, want email-nudges", m.Slice().Entries("name", "backbone", "queues")[1].Str("name"))
 	}
 }
 
@@ -685,14 +785,14 @@ environments:
 		t.Fatal(err)
 	}
 
-	if got := m.Slice.Atomic.DeployHistory; got != 0 {
+	if got := m.Slice().Int("atomic", "deploy_history"); got != 0 {
 		t.Errorf("deploy_history = %d, want 0 — the override was discarded because "+
 			"the merge read 0 as 'absent', so the Driftfile and the slice disagree "+
 			"with no error anywhere", got)
 	}
 	// The control: a sibling the overlay did NOT mention must survive. Without
 	// this, a merge that simply dropped the base would pass the assertion above.
-	if got := m.Slice.Atomic.FunctionMemory; got != "128MB" {
+	if got := m.Slice().Str("atomic", "function_memory"); got != "128MB" {
 		t.Errorf("function_memory = %q, want 128MB — the overlay replaced the whole "+
 			"atomic block instead of merging into it", got)
 	}
@@ -727,7 +827,7 @@ environments:
 		t.Fatal(err)
 	}
 
-	if got := m.Slice.LogRetention; got != "1h" {
+	if got := m.Slice().Str("log_retention"); got != "1h" {
 		t.Errorf("log_retention = %q, want 1h", got)
 	}
 }
@@ -760,14 +860,14 @@ environments:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := m.Slice.Backbone.Secrets["API_TOKEN"]; got != "s3cr3t" {
+	if got := m.Slice().StrMap("backbone", "secrets")["API_TOKEN"]; got != "s3cr3t" {
 		t.Fatalf("parse did not resolve the envref: %q", got)
 	}
 
 	if _, err := m.SelectEnvironment("staging", true); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.Slice.Backbone.Secrets["API_TOKEN"]; got != "s3cr3t" {
+	if got := m.Slice().StrMap("backbone", "secrets")["API_TOKEN"]; got != "s3cr3t" {
 		t.Errorf("after the environment merge API_TOKEN = %q, want s3cr3t — the "+
 			"merge re-decoded from the raw document and reverted the envref, so the "+
 			"deploy would ship the literal placeholder as the secret", got)

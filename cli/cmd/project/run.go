@@ -109,11 +109,8 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 
 	// pre_deploy hooks first (e.g. a frontend build that produces the
 	// canvas dir the parse then validates).
-	hooks, err := ParseHooks(manifestPath)
-	if err != nil {
-		return "", "", "", err
-	}
-	if err := runHooks("pre_deploy", hooks.PreDeploy, projectDir); err != nil {
+	preHooks, _ := ParseHooks(manifestPath)
+	if err := runHooks("pre_deploy", preHooks, projectDir); err != nil {
 		return "", "", "", err
 	}
 
@@ -124,7 +121,7 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 	if _, err := m.SelectEnvironment(selectedEnv, envExplicit); err != nil {
 		return "", "", "", err
 	}
-	app = m.Slice.Name
+	app = m.Name()
 	container = "drift-" + app
 
 	// ── Build into a temp slot layout ───────────────────────────────
@@ -179,7 +176,7 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 	// $ENVREF-resolved. Docker-native `-e SECRET=…` — no admin port exposed.
 	// (Visible to `docker inspect` on this host, the user's own machine; the
 	// SAT itself is never passed this way.)
-	for name, val := range m.Slice.Backbone.Secrets {
+	for name, val := range m.Slice().Sub("backbone", "secrets") {
 		runArgs = append(runArgs, "-e", fmt.Sprintf("DRIFT_SECRET_%s=%s", name, val))
 	}
 	if persist {
@@ -313,10 +310,10 @@ func layoutCanvas(m *Manifest, dir string) error {
 		Route string `json:"route"`
 	}
 	var registry []siteEntry
-	for _, s := range m.Slice.Canvas.Sites {
-		route := canonicalRoute(s.Route)
+	for _, s := range m.Slice().Entries("dir", "canvas", "sites") {
+		route := canonicalRoute(s.Str("route"))
 		slug := SlugifyRoute(route)
-		if err := copyTree(m.ResolvePath(s.Dir), filepath.Join(dir, slug)); err != nil {
+		if err := copyTree(m.ResolvePath(s.Str("dir")), filepath.Join(dir, slug)); err != nil {
 			return err
 		}
 		registry = append(registry, siteEntry{Slug: slug, Route: route})

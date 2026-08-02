@@ -9,19 +9,18 @@
 // `function_memory` being required in practice — is answerable on the laptop, in
 // milliseconds (#CLI-STANDARDUSAGE-RKN51F).
 //
-// # What it validates against, and the limit of that
+// # What it validates against
 //
-// `ParseDriftfile` — the same parse and the same 46 validation rules a deploy
-// runs, so `lint` gives exactly the answer a deploy would, minus the deploy.
+// `ParseDriftfile` — the same parse a deploy runs, so `lint` gives exactly the
+// answer a deploy would, minus the deploy. And that parse now has exactly one
+// authority: the JSON Schema the platform serves and this machine has cached
+// (#CLI-STANDARDUSAGE-ERF1CV). The CLI holds no rules of its own to disagree
+// with it, so a field the platform has added is accepted here the moment the
+// cached schema is refreshed, without a CLI release.
 //
-// It does NOT validate against the schema the platform serves. The CLI fetches and
-// caches that (`common/driftfile.go`) and nothing reads it yet. The consequence is
-// worth stating plainly rather than discovering: this validates the CLI's own
-// encoding of the format, so a Driftfile using a field the platform has added but
-// this CLI has not learned is reported as an error. That limit already governs
-// `drift project deploy` — `ParseDriftfile` re-decodes with `KnownFields(true)` —
-// so `lint` does not introduce it, it surfaces it earlier. Moving both onto the
-// served schema is the follow-up, and it is a real change rather than a tidy-up.
+// The cost of that is a dependency: with no schema ever fetched there is nothing
+// to validate against, and `lint` refuses rather than printing a ✓ it cannot
+// stand behind.
 package file
 
 import (
@@ -87,16 +86,24 @@ func getLintCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Refuse rather than report a pass we cannot stand behind. The platform
+			// owns the format and this machine has never fetched it, so the only
+			// honest answer is "I don't know" — and `lint` printing ✓ after
+			// validating nothing is precisely the false green a CI gate must never
+			// give (#CLI-STANDARDUSAGE-ERF1CV).
+			if !project.SchemaAvailable() {
+				return project.ErrNoSchema
+			}
 			m, perr := project.ParseDriftfile(path)
 			if perr != nil {
 				return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), perr)
 			}
 			envs := ""
-			if n := len(m.Environments); n > 0 {
+			if n := len(m.EnvironmentNames()); n > 0 {
 				envs = fmt.Sprintf(", %d environment(s)", n)
 			}
 			fmt.Printf("%s %s is valid (project %q%s)\n",
-				common.Hint("✓"), shortPath(path), m.Slice.Name, envs)
+				common.Hint("✓"), shortPath(path), m.Name(), envs)
 			return nil
 		},
 	}
