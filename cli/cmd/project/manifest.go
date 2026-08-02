@@ -108,6 +108,17 @@ type Manifest struct {
 	// baseDir is set after parsing; relative paths in the manifest
 	// resolve against it.
 	baseDir string `yaml:"-"`
+
+	// raw is the shorthand-expanded document, kept so an environment overlay
+	// can be merged as DATA rather than field by field.
+	//
+	// It exists because a struct cannot express the difference between "absent"
+	// and "present and zero", and an override needs that difference: the
+	// field-by-field mergers gated on `!= ""` / `!= 0`, so `deploy_history: 0`
+	// in an environments block was read as absent and discarded
+	// (#CLI-STANDARDUSAGE-T9914R). YAML has key presence; the typed Slice does
+	// not, so the merge happens before the decode.
+	raw Node `yaml:"-"`
 }
 
 // Hooks are shell commands the CLI runs locally around a deploy: pre_deploy
@@ -370,6 +381,13 @@ func ParseDriftfile(path string) (*Manifest, error) {
 
 	m.baseDir = filepath.Dir(path)
 
+	// Keep the shorthand-expanded document alongside the typed parse.
+	// SelectEnvironment merges the overlay against THIS, because presence is the
+	// signal an override needs and only the document has it.
+	if err := raw.Decode(&m.raw); err != nil {
+		return nil, fmt.Errorf("Driftfile: %w", err)
+	}
+
 	if err := resolveSecretEnvRefs(&m); err != nil {
 		return nil, err
 	}
@@ -483,13 +501,30 @@ func (m *Manifest) SelectEnvironment(env string, explicit bool) (string, error) 
 		}
 	}
 
-	overlay, ok := m.Environments[env]
-	if !ok {
+	// The typed map answers "is this a declared environment"; the merge below
+	// reads the DOCUMENT, because only the document distinguishes an absent key
+	// from one set to zero.
+	if _, ok := m.Environments[env]; !ok {
 		return "", fmt.Errorf("unknown environment %q — declared: %s", env, strings.Join(names, ", "))
 	}
 
 	base := m.Slice.Name
-	m.Slice = mergeSlice(m.Slice, overlay)
+	merged, err := m.mergeEnvironment(env)
+	if err != nil {
+		return "", err
+	}
+	m.Slice = merged
+
+	// The merge re-decodes from the RAW document, where a `$VAR` secret is still
+	// the placeholder — ParseDriftfile resolved those onto the slice this just
+	// replaced. Resolve again, which is not a double-resolve: the merged slice
+	// carries unresolved values, so this runs exactly once on them, the same as
+	// for a project that declares no environments. Without it a deploy ships the
+	// literal "$VAR" as the secret's value, which nothing downstream can detect.
+	if err := resolveSecretEnvRefs(m); err != nil {
+		return "", err
+	}
+
 	m.Slice.Name = deriveSliceName(base, env)
 	if !nameRe.MatchString(m.Slice.Name) {
 		return "", fmt.Errorf("derived slice name %q (project %q + environment %q) must be 1–32 lowercase letters, numbers, or hyphens — shorten the project or environment name", m.Slice.Name, base, env)
@@ -508,100 +543,50 @@ func deriveSliceName(base, env string) string {
 	return base + "-" + env
 }
 
-// mergeSlice deep-merges an environment overlay onto the base slice. Scalar
-// config knobs replace the base when set; resource lists/maps replace the base
-// only when the overlay provides a non-empty one (the spec's list-override =
-// REPLACE rule). The name is never merged — SelectEnvironment derives it.
-func mergeSlice(base, overlay Slice) Slice {
-	out := base
-	if overlay.LogRetention != "" {
-		out.LogRetention = overlay.LogRetention
+// mergeEnvironment resolves the slice for `env` by merging that environment's
+// overlay onto the base AS A DOCUMENT, then decoding the result.
+//
+// It replaces four hand-written mergers (mergeSlice/mergeAtomic/mergeBackbone/
+// mergeCanvas) that walked the typed Slice field by field. That shape had two
+// bugs, both live and both invisible (#CLI-STANDARDUSAGE-T9914R):
+//
+//   - **A value could not be overridden to zero or false.** Every clause gated on
+//     truthiness — `if overlay.DeployHistory != 0` — so `deploy_history: 0` in an
+//     environments block was indistinguishable from an absent key and was
+//     discarded. The user's Driftfile said one thing and their slice was another,
+//     with no error anywhere.
+//   - **A merge could silently forget.** Overrides were applied clause by clause,
+//     so a new Driftfile field was not overridable until someone remembered to add
+//     one. No compiler error, no failing test. mergeCanvas handled two fields;
+//     anything else under `canvas:` could not be overridden at all.
+//
+// Merging the document cannot have either bug: DeepMerge keys off PRESENCE, and it
+// does not know what a field is, so it cannot fail to know about one.
+//
+// The base slice is the document root — Slice is `yaml:",inline"`, so the
+// Driftfile's top level IS the slice — minus the three keys that are its siblings
+// rather than part of it.
+func (m *Manifest) mergeEnvironment(env string) (Slice, error) {
+	baseDoc := m.raw.Clone()
+	for _, sibling := range []string{"environments", "hooks", "tests"} {
+		delete(baseDoc, sibling)
 	}
-	if overlay.BackupRetention != "" {
-		out.BackupRetention = overlay.BackupRetention
-	}
-	out.Atomic = mergeAtomic(base.Atomic, overlay.Atomic)
-	out.Backbone = mergeBackbone(base.Backbone, overlay.Backbone)
-	out.Canvas = mergeCanvas(base.Canvas, overlay.Canvas)
-	if len(overlay.Domains) > 0 {
-		out.Domains = overlay.Domains
-	}
-	return out
-}
 
-func mergeAtomic(base, overlay AtomicSection) AtomicSection {
-	out := base
-	if overlay.FunctionMemory != "" {
-		out.FunctionMemory = overlay.FunctionMemory
-	}
-	if overlay.FunctionTimeout != "" {
-		out.FunctionTimeout = overlay.FunctionTimeout
-	}
-	if overlay.RateLimit != "" {
-		out.RateLimit = overlay.RateLimit
-	}
-	if overlay.DeployHistory != 0 {
-		out.DeployHistory = overlay.DeployHistory
-	}
-	if len(overlay.Functions) > 0 {
-		out.Functions = overlay.Functions
-	}
-	if overlay.Egress != nil {
-		out.Egress = overlay.Egress
-	}
-	return out
-}
+	merged := DeepMerge(baseDoc, m.raw.Sub("environments", env))
 
-func mergeBackbone(base, overlay BackboneSection) BackboneSection {
-	out := base
-	if overlay.BlobMaxSize != "" {
-		out.BlobMaxSize = overlay.BlobMaxSize
+	// Round-trip through YAML rather than reaching for reflection: the decode
+	// rules that produced m.Slice are the ones that must produce this too, and
+	// re-using them is what keeps a merged slice and an unmerged one the same
+	// kind of object.
+	encoded, err := yaml.Marshal(merged)
+	if err != nil {
+		return Slice{}, fmt.Errorf("environments.%s: %w", env, err)
 	}
-	if overlay.SecretMaxSize != "" {
-		out.SecretMaxSize = overlay.SecretMaxSize
+	var out Slice
+	if err := yaml.Unmarshal(encoded, &out); err != nil {
+		return Slice{}, fmt.Errorf("environments.%s: %w", env, err)
 	}
-	if overlay.BlobMaxCount != 0 {
-		out.BlobMaxCount = overlay.BlobMaxCount
-	}
-	if overlay.QueueMaxDepth != 0 {
-		out.QueueMaxDepth = overlay.QueueMaxDepth
-	}
-	if overlay.Locks != 0 {
-		out.Locks = overlay.Locks
-	}
-	if overlay.RealtimeConnections != 0 {
-		out.RealtimeConnections = overlay.RealtimeConnections
-	}
-	if len(overlay.NoSQL) > 0 {
-		out.NoSQL = overlay.NoSQL
-	}
-	if len(overlay.SQL) > 0 {
-		out.SQL = overlay.SQL
-	}
-	if len(overlay.Blobs) > 0 {
-		out.Blobs = overlay.Blobs
-	}
-	if len(overlay.Queues) > 0 {
-		out.Queues = overlay.Queues
-	}
-	if len(overlay.Cache) > 0 {
-		out.Cache = overlay.Cache
-	}
-	if len(overlay.Secrets) > 0 {
-		out.Secrets = overlay.Secrets
-	}
-	return out
-}
-
-func mergeCanvas(base, overlay CanvasSection) CanvasSection {
-	out := base
-	if overlay.CanvasSize != "" {
-		out.CanvasSize = overlay.CanvasSize
-	}
-	if len(overlay.Sites) > 0 {
-		out.Sites = overlay.Sites
-	}
-	return out
+	return out, nil
 }
 
 // sortedKeys returns the map's keys in deterministic order, for stable

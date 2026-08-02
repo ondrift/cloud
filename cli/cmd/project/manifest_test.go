@@ -648,3 +648,128 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// ─── Environment overrides: presence, not truthiness ────────────────────────
+
+// An environment override must be able to set a value to ZERO or FALSE.
+//
+// The struct-based mergers gated every field on truthiness — `if overlay.X != ""`
+// / `!= 0` — so `deploy_history: 0` in an environments block was read as "absent"
+// and silently discarded. A user asking staging to keep no rollback history got
+// the base value and no error, which is the worst shape: the Driftfile says one
+// thing and the slice is another (#CLI-STANDARDUSAGE-T9914R).
+//
+// YAML distinguishes "absent" from "present and zero"; a struct does not. The
+// overlay is merged as a DOCUMENT for exactly this reason.
+func TestSelectEnvironment_OverrideToZeroIsHonoured(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+name: hello
+canvas: ./canvas
+atomic:
+  function_memory: 128MB
+  deploy_history: 5
+environments:
+  prod: {}
+  staging:
+    atomic:
+      deploy_history: 0
+`)
+	mustMkdir(t, filepath.Join(tmp, "canvas"))
+
+	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SelectEnvironment("staging", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := m.Slice.Atomic.DeployHistory; got != 0 {
+		t.Errorf("deploy_history = %d, want 0 — the override was discarded because "+
+			"the merge read 0 as 'absent', so the Driftfile and the slice disagree "+
+			"with no error anywhere", got)
+	}
+	// The control: a sibling the overlay did NOT mention must survive. Without
+	// this, a merge that simply dropped the base would pass the assertion above.
+	if got := m.Slice.Atomic.FunctionMemory; got != "128MB" {
+		t.Errorf("function_memory = %q, want 128MB — the overlay replaced the whole "+
+			"atomic block instead of merging into it", got)
+	}
+}
+
+// The same defect in its other form: a field the mergers never learned about is
+// silently not overridable. Overrides were applied field by field, so adding a
+// Driftfile field without adding a merge clause left it inheriting the base
+// forever — no compiler error and no failing test, which is why this asserts a
+// field rather than trusting the four merge functions to be complete.
+//
+// mergeCanvas handled exactly two fields, so anything else in `canvas:` was not
+// overridable at all.
+func TestSelectEnvironment_OverridesEveryDeclaredField(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+name: hello
+canvas: ./canvas
+log_retention: 24h
+environments:
+  prod: {}
+  staging:
+    log_retention: 1h
+`)
+	mustMkdir(t, filepath.Join(tmp, "canvas"))
+
+	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SelectEnvironment("staging", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := m.Slice.LogRetention; got != "1h" {
+		t.Errorf("log_retention = %q, want 1h", got)
+	}
+}
+
+// A `$ENVREF` secret must still be resolved after an environment merge.
+//
+// ParseDriftfile resolves `$VAR` secrets onto the typed slice; the environment
+// merge re-decodes that slice from the raw document, where the value is still
+// `$VAR`. Without re-resolving, selecting an environment would silently revert
+// every envref and deploy the literal string "$VAR" as the secret's value — a
+// credential that is wrong in a way nothing downstream can detect.
+func TestSelectEnvironment_SecretEnvRefsSurviveTheMerge(t *testing.T) {
+	t.Setenv("DRIFT_TEST_SECRET_VALUE", "s3cr3t")
+
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+name: hello
+canvas: ./canvas
+backbone:
+  secrets:
+    API_TOKEN: $DRIFT_TEST_SECRET_VALUE
+environments:
+  prod: {}
+  staging:
+    log_retention: 1h
+`)
+	mustMkdir(t, filepath.Join(tmp, "canvas"))
+
+	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Slice.Backbone.Secrets["API_TOKEN"]; got != "s3cr3t" {
+		t.Fatalf("parse did not resolve the envref: %q", got)
+	}
+
+	if _, err := m.SelectEnvironment("staging", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Slice.Backbone.Secrets["API_TOKEN"]; got != "s3cr3t" {
+		t.Errorf("after the environment merge API_TOKEN = %q, want s3cr3t — the "+
+			"merge re-decoded from the raw document and reverted the envref, so the "+
+			"deploy would ship the literal placeholder as the secret", got)
+	}
+}
