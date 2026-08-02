@@ -156,35 +156,33 @@ canvas: ./canvas
 	}
 }
 
-// TestParseDriftfile_SQLShorthandString verifies the bare-string SQL
-// shorthand parses (regression: SQLEntry used to reject `sql: [ledger]`
-// with "cannot unmarshal !!str into project.SQLEntry"). It mirrors the
-// nosql short form — a bare string is a database with no schema/seed,
-// created lazily on first use.
-// TestParseDriftfile_SQLShorthandString checks the SQLEntry.UnmarshalYAML
-// shape acceptance directly (bare string vs. long form) rather than through
-// a full ParseDriftfile round trip: a bare-string entry can never carry a
-// `size`, and size is now mandatory, so a full Driftfile using the bare
-// form would fail validation regardless of whether the shorthand itself
-// parsed correctly. Decoding directly isolates the thing this test actually
-// verifies — the unmarshal shape — from that unrelated validation rule.
-func TestParseDriftfile_SQLShorthandString(t *testing.T) {
-	var sql []SQLEntry
-	if err := yaml.Unmarshal([]byte(`
-- ledger
-- name: audit
-  schema: ./sql/audit.sql
-`), &sql); err != nil {
-		t.Fatalf("unmarshal failed: %v", err)
-	}
-	if len(sql) != 2 {
-		t.Fatalf("backbone.sql count = %d, want 2", len(sql))
-	}
-	if sql[0].Name != "ledger" || sql[0].Schema != "" {
-		t.Errorf("sql[0] = %+v, want bare {Name: ledger}", sql[0])
-	}
-	if sql[1].Name != "audit" || sql[1].Schema != "./sql/audit.sql" {
-		t.Errorf("sql[1] = %+v, want {Name: audit, Schema: ./sql/audit.sql}", sql[1])
+// The bare-string `sql: [ledger]` / `nosql: [widgets]` / `blobs: [assets]` forms
+// are NOT legal, and the CLI no longer pretends otherwise.
+//
+// This test used to assert the opposite — that SQLEntry.UnmarshalYAML accepted a
+// bare string — and its own comment conceded the contradiction: "a bare-string
+// entry can never carry a `size`, and size is now mandatory, so a full Driftfile
+// using the bare form would fail validation regardless". It decoded the type
+// directly to dodge the validation that would have caught it.
+//
+// That is what two definitions of a format look like from the inside: the schema
+// requires `name` and `size` because size both prices and enforces the quota, the
+// CLI accepted a form that can carry neither, and a test was written around the
+// gap rather than closing it (#CLI-STANDARDUSAGE-ERF1CV).
+func TestParseDriftfile_BareStringResourceEntriesAreRejected(t *testing.T) {
+	for _, section := range []string{"sql", "nosql", "blobs"} {
+		t.Run(section, func(t *testing.T) {
+			tmp := t.TempDir()
+			mustWrite(t, filepath.Join(tmp, "Driftfile"),
+				"name: hello\ncanvas: ./canvas\nbackbone:\n  "+section+": [thing]\n")
+			mustMkdir(t, filepath.Join(tmp, "canvas"))
+
+			_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+			if err == nil {
+				t.Fatalf("backbone.%s accepted a bare string, which the platform rejects "+
+					"because size is required and a bare string cannot carry one", section)
+			}
+		})
 	}
 }
 

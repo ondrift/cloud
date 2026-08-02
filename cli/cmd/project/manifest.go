@@ -33,7 +33,6 @@ package project
 //     to the slice envelope's defaults.
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,39 +43,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ─── Shared validators ──────────────────────────────────────────────
-
-// nameRe matches the canonical Drift identifier shape: 1–32 lowercase
-// letters, numbers, or hyphens; cannot start or end with a hyphen.
-// Used for slice names, function names, collection names, queue names.
-var nameRe = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$`)
-
-// sizeRe matches `<integer>(KB|MB|GB)` — used by canvas_size,
-// nosql[].size, sql[].size, blobs[].size, blob_max_size, function_memory.
-var sizeRe = regexp.MustCompile(`^[0-9]+(KB|MB|GB)$`)
-
-// memoryRe is sizeRe minus KB — function memory caps don't go below
-// MB granularity.
-var memoryRe = regexp.MustCompile(`^[0-9]+(MB|GB)$`)
-
-// durationRe matches `<integer>(s|m|h|d)` — used by log_retention,
-// backup_retention.
-var durationRe = regexp.MustCompile(`^[0-9]+[smhd]$`)
-
-// timeoutRe is durationRe minus `d` — function timeouts don't run
-// for days.
-var timeoutRe = regexp.MustCompile(`^[0-9]+[smh]$`)
-
-// rateRe matches `<integer>/(s|min|h)` — used by rate_limit.
-var rateRe = regexp.MustCompile(`^[0-9]+/(s|min|h)$`)
-
-// cronFiveFieldRe is a permissive 5-field cron check. The parser only
-// validates that there are exactly five whitespace-separated tokens;
-// the actual cron grammar (`*`, `*/n`, `1-5`, `1,3,5`) lives in the
-// scheduler that consumes it. This catches obvious mistakes (six
-// fields, empty string) without locking the spec to a specific cron
-// dialect.
-var cronFiveFieldRe = regexp.MustCompile(`^\S+\s+\S+\s+\S+\s+\S+\s+\S+$`)
+// The Driftfile's rules are NOT here. The platform defines the format and serves
+// the schema; schema.go validates against it, and NamePattern() reads the one rule
+// the CLI needs for a value the document never contains (the derived slice name).
+//
+// A block of regexes lived here — name, size, memory, duration, timeout, rate,
+// cron — restating rules the schema already carries as `pattern` keywords. Two
+// definitions of one format do not stay in step: this binary accepted
+// `nosql: [widgets]` while the platform rejected it, because the local copy
+// answered first (#CLI-STANDARDUSAGE-ERF1CV).
 
 // ─── The canonical (post-expansion) shape ────────────────────────────
 
@@ -341,32 +316,41 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	}
 	data = expanded
 
-	// We unmarshal twice: once into the typed Manifest for downstream
-	// use, and once into a generic node tree so we can detect short
-	// forms before the strict typed decode would reject them.
 	var raw yaml.Node
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("invalid YAML: %w", err)
 	}
 
-	// Walk the raw node tree and rewrite the two short forms into
-	// their canonical maps before the typed decode.
+	// Rewrite the documented short forms into their canonical maps. This is a
+	// TRANSFORMATION, not a rule: it changes shape and never decides legality,
+	// which is why it can run before the only thing that does.
 	if err := expandShorthands(&raw); err != nil {
 		return nil, fmt.Errorf("Driftfile: %w", err)
 	}
 
 	var m Manifest
-	if err := raw.Decode(&m); err != nil {
+	m.baseDir = filepath.Dir(path)
+
+	// The document, which is what the platform defines and therefore what gets
+	// validated.
+	if err := raw.Decode(&m.raw); err != nil {
 		return nil, fmt.Errorf("Driftfile: %w", err)
 	}
 
-	m.baseDir = filepath.Dir(path)
+	// ONE validation, and it runs FIRST (#CLI-STANDARDUSAGE-ERF1CV).
+	//
+	// Ordering is the whole point. The typed decode below still refuses shapes of
+	// its own — a bare string where it wants a map — so leaving it in front meant
+	// the CLI got first refusal and the schema never spoke. That is how
+	// `nosql: [widgets]` came to be accepted by this binary and rejected by the
+	// platform: two rule sets, and the local one answered first.
+	if errs := validateAgainstSchema(m.raw); len(errs) > 0 {
+		return nil, errs
+	}
 
-	// Keep the shorthand-expanded document alongside the typed read model.
-	// SelectEnvironment merges the overlay against THIS, because presence is the
-	// signal an override needs and only the document has it — and the schema
-	// validates THIS, because the document is what the platform defines.
-	if err := raw.Decode(&m.raw); err != nil {
+	// Everything past here is a PROJECTION of an already-valid document, never a
+	// second opinion on whether it is valid.
+	if err := raw.Decode(&m); err != nil {
 		return nil, fmt.Errorf("Driftfile: %w", err)
 	}
 
@@ -384,12 +368,12 @@ func ParseDriftfile(path string) (*Manifest, error) {
 		return nil, errs
 	}
 
+	// $ENVREF resolution is not validation — it substitutes a value from the
+	// deployer's environment, and reports the ones that are not set because a
+	// secret silently becoming the literal "$VAR" is a credential that is wrong
+	// in a way nothing downstream can detect.
 	if err := resolveSecretEnvRefs(&m); err != nil {
 		return nil, err
-	}
-
-	if errs := validate(&m); len(errs) > 0 {
-		return nil, errs
 	}
 	return &m, nil
 }
@@ -538,8 +522,19 @@ func (m *Manifest) SelectEnvironment(env string, explicit bool) (string, error) 
 	}
 
 	m.Slice.Name = deriveSliceName(base, env)
-	if !nameRe.MatchString(m.Slice.Name) {
-		return "", fmt.Errorf("derived slice name %q (project %q + environment %q) must be 1–32 lowercase letters, numbers, or hyphens — shorten the project or environment name", m.Slice.Name, base, env)
+
+	// The one name the schema cannot see: this is DERIVED (`<project>-<env>`) and
+	// never appears in the Driftfile, so no amount of document validation catches
+	// a long project name plus `-staging` going over the limit.
+	//
+	// The rule still comes from the platform — NamePattern() reads it out of the
+	// fetched schema. Restating it here as a literal regex is what `nameRe` was,
+	// and a second copy of a platform rule is exactly what let `nosql: [widgets]`
+	// be legal in this binary and illegal on the server. No schema, no check: the
+	// server is the final enforcer, and a guess is the thing being removed.
+	if re := NamePattern(); re != nil && !re.MatchString(m.Slice.Name) {
+		return "", fmt.Errorf("derived slice name %q (project %q + environment %q) is not a "+
+			"valid slice name — shorten the project or environment name", m.Slice.Name, base, env)
 	}
 	return env, nil
 }
@@ -766,58 +761,6 @@ func (a *AtomicEntry) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// UnmarshalYAML accepts either a bare-string (collection name) or a
-// map (the long form with name/seed).
-func (n *NoSQLEntry) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind == yaml.ScalarNode {
-		n.Name = node.Value
-		return nil
-	}
-	type raw NoSQLEntry
-	var r raw
-	if err := node.Decode(&r); err != nil {
-		return err
-	}
-	*n = NoSQLEntry(r)
-	return nil
-}
-
-// UnmarshalYAML accepts either a bare-string (database name → empty
-// database) or a map (the long form with name/schema/seed). This
-// mirrors nosql so `sql: [ledger]` and the long form both work.
-func (s *SQLEntry) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind == yaml.ScalarNode {
-		s.Name = node.Value
-		return nil
-	}
-	type raw SQLEntry
-	var r raw
-	if err := node.Decode(&r); err != nil {
-		return err
-	}
-	*s = SQLEntry(r)
-	return nil
-}
-
-// UnmarshalYAML accepts either a bare-string (bucket name → no declared
-// size, which fails validation with a clear "missing a size" error) or a
-// map (the long form with name/size). Mirrors NoSQLEntry/SQLEntry so
-// `blobs: [uploads]` parses the same way, even though a bare bucket can
-// never pass validation now that size is mandatory.
-func (bk *BlobEntry) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind == yaml.ScalarNode {
-		bk.Name = node.Value
-		return nil
-	}
-	type raw BlobEntry
-	var r raw
-	if err := node.Decode(&r); err != nil {
-		return err
-	}
-	*bk = BlobEntry(r)
-	return nil
-}
-
 // UnmarshalYAML accepts either a bare-string (queue name) or a map (the long
 // form, whose only key today is `name`). Mirrors NoSQLEntry/SQLEntry/BlobEntry
 // so every resource list in `backbone:` now takes the same two shapes.
@@ -948,274 +891,6 @@ func resolveSecretEnvRefs(m *Manifest) error {
 		return ParseErrors(missing)
 	}
 	return nil
-}
-
-// ─── Validation ─────────────────────────────────────────────────────
-
-// validate checks every field in the manifest against the spec's
-// binding rules. Returns a slice of error messages for one-shot
-// reporting.
-func validate(m *Manifest) ParseErrors {
-	var errs ParseErrors
-
-	// slice.name
-	if strings.TrimSpace(m.Slice.Name) == "" {
-		errs = append(errs, "name must be a non-empty string")
-	} else if !nameRe.MatchString(m.Slice.Name) {
-		errs = append(errs, fmt.Sprintf("name %q must be 1–32 lowercase letters, numbers, or hyphens (no leading/trailing hyphen)", m.Slice.Name))
-	}
-
-	// slice-level operational durations
-	if v := m.Slice.LogRetention; v != "" && !durationRe.MatchString(v) {
-		errs = append(errs, fmt.Sprintf("log_retention %q must be an integer ending in s, m, h, or d", v))
-	}
-	if v := m.Slice.BackupRetention; v != "" && !durationRe.MatchString(v) {
-		errs = append(errs, fmt.Sprintf("backup_retention %q must be an integer ending in s, m, h, or d", v))
-	}
-
-	// atomic envelope
-	a := m.Slice.Atomic
-	if v := a.FunctionMemory; v != "" && !memoryRe.MatchString(v) {
-		errs = append(errs, fmt.Sprintf("atomic.function_memory %q must be an integer ending in MB or GB", v))
-	}
-	if v := a.FunctionTimeout; v != "" && !timeoutRe.MatchString(v) {
-		errs = append(errs, fmt.Sprintf("atomic.function_timeout %q must be an integer ending in s, m, or h", v))
-	}
-	if v := a.RateLimit; v != "" && !rateRe.MatchString(v) {
-		errs = append(errs, fmt.Sprintf("atomic.rate_limit %q must be an integer per s, min, or h (e.g. 1000/min)", v))
-	}
-
-	// atomic functions
-	for i, fn := range a.Functions {
-		if !nameRe.MatchString(fn.Name) {
-			errs = append(errs, fmt.Sprintf("atomic.functions[%d]: name %q is invalid", i, fn.Name))
-			continue
-		}
-		dir := fn.Dir
-		if dir == "" {
-			dir = filepath.Join("atomic", fn.Name)
-		}
-		dir = resolveBaseDir(m, dir)
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			errs = append(errs, fmt.Sprintf("atomic.functions[%d]: function %q not found at %s", i, fn.Name, dir))
-		}
-		if v := fn.Cron; v != "" && !cronFiveFieldRe.MatchString(v) {
-			errs = append(errs, fmt.Sprintf("atomic.functions[%d]: function %q cron %q is not a valid 5-field cron expression", i, fn.Name, v))
-		}
-	}
-
-	// backbone envelope
-	b := m.Slice.Backbone
-	if v := b.BlobMaxSize; v != "" && !sizeRe.MatchString(v) {
-		errs = append(errs, fmt.Sprintf("backbone.blob_max_size %q must be an integer ending in KB, MB, or GB", v))
-	}
-	if v := b.SecretMaxSize; v != "" && !sizeRe.MatchString(v) {
-		errs = append(errs, fmt.Sprintf("backbone.secret_max_size %q must be an integer ending in KB, MB, or GB", v))
-	}
-	if b.Locks < 0 {
-		errs = append(errs, "backbone.locks must be >= 0")
-	}
-	if m.Slice.Atomic.DeployHistory < 0 {
-		errs = append(errs, "atomic.deploy_history must be >= 0")
-	}
-	if b.QueueMaxDepth < 0 {
-		errs = append(errs, fmt.Sprintf("backbone.queue_max_depth %d must be a positive integer", b.QueueMaxDepth))
-	}
-	if b.RealtimeConnections < 0 {
-		errs = append(errs, fmt.Sprintf("backbone.realtime_connections %d must be a positive integer", b.RealtimeConnections))
-	}
-
-	// nosql collections
-	for i, c := range b.NoSQL {
-		if !nameRe.MatchString(c.Name) {
-			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: collection name %q is invalid", i, c.Name))
-		}
-		// A declared collection with no size would price at 0 bytes (free)
-		// while the runtime quota check never engages either, so it could
-		// grow unbounded for free. Require the size up front instead of
-		// silently defaulting one: the deployer is the only one who knows
-		// whether "small" means 50MB or 50GB.
-		if c.Size == "" {
-			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q is missing a size — pick a real limit (e.g. 50MB), it prices and is enforced from that value", i, c.Name))
-		} else if !sizeRe.MatchString(c.Size) {
-			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q size %q must be an integer ending in KB, MB, or GB", i, c.Name, c.Size))
-		}
-		if c.TTL != "" && !durationRe.MatchString(c.TTL) {
-			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q ttl %q must be an integer ending in s, m, h, or d", i, c.Name, c.TTL))
-		}
-		if c.Seed != "" {
-			seedPath := resolveBaseDir(m, c.Seed)
-			if _, err := os.Stat(seedPath); err != nil {
-				errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q seed file not found at %s", i, c.Name, seedPath))
-				continue
-			}
-			if seedErrs := validateJSONLSeed(c.Name, seedPath); len(seedErrs) > 0 {
-				errs = append(errs, seedErrs...)
-			}
-		}
-	}
-
-	// sql databases
-	for i, d := range b.SQL {
-		if !nameRe.MatchString(d.Name) {
-			errs = append(errs, fmt.Sprintf("backbone.sql[%d]: database name %q is invalid", i, d.Name))
-		}
-		if d.Size == "" {
-			errs = append(errs, fmt.Sprintf("backbone.sql[%d]: %q is missing a size — pick a real limit (e.g. 50MB), it prices and is enforced from that value", i, d.Name))
-		} else if !sizeRe.MatchString(d.Size) {
-			errs = append(errs, fmt.Sprintf("backbone.sql[%d]: %q size %q must be an integer ending in KB, MB, or GB", i, d.Name, d.Size))
-		}
-	}
-
-	// blob buckets
-	for i, bk := range b.Blobs {
-		if !nameRe.MatchString(bk.Name) {
-			errs = append(errs, fmt.Sprintf("backbone.blobs[%d]: bucket name %q is invalid", i, bk.Name))
-		}
-		if bk.Size == "" {
-			errs = append(errs, fmt.Sprintf("backbone.blobs[%d]: %q is missing a size — pick a real limit (e.g. 100MB), it prices and is enforced from that value", i, bk.Name))
-		} else if !sizeRe.MatchString(bk.Size) {
-			errs = append(errs, fmt.Sprintf("backbone.blobs[%d]: %q size %q must be an integer ending in KB, MB, or GB", i, bk.Name, bk.Size))
-		}
-	}
-
-	// queues
-	for i, q := range b.Queues {
-		if !nameRe.MatchString(q.Name) {
-			errs = append(errs, fmt.Sprintf("backbone.queues[%d]: name %q is invalid", i, q.Name))
-		}
-	}
-
-	// cache
-	for k, e := range b.Cache {
-		if e.File == "" && e.Value == "" {
-			errs = append(errs, fmt.Sprintf("cache %q must have either a file path or an inline value", k))
-			continue
-		}
-		if e.File != "" {
-			fp := resolveBaseDir(m, e.File)
-			if _, err := os.Stat(fp); err != nil {
-				errs = append(errs, fmt.Sprintf("cache %q file not found at %s", k, fp))
-			}
-		}
-	}
-
-	// canvas envelope
-	if v := m.Slice.Canvas.CanvasSize; v != "" && !sizeRe.MatchString(v) {
-		errs = append(errs, fmt.Sprintf("canvas.canvas_size %q must be an integer ending in KB, MB, or GB", v))
-	}
-	for i, s := range m.Slice.Canvas.Sites {
-		dir := resolveBaseDir(m, s.Dir)
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			errs = append(errs, fmt.Sprintf("canvas.sites[%d]: directory not found at %s", i, dir))
-		}
-	}
-
-	// environments — per-env config overrides
-	for _, name := range sortedKeys(m.Environments) {
-		errs = append(errs, validateEnvOverride(name, m.Environments[name])...)
-	}
-
-	// hooks — local lifecycle commands
-	errs = append(errs, validateHooks(m.Hooks)...)
-	errs = append(errs, validateTests(m.Tests)...)
-
-	return errs
-}
-
-// validateEnvOverride checks one environment override block. Environment names
-// follow the identifier shape; the block may not set `name` (the slice name is
-// derived); and every scalar knob it sets must satisfy the same format its base
-// section requires. Resource-list overrides (functions/collections/sites) are
-// NOT re-checked for on-disk existence here — that surfaces when the merged
-// slice deploys, the same as the base resources.
-func validateEnvOverride(name string, ov Slice) []string {
-	var errs []string
-	if !nameRe.MatchString(name) {
-		errs = append(errs, fmt.Sprintf("environment name %q must be 1–32 lowercase letters, numbers, or hyphens (no leading/trailing hyphen)", name))
-	}
-	if strings.TrimSpace(ov.Name) != "" {
-		errs = append(errs, fmt.Sprintf("environments.%s must not set name — the slice name is derived from the project name and environment", name))
-	}
-	check := func(field, val string, re *regexp.Regexp, suffix string) {
-		if val != "" && !re.MatchString(val) {
-			errs = append(errs, fmt.Sprintf("environments.%s.%s %q must be %s", name, field, val, suffix))
-		}
-	}
-	check("log_retention", ov.LogRetention, durationRe, "an integer ending in s, m, h, or d")
-	check("backup_retention", ov.BackupRetention, durationRe, "an integer ending in s, m, h, or d")
-	check("atomic.function_memory", ov.Atomic.FunctionMemory, memoryRe, "an integer ending in MB or GB")
-	check("atomic.function_timeout", ov.Atomic.FunctionTimeout, timeoutRe, "an integer ending in s, m, or h")
-	check("atomic.rate_limit", ov.Atomic.RateLimit, rateRe, "an integer per s, min, or h (e.g. 1000/min)")
-	check("backbone.blob_max_size", ov.Backbone.BlobMaxSize, sizeRe, "an integer ending in KB, MB, or GB")
-	check("backbone.secret_max_size", ov.Backbone.SecretMaxSize, sizeRe, "an integer ending in KB, MB, or GB")
-	check("canvas.canvas_size", ov.Canvas.CanvasSize, sizeRe, "an integer ending in KB, MB, or GB")
-	return errs
-}
-
-// validateHooks rejects empty/whitespace-only hook commands. The commands
-// themselves are arbitrary shell — their correctness is the user's, surfaced
-// when they run.
-func validateHooks(h Hooks) []string {
-	var errs []string
-	for i, c := range h.PreDeploy {
-		if strings.TrimSpace(c) == "" {
-			errs = append(errs, fmt.Sprintf("hooks.pre_deploy[%d] is empty", i))
-		}
-	}
-	for i, c := range h.PostDeploy {
-		if strings.TrimSpace(c) == "" {
-			errs = append(errs, fmt.Sprintf("hooks.post_deploy[%d] is empty", i))
-		}
-	}
-	return errs
-}
-
-// validateTests rejects empty/whitespace-only test commands — same posture
-// as validateHooks.
-func validateTests(t Tests) []string {
-	var errs []string
-	for i, c := range t.E2E {
-		if strings.TrimSpace(c) == "" {
-			errs = append(errs, fmt.Sprintf("tests.e2e[%d] is empty", i))
-		}
-	}
-	return errs
-}
-
-// validateJSONLSeed checks every line of a JSONL seed file for
-// JSON-validity and a non-empty `_id` field.
-func validateJSONLSeed(collection, path string) []string {
-	data, err := os.ReadFile(path) // #nosec G304 — CLI reads the user's manifest by design
-	if err != nil {
-		return []string{fmt.Sprintf("nosql %q seed: read %s: %v", collection, path, err)}
-	}
-
-	var errs []string
-	lines := strings.Split(string(data), "\n")
-	for i, ln := range lines {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
-		var doc map[string]any
-		if err := json.Unmarshal([]byte(ln), &doc); err != nil {
-			errs = append(errs, fmt.Sprintf("nosql %q seed: %s:%d: invalid JSON: %v", collection, path, i+1, err))
-			continue
-		}
-		id, ok := doc["_id"]
-		if !ok {
-			errs = append(errs, fmt.Sprintf("nosql %q seed: %s:%d: missing _id", collection, path, i+1))
-			continue
-		}
-		// Treat empty string and nil as "missing".
-		if s, isStr := id.(string); isStr && s == "" {
-			errs = append(errs, fmt.Sprintf("nosql %q seed: %s:%d: empty _id", collection, path, i+1))
-		} else if id == nil {
-			errs = append(errs, fmt.Sprintf("nosql %q seed: %s:%d: empty _id", collection, path, i+1))
-		}
-	}
-	return errs
 }
 
 // resolveBaseDir resolves a possibly-relative path against the

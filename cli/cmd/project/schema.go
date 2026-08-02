@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -211,4 +212,40 @@ func instanceLocation(msg string) string {
 		return ""
 	}
 	return rest[:j]
+}
+
+// NamePattern is the platform's rule for a project/slice identifier, read out of
+// the fetched schema rather than restated here.
+//
+// The CLI needs it for one value the schema cannot see: the slice name it DERIVES
+// (`<project>-<environment>`) never appears in the Driftfile, so no amount of
+// document validation can catch `a-very-long-project-name` + `-staging` going over
+// the limit. Checking it locally is legitimate; hardcoding the rule to do so is
+// not — that was `nameRe`, a second copy of a rule the platform owns, of exactly
+// the kind that let `nosql: [widgets]` be legal here and illegal there.
+//
+// So the rule is fetched with everything else. Returns nil when the schema has no
+// pattern for `name` or is not on this machine, and callers then skip the check
+// rather than inventing one: the server is the final enforcer either way, and a
+// guess is what this whole change removes.
+func NamePattern() *regexp.Regexp {
+	raw, err := common.LocalDriftfileSchema()
+	if err != nil {
+		return nil
+	}
+	var doc struct {
+		Properties struct {
+			Name struct {
+				Pattern string `json:"pattern"`
+			} `json:"name"`
+		} `json:"properties"`
+	}
+	if jerr := json.Unmarshal(raw, &doc); jerr != nil || doc.Properties.Name.Pattern == "" {
+		return nil
+	}
+	re, cerr := regexp.Compile(doc.Properties.Name.Pattern)
+	if cerr != nil {
+		return nil
+	}
+	return re
 }
