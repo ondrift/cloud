@@ -64,6 +64,59 @@ jobs:
               exit 1 ;;
           esac
 
+      # A major must name the languages it actually breaks (conventions.md,
+      # SDK-GFT5A6). Six languages share ONE version, so the major number tracks
+      # the most-churning language and the other five inherit a stability signal
+      # that is false for them. v4.0.0 broke Ruby and Node only; Go, Python, PHP
+      # and Rust were bumped alongside it with nothing changed, and their users
+      # read "major, my code may break" about a Ruby bug fix. That is worse than
+      # over-bumping — it is indistinguishable from a real break.
+      #
+      # The PR body is UNTRUSTED input and is passed through env, never
+      # interpolated into the script. `${{ }}` inlined here would let a PR title
+      # or body containing shell metacharacters execute in this runner.
+      - name: A breaking change must name the languages it breaks
+        if: startsWith(github.event.pull_request.head.ref, 'breaking/')
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          valid="go python node ruby php rust"
+
+          # One line, anywhere in the body: "Breaking: ruby, node"
+          line=$(printf '%s\n' "$PR_BODY" | grep -im1 '^[[:space:]]*Breaking:' || true)
+          if [ -z "$line" ]; then
+            echo "✗ this is a breaking/ branch, so the PR body must carry a Breaking: line."
+            echo ""
+            echo "  Breaking: ruby, node"
+            echo ""
+            echo "  One line, lowercased, comma-separated, from: $valid"
+            echo "  A reader on a language you do NOT list knows the major does not affect them."
+            echo "  That is the whole point — see conventions.md, 'Six languages, ONE version'."
+            exit 1
+          fi
+
+          langs=$(printf '%s' "$line" | sed 's/^[[:space:]]*[Bb]reaking:[[:space:]]*//' | tr ',' ' ' | tr -s ' ')
+          if [ -z "$(printf '%s' "$langs" | tr -d '[:space:]')" ]; then
+            echo "✗ '$line' names no languages. A breaking change breaks something specific."
+            exit 1
+          fi
+
+          bad=""
+          for l in $langs; do
+            case " $valid " in
+              *" $l "*) ;;
+              *) bad="$bad $l" ;;
+            esac
+          done
+          if [ -n "$bad" ]; then
+            echo "✗ unrecognised language(s):$bad"
+            echo "  valid: $valid  (lowercase)"
+            echo "  A typo'd language silently narrows the warning to nobody."
+            exit 1
+          fi
+
+          echo "✓ breaking change declared for:$(printf '%s' " $langs")"
+
   cli:
     name: CLI — build, vet, test
     needs: changes
