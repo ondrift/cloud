@@ -40,8 +40,7 @@ func Redeploy() *cobra.Command {
 			_, err = common.CheckResponse(resp, "redeploy function")
 			s.Stop()
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 
 			fmt.Printf("Function %s redeployed from last known artifact.\n", common.Highlight(function))

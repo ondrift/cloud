@@ -74,12 +74,25 @@ func DoLoginErr(username, password string) error {
 	return nil
 }
 
-func DoLogin(username, password string) {
+// DoLogin logs in and reports the outcome, returning the error so the command
+// EXITS NON-ZERO on failure.
+//
+// It used to print the error and return nothing, on a cobra `Run:` (which has no
+// error channel at all), so a rejected login printed "Couldn't log in: invalid
+// username or password." and exited 0 (#CLI-STANDARDUSAGE-3F5TDV). Every script
+// doing `drift account login ... && drift atomic deploy ...` therefore deployed
+// after a failed login, and `set -e` could not help, because nothing failed as far
+// as the shell could see.
+//
+// Nothing is printed here on failure: main() prints the returned error to stderr
+// and exits 1 (SilenceErrors is set), so printing it too would emit the message
+// twice, once per stream.
+func DoLogin(username, password string) error {
 	if err := DoLoginErr(username, password); err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 	fmt.Printf("Logged in as %s.\n", username)
+	return nil
 }
 
 func GetLoginCmd() *cobra.Command {
@@ -92,7 +105,7 @@ func GetLoginCmd() *cobra.Command {
 		Example: `  drift account login
   drift account login --username alice
   echo $PASS | drift account login -u alice --password-stdin`,
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if username == "" {
 				username = common.PromptForInput("Username")
 			}
@@ -112,7 +125,7 @@ func GetLoginCmd() *cobra.Command {
 				password = common.PromptForInputHidden("Password")
 			}
 
-			DoLogin(username, password)
+			return DoLogin(username, password)
 		},
 	}
 

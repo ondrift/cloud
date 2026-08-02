@@ -28,8 +28,7 @@ func statusCmd() *cobra.Command {
 
 			body, err := common.CheckResponse(resp, "check deed status")
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 
 			var status struct {

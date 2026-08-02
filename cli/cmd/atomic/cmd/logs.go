@@ -134,8 +134,7 @@ func logsPurgeCmd() *cobra.Command {
 
 			_, err = common.CheckResponse(resp, "purge logs")
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 
 			fmt.Printf("Logs purged for %s.\n", common.Highlight(function))

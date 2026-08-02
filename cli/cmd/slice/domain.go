@@ -72,8 +72,7 @@ first request, exactly like every other custom domain.`,
 			defer resp.Body.Close()
 			respBody, err := common.CheckResponse(resp, "add domain")
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 			var d domainResponse
 			_ = json.Unmarshal(respBody, &d)
@@ -106,8 +105,7 @@ func getDomainVerifyCmd() *cobra.Command {
 			defer resp.Body.Close()
 			respBody, err := common.CheckResponse(resp, "verify domain")
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 			var d domainResponse
 			_ = json.Unmarshal(respBody, &d)
@@ -145,8 +143,7 @@ func getDomainListCmd() *cobra.Command {
 			defer resp.Body.Close()
 			respBody, err := common.CheckResponse(resp, "list domains")
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 			var domains []domainResponse
 			_ = json.Unmarshal(respBody, &domains)

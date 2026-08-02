@@ -35,8 +35,7 @@ func History() *cobra.Command {
 
 			body, err := common.CheckResponse(resp, "fetch deployment history")
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 
 			var records []struct {

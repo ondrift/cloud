@@ -81,8 +81,7 @@ func getSnapshotCreateCmd() *cobra.Command {
 
 			respBody, err := common.CheckResponse(resp, "create snapshot")
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 
 			var result struct {
@@ -126,8 +125,10 @@ func getSnapshotCreateCmd() *cobra.Command {
 						return nil
 					case "failed":
 						spinner.Stop()
-						fmt.Printf("Snapshot failed: %s\n", snap.Error)
-						return nil
+						// The platform said the snapshot failed, so this command failed
+						// (#CLI-STANDARDUSAGE-3F5TDV). Printing and returning nil exited 0
+						// and told any script the backup had been taken.
+						return fmt.Errorf("snapshot failed: %s", snap.Error)
 					default:
 						spinner.Update("Creating snapshot...")
 					}
@@ -159,8 +160,7 @@ func getSnapshotListCmd() *cobra.Command {
 
 			body, err := common.CheckResponse(resp, "list snapshots")
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 
 			var snapshots []snapshotResponse
@@ -229,8 +229,9 @@ func getSnapshotDownloadCmd() *cobra.Command {
 			if resp.StatusCode != http.StatusOK {
 				spinner.Stop()
 				body, _ := io.ReadAll(resp.Body)
-				fmt.Printf("Download failed: %s\n", strings.TrimSpace(string(body)))
-				return nil
+				// #CLI-STANDARDUSAGE-3F5TDV — was print + return nil, so a bad id or a
+				// missing snapshot exited 0 and left no file behind.
+				return fmt.Errorf("download failed: %s", strings.TrimSpace(string(body)))
 			}
 
 			// Determine output filename.
@@ -302,12 +303,13 @@ func getSnapshotDeleteCmd() *cobra.Command {
 			}
 			defer resp.Body.Close()
 
-			if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
-				fmt.Printf("%s Snapshot %s deleted.\n", common.Check(), id)
-			} else {
+			if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 				body, _ := io.ReadAll(resp.Body)
-				fmt.Printf("Delete failed: %s\n", strings.TrimSpace(string(body)))
+				// #CLI-STANDARDUSAGE-3F5TDV — a snapshot that was NOT deleted must not
+				// report success; a retention script would move on believing it had.
+				return fmt.Errorf("delete failed: %s", strings.TrimSpace(string(body)))
 			}
+			fmt.Printf("%s Snapshot %s deleted.\n", common.Check(), id)
 			return nil
 		},
 	}
@@ -345,8 +347,7 @@ func getSnapshotRestoreCmd() *cobra.Command {
 			respBody, err := common.CheckResponse(resp, "restore snapshot")
 			if err != nil {
 				spinner.Stop()
-				fmt.Println(err)
-				return nil
+				return err
 			}
 			spinner.Stop()
 

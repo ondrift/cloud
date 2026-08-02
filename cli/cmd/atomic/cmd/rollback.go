@@ -49,8 +49,7 @@ func Rollback() *cobra.Command {
 			body, err := common.CheckResponse(resp, "roll back function")
 			s.Stop()
 			if err != nil {
-				fmt.Println(err)
-				return nil
+				return err
 			}
 
 			var result struct {
