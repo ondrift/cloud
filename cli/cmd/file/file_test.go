@@ -9,6 +9,22 @@ import (
 	"github.com/ondrift/cloud/cli/cmd/project"
 )
 
+// The scaffold tests below round-trip through the real parser, and the parser's
+// only authority is the schema the platform serves. With none cached, that parse
+// checks nothing and the round trip proves nothing — this package went green on a
+// fresh CI runner for exactly that reason while `cmd/project` failed loudly.
+//
+// Same guard as `cmd/project`, for the same reason: make the absence loud rather
+// than let it read as a pass (#CLI-STANDARDUSAGE-ERF1CV).
+func TestSchemaMustBePresentOrTheScaffoldTestsProveNothing(t *testing.T) {
+	if !project.SchemaAvailable() {
+		t.Fatal("no Driftfile schema on this machine, so the scaffold round trips below " +
+			"would pass without validating anything.\n" +
+			"Fetch it once and it stays: `drift slice list` while online, or\n" +
+			"  mkdir -p ~/.drift && curl -fsS https://api.ondrift.eu/driftfile/schema -o ~/.drift/driftfile.schema.json")
+	}
+}
+
 // ─── new ────────────────────────────────────────────────────────────────────
 
 // The scaffold's whole claim is that it produces a file that DEPLOYS, not one

@@ -137,6 +137,25 @@ jobs:
       - name: vet
         working-directory: cli
         run: go vet ./...
+      # The CLI holds no copy of the Driftfile format — the platform serves it and
+      # the CLI caches what it fetched (#CLI-STANDARDUSAGE-ERF1CV). A runner has
+      # never run the CLI, so it has no cache, and without one every test that
+      # asserts "the schema rejects this" passes by validating NOTHING.
+      #
+      # So fetch it, and fail the job if that does not work. Committing a fixture
+      # copy instead would be the second definition of the format this card just
+      # removed — and the copy that used to exist rotted precisely because nothing
+      # compared it to the original.
+      - name: fetch the Driftfile schema
+        run: |
+          mkdir -p "$HOME/.drift"
+          curl --fail --silent --show-error --retry 3 --retry-connrefused \
+            https://api.ondrift.eu/driftfile/schema -o "$HOME/.drift/driftfile.schema.json"
+          python3 - "$HOME/.drift/driftfile.schema.json" <<'PY'
+          import json, sys
+          schema = json.load(open(sys.argv[1]))
+          print(f"Driftfile format version {schema['version']}, tested against as served")
+          PY
       - name: test
         working-directory: cli
         run: |

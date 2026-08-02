@@ -24,6 +24,34 @@ func withSchema(t *testing.T, doc string) {
 	t.Cleanup(func() { compiledSchema = nil })
 }
 
+// The guard that makes the rest of this suite mean something.
+//
+// Most of what these tests assert is "the platform's schema REJECTS this" — and
+// with no schema on the machine, `validateAgainstSchema` returns nothing to say
+// and every one of those assertions passes by validating nothing at all. That is
+// not hypothetical: the whole suite was green on a developer laptop and failed on
+// CI for exactly this reason, because a laptop that has run the CLI has a cached
+// schema and a fresh runner does not.
+//
+// So the absence is made loud, here, once. A committed fixture copy would be the
+// second definition of the format this card removed — and the copy that used to
+// exist rotted because nothing compared it to the original.
+func TestSchemaMustBePresentOrTheSuiteIsTheatre(t *testing.T) {
+	compiledSchema = nil
+	t.Cleanup(func() { compiledSchema = nil })
+
+	sch, err := loadSchema()
+	if err != nil {
+		t.Fatalf("the cached Driftfile schema is unusable: %v", err)
+	}
+	if sch == nil {
+		t.Fatal("no Driftfile schema on this machine, so every rejection test in this " +
+			"package would pass without validating anything.\n" +
+			"Fetch it once and it stays: `drift slice list` while online, or\n" +
+			"  mkdir -p ~/.drift && curl -fsS https://api.ondrift.eu/driftfile/schema -o ~/.drift/driftfile.schema.json")
+	}
+}
+
 // THE test for this change.
 //
 // The CLI used to reject a Driftfile carrying a field it had not been taught —
