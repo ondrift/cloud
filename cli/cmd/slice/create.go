@@ -219,6 +219,26 @@ func createHeadless(name string) error {
 		return err
 	}
 
+	// Wait for the slice to answer, exactly as the --from path above does.
+	// The record exists the moment create returns, but the components behind
+	// it do not, and this command's whole purpose is that a deploy follows it
+	// — the documented opening of every demo is create, use, deploy, run back
+	// to back. A deploy issued into that gap is refused by a component that is
+	// not listening yet, and the CLI renders any 5xx as the maintenance
+	// message, so the reader is told to wait for Drift when what they are
+	// waiting for is their own slice.
+	//
+	// The slice is created either way, so a timeout is reported as "not ready
+	// yet" rather than as a failure: a create retried against an existing name
+	// gets a 409, which is a worse place to leave someone.
+	fmt.Printf("  Waiting for slice %q to come up...\n", name)
+	if err := project.WaitForSliceReady(name); err != nil {
+		if serr := common.SaveActiveSlice(name); serr != nil {
+			fmt.Println("Warning: couldn't mark the new slice as active —", serr)
+		}
+		return fmt.Errorf("slice %q was created and is still starting: %w", name, err)
+	}
+
 	if err := common.SaveActiveSlice(name); err != nil {
 		fmt.Println("Warning: couldn't mark the new slice as active —", err)
 	}
