@@ -61,6 +61,7 @@ func TestManifestToSliceConfig_EnvelopeKnobs(t *testing.T) {
 			"function_memory":  "256MB",
 			"function_timeout": "60s",
 			"rate_limit":       "1000/min",
+			"atomic_size":      "250MB",
 		},
 		"backbone": map[string]any{
 			"nosql":           []any{map[string]any{"name": "events", "size": "500MB"}},
@@ -83,6 +84,12 @@ func TestManifestToSliceConfig_EnvelopeKnobs(t *testing.T) {
 	}
 	if cfg.Atomic.MaxNumberOfRequestsPerMinute != 1000 {
 		t.Errorf("rate_limit: got %d, want 1000", cfg.Atomic.MaxNumberOfRequestsPerMinute)
+	}
+	// The runner volume's cap — deployed code and its vendored dependencies.
+	// Without this the knob parses nowhere and the slice silently keeps the
+	// platform default, which reads as the declaration having been honoured.
+	if got := cfg.Atomic.MaxStorageBytes; got != 250*1024*1024 {
+		t.Errorf("atomic_size: got %d, want %d", got, 250*1024*1024)
 	}
 	if cfg.Backbone.NoSQL.Collections["events"] != 500*1024*1024 {
 		t.Errorf("nosql[events].size: got %d, want %d", cfg.Backbone.NoSQL.Collections["events"], 500*1024*1024)
@@ -141,6 +148,26 @@ func TestDiff_CreatePath(t *testing.T) {
 	}
 	if len(d.Grows) != 3 { // functions, memory, collections
 		t.Errorf("grows: got %d, want 3 (got %+v)", len(d.Grows), d.Grows)
+	}
+}
+
+// Shrinking the runner volume has to abort like every other shrink. A byte cap
+// absent from the delta list is invisible to that check, so a manifest asking
+// for less disk than the slice holds would resize straight through it.
+func TestDiff_AtomicStorageShrinkAborts(t *testing.T) {
+	live := SliceConfig{Atomic: AtomicLimits{MaxStorageBytes: 1024 * 1024 * 1024}}
+	manifest := SliceConfig{Atomic: AtomicLimits{MaxStorageBytes: 100 * 1024 * 1024}}
+	d := Diff("hello", manifest, &live, "", 3000, 1500)
+	if d.Verdict != VerdictAbort {
+		t.Errorf("verdict: got %s, want abort", d.Verdict)
+	}
+	if len(d.Shrinks) != 1 || d.Shrinks[0].Path != "atomic.storage" {
+		t.Errorf("shrinks: got %+v, want one entry for atomic.storage", d.Shrinks)
+	}
+	// The control: growing it is a Grow, not an Abort.
+	g := Diff("hello", SliceConfig{Atomic: AtomicLimits{MaxStorageBytes: 2 * 1024 * 1024 * 1024}}, &live, "", 1500, 3000)
+	if g.Verdict != VerdictGrow {
+		t.Errorf("grow verdict: got %s, want grow", g.Verdict)
 	}
 }
 

@@ -220,6 +220,7 @@ func compareFields(live, wanted SliceConfig, includeZeroLive bool) []FieldDelta 
 		// Driftfile omits them, specifically so downstream code treats
 		// zero as "inherit the platform default", not a declared value.
 		{Path: "atomic.function_memory", Live: live.Atomic.MaxFunctionMemoryBytes, Wanted: wanted.Atomic.MaxFunctionMemoryBytes, IsBytes: true, Omittable: true},
+		{Path: "atomic.storage", Live: live.Atomic.MaxStorageBytes, Wanted: wanted.Atomic.MaxStorageBytes, IsBytes: true, Omittable: true},
 		{Path: "atomic.function_timeout", Live: live.Atomic.MaxFunctionRuntimeInSeconds, Wanted: wanted.Atomic.MaxFunctionRuntimeInSeconds, IsTime: true, Omittable: true},
 		{Path: "atomic.rate_limit_per_minute", Live: live.Atomic.MaxNumberOfRequestsPerMinute, Wanted: wanted.Atomic.MaxNumberOfRequestsPerMinute, Omittable: true},
 		{Path: "atomic.log_retention", Live: live.Atomic.MaxNumberOfHoursForLogRetention, Wanted: wanted.Atomic.MaxNumberOfHoursForLogRetention, IsHours: true, Omittable: true},
@@ -320,15 +321,18 @@ func renderLineItems(items []LineItem) string {
 		if it.UnitCents == 0 {
 			continue
 		}
-		// bb_storage is the one line item whose Quantity (MiB, for a
-		// readable small number) doesn't match its own Label/UnitCents
-		// (per GiB) — displaying it via the generic "quantity x unit"
+		// The storage lines are the ones whose Quantity (MiB, for a
+		// readable small number) doesn't match their own Label/UnitCents
+		// (per GiB) — displaying one via the generic "quantity x unit"
 		// format reads as "50 x €0.25 = €0.01", which looks like broken
 		// math (and worse, like 50 GiB for a cent) unless you already know
 		// Quantity is secretly MiB. Show the same GiB unit as the label
 		// and rate here instead; SubtotalCent (already byte-accurate)
 		// doesn't change.
-		if it.Key == "bb_storage" {
+		//
+		// One line per service that owns disk, all at the same rate, so
+		// they add up to the storage charge without a fourth total line.
+		if it.Key == "atomic_storage" || it.Key == "bb_storage" || it.Key == "canvas_storage" {
 			gib := float64(it.Quantity) / 1024
 			fmt.Fprintf(&sb, "    %-24s %.4f x €%s = €%s\n", it.Label, gib, formatEuros(it.UnitCents), formatEuros(it.SubtotalCent))
 			continue
