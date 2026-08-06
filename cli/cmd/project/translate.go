@@ -57,6 +57,7 @@ type AtomicLimits struct {
 	MaxNumberOfRequestsPerMinute    int
 	MaxNumberOfScheduledJobs        int
 	MaxFunctionMemoryBytes          int
+	MaxStorageBytes                 int
 }
 
 type BackboneLimits struct {
@@ -170,6 +171,14 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 			errs = append(errs, fmt.Sprintf("atomic.function_memory: %v", err))
 		} else {
 			cfg.Atomic.MaxFunctionMemoryBytes = bytes
+		}
+	}
+	if v := m.Slice().Str("atomic", "atomic_size"); v != "" {
+		bytes, err := parseSizeBytes(v)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("atomic.atomic_size: %v", err))
+		} else {
+			cfg.Atomic.MaxStorageBytes = bytes
 		}
 	}
 	if v := m.Slice().Str("atomic", "function_timeout"); v != "" {

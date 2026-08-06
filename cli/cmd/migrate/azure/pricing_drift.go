@@ -75,7 +75,12 @@ func priceDrift(r driftResources) driftBreakdown {
 	if mem > 0 {
 		lines = append(lines, driftLine{"atomic_memory", "Function memory (MiB)", mem, driftCentsPerMiBMemory, mem * driftCentsPerMiBMemory})
 	}
-	lines = append(lines, driftLine{"bb_storage", "Storage (per GiB)", int(storage / (1024 * 1024)), driftCentsPerGiBStorage, storageCents})
+	// One storage line, deliberately. The platform bills storage as three —
+	// Atomic, Backbone and Canvas — but a migration estimate reads one lump of
+	// bytes off an Azure account with nothing to attribute them to, and all
+	// three carry the same rate, so the total is identical either way. The key
+	// is not `bb_storage`: that one now means Backbone alone.
+	lines = append(lines, driftLine{"storage", "Storage (per GiB)", int(storage / (1024 * 1024)), driftCentsPerGiBStorage, storageCents})
 
 	total := 0
 	for _, l := range lines {

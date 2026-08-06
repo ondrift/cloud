@@ -61,6 +61,7 @@ func TestManifestToSliceConfig_EnvelopeKnobs(t *testing.T) {
 			"function_memory":  "256MB",
 			"function_timeout": "60s",
 			"rate_limit":       "1000/min",
+			"atomic_size":      "250MB",
 		},
 		"backbone": map[string]any{
 			"nosql":           []any{map[string]any{"name": "events", "size": "500MB"}},
@@ -83,6 +84,12 @@ func TestManifestToSliceConfig_EnvelopeKnobs(t *testing.T) {
 	}
 	if cfg.Atomic.MaxNumberOfRequestsPerMinute != 1000 {
 		t.Errorf("rate_limit: got %d, want 1000", cfg.Atomic.MaxNumberOfRequestsPerMinute)
+	}
+	// The runner volume's cap — deployed code and its vendored dependencies.
+	// Without this the knob parses nowhere and the slice silently keeps the
+	// platform default, which reads as the declaration having been honoured.
+	if got := cfg.Atomic.MaxStorageBytes; got != 250*1024*1024 {
+		t.Errorf("atomic_size: got %d, want %d", got, 250*1024*1024)
 	}
 	if cfg.Backbone.NoSQL.Collections["events"] != 500*1024*1024 {
 		t.Errorf("nosql[events].size: got %d, want %d", cfg.Backbone.NoSQL.Collections["events"], 500*1024*1024)
