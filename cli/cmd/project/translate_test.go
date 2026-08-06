@@ -151,6 +151,26 @@ func TestDiff_CreatePath(t *testing.T) {
 	}
 }
 
+// Shrinking the runner volume has to abort like every other shrink. A byte cap
+// absent from the delta list is invisible to that check, so a manifest asking
+// for less disk than the slice holds would resize straight through it.
+func TestDiff_AtomicStorageShrinkAborts(t *testing.T) {
+	live := SliceConfig{Atomic: AtomicLimits{MaxStorageBytes: 1024 * 1024 * 1024}}
+	manifest := SliceConfig{Atomic: AtomicLimits{MaxStorageBytes: 100 * 1024 * 1024}}
+	d := Diff("hello", manifest, &live, "", 3000, 1500)
+	if d.Verdict != VerdictAbort {
+		t.Errorf("verdict: got %s, want abort", d.Verdict)
+	}
+	if len(d.Shrinks) != 1 || d.Shrinks[0].Path != "atomic.storage" {
+		t.Errorf("shrinks: got %+v, want one entry for atomic.storage", d.Shrinks)
+	}
+	// The control: growing it is a Grow, not an Abort.
+	g := Diff("hello", SliceConfig{Atomic: AtomicLimits{MaxStorageBytes: 2 * 1024 * 1024 * 1024}}, &live, "", 1500, 3000)
+	if g.Verdict != VerdictGrow {
+		t.Errorf("grow verdict: got %s, want grow", g.Verdict)
+	}
+}
+
 // TestDiff_MatchPath verifies identical manifests produce a Match
 // verdict with no grows or shrinks.
 func TestDiff_MatchPath(t *testing.T) {

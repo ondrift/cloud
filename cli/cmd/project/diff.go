@@ -220,6 +220,7 @@ func compareFields(live, wanted SliceConfig, includeZeroLive bool) []FieldDelta 
 		// Driftfile omits them, specifically so downstream code treats
 		// zero as "inherit the platform default", not a declared value.
 		{Path: "atomic.function_memory", Live: live.Atomic.MaxFunctionMemoryBytes, Wanted: wanted.Atomic.MaxFunctionMemoryBytes, IsBytes: true, Omittable: true},
+		{Path: "atomic.storage", Live: live.Atomic.MaxStorageBytes, Wanted: wanted.Atomic.MaxStorageBytes, IsBytes: true, Omittable: true},
 		{Path: "atomic.function_timeout", Live: live.Atomic.MaxFunctionRuntimeInSeconds, Wanted: wanted.Atomic.MaxFunctionRuntimeInSeconds, IsTime: true, Omittable: true},
 		{Path: "atomic.rate_limit_per_minute", Live: live.Atomic.MaxNumberOfRequestsPerMinute, Wanted: wanted.Atomic.MaxNumberOfRequestsPerMinute, Omittable: true},
 		{Path: "atomic.log_retention", Live: live.Atomic.MaxNumberOfHoursForLogRetention, Wanted: wanted.Atomic.MaxNumberOfHoursForLogRetention, IsHours: true, Omittable: true},
