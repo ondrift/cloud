@@ -199,6 +199,104 @@ func TestInstallPHPDeps_SDKOnlyNeedsNoDocker(t *testing.T) {
 	}
 }
 
+// ─── An element that declares nothing still needs the SDK ───────────────────
+//
+// The generated wrapper requires the SDK unconditionally, so a bare element —
+// one source file and no manifest — needs it vendored exactly as much as one
+// that declares it. Every *SDKOnly helper reports a missing manifest as
+// SDK-only for this reason. Nothing declared is the shape `drift atomic deploy`
+// produces for a single-file function, and the deploy reports success either
+// way, so the gap surfaces only as a 500 at first invocation.
+
+func TestInstallNodeDeps_NoManifestStillVendorsTheSDK(t *testing.T) {
+	withStubbedSDK(t)
+	noDockerPATH(t)
+
+	elem, stage := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(elem, "nodecheck.js"),
+		"const drift = require('@ondrift/sdk');\nmodule.exports = { handle: () => {} };\n")
+
+	if err := installNodeDeps(elem, stage); err != nil {
+		t.Fatalf("installNodeDeps failed for a manifest-less element: %v", err)
+	}
+	// app.js does require('@ondrift/sdk'); without this the function deploys
+	// clean and 500s with "Cannot find module '@ondrift/sdk'".
+	if _, err := os.Stat(filepath.Join(stage, "node_modules", "@ondrift", "sdk", "node", "index.js")); err != nil {
+		t.Errorf("expected the SDK vendored with no package.json present: %v", err)
+	}
+}
+
+func TestInstallPythonDeps_NoManifestStillVendorsTheSDK(t *testing.T) {
+	withStubbedSDK(t)
+	noDockerPATH(t)
+
+	elem, stage := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(elem, "health.py"), "import drift\n\n\ndef handle(req):\n    return None\n")
+
+	if err := installPythonDeps(elem, stage); err != nil {
+		t.Fatalf("installPythonDeps failed for a manifest-less element: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stage, "vendor", "drift.py")); err != nil {
+		t.Errorf("expected the SDK vendored with no requirements.txt present: %v", err)
+	}
+}
+
+func TestInstallRubyDeps_NoManifestStillVendorsTheSDK(t *testing.T) {
+	withStubbedSDK(t)
+	noDockerPATH(t)
+
+	elem, stage := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(elem, "health.rb"), "require 'drift'\n\ndef handle(req)\nend\n")
+
+	if err := installRubyDeps(elem, stage); err != nil {
+		t.Fatalf("installRubyDeps failed for a manifest-less element: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stage, "drift.rb")); err != nil {
+		t.Errorf("expected the SDK vendored with no Gemfile present: %v", err)
+	}
+}
+
+func TestInstallPHPDeps_NoManifestStillVendorsTheSDK(t *testing.T) {
+	withStubbedSDK(t)
+	noDockerPATH(t)
+
+	elem, stage := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(elem, "health.php"), "<?php\nfunction handle($req) {}\n")
+
+	if err := installPHPDeps(elem, stage); err != nil {
+		t.Fatalf("installPHPDeps failed for a manifest-less element: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stage, "vendor", "php", "drift.php")); err != nil {
+		t.Errorf("expected the SDK vendored with no composer.json present: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stage, "vendor", "autoload.php")); err != nil {
+		t.Errorf("expected vendor/autoload.php with no composer.json present: %v", err)
+	}
+}
+
+// The control: staging a manifest that IS present must survive the reordering.
+// Without this, moving the vendor step could silently stop copying package.json
+// into the artifact and every assertion above would still pass.
+func TestInstallNodeDeps_StagesThePackageJsonItWasGiven(t *testing.T) {
+	withStubbedSDK(t)
+	noDockerPATH(t)
+
+	elem, stage := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(elem, "package.json"),
+		`{"name":"atomic-hello","version":"1.0.0","private":true,`+
+			`"dependencies":{"@ondrift/sdk":"github:ondrift/sdk#semver:*"}}`)
+	writeFile(t, filepath.Join(elem, "package-lock.json"), `{"lockfileVersion":3}`)
+
+	if err := installNodeDeps(elem, stage); err != nil {
+		t.Fatalf("installNodeDeps: %v", err)
+	}
+	for _, want := range []string{"package.json", "package-lock.json"} {
+		if _, err := os.Stat(filepath.Join(stage, want)); err != nil {
+			t.Errorf("expected %s staged into the artifact: %v", want, err)
+		}
+	}
+}
+
 // ─── The controls: the container path must still be the container path ──────
 
 // TestInstallNodeDeps_RealDependencyStillUsesContainer proves the fast path

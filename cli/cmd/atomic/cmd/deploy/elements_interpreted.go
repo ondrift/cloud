@@ -149,25 +149,23 @@ func DeployInterpretedElement(el Element, digest string, quiet bool) error {
 
 // installPythonDeps installs the element's requirements.txt (the Drift SDK
 // among them) into stageDir/vendor — the wrapper prepends vendor/ to sys.path.
-// No-op when there's no requirements.txt.
+// An element with no requirements.txt still gets the SDK vendored.
 func installPythonDeps(absFolder, stageDir string) error {
 	reqPath := filepath.Join(absFolder, "requirements.txt")
-	if _, err := os.Stat(reqPath); err != nil {
-		return nil
-	}
 	// Stage requirements.txt next to the source (as node/php/ruby do their
 	// manifests) so the install runs entirely within stageDir with relative
 	// paths only — which keeps it bind-mountable when the build runs in a
 	// container (absolute host paths in args wouldn't resolve at the /w mount).
-	data, rerr := os.ReadFile(reqPath) // #nosec G304 -- controlled base dir
-	if rerr != nil {
-		return fmt.Errorf("read requirements.txt: %w", rerr)
-	}
-	if werr := os.WriteFile(filepath.Join(stageDir, "requirements.txt"), data, 0o644); werr != nil { // #nosec G306
-		return fmt.Errorf("write staged requirements.txt: %w", werr)
+	if data, rerr := os.ReadFile(reqPath); rerr == nil { // #nosec G304 -- controlled base dir
+		if werr := os.WriteFile(filepath.Join(stageDir, "requirements.txt"), data, 0o644); werr != nil { // #nosec G306
+			return fmt.Errorf("write staged requirements.txt: %w", werr)
+		}
 	}
 	// Nothing but the SDK declared → copy it into vendor/ and skip the
-	// container entirely (see sdkvendor.go).
+	// container entirely (see sdkvendor.go). A MISSING manifest lands here too,
+	// and must: the generated wrapper imports the SDK whether or not the
+	// element declared it, so returning early on absence ships a function that
+	// deploys clean and fails at first invocation.
 	if done, verr := tryVendorSDKOnly("python", absFolder, stageDir); verr != nil {
 		return verr
 	} else if done {
@@ -182,18 +180,19 @@ func installPythonDeps(absFolder, stageDir string) error {
 }
 
 // installNodeDeps mirrors build_node.go: copies package.json (+ lock) into the
-// stage and runs npm with linux platform resolution. No-op without a manifest.
+// stage and runs npm with linux platform resolution. An element with no
+// package.json still gets the SDK vendored.
 func installNodeDeps(absFolder, stageDir string) error {
-	data, rerr := os.ReadFile(filepath.Join(absFolder, "package.json")) // #nosec G304
-	if rerr != nil {
-		return nil
+	if data, rerr := os.ReadFile(filepath.Join(absFolder, "package.json")); rerr == nil { // #nosec G304
+		if werr := os.WriteFile(filepath.Join(stageDir, "package.json"), data, 0o644); werr != nil { // #nosec G306
+			return fmt.Errorf("write staged package.json: %w", werr)
+		}
+		if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "package-lock.json")); lerr == nil { // #nosec G304
+			_ = os.WriteFile(filepath.Join(stageDir, "package-lock.json"), lockData, 0o644) // #nosec G306
+		}
 	}
-	if werr := os.WriteFile(filepath.Join(stageDir, "package.json"), data, 0o644); werr != nil { // #nosec G306
-		return fmt.Errorf("write staged package.json: %w", werr)
-	}
-	if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "package-lock.json")); lerr == nil { // #nosec G304
-		_ = os.WriteFile(filepath.Join(stageDir, "package-lock.json"), lockData, 0o644) // #nosec G306
-	}
+	// A missing package.json reaches here and must: app.js requires the SDK
+	// whether or not the element declared it.
 	if done, verr := tryVendorSDKOnly("node", absFolder, stageDir); verr != nil {
 		return verr
 	} else if done {
@@ -208,22 +207,19 @@ func installNodeDeps(absFolder, stageDir string) error {
 }
 
 // installRubyDeps mirrors build_ruby.go: copies the Gemfile (+ lock) and runs
-// `bundle install --standalone` under a host Ruby >= 3.0. No-op without a Gemfile.
+// `bundle install --standalone` under a host Ruby >= 3.0. An element with no
+// Gemfile still gets the SDK vendored.
 func installRubyDeps(absFolder, stageDir string) error {
-	gemfilePath := filepath.Join(absFolder, "Gemfile")
-	if _, err := os.Stat(gemfilePath); err != nil {
-		return nil
+	if data, rerr := os.ReadFile(filepath.Join(absFolder, "Gemfile")); rerr == nil { // #nosec G304
+		if werr := os.WriteFile(filepath.Join(stageDir, "Gemfile"), data, 0o644); werr != nil { // #nosec G306
+			return fmt.Errorf("write staged Gemfile: %w", werr)
+		}
+		if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "Gemfile.lock")); lerr == nil { // #nosec G304
+			_ = os.WriteFile(filepath.Join(stageDir, "Gemfile.lock"), lockData, 0o644) // #nosec G306
+		}
 	}
-	data, rerr := os.ReadFile(gemfilePath) // #nosec G304
-	if rerr != nil {
-		return fmt.Errorf("read Gemfile: %w", rerr)
-	}
-	if werr := os.WriteFile(filepath.Join(stageDir, "Gemfile"), data, 0o644); werr != nil { // #nosec G306
-		return fmt.Errorf("write staged Gemfile: %w", werr)
-	}
-	if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "Gemfile.lock")); lerr == nil { // #nosec G304
-		_ = os.WriteFile(filepath.Join(stageDir, "Gemfile.lock"), lockData, 0o644) // #nosec G306
-	}
+	// A missing Gemfile reaches here and must: the wrapper requires 'drift'
+	// whether or not the element declared it.
 	if done, verr := tryVendorSDKOnly("ruby", absFolder, stageDir); verr != nil {
 		return verr
 	} else if done {
@@ -246,22 +242,19 @@ func installRubyDeps(absFolder, stageDir string) error {
 }
 
 // installPHPDeps mirrors build_php.go: copies composer.json (+ lock) and runs
-// `composer install --no-dev`. No-op without a composer.json.
+// `composer install --no-dev`. An element with no composer.json still gets the
+// SDK vendored.
 func installPHPDeps(absFolder, stageDir string) error {
-	composerPath := filepath.Join(absFolder, "composer.json")
-	if _, serr := os.Stat(composerPath); serr != nil {
-		return nil
+	if data, rerr := os.ReadFile(filepath.Join(absFolder, "composer.json")); rerr == nil { // #nosec G304
+		if werr := os.WriteFile(filepath.Join(stageDir, "composer.json"), data, 0o644); werr != nil { // #nosec G306
+			return fmt.Errorf("write staged composer.json: %w", werr)
+		}
+		if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "composer.lock")); lerr == nil { // #nosec G304
+			_ = os.WriteFile(filepath.Join(stageDir, "composer.lock"), lockData, 0o644) // #nosec G306
+		}
 	}
-	data, rerr := os.ReadFile(composerPath) // #nosec G304
-	if rerr != nil {
-		return fmt.Errorf("read composer.json: %w", rerr)
-	}
-	if werr := os.WriteFile(filepath.Join(stageDir, "composer.json"), data, 0o644); werr != nil { // #nosec G306
-		return fmt.Errorf("write staged composer.json: %w", werr)
-	}
-	if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "composer.lock")); lerr == nil { // #nosec G304
-		_ = os.WriteFile(filepath.Join(stageDir, "composer.lock"), lockData, 0o644) // #nosec G306
-	}
+	// A missing composer.json reaches here and must: the wrapper require_once's
+	// vendor/autoload.php whether or not the element declared anything.
 	if done, verr := tryVendorSDKOnly("php", absFolder, stageDir); verr != nil {
 		return verr
 	} else if done {
