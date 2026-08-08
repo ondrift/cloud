@@ -17,6 +17,7 @@ func GetCmd() *cobra.Command {
 		getUseCmd(),
 		getDeleteCmd(),
 		getRestartCmd(),
+		getAuthCmd(),
 		getSnapshotCmd(),
 		getDomainCmd(),
 		getLinkCmd(),
