@@ -12,9 +12,15 @@ import (
 
 // SliceEntry is one slice in the caller's account, as returned by
 // /ops/slice/list. Exported so the `drift portal` TUI can reuse the fetch.
+//
+// MonthlyCostCents is the price stored on the slice, fixed when it was created
+// or last resized. It is read, never recomputed from the config: the stored
+// figure is the one being billed, and a live re-price would disagree with it
+// the moment unit prices move.
 type SliceEntry struct {
-	Name string `json:"name"`
-	Tier string `json:"tier"`
+	Name             string `json:"name"`
+	Tier             string `json:"tier"`
+	MonthlyCostCents int    `json:"monthly_cost_cents"`
 }
 
 // FetchSlices returns the caller's slices. Data-only (no printing) so both the
@@ -47,6 +53,20 @@ func TierLabel(tier string) string {
 	return "configured"
 }
 
+// PriceLabel renders what a slice costs per month. A free slice reads as
+// "free"; a configured one reads as its stored price.
+//
+// Without a stored price it falls back to TierLabel rather than printing
+// "EUR 0.00/mo" — zero here means the figure was never recorded, and rendering
+// that as a price would state the slice is free, which is a billing claim the
+// CLI has no basis to make.
+func PriceLabel(tier string, cents int) string {
+	if tier == "hacker" || cents <= 0 {
+		return TierLabel(tier)
+	}
+	return fmt.Sprintf("EUR %d.%02d/mo", cents/100, cents%100)
+}
+
 func getListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
@@ -64,7 +84,7 @@ func getListCmd() *cobra.Command {
 				if s.Name == active {
 					marker = "* "
 				}
-				fmt.Printf("%s%-20s %s\n", marker, s.Name, TierLabel(s.Tier))
+				fmt.Printf("%s%-20s %s\n", marker, s.Name, PriceLabel(s.Tier, s.MonthlyCostCents))
 			}
 			return nil
 		},
