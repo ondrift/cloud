@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -624,10 +625,25 @@ func (c collectionHandle) Delete(key string) error {
 	return err
 }
 
-func (c collectionHandle) List(filter map[string]string) ([]json.RawMessage, error) {
+// List returns documents from the collection, optionally filtered by one field.
+//
+// PASS A LIMIT FOR ANY COLLECTION THAT GROWS. Omitting it does not mean
+// "everything" — the platform applies its own default of 100 documents and
+// silently returns a short list, with nothing to distinguish "these are all of
+// them" from "these are the first hundred". A caller that treats a capped read as
+// complete draws wrong conclusions from it: an append-only log read that way is
+// missing its most recent entries, because the rows come back in key order rather
+// than newest-first.
+//
+// The platform clamps the limit to 1000. Collections expected to outgrow that need
+// their reads narrowed by filter rather than widened by limit.
+func (c collectionHandle) List(filter map[string]string, limit ...int) ([]json.RawMessage, error) {
 	path := "nosql/list?collection=" + url.QueryEscape(c.name)
 	for k, v := range filter {
 		path += "&field=" + url.QueryEscape(k) + "&value=" + url.QueryEscape(v)
+	}
+	if len(limit) > 0 && limit[0] > 0 {
+		path += "&limit=" + strconv.Itoa(limit[0])
 	}
 	resp, err := callBackbone("GET", path, nil)
 	if err != nil {

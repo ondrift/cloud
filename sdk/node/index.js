@@ -513,13 +513,20 @@ const nosql = {
     },
     delete: (key) =>
       _call("POST", `nosql/delete?collection=${encodeURIComponent(name)}&key=${encodeURIComponent(key)}`),
-    list: (filter) => {
+    // Pass a limit for any collection that grows. Omitting it does not mean
+    // "everything" — the platform applies its own default of 100 documents and
+    // returns a short list with nothing to mark it as truncated, so a caller
+    // cannot tell "all of them" from "the first hundred". Rows come back in key
+    // order rather than newest-first, so a capped read of an append-only log is
+    // missing its most recent entries. The platform clamps the limit to 1000.
+    list: (filter, limit) => {
       let path = `nosql/list?collection=${encodeURIComponent(name)}`;
       if (filter) {
         for (const [k, v] of Object.entries(filter)) {
           path += `&field=${encodeURIComponent(k)}&value=${encodeURIComponent(v)}`;
         }
       }
+      if (limit > 0) path += `&limit=${encodeURIComponent(limit)}`;
       return _call("GET", path).then((r) => (Array.isArray(r) ? r : []));
     },
     drop: () => _call("POST", `nosql/drop?collection=${encodeURIComponent(name)}`),

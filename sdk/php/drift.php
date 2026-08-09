@@ -687,12 +687,25 @@ class NosqlCollection {
         return _call('POST', 'nosql/delete?collection=' . urlencode($this->name) . '&key=' . urlencode($key));
     }
 
-    public function list(?array $filter = null): array {
+    /**
+     * Return documents from the collection, optionally filtered by one field.
+     *
+     * Pass a limit for any collection that grows. Omitting it does not mean
+     * "everything" — the platform applies its own default of 100 documents and
+     * returns a short list with nothing marking it truncated, so a caller cannot
+     * tell "all of them" from "the first hundred". Rows come back in key order
+     * rather than newest-first, so a capped read of an append-only log is missing
+     * its most recent entries. The platform clamps the limit to 1000.
+     */
+    public function list(?array $filter = null, ?int $limit = null): array {
         $path = 'nosql/list?collection=' . urlencode($this->name);
         if ($filter) {
             foreach ($filter as $k => $v) {
                 $path .= '&field=' . urlencode($k) . '&value=' . urlencode($v);
             }
+        }
+        if ($limit !== null && $limit > 0) {
+            $path .= '&limit=' . urlencode((string) $limit);
         }
         $resp = _call('GET', $path);
         return is_array($resp) ? $resp : [];

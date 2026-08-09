@@ -469,13 +469,22 @@ module Drift
           Drift._call('POST', "nosql/delete?collection=#{URI.encode_www_form_component(@name)}&key=#{URI.encode_www_form_component(key)}")
         end
 
-        def list(filter = nil)
+        # Return documents from the collection, optionally filtered by one field.
+        #
+        # Pass a limit for any collection that grows. Omitting it does not mean
+        # "everything" — the platform applies its own default of 100 documents and
+        # returns a short list with nothing marking it truncated, so a caller
+        # cannot tell "all of them" from "the first hundred". Rows come back in key
+        # order rather than newest-first, so a capped read of an append-only log is
+        # missing its most recent entries. The platform clamps the limit to 1000.
+        def list(filter = nil, limit: nil)
           path = "nosql/list?collection=#{URI.encode_www_form_component(@name)}"
           if filter
             filter.each do |k, v|
               path += "&field=#{URI.encode_www_form_component(k)}&value=#{URI.encode_www_form_component(v)}"
             end
           end
+          path += "&limit=#{limit.to_i}" if limit && limit.to_i > 0
           resp = Drift._call('GET', path)
           resp.is_a?(Array) ? resp : []
         end

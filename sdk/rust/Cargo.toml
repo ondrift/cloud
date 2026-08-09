@@ -1,6 +1,6 @@
 [package]
 name = "drift-sdk"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Drift SDK for Rust Atomic functions — minimal dependency footprint."
 license = "MIT"

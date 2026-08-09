@@ -490,11 +490,22 @@ class _CollectionHandle:
     def delete(self, key):
         return _call("POST", f"nosql/delete?collection={urllib.parse.quote(self.name)}&key={urllib.parse.quote(key)}")
 
-    def list(self, filter=None):
+    def list(self, filter=None, limit=None):
+        """Return documents from the collection, optionally filtered by one field.
+
+        Pass a limit for any collection that grows. Omitting it does not mean
+        "everything" — the platform applies its own default of 100 documents and
+        returns a short list with nothing marking it truncated, so a caller cannot
+        tell "all of them" from "the first hundred". Rows come back in key order
+        rather than newest-first, so a capped read of an append-only log is missing
+        its most recent entries. The platform clamps the limit to 1000.
+        """
         path = f"nosql/list?collection={urllib.parse.quote(self.name)}"
         if filter:
             for k, v in filter.items():
                 path += f"&field={urllib.parse.quote(k)}&value={urllib.parse.quote(v)}"
+        if limit:
+            path += f"&limit={int(limit)}"
         resp = _call("GET", path)
         return resp if isinstance(resp, list) else []
 
