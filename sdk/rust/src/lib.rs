@@ -580,12 +580,41 @@ pub mod backbone {
                 ), None);
             }
 
+            /// Documents from the collection, optionally filtered by one field.
+            ///
+            /// Reads at the platform's own default of 100 documents. For any
+            /// collection that grows, use [`list_limited`] instead: a capped read
+            /// is returned with nothing marking it truncated, so a caller cannot
+            /// tell "all of them" from "the first hundred".
+            ///
+            /// [`list_limited`]: Self::list_limited
             pub fn list(&self, filter: Option<HashMap<String, String>>) -> Vec<Value> {
+                self.list_limited(filter, None)
+            }
+
+            /// Documents from the collection, with an explicit row limit.
+            ///
+            /// Rows come back in key order rather than newest-first, so a capped
+            /// read of an append-only log is missing its most recent entries — not
+            /// its oldest. The platform clamps the limit to 1000; a collection
+            /// expected to outgrow that needs its reads narrowed by filter rather
+            /// than widened by limit.
+            ///
+            /// A separate method rather than a parameter on `list`, so adding it
+            /// does not break every existing caller.
+            pub fn list_limited(
+                &self,
+                filter: Option<HashMap<String, String>>,
+                limit: Option<usize>,
+            ) -> Vec<Value> {
                 let mut path = format!("nosql/list?collection={}", percent_encode(&self.name));
                 if let Some(f) = filter {
                     for (k, v) in f {
                         path.push_str(&format!("&field={}&value={}", percent_encode(&k), percent_encode(&v)));
                     }
+                }
+                if let Some(n) = limit.filter(|&n| n > 0) {
+                    path.push_str(&format!("&limit={n}"));
                 }
                 match call("GET", &path, None) {
                     Some(Value::Array(arr)) => arr,
