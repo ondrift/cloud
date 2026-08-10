@@ -11,7 +11,7 @@ package project
 // The parser does three things in one pass:
 //
 //   1. Decodes the YAML into the canonical shape, expanding the short-form
-//      sugars on the way (atomic-as-bare-list, canvas-as-bare-string, and
+//      sugars on the way (canvas-as-bare-string-or-list, and
 //      environments-as-bare-list) — at the top level AND inside each
 //      environment override block.
 //   2. Resolves `$ENVREF` shorthands in secrets to their literal
@@ -531,17 +531,17 @@ func expandSectionShorthands(m *yaml.Node) {
 		return
 	}
 
-	// atomic short form: a sequence becomes { functions: <seq> }.
-	if atomicNode := findChild(m, "atomic"); atomicNode != nil && atomicNode.Kind == yaml.SequenceNode {
-		wrap := *atomicNode
-		atomicNode.Kind = yaml.MappingNode
-		atomicNode.Tag = ""
-		atomicNode.Style = 0
-		atomicNode.Content = []*yaml.Node{
-			{Kind: yaml.ScalarNode, Value: "functions", Tag: "!!str"},
-			&wrap,
-		}
-	}
+	// `atomic:` has NO short form, and expanding one here was the CLI holding a
+	// second opinion about the format. The schema defines `canvas` as a `oneOf`
+	// over string, list and object; `atomic` is the object alone.
+	//
+	// Rewriting a list into `{ functions: <list> }` cost twice over. A list of
+	// bare names cannot carry the memory every function must book, so the
+	// document it produced always failed validation — but at
+	// `/atomic/functions/0`, a path the user's file does not contain. And a list
+	// of MAPS produced a document that validated, so this binary accepted a shape
+	// the platform does not define. Without the rewrite the same file is refused
+	// at `/atomic`, which is where they wrote it.
 
 	// canvas short forms:
 	//   string   -> { sites: [string] }

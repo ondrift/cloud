@@ -4,10 +4,10 @@ package file
 //
 // # Two things it deliberately does not do
 //
-// **It does not expand shorthands.** `canvas: ./site` and `atomic: [...]` are the
-// spec's short forms and a user chose them; rewriting them into their canonical
-// long form on a formatting pass would turn "tidy my file" into "restructure my
-// file", and produce exactly the enormous diff this command exists to prevent.
+// **It does not expand shorthands.** `canvas: ./site` is one of the format's
+// short forms and a user chose it; rewriting it into the canonical long form on
+// a formatting pass would turn "tidy my file" into "restructure my file", and
+// produce exactly the enormous diff this command exists to prevent.
 //
 // **It does not touch anything below the section level.** Ordering the top level
 // and the known sections is enough to keep diffs stable; sorting a user's list of
