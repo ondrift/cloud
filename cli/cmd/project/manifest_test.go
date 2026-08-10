@@ -345,15 +345,10 @@ func TestParseDriftfile_LocalPathsMustExist(t *testing.T) {
 		want    string
 	}{
 		{
-			name:      "function directory",
-			driftfile: "name: hello\natomic:\n  functions:\n    - name: get-menu\n",
-			want:      `atomic.functions[0]: function "get-menu" not found at`,
-		},
-		{
 			name:      "function explicit dir",
 			driftfile: "name: hello\natomic:\n  functions:\n    - name: get-menu\n      dir: ./src/menu\n",
 			present:   []string{"atomic/get-menu"}, // the conventional path exists; the declared one does not
-			want:      `atomic.functions[0]: function "get-menu" not found at`,
+			want:      `atomic.functions[0]: function "get-menu" declares dir`,
 		},
 		{
 			name:      "canvas site directory",
@@ -871,5 +866,31 @@ environments:
 		t.Errorf("after the environment merge API_TOKEN = %q, want s3cr3t — the "+
 			"merge re-decoded from the raw document and reverted the envref, so the "+
 			"deploy would ship the literal placeholder as the secret", got)
+	}
+}
+
+// A function that declares no `dir` is DISCOVERED from source, so there is no
+// path to check.
+//
+// Its `name` is a ROUTE — `get:menu` — not a directory. Deriving `atomic/<name>`
+// from it asked the filesystem for something nobody declared, using a string
+// holding `/` and `:`. It also assumed one folder per function, which is not the
+// layout most projects use: a flat `atomic/` tree with several @atomic functions
+// per file has no per-function directory at all, and demanding one made every
+// such project unable to declare its own functions.
+//
+// Asserts the absence of the PATH error specifically rather than a clean parse:
+// the parser also validates against whatever schema this machine has cached, and
+// that cache's age is not what this test is about.
+func TestParseDriftfile_AFunctionWithoutADirIsNotPathChecked(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"),
+		"name: hello\natomic:\n  functions:\n    - name: \"get:menu\"\n      memory: 8MB\n")
+
+	_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err != nil && strings.Contains(err.Error(), "atomic.functions[0]") &&
+		strings.Contains(err.Error(), "not found at") {
+		t.Fatalf("a function declaring no dir was path-checked against a directory "+
+			"derived from its route: %v", err)
 	}
 }
