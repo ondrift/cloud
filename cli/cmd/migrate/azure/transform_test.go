@@ -80,7 +80,7 @@ func TestPipeline_SnapshotToTransform(t *testing.T) {
 
 	// The Driftfile references the functions, the seeded collection, the secrets.
 	df := readFile(t, wsDir, "Driftfile")
-	for _, want := range []string{"- get-order", "- name: orders", "seed: backbone/nosql/orders.jsonl", "STRIPE_KEY: $STRIPE_KEY"} {
+	for _, want := range []string{"post:get-order", "- name: orders", "seed: backbone/nosql/orders.jsonl", "STRIPE_KEY: $STRIPE_KEY"} {
 		if strings.Contains(df, "nightly-report") {
 			t.Errorf("refused timer must not appear in the Driftfile:\n%s", df)
 		}

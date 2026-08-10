@@ -230,6 +230,16 @@ func compareFields(live, wanted SliceConfig, includeZeroLive bool) []FieldDelta 
 		{Path: "backbone.backup_retention", Live: live.Backbone.BackupRetentionDays, Wanted: wanted.Backbone.BackupRetentionDays, IsDays: true, Omittable: true},
 		{Path: "canvas.max_size", Live: live.Canvas.TotalMaxSizeInBytes, Wanted: wanted.Canvas.TotalMaxSizeInBytes, IsBytes: true, Omittable: true},
 	}
+
+	// Per-function bookings, ONE ROW EACH.
+	//
+	// Not a total: a slice-wide sum would report "no change" for a Driftfile
+	// that halves one function and doubles another, and each of these is a
+	// separate pool and a separate line on the bill. Without these rows a
+	// resize that changes only per-function memory compares equal and reports
+	// "already matches the Driftfile" — the change silently never applies.
+	pairs = append(pairs, perItemDeltas("atomic.functions",
+		functionBookings(live.Atomic.Functions), functionBookings(wanted.Atomic.Functions))...)
 	pairs = append(pairs, perItemDeltas("backbone.nosql", live.Backbone.NoSQL.Collections, wanted.Backbone.NoSQL.Collections)...)
 	pairs = append(pairs, perItemDeltas("backbone.sql", live.Backbone.SQL.Databases, wanted.Backbone.SQL.Databases)...)
 	pairs = append(pairs, perItemDeltas("backbone.blobs", live.Backbone.Blobs.Buckets, wanted.Backbone.Blobs.Buckets)...)
@@ -446,4 +456,16 @@ func mustJSON(v any) []byte {
 		panic(fmt.Sprintf("encode JSON: %v", err))
 	}
 	return b
+}
+
+// functionBookings keys each declared function's memory by name, for
+// perItemDeltas — the same shape a nosql collection or blob bucket already uses,
+// because a function's booking is the same kind of thing: a named, per-item
+// quota that is also a line on the bill.
+func functionBookings(fns []AtomicFunction) map[string]int {
+	m := make(map[string]int, len(fns))
+	for _, f := range fns {
+		m[f.Name] = f.MemoryBytes
+	}
+	return m
 }

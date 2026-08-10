@@ -4,12 +4,12 @@ package file
 //
 // The starter file fills in the knobs that are required IN PRACTICE rather than
 // the minimum the format allows, because the gap between those two is where the
-// golden-path run kept stalling. `function_memory` is the clearest case: the spec
-// calls it optional, and a Driftfile that declares a function without it is
-// rejected outright on both create and resize
-// (`function_memory must be between 32MB and 256MB (got 0MB)`). A scaffold that
-// emits the technically-minimal file would reproduce that on the user's first
-// command, which is the opposite of a starting point.
+// golden-path run kept stalling.
+//
+// Every function now declares its own `memory` and nothing is defaulted, so the
+// scaffold ships one complete function rather than an empty list: `functions: []`
+// is technically valid and teaches nothing, and a user's first edit should be
+// changing a real entry rather than inventing the shape of one.
 
 import (
 	"fmt"
@@ -106,11 +106,19 @@ func starterDriftfile(name, canvasDir string) string {
 	}
 
 	b.WriteString("atomic:\n")
-	b.WriteString("  # REQUIRED in practice: a Driftfile that declares a function without\n")
-	b.WriteString("  # this is rejected on create and resize, even though the spec calls it\n")
-	b.WriteString("  # optional. 32MB–256MB.\n")
-	b.WriteString("  function_memory: 128MB\n")
-	b.WriteString("  functions: []\n\n")
+	b.WriteString("  # Every function you run, each with the memory it books. Both fields are\n")
+	b.WriteString("  # required and neither has a default: the figure is that function's own\n")
+	b.WriteString("  # pool — its concurrent invocations together stay inside it — and it is\n")
+	b.WriteString("  # what the function is billed at.\n")
+	b.WriteString("  #\n")
+	b.WriteString("  # The name is the route it answers on: `get:ping`, `post:auth/login`.\n")
+	b.WriteString("  #\n")
+	b.WriteString("  # Size it from what the function actually costs rather than guessing —\n")
+	b.WriteString("  # `drift project benchmark` measures it, and booking more than you need\n")
+	b.WriteString("  # is paid for, while booking less means invocations are refused under\n")
+	b.WriteString("  # load. 8MB–256MB.\n")
+	b.WriteString("  functions:\n")
+	b.WriteString("    - { name: \"get:hello\", memory: 32MB }\n\n")
 
 	b.WriteString("# Per-environment overrides. Anything set here replaces the base for that\n")
 	b.WriteString("# environment — including a 0 or a false, which is the point of the block.\n")
@@ -120,6 +128,9 @@ func starterDriftfile(name, canvasDir string) string {
 	b.WriteString("  prod: {}\n")
 	b.WriteString("  staging:\n")
 	b.WriteString("    atomic:\n")
-	b.WriteString("      function_memory: 64MB\n")
+	b.WriteString("      # An override is a partial: name only what differs. Restating a\n")
+	b.WriteString("      # function here replaces its booking for this environment alone.\n")
+	b.WriteString("      functions:\n")
+	b.WriteString("        - { name: \"get:hello\", memory: 16MB }\n")
 	return b.String()
 }
