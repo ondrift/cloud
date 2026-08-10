@@ -10,9 +10,9 @@ func TestManifestToSliceConfig_Counts(t *testing.T) {
 	m := manifestFrom(Node{
 		"name": "test",
 		"atomic": map[string]any{"functions": []any{
-			map[string]any{"name": "a"},
-			map[string]any{"name": "b"},
-			map[string]any{"name": "c", "cron": "0 * * * *"}, // scheduled
+			map[string]any{"name": "a", "memory": "32MB"},
+			map[string]any{"name": "b", "memory": "64MB"},
+			map[string]any{"name": "c", "memory": "32MB", "cron": "0 * * * *"}, // scheduled
 		}},
 		"backbone": map[string]any{
 			"nosql": []any{

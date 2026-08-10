@@ -58,6 +58,17 @@ type AtomicLimits struct {
 	MaxNumberOfScheduledJobs        int
 	MaxFunctionMemoryBytes          int
 	MaxStorageBytes                 int
+
+	// Functions is the declared function list — each name with the memory it
+	// books. Mandatory in the Driftfile from schema 1.2.0; a function's memory
+	// is its own pool AND what it is priced at, so nothing here is defaulted.
+	Functions []AtomicFunction `json:"functions,omitempty"`
+}
+
+// AtomicFunction mirrors drift-common/models.AtomicFunction's wire shape.
+type AtomicFunction struct {
+	Name        string `json:"name"`
+	MemoryBytes int    `json:"memory_bytes"`
 }
 
 type BackboneLimits struct {
@@ -172,6 +183,36 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 		} else {
 			cfg.Atomic.MaxFunctionMemoryBytes = bytes
 		}
+	}
+
+	// ── The declared functions, each with the memory it books ───────
+	//
+	// Both fields are required and neither is defaulted (schema 1.2.0). A
+	// missing memory is reported rather than filled in: the figure is the
+	// function's pool AND its price, so a value the platform invented is one the
+	// tenant never agreed to and would first meet on an invoice.
+	for i, fn := range m.Slice().Nodes("atomic", "functions") {
+		name := fn.Str("name")
+		if name == "" {
+			errs = append(errs, fmt.Sprintf("atomic.functions[%d]: needs a name", i))
+			continue
+		}
+		raw := fn.Str("memory")
+		if raw == "" {
+			errs = append(errs, fmt.Sprintf(
+				"atomic.functions[%d] (%s): needs `memory` — every function declares what it books, "+
+					"and there is no default", i, name))
+			continue
+		}
+		bytes, err := parseSizeBytes(raw)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("atomic.functions[%d] (%s).memory: %v", i, name, err))
+			continue
+		}
+		cfg.Atomic.Functions = append(cfg.Atomic.Functions, AtomicFunction{
+			Name:        name,
+			MemoryBytes: bytes,
+		})
 	}
 	if v := m.Slice().Str("atomic", "atomic_size"); v != "" {
 		bytes, err := parseSizeBytes(v)
