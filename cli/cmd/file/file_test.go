@@ -56,7 +56,7 @@ func TestNew_ScaffoldPassesTheRealParser(t *testing.T) {
 // The scaffold exists to close that gap, so its presence is asserted rather than
 // left to whoever next edits the template.
 // Asserted through the PARSER, on the BASE slice, not by searching the text.
-// A string match for "function_memory:" passes on the staging override alone —
+// A string match for "memory: 32MB" passes on the staging override alone —
 // the scaffold writes it twice — so it would still be green with the base knob
 // deleted, which is the exact regression this is here to catch. Proven by
 // deleting that line and watching this fail.
@@ -70,11 +70,16 @@ func TestNew_ScaffoldFillsTheRequiredInPracticeKnobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Slice().Str("atomic", "function_memory") == "" {
-		t.Error("the scaffold's BASE slice omits function_memory — a Driftfile that " +
-			"declares a function without it is rejected on create and resize with " +
-			"'function_memory must be between 32MB and 256MB (got 0MB)', which is the " +
-			"first thing the user would hit")
+	fns := m.Slice().Nodes("atomic", "functions")
+	if len(fns) == 0 {
+		t.Fatal("the scaffold declares no functions — `functions: []` is valid and " +
+			"teaches nothing; a first edit should be changing a real entry")
+	}
+	for i, fn := range fns {
+		if fn.Str("memory") == "" {
+			t.Errorf("scaffolded function %d (%q) books no memory — there is no default, "+
+				"so this is rejected on the user's first deploy", i, fn.Str("name"))
+		}
 	}
 }
 
