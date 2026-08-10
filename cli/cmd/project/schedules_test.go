@@ -125,8 +125,8 @@ func TestDeclaredSchedules_KeyedByFunctionName(t *testing.T) {
 // The envelope the slice is actually sized with.
 func TestManifestToSliceConfig_SizesTheScheduledJobEnvelope(t *testing.T) {
 	m := projectWith(t, []Node{
-		{"name": "a"},
-		{"name": "nightly", "cron": "0 2 * * *"},
+		{"name": "a", "memory": "32MB"},
+		{"name": "nightly", "memory": "128MB", "cron": "0 2 * * *"},
 	}, map[string]string{
 		"atomic/a/main.go":       "// @atomic http=get:/a\nfunc A() {}\n",
 		"atomic/nightly/main.go": "// @atomic http=post:/nightly\nfunc N() {}\n",
