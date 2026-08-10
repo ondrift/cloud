@@ -170,6 +170,12 @@ canvas: ./canvas
 	if !contains(err.Error(), "atomic") {
 		t.Errorf("the error should name the section it refused, got: %v", err)
 	}
+	// And it must name only what the user wrote. Expanding the list into
+	// `{functions: [...]}` before validating reported `/atomic/functions/0`,
+	// sending them looking for a key their file does not contain.
+	if contains(err.Error(), "functions") {
+		t.Errorf("the error names a key the Driftfile does not contain, got: %v", err)
+	}
 }
 
 // The bare-string `sql: [ledger]` / `nosql: [widgets]` / `blobs: [assets]` forms
