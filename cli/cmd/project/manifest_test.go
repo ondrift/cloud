@@ -209,9 +209,10 @@ func TestParseDriftfile_BareStringResourceEntriesAreRejected(t *testing.T) {
 }
 
 // TestParseDriftfile_UnknownTopLevelField catches a typo'd top-level key
-// (e.g. "nmae" instead of "name") that the lenient first decode pass used
-// to silently drop, leaving the slice unnamed with no error at all. The
-// strict KnownFields(true) re-decode in ParseDriftfile must now reject it.
+// (e.g. "nmae" instead of "name"). Nothing in the CLI knows what a key is, so
+// the refusal comes from the schema's `additionalProperties: false` — and the
+// consequence of losing it is silent: the document decodes, the typo is dropped,
+// and the slice deploys unnamed with no error anywhere.
 func TestParseDriftfile_UnknownTopLevelField(t *testing.T) {
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
@@ -725,8 +726,8 @@ queues:
 }
 
 // And the map form must survive a full ParseDriftfile — the shorthand expander
-// and the strict KnownFields re-decode both run there, and either could reject
-// a shape the standalone unmarshaler accepts.
+// and the schema both run there, and either could reject a shape the standalone
+// unmarshaler accepts.
 func TestParseDriftfile_QueueMapFormEndToEnd(t *testing.T) {
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `

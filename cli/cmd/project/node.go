@@ -1,10 +1,15 @@
 // node.go — the Driftfile as data, for the one job that needs it.
 //
-// # What this is used for TODAY
+// # What this is used for
 //
-// The ENVIRONMENT OVERLAY, and nothing else. `Manifest.mergeEnvironment` merges an
-// environment's block onto the base as a document and decodes the result, because
-// two bugs are unfixable in a typed merge and disappear in a document one:
+// The whole Driftfile. `Manifest` holds the document these types describe and
+// nothing else — there are no Go structs for `atomic`, `backbone` or `canvas`,
+// because the platform publishes the definition of the format and a second one
+// here could only disagree with it.
+//
+// The ENVIRONMENT OVERLAY is what forced the shape. `Manifest.mergeEnvironment`
+// merges an environment's block onto the base as a document, because two bugs are
+// unfixable in a typed merge and disappear in a document one:
 //
 //   - **Values that could not be overridden to zero.** Four hand-written mergers
 //     gated on `if overlay.X != ""` / `!= 0`, so `deploy_history: 0` or
@@ -17,23 +22,16 @@
 //     compiler error, no failing test. `mergeCanvas` covered two fields.
 //     DeepMerge cannot have that bug because it does not know what a field is.
 //
-// # What this is NOT, however much the shape suggests it
+// # An unrecognised key is the SCHEMA's to refuse
 //
-// The Driftfile is still **decoded into typed structs**, and `ParseDriftfile` still
-// re-decodes with `KnownFields(true)` to reject an unrecognised key. Carrying the
-// whole file as a document — so the platform could add a field an installed CLI has
-// never been taught, instead of that being a hard error — is a plausible direction
-// and is NOT what happens.
+// Nothing here rejects one. `ParseDriftfile` validates the document against the
+// schema the platform serves (`schema.go`), whose sections are
+// `additionalProperties: false` — so a typo is caught there, by the side that
+// defines what a key is.
 //
-// Nor is anything validated against the schema. The CLI fetches and caches it
-// (`common/driftfile.go`) and reads it for no purpose yet; there is no JSON-schema
-// library in this module. `drift file lint` (#CLI-STANDARDUSAGE-RKN51F) is where
-// that would land.
-//
-// This paragraph exists because the file previously described both of those as
-// already true. A comment in the present tense about work that has not happened is
-// worse than no comment: it tells the next reader that the bug in front of them
-// cannot exist.
+// That is what lets an installed CLI carry a field it has never been taught: the
+// document holds it, the schema decides on it, and this binary passes it through
+// rather than failing on a name it does not recognise.
 package project
 
 // Node is one object in the Driftfile document.
@@ -210,7 +208,7 @@ func cloneValue(v any) any {
 //     `wildcard: false` expressible in an environment override, which the
 //     struct-based mergers could not do.
 //   - Two objects merge recursively, so an environment can override
-//     `atomic.function_memory` without restating the rest of `atomic`.
+//     `atomic.rate_limit` without restating the rest of `atomic`.
 //   - A list REPLACES wholesale. An environment that lists functions means
 //     exactly those functions; element-wise merging of a list has no
 //     defensible identity rule and would surprise more than it helped. This
@@ -245,11 +243,10 @@ func asNode(v any) (Node, bool) {
 // Entries reads a list whose elements may be a bare STRING or a map, and yields
 // them uniformly as Nodes — a bare string becoming {scalarKey: value}.
 //
-// The schema permits both shapes for `atomic.functions` and `backbone.queues`
-// (their definitions are a `oneOf` over string and object), so a reader has to
-// cope with both. This used to be four custom UnmarshalYAML methods hanging off
-// four struct types; with the structs gone the normalisation belongs here, next to
-// the document it normalises.
+// `backbone.queues` is a `oneOf` over string and object, so a reader has to cope
+// with both. `atomic.functions` takes objects alone — a function must book its
+// memory and a bare name cannot — and reading it through here costs nothing while
+// keeping one accessor for every list the format has.
 //
 // scalarKey is what a bare string MEANS for that list, which differs by section:
 // a function or queue string is a `name`, a canvas string is a `dir`, a cache
