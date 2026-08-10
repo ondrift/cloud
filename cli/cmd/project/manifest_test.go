@@ -9,11 +9,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestParseDriftfile_RestaurantTemplate parses the canonical restaurant
-// Driftfile end-to-end and verifies every field lands where the spec
-// says it should. This is the contract test for the v1.0 schema —
-// when adding new spec features, extend this test before touching any
-// other code.
+// TestParseDriftfile_RestaurantTemplate parses a complete restaurant Driftfile
+// end-to-end and verifies every field lands where the format says it should.
+// This is the contract test for the schema the platform serves — when adding a
+// format feature, extend this test before touching any other code.
 func TestParseDriftfile_RestaurantTemplate(t *testing.T) {
 	t.Setenv("RESEND_API_KEY", "test-resend-key-xyz")
 	t.Setenv("SENDER_EMAIL", "noreply@la-cucina.test")
@@ -29,14 +28,25 @@ func TestParseDriftfile_RestaurantTemplate(t *testing.T) {
 		t.Errorf("slice.name = %q, want %q", m.Name(), "la-cucina")
 	}
 
-	// atomic — bare-list shorthand expands to functions:[...]
-	if len(m.Slice().Entries("name", "atomic", "functions")) != 3 {
-		t.Fatalf("atomic.functions count = %d, want 3", len(m.Slice().Entries("name", "atomic", "functions")))
+	// atomic — every function carries its route and the memory it books. The
+	// memory is asserted alongside the name because it is what the slice admits
+	// work against and what the function is billed at; a list that parsed its
+	// names and dropped its bookings would deploy a slice nobody priced.
+	fns := m.Slice().Entries("name", "atomic", "functions")
+	if len(fns) != 3 {
+		t.Fatalf("atomic.functions count = %d, want 3", len(fns))
 	}
-	wantFns := []string{"get-menu", "submit-reservation", "confirm-reservation"}
-	for i, fn := range m.Slice().Entries("name", "atomic", "functions") {
-		if fn.Str("name") != wantFns[i] {
-			t.Errorf("atomic.functions[%d].name = %q, want %q", i, fn.Str("name"), wantFns[i])
+	wantFns := []struct{ name, memory string }{
+		{"get:menu", "32MB"},
+		{"post:reservations", "64MB"},
+		{"post:reservations/confirm", "32MB"},
+	}
+	for i, fn := range fns {
+		if fn.Str("name") != wantFns[i].name {
+			t.Errorf("atomic.functions[%d].name = %q, want %q", i, fn.Str("name"), wantFns[i].name)
+		}
+		if fn.Str("memory") != wantFns[i].memory {
+			t.Errorf("atomic.functions[%d].memory = %q, want %q", i, fn.Str("memory"), wantFns[i].memory)
 		}
 	}
 
@@ -129,9 +139,17 @@ canvas: ./canvas
 	}
 }
 
-// TestParseDriftfile_AtomicShorthandList verifies the bare-list
-// atomic shorthand expands correctly.
-func TestParseDriftfile_AtomicShorthandList(t *testing.T) {
+// A bare list of function names under `atomic:` is REFUSED.
+//
+// Every function must book its memory, and a list of names has nowhere to put
+// the booking — so the short form cannot be sugar for the long one. It would
+// have to invent a reservation the tenant never chose, for a figure the slice
+// admits work against and the invoice is computed from.
+//
+// Canvas keeps its shorthand (the test above) because `canvas: ./site` states
+// the whole of what a site entry carries. That is the line: a shorthand is sugar
+// only while it can express everything the long form must.
+func TestParseDriftfile_AtomicBareListIsRefused(t *testing.T) {
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
 name: hello
@@ -141,18 +159,16 @@ atomic:
 canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
-	mustMkdir(t, filepath.Join(tmp, "atomic", "foo"))
-	mustMkdir(t, filepath.Join(tmp, "atomic", "bar"))
 
-	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
-	if err != nil {
-		t.Fatalf("ParseDriftfile failed: %v", err)
+	_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err == nil {
+		t.Fatal("a bare list of function names parsed; every function must declare " +
+			"the memory it books, and this form cannot carry one")
 	}
-	if len(m.Slice().Entries("name", "atomic", "functions")) != 2 {
-		t.Fatalf("atomic.functions count = %d, want 2", len(m.Slice().Entries("name", "atomic", "functions")))
-	}
-	if m.Slice().Entries("name", "atomic", "functions")[0].Str("name") != "foo" || m.Slice().Entries("name", "atomic", "functions")[1].Str("name") != "bar" {
-		t.Errorf("atomic.functions = %+v, want [foo bar]", m.Slice().Entries("name", "atomic", "functions"))
+	// The SCHEMA owns the rule, so the assertion is that the refusal points at
+	// the offending section rather than at a wording the platform defines.
+	if !contains(err.Error(), "atomic") {
+		t.Errorf("the error should name the section it refused, got: %v", err)
 	}
 }
 
@@ -232,19 +248,23 @@ canvas: ./canvas
 	}
 }
 
-// writeRestaurantFixture writes a minimal-but-complete restaurant
-// project shape into a temp dir and returns the dir path. The
-// Driftfile content matches the canonical template under
-// templates/sites/hospitality/restaurant/.
+// writeRestaurantFixture writes a minimal-but-complete restaurant project shape
+// into a temp dir and returns the dir path. It exercises one of every section
+// and every shorthand the format still accepts.
+//
+// The functions declare no `dir`, so there are no per-function source
+// directories here: a function's name is its ROUTE, and nothing derives a path
+// from it.
 func writeRestaurantFixture(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
 name: la-cucina
 atomic:
-  - get-menu
-  - submit-reservation
-  - confirm-reservation
+  functions:
+    - { name: "get:menu",                  memory: 32MB }
+    - { name: "post:reservations",         memory: 64MB }
+    - { name: "post:reservations/confirm", memory: 32MB }
 backbone:
   nosql:
     - name: reservations
@@ -259,9 +279,6 @@ backbone:
 canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
-	mustMkdir(t, filepath.Join(tmp, "atomic", "get-menu"))
-	mustMkdir(t, filepath.Join(tmp, "atomic", "submit-reservation"))
-	mustMkdir(t, filepath.Join(tmp, "atomic", "confirm-reservation"))
 	mustMkdir(t, filepath.Join(tmp, "backbone"))
 	mustWrite(t, filepath.Join(tmp, "backbone", "menu.json"), `[]`)
 	return tmp
@@ -272,11 +289,15 @@ canvas: ./canvas
 // shadow each other) and passes when the paths are distinct.
 func TestCheckRouteCollisions(t *testing.T) {
 	tmp := t.TempDir()
+	// Each function declares its `dir`. The name is a route, so there is no
+	// directory to derive from it, and the collision check reads the annotation
+	// in the source at that path rather than the name in the manifest.
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
 name: shop
 atomic:
-  - items-get
-  - items-post
+  functions:
+    - { name: "get:items",  memory: 32MB, dir: ./atomic/items-get }
+    - { name: "post:items", memory: 32MB, dir: ./atomic/items-post }
 canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
@@ -339,16 +360,12 @@ func TestParseDriftfile_LocalPathsMustExist(t *testing.T) {
 	cases := []struct {
 		name      string
 		driftfile string
-		// present is created before the parse; whatever the Driftfile names and
-		// this omits is the missing path under test.
-		present []string
-		want    string
+		want      string
 	}{
 		{
 			name:      "function explicit dir",
-			driftfile: "name: hello\natomic:\n  functions:\n    - name: get-menu\n      dir: ./src/menu\n",
-			present:   []string{"atomic/get-menu"}, // the conventional path exists; the declared one does not
-			want:      `atomic.functions[0]: function "get-menu" declares dir`,
+			driftfile: "name: hello\natomic:\n  functions:\n    - name: \"get:menu\"\n      memory: 8MB\n      dir: ./src/menu\n",
+			want:      `atomic.functions[0]: function "get:menu" declares dir`,
 		},
 		{
 			name:      "canvas site directory",
@@ -371,9 +388,6 @@ func TestParseDriftfile_LocalPathsMustExist(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tmp := t.TempDir()
 			mustWrite(t, filepath.Join(tmp, "Driftfile"), tc.driftfile)
-			for _, d := range tc.present {
-				mustMkdir(t, filepath.Join(tmp, filepath.FromSlash(d)))
-			}
 
 			_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
 			if err == nil {
@@ -467,13 +481,17 @@ canvas: ./canvas
 // un-overridden knobs inherit, and the slice name is derived.
 func TestEnvironments(t *testing.T) {
 	tmp := t.TempDir()
+	// Each `atomic` override restates `functions`, because the section the
+	// override merges into requires them. `deploy_history` is the control: no
+	// override mentions it, so it has to survive the merge into `atomic`.
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
 name: snip
 log_retention: 30d
 atomic:
   rate_limit: 5000/min
-  function_memory: 128MB
-  functions: [redirect]
+  deploy_history: 5
+  functions:
+    - { name: "get:redirect", memory: 128MB }
 backbone:
   nosql:
     - name: links
@@ -483,13 +501,18 @@ environments:
   prod: {}
   staging:
     log_retention: 3d
-    atomic: { rate_limit: 200/min, function_memory: 64MB }
+    atomic:
+      rate_limit: 200/min
+      functions:
+        - { name: "get:redirect", memory: 64MB }
     backbone: { nosql: [{name: links, size: 50MB}] }
   dev:
-    atomic: { rate_limit: 20/min }
+    atomic:
+      rate_limit: 20/min
+      functions:
+        - { name: "get:redirect", memory: 128MB }
 `)
 	mustMkdir(t, filepath.Join(tmp, "web"))
-	mustMkdir(t, filepath.Join(tmp, "atomic", "redirect"))
 
 	parse := func() *Manifest {
 		m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
@@ -510,6 +533,10 @@ environments:
 	if m.Slice().Str("atomic", "rate_limit") != "5000/min" || m.Slice().Str("log_retention") != "30d" {
 		t.Errorf("prod values changed: rate=%q retention=%q", m.Slice().Str("atomic", "rate_limit"), m.Slice().Str("log_retention"))
 	}
+	// The base booking, against which staging's override below is the contrast.
+	if fns := m.Slice().Entries("name", "atomic", "functions"); len(fns) != 1 || fns[0].Str("memory") != "128MB" {
+		t.Errorf("prod functions = %+v, want [get:redirect booked at 128MB]", fns)
+	}
 
 	// staging → suffixed name; scalar overrides applied; resource set shared.
 	m = parse()
@@ -519,14 +546,17 @@ environments:
 	if m.Name() != "snip-staging" {
 		t.Errorf("staging name = %q, want snip-staging", m.Name())
 	}
-	if m.Slice().Str("atomic", "rate_limit") != "200/min" || m.Slice().Str("atomic", "function_memory") != "64MB" {
+	if m.Slice().Str("atomic", "rate_limit") != "200/min" {
 		t.Errorf("staging atomic overrides not applied: %+v", m.Slice().Sub("atomic"))
 	}
 	if m.Slice().Str("log_retention") != "3d" {
 		t.Errorf("staging overrides not applied: retention=%q", m.Slice().Str("log_retention"))
 	}
-	if len(m.Slice().Entries("name", "atomic", "functions")) != 1 || m.Slice().Entries("name", "atomic", "functions")[0].Str("name") != "redirect" {
-		t.Errorf("staging functions = %+v, want shared [redirect]", m.Slice().Entries("name", "atomic", "functions"))
+	// An environment books its own memory per function: staging runs the same
+	// route on a smaller pool, and pays for the smaller one.
+	if fns := m.Slice().Entries("name", "atomic", "functions"); len(fns) != 1 ||
+		fns[0].Str("name") != "get:redirect" || fns[0].Str("memory") != "64MB" {
+		t.Errorf("staging functions = %+v, want [get:redirect booked at 64MB]", fns)
 	}
 	if len(m.Slice().Entries("name", "backbone", "nosql")) != 1 || m.Slice().Entries("name", "backbone", "nosql")[0].Str("name") != "links" || m.Slice().Entries("name", "backbone", "nosql")[0].Str("size") != "50MB" {
 		t.Errorf("staging nosql = %+v, want shared [links] with overridden size 50MB", m.Slice().Entries("name", "backbone", "nosql"))
@@ -540,8 +570,10 @@ environments:
 	if m.Name() != "snip-dev" || m.Slice().Str("atomic", "rate_limit") != "20/min" {
 		t.Errorf("dev name/rate = %q/%q", m.Name(), m.Slice().Str("atomic", "rate_limit"))
 	}
-	if m.Slice().Str("atomic", "function_memory") != "128MB" || m.Slice().Str("log_retention") != "30d" {
-		t.Errorf("dev should inherit base mem/retention: mem=%q retention=%q", m.Slice().Str("atomic", "function_memory"), m.Slice().Str("log_retention"))
+	// The overlay names two keys inside `atomic`; the third has to survive it.
+	// An overlay that replaced the section wholesale would zero this.
+	if m.Slice().Int("atomic", "deploy_history") != 5 || m.Slice().Str("log_retention") != "30d" {
+		t.Errorf("dev should inherit base history/retention: history=%d retention=%q", m.Slice().Int("atomic", "deploy_history"), m.Slice().Str("log_retention"))
 	}
 
 	// Default (no arg) resolves to prod when present.
@@ -762,13 +794,17 @@ func TestSelectEnvironment_OverrideToZeroIsHonoured(t *testing.T) {
 name: hello
 canvas: ./canvas
 atomic:
-  function_memory: 128MB
+  rate_limit: 5000/min
   deploy_history: 5
+  functions:
+    - { name: "get:ping", memory: 32MB }
 environments:
   prod: {}
   staging:
     atomic:
       deploy_history: 0
+      functions:
+        - { name: "get:ping", memory: 32MB }
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
 
@@ -787,8 +823,8 @@ environments:
 	}
 	// The control: a sibling the overlay did NOT mention must survive. Without
 	// this, a merge that simply dropped the base would pass the assertion above.
-	if got := m.Slice().Str("atomic", "function_memory"); got != "128MB" {
-		t.Errorf("function_memory = %q, want 128MB — the overlay replaced the whole "+
+	if got := m.Slice().Str("atomic", "rate_limit"); got != "5000/min" {
+		t.Errorf("rate_limit = %q, want 5000/min — the overlay replaced the whole "+
 			"atomic block instead of merging into it", got)
 	}
 }
