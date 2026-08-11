@@ -54,7 +54,9 @@ func fetchDeployedFunctions() ([]atomicRecord, error) {
 
 func langOrDefault(r atomicRecord) string {
 	switch r.Language {
-	case "", "native":
+	// "native" is the historical label for Go and the api still returns it for
+	// anything deployed before the rename; "" is a very old record with none.
+	case "", "native", "go":
 		return "go"
 	case "python":
 		return "python"

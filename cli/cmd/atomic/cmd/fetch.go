@@ -127,7 +127,8 @@ func discoverFunctions(root string) ([]fetchTarget, error) {
 
 func fetchOne(t fetchTarget) error {
 	switch t.language {
-	case "native":
+	// Both Go labels: the api returns whichever was stored at deploy time.
+	case "go", "native":
 		return fetchGo(t.dir)
 	case "node":
 		return fetchNode(t.dir)
@@ -232,9 +233,10 @@ func fetchRust(dir string) error {
 	return nil
 }
 
-// fetchLangLabel renders the user-facing language name ("native" is Go).
+// fetchLangLabel renders the user-facing language name. A record deployed before
+// the rename carries "native", which the user should still see as "go".
 func fetchLangLabel(language string) string {
-	if language == "native" {
+	if atomic_common.IsGo(language) {
 		return "go"
 	}
 	return language

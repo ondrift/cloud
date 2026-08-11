@@ -5,14 +5,29 @@ import (
 	"path/filepath"
 )
 
-// BuildLanguage is the language key the BUILD and the operator speak, which is
-// not quite the one the parser uses: Go compiles to a binary the slice runs
-// directly, so it ships as "native".
+// BuildLanguage is the language key the BUILD and the operator speak. It is the
+// parser's key unchanged, and this function exists to say that in one place.
+//
+// It used to rewrite "go" to "native", a name from when Go was the only compiled
+// language Drift accepted. Rust is compiled too and always travelled as "rust",
+// so "native" named Go and nothing else while claiming to name a category.
+//
+// A slice understands both labels and always will — see is_compiled_go in the
+// runner — because a function keeps the label it was deployed under in its
+// metadata.json, and released CLI binaries go on sending "native" indefinitely.
 func BuildLanguage(parserLanguage string) string {
-	if parserLanguage == "go" {
-		return "native"
-	}
 	return parserLanguage
+}
+
+// IsGo reports whether a language label means compiled Go, accepting both the
+// current "go" and the historical "native".
+//
+// Every place that READS a label needs this: the api hands back whatever was
+// stored at deploy time, so a slice deployed last month answers "native" and one
+// deployed today answers "go". Matching one alone makes a function's language
+// render as unknown, or worse, silently skips the branch that places its binary.
+func IsGo(language string) bool {
+	return language == "go" || language == "native"
 }
 
 // DetectLanguage reports the language of a source directory and the file that

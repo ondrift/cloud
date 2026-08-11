@@ -278,7 +278,7 @@ func DeployGoElement(el Element, digest string, quiet bool) error {
 		// No SourceModule/EntryFunc: a native function's entry point is the built
 		// binary, which the runtime cannot generate and this path must supply.
 		return sendSourceToOperator(FuncArtifact{
-			Name: name, Method: method, Language: "native", Auth: f.Spec.Auth,
+			Name: name, Method: method, Language: "go", Auth: f.Spec.Auth,
 			Element: el.Name, Stream: f.Spec.Stream, Secrets: f.Spec.Secrets,
 			Triggers: triggersFor(f), Digest: digest,
 			SourcePath: bin, UserSourcePath: userSrc,

@@ -431,7 +431,7 @@ func createUserSourceArchive(absFolder, name string) (string, error) {
 // waits forever on the second call, while a slice told nothing about a looping
 // one merely spawns more than it had to.
 func invocationProtocol(language string) string {
-	if language == "native" {
+	if atomic_common.IsGo(language) {
 		return "loop"
 	}
 	return ""
@@ -579,7 +579,7 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 
 	if !quiet {
 		langLabel := language
-		if langLabel == "native" {
+		if atomic_common.IsGo(langLabel) {
 			langLabel = "go"
 		}
 		if q := spec.QueueSource(); q != "" {
