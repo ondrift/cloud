@@ -21,6 +21,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 )
 
 // FuncArtifact is one built function ready to be placed: its metadata plus the
@@ -114,7 +116,7 @@ func localSlotSink(runnerDir string) SlotSink {
 	return func(a FuncArtifact) error {
 		lang := a.Language
 		if lang == "" {
-			lang = "native"
+			lang = "go"
 		}
 		slotDir := filepath.Join(runnerDir, slotDirName(a.Element, a.Method, a.Name))
 		if err := os.RemoveAll(slotDir); err != nil {
@@ -124,7 +126,7 @@ func localSlotSink(runnerDir string) SlotSink {
 			return err
 		}
 
-		if lang == "native" {
+		if atomic_common.IsGo(lang) {
 			if err := copyFileMode(a.SourcePath, filepath.Join(slotDir, "app"), 0o755); err != nil {
 				return fmt.Errorf("place binary for %q: %w", a.Name, err)
 			}

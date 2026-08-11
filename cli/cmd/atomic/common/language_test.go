@@ -23,7 +23,7 @@ func TestElementLanguage(t *testing.T) {
 		want      string
 		wantBuild string
 	}{
-		{"main.go", "package main\n\nfunc GetHello(req any) {}\n", "go", "native"},
+		{"main.go", "package main\n\nfunc GetHello(req any) {}\n", "go", "go"},
 		{"app.py", "def get_hello(req): pass\n", "python", "python"},
 		{"app.js", "function getHello(req) {}\n", "node", "node"},
 		{"app.rb", "def get_hello(req); end\n", "ruby", "ruby"},
@@ -43,8 +43,10 @@ func TestElementLanguage(t *testing.T) {
 				t.Fatalf("lang: got %q, want %q", lang, tt.want)
 			}
 
-			// Go compiles to a binary the slice runs directly, so the build and
-			// the operator call it "native" while the parser calls it "go".
+			// The build key is the parser's key unchanged. Go used to ship as
+			// "native", a name from when it was the only compiled language; Rust
+			// is compiled too and always travelled as "rust", so that label named
+			// Go while claiming to name a category.
 			build, file, derr := DetectLanguage(dir)
 			if derr != nil {
 				t.Fatalf("DetectLanguage: %v", derr)
@@ -194,5 +196,29 @@ func TestFindCallable_DuplicateInOneElement(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "a.go") || !strings.Contains(err.Error(), "b.go") {
 		t.Errorf("the error must name both files, got: %v", err)
+	}
+}
+
+// Both Go labels must be recognised on the way IN, forever. The api returns
+// whichever label was stored at deploy time, so a function deployed before the
+// rename answers "native" and one deployed after answers "go". A CLI that knows
+// only one renders half a user's Go functions as an unknown language — and in
+// the local sink, silently takes the interpreted branch and fails to place the
+// binary at all.
+//
+// "native" cannot be retired on a schedule: it is persisted per slot in the
+// slice's metadata.json and only changes when a function is redeployed.
+func TestIsGo_AcceptsBothLabels(t *testing.T) {
+	for _, label := range []string{"go", "native"} {
+		if !IsGo(label) {
+			t.Errorf("IsGo(%q) = false — both Go labels must be recognised", label)
+		}
+	}
+	// rust is compiled and ships a binary too, but it is NOT Go and must not
+	// take Go's branches.
+	for _, label := range []string{"rust", "python", "node", "ruby", "php", ""} {
+		if IsGo(label) {
+			t.Errorf("IsGo(%q) = true — only Go's two labels may match", label)
+		}
 	}
 }
