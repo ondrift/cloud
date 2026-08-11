@@ -17,11 +17,7 @@ import (
 )
 
 func (r *devRunner) generateGo() error {
-	// Use the shared FuncNameForLanguage helper so route templates
-	// with path-parameter (`:id`) and multi-segment (`reviewer/blob`)
-	// names produce a valid Go identifier — same path
-	// `drift atomic deploy`'s build_go.go takes.
-	funcName := atomic_common.FuncNameForLanguage(r.method, r.name, "native")
+	funcName := r.handler
 
 	var code string
 	replacer := strings.NewReplacer(

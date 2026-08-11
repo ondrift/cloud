@@ -16,11 +16,12 @@ import (
 	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 )
 
-// buildGo is the legacy single-function path: stage the folder, then build one
-// binary bound to the conventionally-derived handler name. The Element path
-// (buildGoElementStage + buildGoEntrypoint) is the multi-function generalization.
-func buildGo(absFolder, method, name string) (string, error) {
-	funcName := atomic_common.FuncNameForLanguage(method, name, "native")
+// buildGo builds one function on its own: stage the folder, then compile a
+// binary bound to c.Handler. The element path (buildGoElementStage +
+// buildGoEntrypoint) is the multi-function generalization, which stages once
+// and links per function.
+func buildGo(absFolder, method, name string, c atomic_common.Callable) (string, error) {
+	funcName := c.Handler
 	buildDir, err := buildGoElementStage(absFolder, name)
 	if err != nil {
 		return "", err

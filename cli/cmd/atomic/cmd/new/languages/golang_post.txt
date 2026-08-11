@@ -14,7 +14,6 @@ type {{FUNC}}Body struct {
 // {{FUNC}} handles the request and returns (status, message, payload, headers).
 // The Drift SDK is imported as `drift` (secrets, nosql, blobs, queues, cache,
 // locks, jwt, http_request, log).
-{{ANNOTATION}}
 func {{FUNC}}(body {{FUNC}}Body, req drift.Request) (int, string, interface{}, map[string]string) {
 	if body.Name == "" {
 		return 400, "Bad Request", map[string]any{"error": "name is required"}, nil

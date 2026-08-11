@@ -14,7 +14,7 @@ package azure
 // fee — removed platform-side (see pricing.go's own comment) since it was
 // the one line that didn't map to a configured resource.
 const (
-	driftCentsPerFunction     = 5  // per @atomic function (surface token)
+	driftCentsPerFunction     = 5  // per declared function (surface token)
 	driftCentsPerScheduledJob = 30 // per scheduled (cron) job (background load)
 	driftCentsPerMiBMemory    = 3  // per MiB of function-memory cap (RAM, primary lever)
 	driftCentsPerRealtimeConn = 1  // per concurrent realtime connection (RAM)

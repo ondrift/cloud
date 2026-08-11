@@ -10,12 +10,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 )
 
 func (r *devRunner) generateRust() error {
-	funcName := atomic_common.FuncNameForLanguage(r.method, r.name, "rust")
+	funcName := r.handler
 	sourceModule := strings.TrimSuffix(r.sourceFile, ".rs")
 
 	var tmpl string

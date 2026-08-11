@@ -269,9 +269,15 @@ func writeRestaurantFixture(t *testing.T) string {
 name: la-cucina
 atomic:
   functions:
-    - { name: "get:menu",                  memory: 32MB }
-    - { name: "post:reservations",         memory: 64MB }
-    - { name: "post:reservations/confirm", memory: 32MB }
+    - name: "get:menu"
+      handler: GetMenu
+      memory: 32MB
+    - name: "post:reservations"
+      handler: PostReservations
+      memory: 64MB
+    - name: "post:reservations/confirm"
+      handler: PostReservationsConfirm
+      memory: 32MB
 backbone:
   nosql:
     - name: reservations
@@ -291,46 +297,51 @@ canvas: ./canvas
 	return tmp
 }
 
-// TestCheckRouteCollisions flags two functions that share a route path
-// (the deploy identity is method-agnostic, so get:items + post:items would
-// shadow each other) and passes when the paths are distinct.
+// A function's identity is its declared name, method included, so get:items
+// and post:items are two functions. Two entries on ONE identity would shadow
+// each other on the slice, with the survivor answering for both.
+//
+// The check reads the manifest and nothing else. It used to read the ANNOTATION
+// in each function's source instead, which meant the manifest could declare
+// `get:items` while the source shipped `post:items` — and the collision the
+// manifest plainly showed was invisible.
 func TestCheckRouteCollisions(t *testing.T) {
 	tmp := t.TempDir()
-	// Each function declares its `dir`. The name is a route, so there is no
-	// directory to derive from it, and the collision check reads the annotation
-	// in the source at that path rather than the name in the manifest.
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
 name: shop
 atomic:
   functions:
-    - { name: "get:items",  memory: 32MB, dir: ./atomic/items-get }
-    - { name: "post:items", memory: 32MB, dir: ./atomic/items-post }
+    - name: "get:items"
+      handler: GetItems
+      memory: 32MB
+    - name: "post:items"
+      handler: PostItems
+      memory: 32MB
 canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
-	// The annotation must sit directly above a decorated callable — an
-	// annotation floating above `package main` is an orphan the parser
-	// rejects outright (cmd/atomic/common/parse.go), precisely so it can't
-	// be silently ignored and resurface later as a confusing slice-size
-	// refusal. These fixtures carry a real exported func for that reason.
-	mustWrite(t, filepath.Join(tmp, "atomic", "items-get", "main.go"),
-		"package main\n\n// @atomic http=get:items auth=none\nfunc GetItems(req any) {}\n")
-	mustWrite(t, filepath.Join(tmp, "atomic", "items-post", "main.go"),
-		"package main\n\n// @atomic http=post:items auth=none\nfunc PostItems(req any) {}\n")
 
 	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
 	if err != nil {
 		t.Fatalf("ParseDriftfile failed: %v", err)
 	}
-	// get:items and post:items are DISTINCT functions — method is part of the
-	// identity — so they must NOT collide.
 	if err := checkRouteCollisions(m); err != nil {
 		t.Errorf("get:items + post:items are distinct functions, should not collide: %v", err)
 	}
 
-	// Two functions with the SAME method+path genuinely collide.
-	mustWrite(t, filepath.Join(tmp, "atomic", "items-get", "main.go"),
-		"package main\n\n// @atomic http=post:items auth=none\nfunc PostItems(req any) {}\n") // now also post:items
+	// The same identity twice, on two different handlers.
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+name: shop
+atomic:
+  functions:
+    - name: "post:items"
+      handler: CreateItem
+      memory: 32MB
+    - name: "post:items"
+      handler: PostItems
+      memory: 32MB
+canvas: ./canvas
+`)
 	m2, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
 	if err != nil {
 		t.Fatalf("ParseDriftfile failed: %v", err)
@@ -371,7 +382,7 @@ func TestParseDriftfile_LocalPathsMustExist(t *testing.T) {
 	}{
 		{
 			name:      "function explicit dir",
-			driftfile: "name: hello\natomic:\n  functions:\n    - name: \"get:menu\"\n      memory: 8MB\n      dir: ./src/menu\n",
+			driftfile: "name: hello\natomic:\n  functions:\n    - name: \"get:menu\"\n      handler: GetMenu\n      memory: 8MB\n      dir: ./src/menu\n",
 			want:      `atomic.functions[0]: function "get:menu" declares dir`,
 		},
 		{
@@ -498,7 +509,7 @@ atomic:
   rate_limit: 5000/min
   deploy_history: 5
   functions:
-    - { name: "get:redirect", memory: 128MB }
+    - { name: "get:redirect", handler: GetRedirect, memory: 128MB }
 backbone:
   nosql:
     - name: links
@@ -511,13 +522,13 @@ environments:
     atomic:
       rate_limit: 200/min
       functions:
-        - { name: "get:redirect", memory: 64MB }
+        - { name: "get:redirect", handler: GetRedirect, memory: 64MB }
     backbone: { nosql: [{name: links, size: 50MB}] }
   dev:
     atomic:
       rate_limit: 20/min
       functions:
-        - { name: "get:redirect", memory: 128MB }
+        - { name: "get:redirect", handler: GetRedirect, memory: 128MB }
 `)
 	mustMkdir(t, filepath.Join(tmp, "web"))
 
@@ -804,14 +815,14 @@ atomic:
   rate_limit: 5000/min
   deploy_history: 5
   functions:
-    - { name: "get:ping", memory: 32MB }
+    - { name: "get:ping", handler: GetPing, memory: 32MB }
 environments:
   prod: {}
   staging:
     atomic:
       deploy_history: 0
       functions:
-        - { name: "get:ping", memory: 32MB }
+        - { name: "get:ping", handler: GetPing, memory: 32MB }
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
 
@@ -915,12 +926,12 @@ environments:
 // A function that declares no `dir` is DISCOVERED from source, so there is no
 // path to check.
 //
-// Its `name` is a ROUTE — `get:menu` — not a directory. Deriving `atomic/<name>`
+// Its `name` is a TRIGGER — `get:menu` — not a directory. Deriving `atomic/<name>`
 // from it asked the filesystem for something nobody declared, using a string
 // holding `/` and `:`. It also assumed one folder per function, which is not the
-// layout most projects use: a flat `atomic/` tree with several @atomic functions
-// per file has no per-function directory at all, and demanding one made every
-// such project unable to declare its own functions.
+// layout most projects use: a flat `atomic/` tree holding several functions per
+// file has no per-function directory at all, and demanding one made every such
+// project unable to declare its own functions. The element owns the directory.
 //
 // Asserts the absence of the PATH error specifically rather than a clean parse:
 // the parser also validates against whatever schema this machine has cached, and

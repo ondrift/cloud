@@ -2,82 +2,42 @@ package atomic_common
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
-
-	"github.com/ondrift/cloud/cli/common"
 )
 
-// DetectLanguage scans dir for the file containing the @atomic annotation and
-// returns the language ("native", "python", "node", "ruby", "php", "rust") and the filename (not full path).
+// BuildLanguage is the language key the BUILD and the operator speak, which is
+// not quite the one the parser uses: Go compiles to a binary the slice runs
+// directly, so it ships as "native".
+func BuildLanguage(parserLanguage string) string {
+	if parserLanguage == "go" {
+		return "native"
+	}
+	return parserLanguage
+}
+
+// DetectLanguage reports the language of a source directory and the file that
+// would represent it, for callers that only need to know what a folder is
+// written in — a snapshot being laid out, a project being explained.
+//
+// A caller that needs to build something wants FindCallable instead: a
+// function's source file is the one declaring its handler, and an element
+// commonly spreads its handlers across several files.
 func DetectLanguage(dir string) (string, string, error) {
-	entries, err := os.ReadDir(dir)
+	lang, err := ElementLanguage(dir)
 	if err != nil {
 		return "", "", err
 	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		path := filepath.Join(dir, name)
-		ext := filepath.Ext(name)
-		if _, err := ParseAtomicMetadata(path); err != nil {
-			continue
-		}
-		switch ext {
-		case ".py":
-			return "python", name, nil
-		case ".js":
-			return "node", name, nil
-		case ".go":
-			return "native", name, nil
-		case ".rb":
-			return "ruby", name, nil
-		case ".php":
-			return "php", name, nil
-		case ".rs":
-			return "rust", name, nil
-		}
+	files, err := sourceFilesIn(dir)
+	if err != nil {
+		return "", "", err
 	}
-	return "", "", fmt.Errorf("no atomic function found in %s", dir)
+	if len(files) == 0 {
+		return "", "", fmt.Errorf("no source files in %s", dir)
+	}
+	return BuildLanguage(lang), files[0], nil
 }
 
-// FuncNameForLanguage returns the expected handler function name given the
-// @atomic method+name and the target language. Route patterns with path
-// parameters (e.g., "users/:id") are normalized first: colons are stripped
-// and slashes become hyphens, so "users/:id" → "users-id" before casing.
-func FuncNameForLanguage(method, name, language string) string {
-	// Normalize parameterized route patterns into plain kebab-case.
-	name = strings.ReplaceAll(name, ":", "")
-	name = strings.ReplaceAll(name, "/", "-")
-
-	switch language {
-	case "python", "ruby", "php", "rust":
-		return toSnakeCase(method) + "_" + toSnakeCase(name)
-	case "node":
-		return toCamelCase(method + "-" + name)
-	default:
-		// Go: PascalCase
-		namePascal := ""
-		for _, seg := range strings.Split(name, "-") {
-			namePascal += common.CapitalizeFirst(strings.ToLower(seg))
-		}
-		return common.CapitalizeFirst(strings.ToLower(method)) + namePascal
-	}
-}
-
-// toSnakeCase converts "checkout-items" to "checkout_items" for Python function names.
-func toSnakeCase(name string) string {
-	return strings.ReplaceAll(name, "-", "_")
-}
-
-// toCamelCase converts "checkout-items" to "checkoutItems" for Node function names.
-func toCamelCase(name string) string {
-	parts := strings.Split(name, "-")
-	for i := 1; i < len(parts); i++ {
-		parts[i] = common.CapitalizeFirst(strings.ToLower(parts[i]))
-	}
-	return strings.Join(parts, "")
+// LanguageOfFile reports the build language of a single source file.
+func LanguageOfFile(path string) string {
+	return BuildLanguage(languageFromExt(filepath.Ext(path)))
 }

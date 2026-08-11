@@ -5,11 +5,14 @@
 // it can compare against the digest the platform recorded at the last deploy.
 //
 // The digest is computed entirely client-side; the platform stores and returns
-// it as an opaque token (see core/common/db/atomic.go). Everything that affects
-// the deployed artefact lives in the hashed bytes: the @atomic directive,
-// trigger/schedule comments, handler code, and dependency manifests are all in
-// the source files; the element grouping (which comes from the Driftfile, not
-// the source) is folded in explicitly.
+// it as an opaque token (see core/common/db/atomic.go). It hashes the SOURCE:
+// handler code, trigger/schedule comments, and dependency manifests, plus the
+// element grouping folded in explicitly.
+//
+// It deliberately does NOT hash the Driftfile entry. Changing a function's gate
+// or its secrets changes what the operator is told, not what is built, and both
+// are sent on every deploy — so a manifest-only edit must not force a rebuild of
+// code that did not change.
 package atomic_cmd
 
 import (
@@ -26,7 +29,6 @@ import (
 	"strings"
 	"time"
 
-	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 	"github.com/ondrift/cloud/cli/common"
 )
 
@@ -236,22 +238,7 @@ func DeployedDigests() (map[string]string, error) {
 	return out, nil
 }
 
-// FunctionName returns the deploy identity for the function at dir — the key
-// under which the last-deployed digest is looked up and the legacy route
-// collision is checked. For HTTP that's "<method>:<path>" (so get:x and post:x
-// are distinct functions); for a queue trigger it's the directory basename
-// (mirroring DeployFolder).
-func FunctionName(dir string) (string, error) {
-	meta, err := atomic_common.ParseAtomicMetadataFromDir(dir)
-	if err != nil {
-		return "", err
-	}
-	if meta.Trigger == "queue" {
-		abs, aerr := filepath.Abs(dir)
-		if aerr != nil {
-			return "", aerr
-		}
-		return filepath.Base(abs), nil
-	}
-	return deployedKey(meta.Method, meta.Path), nil
-}
+// DeployedKey is the key a function's last-deployed digest is recorded under —
+// the same `method:name` string the Driftfile writes and the slice books
+// against, rebuilt from what a deployed record reports.
+func DeployedKey(method, name string) string { return deployedKey(method, name) }

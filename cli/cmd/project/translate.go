@@ -143,23 +143,16 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	)
 
 	// ── Resource counts ─────────────────────────────────────────────
-	// An Atomic function is a callable in user source with an `@atomic`
-	// annotation directly above it. Walk every directory listed under
-	// atomic.functions in the Driftfile and count decorated callables.
-	// Helpers (no annotation) don't count.
+	// An Atomic function is one `atomic.functions` entry. Callables the
+	// manifest does not name are helpers: free, unrouted, uncounted. The count
+	// needs no filesystem access, so a preflight that cannot read the source
+	// tree still sizes the envelope correctly.
 	if hc, hcErr := CountAtomicFunctions(m); hcErr == nil {
 		cfg.Atomic.MaxNumberOfFunctions = hc
-	} else {
-		// Source not readable (e.g. manifest preflight before deploy);
-		// fall back to one function per directory entry.
-		cfg.Atomic.MaxNumberOfFunctions = len(m.Slice().Entries("name", "atomic", "functions"))
 	}
 
-	// Scheduled-job count spans BOTH declaration sites — `atomic.functions[].cron`
-	// in the Driftfile and `@atomic cron=` in source. CountScheduledFunctions
-	// counts the Driftfile half without touching the tree, so even a preflight
-	// that cannot read source still sizes the envelope for every declared
-	// schedule; its error return carries that partial count rather than zero.
+	// Every scheduled job is billed (tier.CentsPerScheduledJob), and they are
+	// declared in one place: `atomic.functions[].cron`.
 	sc, _ := CountScheduledFunctions(m)
 	cfg.Atomic.MaxNumberOfScheduledJobs = sc
 	if v := m.Slice().Int("atomic", "deploy_history"); v > 0 {

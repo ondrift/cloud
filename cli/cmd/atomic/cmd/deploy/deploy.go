@@ -277,10 +277,10 @@ type TriggerSpec struct {
 	MaxRetry int    `json:"max_retry,omitempty"`
 	// Method tells the runner which HTTP method the function is registered
 	// under, so the trigger registry's lookup matches. Empty defaults to
-	// "POST" (legacy `// drift:trigger queue X` paired with `@atomic
-	// http=post:...`). Set to "queue" for handlers declared via
-	// `@atomic queue=NAME` — those register under a synthetic method that
-	// no HTTP request can match, keeping them externally unreachable.
+	// "POST" — a `// drift:trigger queue X` comment on a function that also
+	// answers over HTTP. It is "queue" for a function the Driftfile names
+	// `queue:<name>`: those register under a synthetic method that no HTTP
+	// request can match, keeping them externally unreachable.
 	Method string `json:"method,omitempty"`
 }
 
@@ -539,49 +539,35 @@ func operatorSink(a FuncArtifact) error {
 	}
 }
 
-// DeployFolder builds and deploys the atomic function at folder. It is
-// exported so that "drift deploy" can call it directly without going through
-// the cobra command layer. When quiet is true, all per-function status
-// chatter is suppressed so the manifest deploy can render its own clean
-// summary line for each function.
-func DeployFolder(folder, element string, quiet bool) error {
-	meta, err := atomic_common.ParseAtomicMetadataFromDir(folder)
-	if err != nil {
-		return fmt.Errorf("failed to parse Atomic metadata: %w", err)
-	}
-	if meta.Trigger != "http" && meta.Trigger != "queue" {
-		return fmt.Errorf("@atomic %s= triggers aren't supported by the deploy path yet (only http= and queue= are wired)", meta.Trigger)
-	}
-
-	absFolder, err := filepath.Abs(folder)
+// DeployFunction builds and deploys one declared function. It is exported so
+// `drift project deploy` can call it directly without going through the cobra
+// command layer. When quiet is true, all per-function status chatter is
+// suppressed so the manifest deploy can render its own clean summary line for
+// each function.
+//
+// Every fact it needs comes from the Driftfile entry in spec. The one thing it
+// asks the filesystem is which file declares the handler — the question a
+// manifest cannot answer.
+func DeployFunction(spec FunctionSpec, quiet bool) error {
+	absFolder, err := filepath.Abs(spec.Dir)
 	if err != nil {
 		return fmt.Errorf("failed to resolve folder path: %w", err)
 	}
 
-	// Resolve (method, name) per trigger type. For HTTP, both come from
-	// the @atomic line (`http=post:reviewer/login` → method=post,
-	// name=reviewer/login). For queue triggers the @atomic line carries
-	// only the queue name (`queue=validate` → meta.Method holds
-	// "validate"); the function's identifier is the directory's
-	// basename, registered under a synthetic "queue" method that no
-	// HTTP request can match. That keeps queue-only functions
-	// unreachable from /api/* while the in-process trigger registry can
-	// still look them up by (method, name).
-	var method, name string
-	auth, stream, secrets := meta.Auth, meta.Stream, meta.Secrets
+	// (method, name) is the pair the operator and slice speak. For HTTP it is
+	// the verb and the route. For a queue it is the synthetic "queue" method,
+	// which no HTTP request can match — that is what keeps a queue handler
+	// unreachable from /api/* while the in-process trigger registry can still
+	// look it up by (method, name) — and the queue's own name.
+	method, name := spec.Wire()
+	element := spec.Element
+	auth, stream, secrets := spec.Auth, spec.Stream, spec.Secrets
 
-	switch meta.Trigger {
-	case "http":
-		method, name = meta.Method, meta.Path
-	case "queue":
-		method = "queue"
-		name = filepath.Base(absFolder)
-	}
-
-	language, sourceFile, err := atomic_common.DetectLanguage(absFolder)
+	callable, err := atomic_common.FindCallable(absFolder, spec.Handler)
 	if err != nil {
-		return fmt.Errorf("failed to detect language: %w", err)
+		return fmt.Errorf("function %q: %w", spec.Name, err)
 	}
+	language, sourceFile := atomic_common.BuildLanguage(callable.Language), callable.SourceFile
 
 	// Catch a common footgun before building: a function that uses the SDK
 	// but ships no dependency manifest to declare it — otherwise it deploys
@@ -596,16 +582,18 @@ func DeployFolder(folder, element string, quiet bool) error {
 		if langLabel == "native" {
 			langLabel = "go"
 		}
-		switch meta.Trigger {
-		case "queue":
-			fmt.Printf("Deploying queue handler '%s' (%s, source: %s)\n", name, langLabel, meta.Method)
-		default:
+		if q := spec.QueueSource(); q != "" {
+			fmt.Printf("Deploying queue handler '%s' (%s, source: %s)\n", name, langLabel, q)
+		} else {
 			// Org-only routing: a function is served at /<name>; the element is
 			// never a route segment.
 			fmt.Printf("Deploying function '%s /%s' (%s, auth: %s)\n", method, name, langLabel, auth)
 		}
 	}
 
+	// A `// drift:trigger queue NAME` comment binds an EXTRA queue to a
+	// function that already has its own trigger — a handler consuming from
+	// several queues. It stacks with the one the Driftfile declares.
 	triggers, err := parseTriggerComments(absFolder)
 	if err != nil {
 		return fmt.Errorf("failed to parse trigger comments: %w", err)
@@ -615,24 +603,8 @@ func DeployFolder(folder, element string, quiet bool) error {
 		return fmt.Errorf("failed to parse schedule comments: %w", err)
 	}
 	triggers = append(triggers, schedules...)
-	// A Driftfile `cron:` declares the same thing as a `// drift:schedule`
-	// comment, from the other end. Both land here; the Driftfile one carries
-	// the function's own method because it is additive to the HTTP route.
-	triggers = append(triggers, scheduleTriggerFor(name, method)...)
+	triggers = append(triggers, triggersFor(ElementFunc{Spec: spec, SourceFile: sourceFile})...)
 
-	// Auto-register the @atomic queue=NAME annotation as a TriggerSpec so
-	// the trigger registry binds the queue to this function. Manual
-	// `// drift:trigger queue NAME` comments still work and stack with
-	// this — useful for handlers that consume from multiple queues.
-	if meta.Trigger == "queue" {
-		triggers = append(triggers, TriggerSpec{
-			Type:     "queue",
-			Source:   meta.Method,
-			Method:   "queue", // matches the synthetic registration method
-			PollMS:   500,
-			MaxRetry: 3,
-		})
-	}
 	if len(triggers) > 0 && !quiet {
 		fmt.Printf("  %d trigger(s) found: ", len(triggers))
 		for i, t := range triggers {
@@ -651,17 +623,17 @@ func DeployFolder(folder, element string, quiet bool) error {
 	var sourcePath string
 	switch language {
 	case "python":
-		sourcePath, err = buildPython(absFolder, method, name)
+		sourcePath, err = buildPython(absFolder, method, name, callable)
 	case "node":
-		sourcePath, err = buildNode(absFolder, method, name)
+		sourcePath, err = buildNode(absFolder, method, name, callable)
 	case "ruby":
-		sourcePath, err = buildRuby(absFolder, method, name)
+		sourcePath, err = buildRuby(absFolder, method, name, callable)
 	case "php":
-		sourcePath, err = buildPHP(absFolder, method, name)
+		sourcePath, err = buildPHP(absFolder, method, name, callable)
 	case "rust":
-		sourcePath, err = buildRust(absFolder, method, name)
+		sourcePath, err = buildRust(absFolder, method, name, callable)
 	default:
-		sourcePath, err = buildGo(absFolder, method, name)
+		sourcePath, err = buildGo(absFolder, method, name, callable)
 	}
 	if err != nil {
 		return err
@@ -686,15 +658,14 @@ func DeployFolder(folder, element string, quiet bool) error {
 	}
 
 	// The two facts the SLICE needs to render this function's entry-point
-	// wrapper itself (#PLATFORM-CORE-OPERATOR-5JPT4H), derived from the same two
-	// helpers the builders use rather than restated: DetectLanguage for the
-	// source file, FuncNameForLanguage for the callable. Empty for compiled
-	// languages, whose entry point is a binary the runtime cannot produce.
+	// wrapper itself, taken from the same callable the build was bound to
+	// rather than restated. Empty for compiled languages, whose entry point is
+	// a binary the runtime cannot produce.
 	var wrapSourceModule, wrapEntryFunc string
 	switch language {
 	case "python", "node", "ruby", "php":
 		wrapSourceModule = strings.TrimSuffix(filepath.Base(sourceFile), filepath.Ext(sourceFile))
-		wrapEntryFunc = atomic_common.FuncNameForLanguage(method, name, language)
+		wrapEntryFunc = callable.Handler
 	}
 
 	if err := sendSourceToOperator(FuncArtifact{
@@ -713,21 +684,36 @@ func DeployFolder(folder, element string, quiet bool) error {
 	return nil
 }
 
-// buildGo compiles a Go function to a static Linux binary and returns the path.
-func Deploy() *cobra.Command {
-	var element string
-
+// Deploy is `drift atomic deploy <folder>` — ship the functions the Driftfile
+// declares in one directory, rather than the whole project.
+//
+// resolve is supplied by the caller that can read a Driftfile. This package is
+// imported BY the manifest parser, so it cannot import it back (Article I: no
+// cycles); handing the lookup in keeps the arrow pointing one way.
+func Deploy(resolve func(dir string) ([]FunctionSpec, error)) *cobra.Command {
 	atomicDeployCmd := &cobra.Command{
-		Use:     "deploy [function folder]",
-		Short:   "Deploy a function endpoint",
-		Example: "  drift atomic deploy ./send-email\n  drift atomic deploy ./create-invoice --element billing",
+		Use:   "deploy [function folder]",
+		Short: "Deploy the functions declared in one folder",
+		Long: "Build and ship every function the project's Driftfile declares in <folder>, " +
+			"leaving the rest of the project alone.\n\n" +
+			"What each function is — its trigger, the handler that serves it, the memory it " +
+			"books, its gate and its secrets — comes from the Driftfile, so this command " +
+			"deploys a subset of the manifest and never something the manifest has not seen.",
+		Example: "  drift atomic deploy ./atomic\n  drift atomic deploy ./atomic/billing",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return DeployFolder(args[0], element, false)
+			specs, err := resolve(args[0])
+			if err != nil {
+				return err
+			}
+			for _, s := range specs {
+				if derr := DeployFunction(s, false); derr != nil {
+					return derr
+				}
+			}
+			return nil
 		},
 	}
-
-	atomicDeployCmd.Flags().StringVarP(&element, "element", "e", "", "Group this function under a named element (e.g. --element payments)")
 	return atomicDeployCmd
 }

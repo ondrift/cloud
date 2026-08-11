@@ -1,47 +1,32 @@
 package project
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
 
-// projectWith writes a throwaway project tree and returns a Manifest rooted at
-// it. files is path→contents, relative to the project root.
-func projectWith(t *testing.T, fns []Node, files map[string]string) *Manifest {
+// projectWith returns a Manifest whose atomic.functions are fns.
+//
+// It needs no source tree: what a project declares is a property of the
+// document, so every count below runs on the manifest alone.
+func projectWith(t *testing.T, fns []Node) *Manifest {
 	t.Helper()
-	dir := t.TempDir()
-	for name, body := range files {
-		p := filepath.Join(dir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
 	items := make([]any, len(fns))
 	for i, fn := range fns {
 		items[i] = map[string]any(fn)
 	}
 	slice := Node{"name": "test", "atomic": map[string]any{"functions": items}}
-	return &Manifest{doc: slice, slice: slice, baseDir: dir}
+	return &Manifest{doc: slice, slice: slice, baseDir: t.TempDir()}
 }
 
-// THE bug. A Driftfile declaring `cron:` sized its envelope at ZERO scheduled
-// jobs, because the count read only `@atomic cron=` — the annotation that
-// cannot deploy. Zero is not a small number here: enforceScheduleLimit treats
-// `max <= 0` as "no quota to enforce", so the slice was billed for none AND
-// gated at none.
+// A Driftfile declaring `cron:` must size its envelope for those jobs. Zero is
+// not a small number here: enforceScheduleLimit treats `max <= 0` as "no quota
+// to enforce", so a slice sized at zero is billed for none AND gated at none.
 func TestCountScheduledFunctions_CountsTheDriftfileField(t *testing.T) {
 	m := projectWith(t, []Node{
-		{"name": "get-menu"},
-		{"name": "nightly-rollup", "cron": "0 2 * * *"},
-		{"name": "hourly-cleanup", "cron": "0 * * * *"},
-	}, map[string]string{
-		"atomic/get-menu/main.go":       "// @atomic http=get:/get-menu\nfunc GetMenu() {}\n",
-		"atomic/nightly-rollup/main.go": "// @atomic http=post:/nightly-rollup\nfunc Rollup() {}\n",
-		"atomic/hourly-cleanup/main.go": "// @atomic http=post:/hourly-cleanup\nfunc Cleanup() {}\n",
+		{"name": "get:menu", "handler": "GetMenu"},
+		{"name": "post:nightly-rollup", "handler": "Rollup", "cron": "0 2 * * *"},
+		{"name": "post:hourly-cleanup", "handler": "Cleanup", "cron": "0 * * * *"},
 	})
 
 	got, err := CountScheduledFunctions(m)
@@ -58,40 +43,21 @@ func TestCountScheduledFunctions_CountsTheDriftfileField(t *testing.T) {
 // scheduled jobs and then let it register them unmetered.
 func TestCountScheduledFunctions_SurvivesAnUnreadableTree(t *testing.T) {
 	slice := Node{"name": "test", "atomic": map[string]any{"functions": []any{
-		map[string]any{"name": "nightly-rollup", "cron": "0 2 * * *"},
-		map[string]any{"name": "get-menu"},
+		map[string]any{"name": "post:nightly-rollup", "handler": "Rollup", "cron": "0 2 * * *"},
+		map[string]any{"name": "get:menu", "handler": "GetMenu"},
 	}}}
 	m := &Manifest{doc: slice, slice: slice, baseDir: filepath.Join(t.TempDir(), "does-not-exist")}
 
 	got, _ := CountScheduledFunctions(m)
 	if got != 1 {
-		t.Errorf("the Driftfile half needs no source access and must still be counted, got %d", got)
-	}
-}
-
-// A function carrying BOTH declarations is one scheduled job, not two.
-func TestCountScheduledFunctions_DoesNotDoubleCount(t *testing.T) {
-	m := projectWith(t, []Node{
-		{"name": "nightly-rollup", "cron": "0 2 * * *"},
-	}, map[string]string{
-		"atomic/nightly-rollup/main.go": "// @atomic cron=\"0 2 * * *\"\nfunc Rollup() {}\n",
-	})
-
-	got, err := CountScheduledFunctions(m)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != 1 {
-		t.Errorf("one function is one scheduled job however many ways it says so, got %d", got)
+		t.Errorf("the count is a property of the document and must not need source access, got %d", got)
 	}
 }
 
 // A project with no schedules sizes at zero — which is correct here, and means
 // "nothing to enforce" rather than "enforced at nothing".
 func TestCountScheduledFunctions_NoSchedulesIsZero(t *testing.T) {
-	m := projectWith(t, []Node{{"name": "get-menu"}}, map[string]string{
-		"atomic/get-menu/main.go": "// @atomic http=get:/get-menu\nfunc GetMenu() {}\n",
-	})
+	m := projectWith(t, []Node{{"name": "get:menu", "handler": "GetMenu"}})
 
 	got, err := CountScheduledFunctions(m)
 	if err != nil {
@@ -102,13 +68,32 @@ func TestCountScheduledFunctions_NoSchedulesIsZero(t *testing.T) {
 	}
 }
 
+// Every declared function is one billed function, whatever the source looks
+// like. Helpers beside them in the same file are free and uncounted, which is
+// the point of declaring the surface rather than inferring it.
+func TestCountAtomicFunctions_IsTheDeclaredList(t *testing.T) {
+	m := projectWith(t, []Node{
+		{"name": "get:menu", "handler": "GetMenu"},
+		{"name": "post:orders", "handler": "PostOrders"},
+		{"name": "queue:orders", "handler": "HandleOrder"},
+	})
+
+	got, err := CountAtomicFunctions(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != 3 {
+		t.Errorf("three declared functions is three billed functions, got %d", got)
+	}
+}
+
 // declaredSchedules is what reaches the deploy artifact. It keys on the
 // function NAME because that is what the operator resolves the trigger target
 // from — for an HTTP function the deployed name IS its route.
 func TestDeclaredSchedules_KeyedByFunctionName(t *testing.T) {
 	slice := Node{"atomic": map[string]any{"functions": []any{
-		map[string]any{"name": "get-menu"},
-		map[string]any{"name": "nightly-rollup", "cron": "0 2 * * *"},
+		map[string]any{"name": "get:menu", "handler": "GetMenu"},
+		map[string]any{"name": "post:nightly-rollup", "handler": "Rollup", "cron": "0 2 * * *"},
 		map[string]any{"name": "", "cron": "0 5 * * *"}, // nameless: unroutable, must be dropped
 	}}}
 	m := &Manifest{doc: slice, slice: slice}
@@ -117,7 +102,7 @@ func TestDeclaredSchedules_KeyedByFunctionName(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("only the named, cron-bearing entry may be published, got %v", got)
 	}
-	if got["nightly-rollup"] != "0 2 * * *" {
+	if got["post:nightly-rollup"] != "0 2 * * *" {
 		t.Errorf("want the cron keyed by function name, got %v", got)
 	}
 }
@@ -125,11 +110,8 @@ func TestDeclaredSchedules_KeyedByFunctionName(t *testing.T) {
 // The envelope the slice is actually sized with.
 func TestManifestToSliceConfig_SizesTheScheduledJobEnvelope(t *testing.T) {
 	m := projectWith(t, []Node{
-		{"name": "a", "memory": "32MB"},
-		{"name": "nightly", "memory": "128MB", "cron": "0 2 * * *"},
-	}, map[string]string{
-		"atomic/a/main.go":       "// @atomic http=get:/a\nfunc A() {}\n",
-		"atomic/nightly/main.go": "// @atomic http=post:/nightly\nfunc N() {}\n",
+		{"name": "get:a", "handler": "GetA", "memory": "32MB"},
+		{"name": "post:nightly", "handler": "Nightly", "memory": "128MB", "cron": "0 2 * * *"},
 	})
 
 	cfg, err := ManifestToSliceConfig(m)
@@ -138,5 +120,8 @@ func TestManifestToSliceConfig_SizesTheScheduledJobEnvelope(t *testing.T) {
 	}
 	if cfg.Atomic.MaxNumberOfScheduledJobs != 1 {
 		t.Errorf("the declared schedule must reach the envelope — at 0 the operator enforces nothing, got %d", cfg.Atomic.MaxNumberOfScheduledJobs)
+	}
+	if cfg.Atomic.MaxNumberOfFunctions != 2 {
+		t.Errorf("both declared functions must be in the envelope, got %d", cfg.Atomic.MaxNumberOfFunctions)
 	}
 }

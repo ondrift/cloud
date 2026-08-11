@@ -231,18 +231,17 @@ func checkLocalPaths(m *Manifest) ParseErrors {
 	// A function whose source directory is missing otherwise fails much later,
 	// inside the per-function build, as a compiler error about no input files.
 	//
-	// Only when a `dir` is actually declared. A function's `name` is its ROUTE
+	// Only when a `dir` is actually declared. A function's `name` is its TRIGGER
 	// (`post:auth/challenge`), not a path — it identifies what the slice runs and
 	// what that booking costs, and deriving `atomic/<name>` from it asks the
-	// filesystem for a directory nobody said existed. It is wrong twice over: the
-	// name holds `/` and `:`, and the layout it assumes — one folder per function
-	// — is not the one most projects use. A flat `atomic/` tree with several
-	// @atomic functions per file has no per-function directory to find, and
-	// demanding one made every such project unable to declare its own functions.
+	// filesystem for a directory nobody wrote. It is wrong twice over: the name
+	// holds `/` and `:`, and the layout it assumes — one folder per function —
+	// is not the one most projects use. Without a `dir`, the directory comes
+	// from the function's element, which is checked when the element is built.
 	for i, fn := range m.slice.Entries("name", "atomic", "functions") {
 		declared := fn.Str("dir")
 		if declared == "" {
-			continue // discovered from source; there is nothing to check here
+			continue // the element owns the directory; nothing to check here
 		}
 		dir := resolveBaseDir(m, declared)
 		if info, err := os.Stat(dir); err != nil || !info.IsDir() {

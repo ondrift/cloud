@@ -41,10 +41,12 @@ func TestPipeline_SnapshotToTransform(t *testing.T) {
 		}
 	}
 
-	// The HTTP scaffold carries the right @atomic directive + Drift signature.
+	// The scaffold is source and nothing else. What the function IS lives in the
+	// generated Driftfile, checked below — a migrated project reads as ported
+	// code rather than as code wearing Drift markup.
 	getOrder := readFile(t, wsDir, "atomic/get-order/get-order.py")
-	if !strings.Contains(getOrder, "# @atomic http=get:orders/:id auth=none") {
-		t.Errorf("get-order scaffold missing the http directive:\n%s", getOrder)
+	if strings.Contains(getOrder, "@atomic") {
+		t.Errorf("the scaffold must carry no Drift annotation:\n%s", getOrder)
 	}
 	if !strings.Contains(getOrder, "def get_orders_id(req):") {
 		t.Errorf("get-order scaffold missing the Drift handler def:\n%s", getOrder)
@@ -78,9 +80,17 @@ func TestPipeline_SnapshotToTransform(t *testing.T) {
 		t.Errorf("original `id` key should have been removed after remap:\n%s", orders)
 	}
 
-	// The Driftfile references the functions, the seeded collection, the secrets.
+	// The Driftfile carries the whole declaration: the function's real Azure
+	// route (not a slug derived from its folder), the callable serving it, the
+	// seeded collection and the secrets.
 	df := readFile(t, wsDir, "Driftfile")
-	for _, want := range []string{"post:get-order", "- name: orders", "seed: backbone/nosql/orders.jsonl", "STRIPE_KEY: $STRIPE_KEY"} {
+	for _, want := range []string{
+		`- name: "get:orders/:id"`,
+		"handler: get_orders_id",
+		"- name: orders",
+		"seed: backbone/nosql/orders.jsonl",
+		"STRIPE_KEY: $STRIPE_KEY",
+	} {
 		if strings.Contains(df, "nightly-report") {
 			t.Errorf("refused timer must not appear in the Driftfile:\n%s", df)
 		}

@@ -1,9 +1,13 @@
 // fetch.go — `drift atomic fetch [path]`. Walks the tree from a path
-// (default: cwd), finds every Atomic function (a directory holding a file
-// with an @atomic annotation), and runs that language's dependency
-// resolution *in place* — a "tidy" for all functions, all languages, in
-// one command. After it, an editor/LSP sees the deps and `drift atomic
-// run`/`deploy` have nothing left to fetch.
+// (default: cwd), finds every element (a directory of source in one
+// language), and runs that language's dependency resolution *in place* — a
+// "tidy" for every element, all languages, in one command. After it, an
+// editor/LSP sees the deps and `drift atomic run`/`deploy` have nothing left
+// to fetch.
+//
+// It reads no manifest on purpose: tidying dependencies is useful on a tree
+// whose Driftfile is half-written, and an element's language is visible from
+// its files alone.
 //
 // The CLI stays SDK-agnostic: for the interpreted languages it just runs
 // the package manager against whatever the function's manifest declares.
@@ -109,12 +113,11 @@ func discoverFunctions(root string) ([]fetchTarget, error) {
 		if p != root && fetchSkipDirs[d.Name()] {
 			return filepath.SkipDir
 		}
-		// DetectLanguage returns the language only when the dir contains a
-		// file carrying an @atomic annotation; otherwise it errors and we
-		// keep walking.
+		// DetectLanguage answers only for a directory holding source in ONE
+		// language; anything else errors and we keep walking.
 		if lang, _, derr := atomic_common.DetectLanguage(p); derr == nil {
 			targets = append(targets, fetchTarget{dir: p, language: lang})
-			return filepath.SkipDir // functions don't nest; don't descend
+			return filepath.SkipDir // elements don't nest; don't descend
 		}
 		return nil
 	})

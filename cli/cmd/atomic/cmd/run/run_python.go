@@ -8,12 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 )
 
 func (r *devRunner) generatePython() error {
-	funcName := atomic_common.FuncNameForLanguage(r.method, r.name, "python")
+	funcName := r.handler
 	sourceModule := strings.TrimSuffix(r.sourceFile, ".py")
 
 	var tmpl string
