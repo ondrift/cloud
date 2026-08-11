@@ -414,6 +414,29 @@ func createUserSourceArchive(absFolder, name string) (string, error) {
 // operatorSink is the default SlotSink: it uploads the built function to the
 // operator (the cloud deploy path). `drift project run` swaps in localSlotSink
 // to write the on-disk slot layout instead — see sink.go.
+// invocationProtocol says how the slice may talk to this artifact.
+//
+// "loop" means the wrapper reads newline-delimited envelopes until stdin closes,
+// so the slice may keep the process warm and stop paying the sandbox install and
+// runtime startup on every call. Anything else means one envelope then exit, and
+// the slice must spawn per invocation.
+//
+// It is declared per LANGUAGE because the loop lives in different places: Go's
+// wrapper owns its own stdin cycle, while Rust, Ruby and PHP hand theirs to the
+// SDK's `run`, so warming those needs an SDK release rather than a template
+// change. Python and Node are dispatched to a persistent language server long
+// before this matters.
+//
+// The safe answer is the empty one: a slice told "loop" about a one-shot binary
+// waits forever on the second call, while a slice told nothing about a looping
+// one merely spawns more than it had to.
+func invocationProtocol(language string) string {
+	if language == "native" {
+		return "loop"
+	}
+	return ""
+}
+
 func operatorSink(a FuncArtifact) error {
 	name, method, language, auth, element, stream := a.Name, a.Method, a.Language, a.Auth, a.Element, a.Stream
 	secrets, sourcePath, userSourcePath, triggers, digest := a.Secrets, a.SourcePath, a.UserSourcePath, a.Triggers, a.Digest
@@ -431,6 +454,7 @@ func operatorSink(a FuncArtifact) error {
 		// (#PLATFORM-CORE-OPERATOR-5JPT4H). Empty for compiled languages.
 		"source_module": a.SourceModule,
 		"entry_func":    a.EntryFunc,
+		"protocol":      invocationProtocol(language),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)

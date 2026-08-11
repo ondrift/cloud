@@ -145,7 +145,7 @@ func localSlotSink(runnerDir string) SlotSink {
 		meta, _ := json.Marshal(map[string]any{
 			"name": a.Name, "method": a.Method, "auth": a.Auth,
 			"element": a.Element, "language": lang, "stream": a.Stream,
-			"secrets": secrets,
+			"secrets": secrets, "protocol": invocationProtocol(lang),
 		})
 		return os.WriteFile(filepath.Join(slotDir, "metadata.json"), meta, 0o644)
 	}
