@@ -76,8 +76,16 @@ jobs:
           esac
           echo "bump=$bump" >> "$GITHUB_OUTPUT"
 
+          # THE MERGE COMMIT, not the branch tip. `head.sha` is the branch's own
+          # commit, and merging with "delete branch" removes it — so this step
+          # died on `fatal: bad object <sha>` and the release was silently not
+          # cut, while the merge itself looked perfectly clean.
+          #
+          # merge_commit_sha is on main and stays reachable however the PR was
+          # merged: squash, merge commit or rebase. Its diff against base.sha is
+          # the same set of files in every case, which is all this needs.
           base="${{ github.event.pull_request.base.sha }}"
-          head="${{ github.event.pull_request.head.sha }}"
+          head="${{ github.event.pull_request.merge_commit_sha }}"
           changed=$(git diff --name-only "$base" "$head")
           echo "$changed" | grep -q '^cli/' && echo "cli=true" >> "$GITHUB_OUTPUT" || echo "cli=false" >> "$GITHUB_OUTPUT"
           echo "$changed" | grep -q '^sdk/' && echo "sdk=true" >> "$GITHUB_OUTPUT" || echo "sdk=false" >> "$GITHUB_OUTPUT"
