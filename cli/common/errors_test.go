@@ -230,3 +230,94 @@ func TestMaintenanceMessage_NeverAdvisesLoggingOut(t *testing.T) {
 		t.Fatalf("the maintenance message must never advise logging out: %q", MaintenanceMessage)
 	}
 }
+
+// THE regression. The operator refuses with http.Error, so a refusal goes out as
+// text/plain and the api forwards it verbatim: a second free slice answers 409
+// with the body `only one free hacker slice is allowed per account`. Parsing only
+// JSON discarded that, and the user saw "that conflicts with existing state" —
+// which names no rule, suggests nothing to do, and reads as a platform fault
+// rather than as the one-per-account limit working exactly as designed.
+func TestDetailForStatus_PlainTextBodyIsTheReason(t *testing.T) {
+	const reason = "only one free hacker slice is allowed per account"
+	if got := detailForStatus(http.StatusConflict, []byte(reason+"\n")); got != reason {
+		t.Errorf("detailForStatus(409, plain text) = %q, want %q", got, reason)
+	}
+
+	// End to end, through the message the user actually reads.
+	err := &APIError{
+		Op:     "create slice",
+		Status: http.StatusConflict,
+		Detail: detailForStatus(http.StatusConflict, []byte(reason)),
+	}
+	want := "Couldn't create slice: " + reason + "."
+	if got := err.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
+// 4xx only. A 5xx is the platform being broken, and those paths already say
+// something careful that names no component; splicing a bare "Internal Server
+// Error" into one adds noise and no information.
+func TestDetailForStatus_PlainTextIsClientErrorsOnly(t *testing.T) {
+	for _, status := range []int{500, 502, 503, 504} {
+		if got := detailForStatus(status, []byte("Internal Server Error")); got != "" {
+			t.Errorf("detailForStatus(%d, plain text) = %q, want empty", status, got)
+		}
+	}
+	// A server that DOES send structured JSON on a 5xx is still read.
+	if got := detailForStatus(500, []byte(`{"error":"db down"}`)); got != "db down" {
+		t.Errorf("detailForStatus(500, JSON) = %q, want db down", got)
+	}
+}
+
+// JSON still wins, and a JSON body with no readable field yields nothing rather
+// than the raw JSON — printing `{"code":42}` at a person is not an improvement.
+func TestDetailForStatus_JSONStillPreferred(t *testing.T) {
+	if got := detailForStatus(409, []byte(`{"error":"nope"}`)); got != "nope" {
+		t.Errorf("JSON error field: got %q, want nope", got)
+	}
+	if got := detailForStatus(409, []byte(`{"code":42}`)); got != "" {
+		t.Errorf("JSON without a message field: got %q, want empty", got)
+	}
+}
+
+// Machinery must not reach the user. A gateway's HTML page, a multi-line trace
+// and an overlong body are all worse in a one-line CLI message than the generic
+// text they would replace.
+func TestDetailForStatus_RejectsNonMessages(t *testing.T) {
+	cases := map[string]string{
+		"html":      "<html><body>502 Bad Gateway</body></html>",
+		"multiline": "panic: nope\n\tgoroutine 1 [running]:",
+		"toolong":   strings.Repeat("x", maxPlainDetail+1),
+		"control":   "bad\x00byte",
+	}
+	for name, body := range cases {
+		if got := detailForStatus(http.StatusConflict, []byte(body)); got != "" {
+			t.Errorf("%s: detailForStatus = %q, want empty", name, got)
+		}
+	}
+}
+
+// A refused resize carries the resource that would drop below usage, and the
+// user needs it: "resize would shrink below current usage" alone tells them to
+// raise a number without saying which one.
+func TestDetailForStatus_RendersResizeViolations(t *testing.T) {
+	body := []byte(`{"error":"resize would shrink below current usage",` +
+		`"violations":[{"resource":"atomic.functions","used":5,"new_limit":1}]}`)
+	got := detailForStatus(http.StatusConflict, body)
+	want := "resize would shrink below current usage (atomic.functions: 5 in use, limit would be 1)"
+	if got != want {
+		t.Errorf("detailForStatus =\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+// An error body with no violations is unchanged — most refusals have none, and
+// appending an empty parenthetical to all of them would be noise.
+func TestDetailForStatus_NoViolationsIsUnchanged(t *testing.T) {
+	if got := detailForStatus(409, []byte(`{"error":"nope"}`)); got != "nope" {
+		t.Errorf("got %q, want nope", got)
+	}
+	if got := detailForStatus(409, []byte(`{"error":"nope","violations":[]}`)); got != "nope" {
+		t.Errorf("empty violations: got %q, want nope", got)
+	}
+}
