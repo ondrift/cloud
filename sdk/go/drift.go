@@ -43,11 +43,11 @@ type Response struct {
 // Run is the entry point for Drift Atomic functions. The handler receives
 // the incoming HTTP request and must return a response.
 //
-// You normally do NOT call Run yourself. The Drift CLI reads the `@atomic`
-// annotation above your exported handler (e.g. `func PostItems(body, req)
-// (int, string, any, map[string]string)`), generates the program's `main()`,
-// and that generated main is what calls Run. Write the annotated handler and
-// let the CLI wire the entry point. (Ruby is the one exception: its file ends
+// You normally do NOT call Run yourself. The Drift CLI reads your Driftfile,
+// finds the exported handler its `handler:` names (e.g. `func PostItems(body,
+// req) (int, string, any, map[string]string)`), generates the program's
+// `main()`, and that generated main is what calls Run. Write the handler,
+// declare it, and let the CLI wire the entry point. (Ruby is the one exception: its file ends
 // with `Drift.run(method(:handler))`.) Call Run directly only if you are
 // hand-building a main without the CLI.
 //
@@ -518,7 +518,7 @@ type secretNS struct{}
 //
 // In deployed mode, the runner injects declared secrets as DRIFT_SECRET_<NAME>
 // env vars at subprocess start. Get reads from the env first; if the secret
-// wasn't declared in the function's `// @atomic-secrets` annotation, the env
+// wasn't declared in the function's Driftfile `secrets:` list, the env
 // var won't exist. The HTTP fallback to backbone exists only for local-dev
 // mode (no DRIFT_RUNTIME) and for back-compat — backbone /secret/get is
 // SAT-guarded in production, so an undeclared HTTP call will be rejected.
@@ -1395,7 +1395,7 @@ func wrapEgressDenied(rawURL string, err error) *EgressDeniedError {
 //
 // Usage:
 //
-//	// @atomic http=get:events auth=none stream=sse
+//	// Driftfile: name get:events, handler GetEvents, stream sse
 //	func main() {
 //	    drift.RunSSE(func(req drift.Request, emit drift.Emitter) {
 //	        for i := 0; i < 10; i++ {
@@ -1503,7 +1503,7 @@ func (e Emitter) SendRaw(event, data string) {
 //
 // Usage:
 //
-//	// @atomic http=get:chat auth=none stream=ws
+//	// Driftfile: name get:chat, handler GetChat, stream ws
 //	func main() {
 //	    drift.RunWS(func(req drift.Request, conn drift.Conn) {
 //	        for {

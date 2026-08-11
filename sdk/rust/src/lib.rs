@@ -474,7 +474,7 @@ pub mod backbone {
 
         /// Read order:
         ///   1. `DRIFT_SECRET_<NAME>` env var — set by the runner from the
-        ///      function's `@atomic-secrets` allowlist. Only path that works
+        ///      function's Driftfile `secrets:` list. Only path that works
         ///      in production: backbone `/secret/get` is SAT-guarded and the
         ///      subprocess does not hold the SAT.
         ///   2. HTTP fallback — local-dev only. In production, returns 401.
@@ -1448,7 +1448,7 @@ pub fn http_request_with_timeout(
 /// Entry point for SSE streaming functions.
 ///
 /// ```rust,no_run
-/// // @atomic http=get:events auth=none stream=sse
+/// // Driftfile: name get:events, handler get_events, stream sse
 /// drift_sdk::run_sse(|req, emit| {
 ///     for i in 0..10 {
 ///         emit("counter", &serde_json::json!({"value": i}));
@@ -1640,7 +1640,7 @@ impl WsConn {
 /// Entry point for WebSocket functions.
 ///
 /// ```rust,no_run
-/// // @atomic http=get:chat auth=none stream=ws
+/// // Driftfile: name get:chat, handler get_chat, stream ws
 /// drift_sdk::run_ws(|req, conn| {
 ///     loop {
 ///         match conn.read() {

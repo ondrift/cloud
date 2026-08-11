@@ -5,8 +5,8 @@
 # `drift atomic deploy` generates a wrapper that requires your file and calls
 # your method BY NAME. So a deployed function must:
 #
-#   1. be a top-level `def` — the `@atomic` annotation has to sit directly
-#      above it, or it is reported as an orphan and never deployed.
+#   1. be a top-level `def`, so the wrapper can call it by the name the
+#      Driftfile's `handler:` gives.
 #   2. return the 3-element array `[status, message, payload]`.
 #
 # The signature differs by method, because the wrapper unwraps the body for
@@ -17,7 +17,7 @@
 #
 #   require 'drift'
 #
-#   # @atomic http=get:expenses auth=none
+#   # Driftfile: name get:expenses, handler get_expenses
 #   def get_expenses(req)
 #     rows = Drift::Backbone.sql('ledger').query('SELECT * FROM expenses')
 #     [200, 'OK', { 'count' => rows.length, 'expenses' => rows }]
@@ -388,7 +388,7 @@ module Drift
     module Secret
       # Read order:
       #   1. DRIFT_SECRET_<NAME> env var — set by the runner from the
-      #      function's @atomic-secrets allowlist. This is the only path
+      #      function's Driftfile `secrets:` list. This is the only path
       #      that works in production: backbone /secret/get is SAT-guarded
       #      and the subprocess does not have the SAT.
       #   2. HTTP fallback — local-dev (`drift atomic run`) only. In

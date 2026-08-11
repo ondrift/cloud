@@ -57,15 +57,23 @@ drift-sdk = { git = "https://github.com/ondrift/cloud/sdk" }
 
 ## Writing a function
 
-A Drift Atomic function is a **named handler with an `@atomic` annotation**. The CLI reads the annotation and generates the program's entry point — you don't write `main()` or call `run()` yourself (Ruby is the one exception; see below).
+A Drift Atomic function is a **named handler your project's Driftfile declares**. Nothing in the source marks it — the CLI reads the manifest and generates the program's entry point, so you don't write `main()` or call `run()` yourself (Ruby is the one exception; see below).
 
-- **Annotation** — `@atomic http=<method>:<route> auth=<none|jwt|…>` for an HTTP route, or `@atomic queue=<name>` for a queue consumer. Path params use `:name` (e.g. `reviewer/decision/:id`).
+- **Declaration** — one entry under `atomic.functions`, naming the trigger (`name: post:items`, or `name: queue:orders` for a queue consumer), the `handler` that serves it, and the `memory` it books. Path params use `:name` (e.g. `reviewer/decision/:id`).
 - **Arguments** — `(req)` for a request with no body (GET); `(body, req)` when there's a request body or queue payload.
 - **Return** — `(status, message, payload)`, with an optional 4th `headers` map. It's a tuple in Go/Python/Rust, an array in Node/PHP, a hash in Ruby.
 - **Request** — read path params from `req.params`, query from `req.query`, headers from `req.headers`, raw body from `req.body`.
-- **Streaming** — annotate `stream=sse` or `stream=ws`; the handler receives an extra `emit` (SSE) or `conn` (WebSocket) argument.
+- **Streaming** — set `stream: sse` or `stream: ws` on the entry; the handler receives an extra `emit` (SSE) or `conn` (WebSocket) argument.
 
-Everything stateful lives under the **Backbone** namespace — the *B* of the sacred A·B·C triad and the **sole entrypoint** for state. Nothing stateful sits at the top level. Backbone groups secrets, key/value cache, NoSQL documents, queues, blobs, locks, relational `sql(name)`, and realtime channels — all shown per-language below. Identity lives under a separate **Deed** namespace instead — a peer pillar, not a Backbone primitive, with its own listener/port (`DEED_URL`) separate from Backbone's — grouping passwordless **KeyAuth** (Ed25519 device-key auth), general-purpose **JWT** sign/verify, the zero-knowledge **Vault** (recovery store), **Link** (multi-device attestation/enrollment/revocation), and **Pocket** (E2EE per-identity app data). Cross-slice calling (`slice(name)` / `callerSlice(req)`) stays at the top level on purpose: it's inter-slice networking, a different, still-hypothetical future pillar — not Backbone, and not the same thing as Deed's `Link` (which enrolls a device for one identity, not a slice-to-slice call).
+```yaml
+atomic:
+  functions:
+    - name: post:reviewer/decision/:id
+      handler: PostReviewerDecisionId
+      memory: 32MB
+```
+
+Everything stateful lives under the **Backbone** namespace — the *B* of the sacred A·B·C triad and the **sole entrypoint** for state. Nothing stateful sits at the top level. Backbone groups secrets, key/value cache, NoSQL documents, queues, blobs, locks, relational `sql(name)`, and realtime channels — all shown per-language below. Identity lives under a separate **Deed** namespace instead — a peer pillar, not a Backbone primitive, reached at its own `DEED_URL` — grouping passwordless **KeyAuth** (Ed25519 device-key auth), general-purpose **JWT** sign/verify, the zero-knowledge **Vault** (recovery store), **Link** (multi-device attestation/enrollment/revocation), and **Pocket** (E2EE per-identity app data). Cross-slice calling (`slice(name)` / `callerSlice(req)`) stays at the top level on purpose: it's inter-slice networking, a different, still-hypothetical future pillar — not Backbone, and not the same thing as Deed's `Link` (which enrolls a device for one identity, not a slice-to-slice call).
 
 ---
 
@@ -80,7 +88,7 @@ import drift "github.com/ondrift/cloud/sdk/go"
 ```
 
 ```go
-// @atomic http=post:reviewer/decision/:id auth=none
+// Declared in the Driftfile as: name post:reviewer/decision/:id, handler PostReviewerDecisionId
 func PostReviewerDecisionId(body RequestBody, req drift.Request) (int, string, any, map[string]string) {
     id := strings.TrimSpace(req.Params["id"])
     if id == "" {
@@ -125,7 +133,7 @@ import drift   # requires Python 3.9+
 ```
 
 ```python
-# @atomic http=post:submit auth=none
+# Declared in the Driftfile as: name post:submit, handler post_submit
 def post_submit(body, req):
     if not body.get("permit_type"):
         return 400, "Bad Request", {"error": "permit_type is required"}
@@ -167,7 +175,7 @@ const drift = require("@ondrift/sdk");   // requires Node.js 18+
 ```
 
 ```js
-// @atomic http=get:status/:token auth=none
+// Declared in the Driftfile as: name get:status/:token, handler getStatusToken
 async function getStatusToken(req) {
   const token = (req.params && req.params.token) || "";
   if (!token) return [400, "Bad Request", { error: "token required" }];
@@ -210,7 +218,7 @@ require "drift"   # requires Ruby 3.0+
 ```
 
 ```ruby
-# @atomic http=get:reviewer/queue auth=none
+# Declared in the Driftfile as: name get:reviewer/queue, handler get_reviewer_queue
 def get_reviewer_queue(req)
   rows = Drift::Backbone::Nosql.collection("submissions").list
   { "status" => 200, "message" => "OK", "payload" => { "count" => rows.length } }
@@ -256,7 +264,7 @@ Drift.log("msg"); Drift.http_request("GET", url, timeout: 30)
 
 ```php
 <?php
-// @atomic queue=notify auth=none
+// Declared in the Driftfile as: name queue:notify, handler queue_notifier
 function queue_notifier($body, $req = null) {
     $id = is_array($body) ? ($body['submission_id'] ?? '') : '';
     if ($id === '') return [200, 'OK', ['ok' => false]];
@@ -304,7 +312,7 @@ serde_json = "1"
 use drift_sdk::{self as drift, Value};
 use serde_json::json;
 
-// @atomic queue=validate auth=none
+// Declared in the Driftfile as: name queue:validate, handler queue_validator
 pub fn queue_validator(body: Value, _req: Value) -> (i64, &'static str, Value) {
     let id = body.get("submission_id").and_then(|v| v.as_str()).unwrap_or("");
     if id.is_empty() {

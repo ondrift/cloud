@@ -17,9 +17,9 @@ All backbone helpers use only stdlib (urllib.request) -- zero external dependenc
 your function BY NAME (`from <your_module> import <your_func>`). So a deployed
 function must:
 
-  1. be a top-level `def` -- the `@atomic` annotation has to sit directly above
-     it. A lambda, or a def nested inside another def, is not matched, and the
-     annotation is then reported as an orphan.
+  1. be a top-level `def`. A lambda, or a def nested inside another def,
+     cannot be imported by name, and the deploy says so rather than shipping
+     a function that never binds.
   2. return the 3-tuple `(status, message, payload)`.
 
 The signature differs by method, because the wrapper unwraps the body for you
@@ -33,14 +33,14 @@ A complete GET function:
 
     import drift
 
-    # @atomic http=get:expenses auth=none
+    # Driftfile: name get:expenses, handler get_expenses
     def get_expenses(req):
         rows = drift.backbone.sql("ledger").query("SELECT * FROM expenses")
         return 200, "OK", {"count": len(rows), "expenses": rows}
 
 And a POST, which receives the decoded body first:
 
-    # @atomic http=post:expense auth=none
+    # Driftfile: name post:expense, handler post_expense
     def post_expense(body, req):
         if not body.get("payer"):
             return 400, "Bad Request", {"error": "payer is required"}
@@ -643,7 +643,7 @@ def run_sse(handler):
     """Entry point for SSE streaming functions.
 
     Usage:
-        # @atomic http=get:events auth=none stream=sse
+        # Driftfile: name get:events, handler get_events, stream sse
         import drift
 
         def get_events(req, emit):
@@ -745,7 +745,7 @@ def run_ws(handler):
     """Entry point for WebSocket functions.
 
     Usage:
-        # @atomic http=get:chat auth=none stream=ws
+        # Driftfile: name get:chat, handler get_chat, stream ws
         import drift
 
         def get_chat(req, conn):
