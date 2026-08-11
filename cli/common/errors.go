@@ -177,7 +177,7 @@ func CheckResponse(resp *http.Response, op string) ([]byte, error) {
 	return nil, &APIError{
 		Op:     op,
 		Status: resp.StatusCode,
-		Detail: extractDetail(body),
+		Detail: detailForStatus(resp.StatusCode, body),
 		Raw:    strings.TrimSpace(string(body)),
 	}
 }
@@ -200,6 +200,109 @@ func extractDetail(body []byte) string {
 		}
 	}
 	return ""
+}
+
+// detailForStatus is extractDetail plus the case it was missing: on a CLIENT
+// error, a non-JSON body is the reason itself.
+//
+// The operator renders a refusal with http.Error, so it goes out as text/plain
+// and the api forwards it verbatim — a second free slice really does answer 409
+// with the body `only one free hacker slice is allowed per account`. Reading only
+// JSON discarded that and left the user with "that conflicts with existing
+// state", which names no rule, suggests nothing to do, and reads like a platform
+// fault rather than a per-account limit working exactly as designed.
+//
+// Scoped to 4xx deliberately. A 4xx is the server telling the USER what they did
+// wrong, which is precisely the text worth surfacing. A 5xx is the platform being
+// broken: those paths already have carefully-worded messages that say nothing
+// about which component failed, and a bare "Internal Server Error" spliced into
+// one adds noise rather than information.
+//
+// Handled here rather than at the one handler that refuses: every endpoint using
+// http.Error has this shape, and a CLI that understands only its server's current
+// content type breaks again the next time one of them differs.
+func detailForStatus(status int, body []byte) string {
+	if d := extractDetail(body); d != "" {
+		if v := resizeViolations(body); v != "" {
+			return d + " (" + v + ")"
+		}
+		return d
+	}
+	if status < 400 || status >= 500 {
+		return ""
+	}
+	if json.Valid(body) {
+		// Structured, but with no field a person can read. Showing the raw JSON
+		// would be worse than the generic message it replaces.
+		return ""
+	}
+	return plainTextDetail(strings.TrimSpace(string(body)))
+}
+
+// resizeViolations renders the per-resource detail a refused resize already
+// carries, or "" for any body that has none.
+//
+// A refused resize answers with `{"error": "...", "violations": [{resource, used,
+// new_limit}]}` — the operator computes exactly which limit would drop below
+// current usage, and the configurator uses it to highlight the offending form
+// field. The CLI printed only the summary, so a person was told the resize would
+// shrink below current usage without being told below WHAT, which leaves them
+// guessing at which number to raise.
+//
+// Best-effort by construction: anything unparseable yields "" and the caller
+// still shows the summary. A partial answer is worse than the summary alone.
+func resizeViolations(body []byte) string {
+	var parsed struct {
+		Violations []struct {
+			Resource string `json:"resource"`
+			Used     int    `json:"used"`
+			NewLimit int    `json:"new_limit"`
+		} `json:"violations"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil || len(parsed.Violations) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(parsed.Violations))
+	for _, v := range parsed.Violations {
+		if v.Resource == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s: %d in use, limit would be %d", v.Resource, v.Used, v.NewLimit))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "; ")
+}
+
+// maxPlainDetail bounds what a non-JSON body may contribute. A refusal from
+// Drift is one short sentence; anything longer is a proxy's HTML error page or a
+// stack trace, and pasting that into a one-line CLI message is worse than the
+// generic text it would replace.
+const maxPlainDetail = 300
+
+// plainTextDetail returns a non-JSON body if it reads like a message meant for a
+// person, and "" if it looks like machinery.
+func plainTextDetail(s string) string {
+	if len(s) > maxPlainDetail {
+		return ""
+	}
+	// An HTML or XML page is a gateway talking, not Drift.
+	if strings.HasPrefix(s, "<") {
+		return ""
+	}
+	// Multi-line bodies are traces and dumps. http.Error writes exactly one
+	// line, so the message this exists for is unaffected.
+	if strings.ContainsAny(s, "\n\r") {
+		return ""
+	}
+	// Control characters mean it is not text meant to be read.
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return ""
+		}
+	}
+	return s
 }
 
 // TransportError wraps a network-level failure (DNS, dial, TLS, timeout) in
