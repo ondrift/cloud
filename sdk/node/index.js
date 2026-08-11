@@ -16,9 +16,9 @@
  * `drift atomic deploy` generates a wrapper (app.js) that requires your file
  * and calls your function BY NAME. So a deployed function must:
  *
- *   1. be a NAMED function — the `@atomic` annotation has to sit directly
- *      above `function myHandler(...)`. An arrow function assigned to a const
- *      is not matched, and the annotation is then reported as an orphan.
+ *   1. be a NAMED function — `function myHandler(...)`. An arrow function
+ *      assigned to a const cannot be found by name, and the deploy says so
+ *      rather than shipping a function that never binds.
  *   2. be EXPORTED — `module.exports = { myHandler }`.
  *   3. return the 3-tuple `[status, message, payload]` — NOT an object.
  *
@@ -33,7 +33,7 @@
  *
  *   const drift = require('@ondrift/sdk');
  *
- *   // @atomic http=get:expenses auth=none
+ *   // Driftfile: name get:expenses, handler getExpenses
  *   async function getExpenses(req) {
  *     const rows = await drift.backbone.sql('ledger').query('SELECT * FROM expenses');
  *     return [200, 'OK', { count: rows.length, expenses: rows }];
@@ -43,7 +43,7 @@
  *
  * And a POST, which receives the decoded body first:
  *
- *   // @atomic http=post:expense auth=none
+ *   // Driftfile: name post:expense, handler postExpense
  *   async function postExpense(body, req) {
  *     if (!body.payer) return [400, 'Bad Request', { error: 'payer is required' }];
  *     return [200, 'OK', { ok: true }];
@@ -632,7 +632,7 @@ async function httpRequest(method, url, headers, body, opts) {
  * Entry point for SSE streaming functions.
  *
  * Usage:
- *   // @atomic http=get:events auth=none stream=sse
+ *   // Driftfile: name get:events, handler getEvents, stream sse
  *   const drift = require("@ondrift/sdk");
  *   drift.runSSE(async (req, emit) => {
  *     for (let i = 0; i < 10; i++) {
@@ -726,7 +726,7 @@ function _runLocalSSE(handler) {
  * Entry point for WebSocket functions.
  *
  * Usage:
- *   // @atomic http=get:chat auth=none stream=ws
+ *   // Driftfile: name get:chat, handler getChat, stream ws
  *   const drift = require("@ondrift/sdk");
  *   drift.runWS(async (req, conn) => {
  *     while (true) {

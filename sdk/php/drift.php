@@ -7,8 +7,8 @@
  * `drift atomic deploy` generates a wrapper that require_once's your file and
  * calls your function BY NAME. So a deployed function must:
  *
- *   1. be a top-level `function` — the `@atomic` annotation has to sit
- *      directly above it, or it is reported as an orphan and never deployed.
+ *   1. be a top-level `function`, so the wrapper can call it by the name the
+ *      Driftfile's `handler:` gives.
  *   2. return the 3-element array `[$status, $message, $payload]`.
  *
  * The signature differs by method, because the wrapper unwraps the body for
@@ -17,7 +17,7 @@
  *   GET                      function my_handler($req)
  *   POST/PUT/DELETE/PATCH    function my_handler($body, $req)
  *
- *   // @atomic http=get:expenses auth=none
+ *   // Driftfile: name get:expenses, handler get_expenses
  *   function get_expenses($req) {
  *       $rows = \Drift\Backbone\sql('ledger')->query('SELECT * FROM expenses');
  *       return [200, 'OK', ['count' => count($rows), 'expenses' => $rows]];
@@ -603,7 +603,7 @@ class Secret {
     /**
      * Read order:
      *   1. DRIFT_SECRET_<NAME> env var — set by the runner from the
-     *      function's @atomic-secrets allowlist. Only path that works
+     *      function's Driftfile `secrets:` list. Only path that works
      *      in production: backbone /secret/get is SAT-guarded and the
      *      subprocess does not hold the SAT.
      *   2. HTTP fallback — local-dev only. In production, returns 401.
