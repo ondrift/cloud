@@ -1,110 +1,145 @@
+// handlers.go — the Driftfile's `atomic.functions` list, resolved into what the
+// deploy paths consume.
+//
+// This is the ONE place a manifest entry becomes a deployable function. Every
+// count, every collision check and every build reads the result of this file,
+// so "what does this project expose" has a single answer rather than one per
+// caller.
 package project
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 
 	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
-	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 )
 
-// CountAtomicFunctions returns the total number of `@atomic`-decorated
-// callables the deploy will ship. It MIRRORS the deploy branch: when the
-// Element layout is in play (a Default element or any multi-function element)
-// it counts across discovered elements; otherwise it counts across the
-// folders listed in the Driftfile (the legacy path, which honors custom
-// `dir:` overrides). Keeping it in lockstep with applyAtomic is what stops a
-// flat app from provisioning zero function slots.
+// FunctionSpecs resolves every declared function into a deployable spec, with
+// its source directory made absolute.
 //
-// An Atomic function IS a decorated callable; un-annotated helpers don't count.
-func CountAtomicFunctions(m *Manifest) (int, error) {
-	elements, err := atomic_cmd.DiscoverElements(m.ResolvePath("atomic"))
-	if err != nil {
-		return 0, err
-	}
-	if shouldUseElementPath(elements) {
-		total := 0
-		for _, el := range elements {
-			total += len(el.Funcs)
-		}
-		return total, nil
-	}
-	total := 0
-	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+// The directory follows from the element unless the entry overrides it: the
+// default element is the flat files under `atomic/`, a named element is
+// `atomic/<element>`. It is never derived from the function's NAME — a name is
+// a route, holding `/` and `:`, and the one-folder-per-function layout that
+// derivation assumed is not the one most projects use.
+func FunctionSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
+	atomicRoot := m.ResolvePath("atomic")
+
+	entries := m.Slice().Entries("name", "atomic", "functions")
+	specs := make([]atomic_cmd.FunctionSpec, 0, len(entries))
+	for _, fn := range entries {
 		dir := fn.Str("dir")
 		if dir == "" {
-			dir = filepath.Join("atomic", fn.Str("name"))
+			dir = atomic_cmd.ElementDir(atomicRoot, fn.Str("element"))
+		} else {
+			dir = m.ResolvePath(dir)
 		}
-		dir = m.ResolvePath(dir)
-		metas, err := atomic_common.ParseAllAtomicMetadataFromDir(dir)
-		if err != nil {
-			return 0, err
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
 		}
-		total += len(metas)
+		specs = append(specs, atomic_cmd.FunctionSpec{
+			Name:    fn.Str("name"),
+			Handler: fn.Str("handler"),
+			Element: fn.Str("element"),
+			Dir:     dir,
+			Auth:    fn.Str("auth"),
+			Stream:  fn.Str("stream"),
+			Secrets: fn.Strings("secrets"),
+		})
 	}
-	return total, nil
+	return specs
+}
+
+// FindDriftfileFor locates the project a directory belongs to, by walking UP
+// from it to the first Driftfile.
+//
+// From the target rather than the working directory, because `drift atomic
+// deploy ./atomic/billing` names a folder INSIDE a project and the project is
+// what has to be found. Reading only `./Driftfile` meant the command worked
+// from the project root and nowhere else — an absolute path from another
+// directory failed with "no Driftfile", which is true of the cwd and beside the
+// point. Running it from the root still resolves to the same file.
+func FindDriftfileFor(dir string) (string, error) {
+	at, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	for {
+		candidate := filepath.Join(at, driftfileName)
+		if st, serr := os.Stat(candidate); serr == nil && !st.IsDir() {
+			return candidate, nil
+		}
+		parent := filepath.Dir(at)
+		if parent == at {
+			return "", fmt.Errorf(
+				"no %s in %s or any directory above it — a function is declared in the "+
+					"project's manifest, so there has to be one to deploy from",
+				driftfileName, dir)
+		}
+		at = parent
+	}
+}
+
+// FunctionSpecsInDir resolves the functions the project declares in one
+// directory, for `drift atomic deploy <dir>` — which ships a subset of the
+// manifest rather than something the manifest has never heard of.
+//
+// A directory the Driftfile does not name is an error, and has to be: without a
+// declaration there is no memory booking, no gate and no handler, so there is
+// nothing to deploy and nothing the slice could admit work against.
+func FunctionSpecsInDir(dir string) ([]atomic_cmd.FunctionSpec, error) {
+	path, err := FindDriftfileFor(dir)
+	if err != nil {
+		return nil, err
+	}
+	m, err := ParseDriftfile(path)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := m.SelectEnvironment("", false); err != nil {
+		return nil, err
+	}
+
+	want, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s: %w", dir, err)
+	}
+
+	var out []atomic_cmd.FunctionSpec
+	for _, s := range FunctionSpecs(m) {
+		if s.Dir == want {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf(
+			"%s declares no functions in %s.\n"+
+				"       A function is declared in the Driftfile — its trigger, the handler that\n"+
+				"       serves it, the memory it books and its gate — so there is nothing here to\n"+
+				"       deploy until one names this directory.",
+			filepath.Base(path), dir)
+	}
+	return out, nil
+}
+
+// CountAtomicFunctions returns how many functions the deploy will ship.
+//
+// An Atomic function IS a declared entry. Callables the manifest does not name
+// are helpers: free, unrouted, and uncounted.
+func CountAtomicFunctions(m *Manifest) (int, error) {
+	return len(m.Slice().Entries("name", "atomic", "functions")), nil
 }
 
 // CountScheduledFunctions returns how many scheduled jobs the deploy will
-// register — the count used to size the slice's envelope. Like
-// CountAtomicFunctions, it mirrors the deploy branch.
-//
-// It counts BOTH declaration sites, because both consume a scheduled-job slot
-// and both are billed (tier.CentsPerScheduledJob):
-//
-//   - `atomic.functions[].cron` in the Driftfile — the documented one, and now
-//     the one that actually deploys (see applyAtomic's schedule wiring).
-//   - `@atomic cron=` in source — counted for as long as the annotation parses
-//     at all, so the envelope never under-counts a project mid-migration.
-//
-// Counting only the annotation is what made this wrong: the Driftfile field was
-// dismissed in code as "vestigial" while the spec documented it with worked
-// examples, so a project declaring `cron:` sized its envelope at ZERO scheduled
-// jobs. That is not merely a small number — enforceScheduleLimit treats
-// `max <= 0` as "no quota to enforce", so the slice was billed for none and
-// gated at none.
+// register — the count used to size the slice's envelope, and what
+// tier.CentsPerScheduledJob is charged against.
 func CountScheduledFunctions(m *Manifest) (int, error) {
-	// The Driftfile half needs no source access, so it is counted first and
-	// unconditionally — a preflight that cannot read the tree still sizes the
-	// envelope for every declared schedule.
-	declared := map[string]bool{}
+	n := 0
 	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
 		if fn.Str("cron") != "" {
-			declared[fn.Str("name")] = true
+			n++
 		}
 	}
-
-	elements, err := atomic_cmd.DiscoverElements(m.ResolvePath("atomic"))
-	if err != nil {
-		return len(declared), err
-	}
-	if shouldUseElementPath(elements) {
-		total := len(declared)
-		for _, el := range elements {
-			for _, f := range el.Funcs {
-				// Don't double-count a function carrying both declarations.
-				if f.Trigger == "cron" && !declared[f.Path] {
-					total++
-				}
-			}
-		}
-		return total, nil
-	}
-	total := len(declared)
-	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
-		dir := fn.Str("dir")
-		if dir == "" {
-			dir = filepath.Join("atomic", fn.Str("name"))
-		}
-		dir = m.ResolvePath(dir)
-		metas, err := atomic_common.ParseAllAtomicMetadataFromDir(dir)
-		if err != nil {
-			return total, err
-		}
-		for _, meta := range metas {
-			if meta.Trigger == "cron" && !declared[fn.Str("name")] {
-				total++
-			}
-		}
-	}
-	return total, nil
+	return n, nil
 }

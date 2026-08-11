@@ -1,3 +1,12 @@
+// Package atomic_common finds the callables a Driftfile names.
+//
+// The Driftfile declares every Atomic function — its trigger, the memory it
+// books, its gate, its secrets, and the `handler` that serves it. This package
+// answers the one question the manifest cannot: which source file in the
+// element holds that callable, and what language is it written in.
+//
+// Nothing here reads intent out of source. A comment above a function changes
+// nothing about how it deploys; the manifest is the whole declaration.
 package atomic_common
 
 import (
@@ -5,203 +14,17 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
-// AtomicMeta is everything a single `@atomic` annotation declares.
+// sentinelRe is the per-language regex matching a callable declaration line.
+// Only the callable's NAME is captured (group 1).
 //
-// One annotation per callable sentinel. The trigger is exactly one of
-// `http`, `queue`, or `cron`; auth, stream, and secrets are optional
-// inline keywords on the same line.
-//
-//	@atomic http=post:foo/bar auth=none secrets=KEY1,KEY2
-//	@atomic queue=validate auth=none secrets=KEY1
-//	@atomic cron="0 * * * *" auth=none
-type AtomicMeta struct {
-	// Trigger is "http", "queue", or "cron".
-	Trigger string
-	// Method carries the trigger-specific value:
-	//   http  → HTTP verb ("get", "post", "put", "delete", "patch")
-	//   queue → queue name
-	//   cron  → cron expression (e.g. "0 * * * *")
-	Method string
-	// Path is the route path, populated only for http triggers.
-	Path string
-	// Auth is the platform-level auth gate ("none", "apikey", or "").
-	Auth string
-	// Stream is the response shape ("", "sse", or "ws").
-	Stream string
-	// Secrets is the allowlist of backbone secrets the runner injects
-	// as DRIFT_SECRET_<NAME> env vars at invocation time.
-	Secrets []string
-	// SentinelName is the name of the source-level callable (function
-	// or method name) the annotation sits directly above. Populated by
-	// ParseAllAtomicMetadata; left empty by ParseAtomicMetadata.
-	SentinelName string
-	// Language is the source language detected for the file the
-	// annotation came from ("go", "python", "node", "ruby", "php",
-	// "rust"). Populated by ParseAllAtomicMetadata.
-	Language string
-}
-
-// ParseAtomicMetadataFromDir scans every file in dir for an `@atomic`
-// annotation and returns the first one found.
-func ParseAtomicMetadataFromDir(dir string) (AtomicMeta, error) {
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return AtomicMeta{}, fmt.Errorf("failed to read dir: %w", err)
-	}
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-		filename := filepath.Join(dir, file.Name())
-		if meta, err := ParseAtomicMetadata(filename); err == nil {
-			return meta, nil
-		}
-	}
-	return AtomicMeta{}, fmt.Errorf("no valid atomic metadata found in directory %s", dir)
-}
-
-// atomicLineRe captures the body of an `@atomic` annotation. The line
-// must begin with a comment marker (`//`, `#`, or `--`) followed by
-// `@atomic` — anchoring this way means the word `@atomic` appearing
-// inside prose ("the @atomic annotation above") doesn't match.
-var atomicLineRe = regexp.MustCompile(`(?m)^[ \t]*(?://|#|--)\s*@atomic\s+([^\r\n]+)$`)
-
-// ParseAtomicMetadata reads filename, finds the first `@atomic` line,
-// and parses it into an AtomicMeta. Returns an error if the file
-// doesn't contain a valid annotation.
-func ParseAtomicMetadata(filename string) (AtomicMeta, error) {
-	data, err := os.ReadFile(filename) // #nosec G304 — CLI tool reads user's own source files by design
-	if err != nil {
-		return AtomicMeta{}, err
-	}
-
-	match := atomicLineRe.FindSubmatch(data)
-	if len(match) < 2 {
-		return AtomicMeta{}, fmt.Errorf("atomic metadata not found")
-	}
-	return parseAtomicLine(string(match[1]))
-}
-
-// parseAtomicLine tokenises the body of an `@atomic` line into key=value
-// pairs and validates the result. Quoted values (single or double) are
-// supported so cron expressions with spaces work.
-//
-//	http=post:foo/bar           → trigger=http, method=post, path=foo/bar
-//	queue=validate              → trigger=queue, method=validate
-//	cron="0 * * * *"            → trigger=cron, method="0 * * * *"
-//	secrets=KEY1,KEY2           → secrets=[KEY1, KEY2]
-func parseAtomicLine(line string) (AtomicMeta, error) {
-	tokens, err := tokeniseAtomicLine(line)
-	if err != nil {
-		return AtomicMeta{}, err
-	}
-
-	var meta AtomicMeta
-	triggerCount := 0
-	for _, tok := range tokens {
-		eq := strings.IndexByte(tok, '=')
-		if eq < 0 {
-			return AtomicMeta{}, fmt.Errorf("@atomic token %q must be key=value", tok)
-		}
-		key := strings.TrimSpace(tok[:eq])
-		val := strings.TrimSpace(tok[eq+1:])
-		val = strings.Trim(val, `"'`)
-		switch key {
-		case "http":
-			triggerCount++
-			meta.Trigger = "http"
-			parts := strings.SplitN(val, ":", 2)
-			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-				return AtomicMeta{}, fmt.Errorf("@atomic http=<verb>:<path> required, got %q", val)
-			}
-			meta.Method = parts[0]
-			meta.Path = parts[1]
-		case "queue":
-			triggerCount++
-			meta.Trigger = "queue"
-			meta.Method = val
-		case "cron":
-			triggerCount++
-			meta.Trigger = "cron"
-			meta.Method = val
-		case "auth":
-			meta.Auth = val
-		case "stream":
-			meta.Stream = val
-		case "secrets":
-			for _, raw := range strings.Split(val, ",") {
-				s := strings.TrimSpace(raw)
-				if s != "" {
-					meta.Secrets = append(meta.Secrets, s)
-				}
-			}
-		default:
-			return AtomicMeta{}, fmt.Errorf("@atomic: unknown key %q", key)
-		}
-	}
-	if triggerCount == 0 {
-		return AtomicMeta{}, fmt.Errorf("@atomic: missing trigger (one of http=, queue=, cron=)")
-	}
-	if triggerCount > 1 {
-		return AtomicMeta{}, fmt.Errorf("@atomic: exactly one trigger allowed (http=, queue=, cron= are mutually exclusive)")
-	}
-	return meta, nil
-}
-
-// tokeniseAtomicLine splits the line into key=value tokens, respecting
-// quoted values so cron expressions like `"0 * * * *"` stay intact.
-func tokeniseAtomicLine(line string) ([]string, error) {
-	var (
-		tokens []string
-		buf    strings.Builder
-		quote  byte
-	)
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-		switch {
-		case quote != 0:
-			buf.WriteByte(c)
-			if c == quote {
-				quote = 0
-			}
-		case c == '"' || c == '\'':
-			quote = c
-			buf.WriteByte(c)
-		case c == ' ' || c == '\t':
-			if buf.Len() > 0 {
-				tokens = append(tokens, buf.String())
-				buf.Reset()
-			}
-		default:
-			buf.WriteByte(c)
-		}
-	}
-	if quote != 0 {
-		return nil, fmt.Errorf("@atomic: unterminated quoted value")
-	}
-	if buf.Len() > 0 {
-		tokens = append(tokens, buf.String())
-	}
-	return tokens, nil
-}
-
-// ── Multi-handler parsing ───────────────────────────────────────────
-//
-// ParseAllAtomicMetadata walks a source file looking for callable
-// sentinels (function/method declarations) and returns one AtomicMeta
-// per decorated callable.
-//
-// Strict rule: a callable has at most ONE `@atomic` annotation in the
-// comment line(s) directly above it. Two or more `@atomic` lines stacked
-// above the same sentinel is a hard error — the user must split into
-// separate functions. Callables with no `@atomic` above them are
-// helpers (skipped, free, unrouted).
-
-// sentinelRe is the per-language regex for matching a callable
-// sentinel declaration line. Only the function NAME is captured (group 1).
+// These are the shapes a handler may take. A callable the manifest names has
+// to be findable from outside its own file — exported in Go, `pub` in Rust, a
+// named `function` rather than an arrow bound to a const in Node — because the
+// generated entry point imports it by name.
 var sentinelRe = map[string]*regexp.Regexp{
 	"go":     regexp.MustCompile(`^[ \t]*func[ \t]+([A-Z][A-Za-z0-9_]*)[ \t]*\(`),
 	"python": regexp.MustCompile(`^[ \t]*def[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(`),
@@ -211,12 +34,18 @@ var sentinelRe = map[string]*regexp.Regexp{
 	"rust":   regexp.MustCompile(`^[ \t]*pub[ \t]+fn[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(`),
 }
 
-// commentAtomicRe matches a comment line that carries an `@atomic`
-// annotation. Captures the body (everything after `@atomic`).
-var commentAtomicRe = regexp.MustCompile(`^[ \t]*(?://|#|--)\s*@atomic\s+([^\r\n]+)$`)
-
-// commentLineRe matches any comment line (used to "look one more line up").
-var commentLineRe = regexp.MustCompile(`^[ \t]*(?://|#|--)`)
+// callableShape is what a findable callable looks like per language, quoted
+// back at the user when the one they named is absent. Naming the shape is the
+// whole point: "not found" is not actionable when the function is right there
+// and merely lowercase, or bound to a const.
+var callableShape = map[string]string{
+	"go":     "func PostUsers(...)            // exported: capital first letter",
+	"python": "def post_users(...):",
+	"node":   "function postUsers(...) {      // a NAMED function, not an arrow assigned to a const",
+	"ruby":   "def post_users(...)",
+	"php":    "function postUsers(...) {",
+	"rust":   "pub fn post_users(...)         // must be pub",
+}
 
 // languageFromExt returns the parser language key for a file extension.
 func languageFromExt(ext string) string {
@@ -239,135 +68,175 @@ func languageFromExt(ext string) string {
 
 // LanguageFromExt reports the Drift language key for a file extension (e.g.
 // ".py" → "python"), or "" if the extension isn't a supported source file.
-// Exported so element discovery can pick out source files per language.
 func LanguageFromExt(ext string) string { return languageFromExt(ext) }
 
-// ParseAllAtomicMetadata reads filename and returns one AtomicMeta
-// per decorated callable in the file. Returns an empty slice if the
-// file has no decorated callables. Returns an error if any callable
-// has more than one `@atomic` line stacked above it.
-func ParseAllAtomicMetadata(filename string) ([]AtomicMeta, error) {
-	lang := languageFromExt(filepath.Ext(filename))
-	if lang == "" {
-		return nil, fmt.Errorf("unsupported source extension: %s", filepath.Ext(filename))
-	}
-	rx, ok := sentinelRe[lang]
-	if !ok {
-		return nil, fmt.Errorf("no sentinel pattern for language %q", lang)
-	}
+// Callable is where a handler lives: the file declaring it and the language
+// that file is written in.
+type Callable struct {
+	// Handler is the callable's name, exactly as the Driftfile wrote it.
+	Handler string
+	// SourceFile is the basename of the file declaring it. Interpreted
+	// entry points import the handler from this module.
+	SourceFile string
+	// Language is the Drift language key ("go", "python", "node", "ruby",
+	// "php", "rust").
+	Language string
+}
 
-	data, err := os.ReadFile(filename) // #nosec G304 — CLI tool reads user's own source files by design
+// sourceFilesIn lists dir's top-level source files, sorted, with the language
+// each maps to. Subdirectories are not descended: an element is one flat
+// package, and a nested directory is that language's own vendor or module
+// tree rather than more handlers.
+func sourceFilesIn(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	lines := strings.Split(string(data), "\n")
-
-	var out []AtomicMeta
-	// Which annotation lines were actually consumed by a callable — anything
-	// left over is an orphan, checked after the scan.
-	usedAnno := make(map[int]bool)
-	for i, line := range lines {
-		m := rx.FindStringSubmatch(line)
-		if len(m) < 2 {
+	var files []string
+	for _, e := range entries {
+		if e.IsDir() {
 			continue
 		}
-		sentinel := m[1]
-
-		// Walk backward, skipping blank lines, to find the comment
-		// directly above this callable.
-		j := i - 1
-		for j >= 0 && strings.TrimSpace(lines[j]) == "" {
-			j--
-		}
-		if j < 0 {
+		if languageFromExt(filepath.Ext(e.Name())) == "" {
 			continue
 		}
-		annoMatch := commentAtomicRe.FindStringSubmatch(lines[j])
-		if annoMatch == nil {
-			// Comment present but no @atomic, or no comment at all → helper.
-			continue
-		}
-
-		// Walk one more line up: if that's ALSO an @atomic, the user
-		// stacked decorators. Hard error.
-		k := j - 1
-		for k >= 0 && strings.TrimSpace(lines[k]) == "" {
-			k--
-		}
-		if k >= 0 && commentAtomicRe.MatchString(lines[k]) {
-			return nil, fmt.Errorf("%s:%d: multiple @atomic decorators above %q — only one decorator per callable is allowed",
-				filepath.Base(filename), i+1, sentinel)
-		}
-
-		meta, perr := parseAtomicLine(annoMatch[1])
-		if perr != nil {
-			return nil, fmt.Errorf("%s:%d: %w", filepath.Base(filename), j+1, perr)
-		}
-		meta.SentinelName = sentinel
-		meta.Language = lang
-		usedAnno[j] = true
-		out = append(out, meta)
+		files = append(files, e.Name())
 	}
-
-	// An `@atomic` that matched no callable is an ERROR, not a shrug.
-	//
-	// It used to be silent, and the silence was expensive: the file parsed as
-	// zero functions, so `project deploy` went on to compare a slice holding N
-	// functions against a manifest declaring 0 and refused with
-	// "atomic.functions 2 (current) > 0 (declared)" — a message about slice SIZE
-	// that says nothing about the real cause. The only way to find it was to
-	// read this file.
-	//
-	// The common way to hit it is following a doc example that puts the
-	// annotation at the top of the file above an import, rather than directly
-	// above a named callable.
-	for i, line := range lines {
-		if usedAnno[i] || !commentAtomicRe.MatchString(line) {
-			continue
-		}
-		return nil, fmt.Errorf(
-			"%s:%d: this @atomic annotation is not directly above a function, so it would be ignored and the function never deployed.\n"+
-				"       In %s a decorated callable looks like:\n         %s\n"+
-				"       Put the annotation on the line immediately above it (blank lines are fine, other code is not).",
-			filepath.Base(filename), i+1, lang, callableShape[lang])
-	}
-	return out, nil
+	sort.Strings(files)
+	return files, nil
 }
 
-// callableShape is what "directly above a callable" actually means per
-// language, quoted back at the user in the orphan error above. Naming the
-// shape is the whole point: "not above a function" is not actionable when the
-// annotation *looks* like it is above one.
-var callableShape = map[string]string{
-	"go":     "func MyFunction(...)          // exported: capital first letter",
-	"python": "def my_function(...):",
-	"node":   "function myFunction(...) {    // a NAMED function, not an arrow assigned to a const",
-	"ruby":   "def my_function(...)",
-	"php":    "function myFunction(...) {",
-	"rust":   "pub fn my_function(...)       // must be pub",
-}
-
-// ParseAllAtomicMetadataFromDir walks every source file in dir, runs
-// ParseAllAtomicMetadata on each, and returns the concatenated list.
-func ParseAllAtomicMetadataFromDir(dir string) ([]AtomicMeta, error) {
-	files, err := os.ReadDir(dir)
+// ElementLanguage reports the one language an element directory is written in.
+//
+// An element is one language by construction — it has a single dependency
+// manifest and a single runtime — so a directory holding two is refused here
+// rather than producing a build that silently drops half the handlers.
+func ElementLanguage(dir string) (string, error) {
+	files, err := sourceFilesIn(dir)
 	if err != nil {
-		return nil, fmt.Errorf("read dir: %w", err)
+		return "", fmt.Errorf("read %s: %w", dir, err)
 	}
-	var out []AtomicMeta
+	if len(files) == 0 {
+		return "", fmt.Errorf("no source files in %s — the Driftfile names functions here, "+
+			"so this directory must hold the code that serves them", dir)
+	}
+
+	lang := languageFromExt(filepath.Ext(files[0]))
+	for _, f := range files[1:] {
+		if l := languageFromExt(filepath.Ext(f)); l != lang {
+			return "", fmt.Errorf(
+				"%s mixes languages (%s in %s, %s in %s) — an element is one language, "+
+					"one dependency manifest and one runtime; move the %s functions into "+
+					"their own element (a separate folder under atomic/, named by the "+
+					"`element:` key on those functions)",
+				dir, lang, files[0], l, f, l)
+		}
+	}
+	return lang, nil
+}
+
+// FindCallable locates the callable named handler in dir.
+//
+// The search is scoped to ONE element directory, never the whole project, so
+// two elements may each declare a `handler`. Within an element the name has to
+// be unique: the generated entry point imports it by name, and two candidates
+// mean the build would pick one and silently drop the other.
+func FindCallable(dir, handler string) (Callable, error) {
+	if handler == "" {
+		return Callable{}, fmt.Errorf("no handler named for a function in %s", dir)
+	}
+
+	lang, err := ElementLanguage(dir)
+	if err != nil {
+		return Callable{}, err
+	}
+	rx, ok := sentinelRe[lang]
+	if !ok {
+		return Callable{}, fmt.Errorf("no callable pattern for language %q", lang)
+	}
+	files, err := sourceFilesIn(dir)
+	if err != nil {
+		return Callable{}, fmt.Errorf("read %s: %w", dir, err)
+	}
+
+	var found []string
+	for _, fname := range files {
+		names, rerr := callableNames(filepath.Join(dir, fname), rx)
+		if rerr != nil {
+			return Callable{}, rerr
+		}
+		for _, n := range names {
+			if n == handler {
+				found = append(found, fname)
+				break
+			}
+		}
+	}
+
+	switch len(found) {
+	case 1:
+		return Callable{Handler: handler, SourceFile: found[0], Language: lang}, nil
+	case 0:
+		return Callable{}, fmt.Errorf(
+			"%s declares a function served by %q, and no such callable is in %s.\n"+
+				"       In %s a handler looks like:\n         %s\n"+
+				"       %s",
+			"the Driftfile", handler, dir, lang, callableShape[lang], nearMiss(dir, rx, handler, files))
+	default:
+		return Callable{}, fmt.Errorf(
+			"%q is declared in %d files in %s (%s) — a handler has to be unique within its "+
+				"element, because the entry point imports it by name and cannot say which one "+
+				"you meant. Rename one, or split them into separate elements.",
+			handler, len(found), dir, strings.Join(found, ", "))
+	}
+}
+
+// callableNames returns every callable declared in a file.
+func callableNames(path string, rx *regexp.Regexp) ([]string, error) {
+	data, err := os.ReadFile(path) // #nosec G304 — the CLI reads the user's own source by design
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if m := rx.FindStringSubmatch(line); len(m) >= 2 {
+			names = append(names, m[1])
+		}
+	}
+	return names, nil
+}
+
+// nearMiss adds the one sentence that turns "not found" into a fix.
+//
+// The overwhelmingly common cause is a handler that IS there and merely spelled
+// differently — a lowercase Go function, a `handle_order` written `handleOrder`
+// in the manifest. Listing what the directory does declare costs one pass over
+// files already read and answers the question the bare error leaves open.
+func nearMiss(dir string, rx *regexp.Regexp, handler string, files []string) string {
+	var all []string
 	for _, f := range files {
-		if f.IsDir() {
-			continue
-		}
-		ext := filepath.Ext(f.Name())
-		if languageFromExt(ext) == "" {
-			continue
-		}
-		metas, err := ParseAllAtomicMetadata(filepath.Join(dir, f.Name()))
+		names, err := callableNames(filepath.Join(dir, f), rx)
 		if err != nil {
-			return nil, err
+			continue
 		}
-		out = append(out, metas...)
+		all = append(all, names...)
 	}
-	return out, nil
+	if len(all) == 0 {
+		return "Nothing in that directory declares a callable of any name."
+	}
+	for _, n := range all {
+		if strings.EqualFold(n, handler) {
+			return fmt.Sprintf("There IS a %q — the names differ only in case, and the match is exact.", n)
+		}
+	}
+	sort.Strings(all)
+	return "Callables found there: " + strings.Join(all, ", ") + "."
+}
+
+// CallableExists reports whether dir declares a callable of this name, without
+// building the error prose. Used where absence is a question rather than a
+// failure.
+func CallableExists(dir, handler string) bool {
+	_, err := FindCallable(dir, handler)
+	return err == nil
 }

@@ -134,7 +134,7 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 	canvasDir := filepath.Join(work, "canvas")
 
 	fmt.Printf("\n  %s building %s…\n", common.Hint("·"), common.Highlight(app))
-	elements, err := atomic_cmd.DiscoverElements(m.ResolvePath("atomic"))
+	elements, err := atomic_cmd.BuildElements(FunctionSpecs(m))
 	if err != nil {
 		return "", "", "", err
 	}

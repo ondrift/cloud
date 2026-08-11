@@ -17,15 +17,12 @@ import (
 
 // buildPython generates the wrapper, installs the SDK + deps into
 // vendor/, creates a tar.gz archive, and returns its path.
-func buildPython(absFolder, method, name string) (string, error) {
-	funcName := atomic_common.FuncNameForLanguage(method, name, "python")
-
-	// Find the user's source file (the .py with @atomic annotation).
-	_, sourceFile, err := atomic_common.DetectLanguage(absFolder)
-	if err != nil {
-		return "", err
-	}
-	sourceModule := strings.TrimSuffix(filepath.Base(sourceFile), ".py")
+//
+// c names the callable and the file declaring it, both resolved from the
+// Driftfile entry this function is being built for.
+func buildPython(absFolder, method, name string, c atomic_common.Callable) (string, error) {
+	funcName := c.Handler
+	sourceModule := strings.TrimSuffix(filepath.Base(c.SourceFile), ".py")
 
 	// Create a staging directory for the archive.
 	stageDir, err := stageTempDir("drift-python-")

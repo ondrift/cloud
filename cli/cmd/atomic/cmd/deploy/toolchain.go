@@ -206,7 +206,11 @@ func toolchainImage(lang string) string {
 	case "python":
 		return "python:3.13" // NOT -slim: needs git for the SDK
 	case "node":
-		return "node:22" // NOT -slim: needs git for the SDK
+		// NOT -slim: needs git for the SDK. The major must match the node the
+		// SLICE runs (src/slice/Dockerfile) — dependencies are installed here
+		// and executed there, so a native module built against another ABI
+		// fails at the tenant's first invocation rather than at build.
+		return "node:24"
 	case "php":
 		return "composer:2" // php + composer; entrypoint is composer (see caller)
 	case "ruby":

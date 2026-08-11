@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
+	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/spf13/cobra"
@@ -167,15 +168,16 @@ func runNew(name, lang, method, queue, auth, element string) error {
 		}
 	}
 
-	// ---- resolve trigger details + the handler shape ----
-	var annotationBody, funcMethod, shape string
+	// ---- resolve the trigger, the handler shape, and the declared identity ----
+	var declaredName, funcMethod, shape string
 	if isQueue {
 		if !nameRe.MatchString(queue) {
 			return fmt.Errorf("invalid queue name %q", queue)
 		}
-		annotationBody = fmt.Sprintf("queue=%s auth=none", queue)
+		declaredName = "queue:" + queue
 		funcMethod = "queue"
 		shape = "post" // queue messages carry a body: handler(body, req)
+		auth = "none"  // a queue handler has no URL, so there is no gate to set
 	} else {
 		method = strings.ToLower(method)
 		switch method {
@@ -187,11 +189,11 @@ func runNew(name, lang, method, queue, auth, element string) error {
 			auth = "none"
 		}
 		switch auth {
-		case "none", "apikey", "jwt":
+		case "none", "apikey":
 		default:
-			return fmt.Errorf("invalid auth %q (none|apikey|jwt)", auth)
+			return fmt.Errorf("invalid auth %q (none|apikey)", auth)
 		}
-		annotationBody = fmt.Sprintf("http=%s:%s auth=%s", method, name, auth)
+		declaredName = method + ":" + name
 		funcMethod = method
 		if method == "get" {
 			shape = "get"
@@ -201,10 +203,11 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	}
 
 	// ---- assemble + write ----
-	funcName := atomic_common.FuncNameForLanguage(funcMethod, name, lang)
-	annotation := commentPrefix(lang) + " @atomic " + annotationBody
-	source := strings.NewReplacer("{{ANNOTATION}}", annotation, "{{FUNC}}", funcName).
-		Replace(sourceTemplate(lang, shape))
+	// The source carries no Drift-specific marking. What this function is —
+	// its trigger, its gate, the memory it books — is declared in the
+	// Driftfile, and the handler name is the only thing binding the two.
+	funcName := handlerName(funcMethod, name, lang)
+	source := strings.NewReplacer("{{FUNC}}", funcName).Replace(sourceTemplate(lang, shape))
 
 	// ---- resolve the target element + drop a flat handler file into it ----
 	// An element is a single-language backend: a folder of flat source files
@@ -257,15 +260,57 @@ func runNew(name, lang, method, queue, auth, element string) error {
 
 	trigger := "HTTP " + strings.ToUpper(method)
 	if isQueue {
-		trigger = "queue=" + queue
+		trigger = "queue " + queue
 	}
 	fmt.Printf("✅ Added %s to the %s element  (%s, %s)\n", filepath.Base(srcFile), elementID, lang, trigger)
 	for _, f := range created {
 		fmt.Printf("   %s\n", f)
 	}
-	fmt.Printf("\nNext:\n")
-	fmt.Printf("\tdrift project deploy   # discovers every @atomic function and ships the element\n")
+
+	// The function does not exist until the Driftfile says so: the manifest is
+	// what the slice is contracted to run, and a booking nobody wrote is one the
+	// platform cannot size, price or admit work against. Print the entry rather
+	// than guess a memory figure — that number is a decision, and `drift project
+	// benchmark` is what measures it.
+	fmt.Printf("\nDeclare it in your Driftfile, under atomic.functions:\n\n")
+	fmt.Printf("    - name: %s\n", declaredName)
+	fmt.Printf("      handler: %s\n", funcName)
+	fmt.Printf("      memory: 32MB\n")
+	if auth != "none" {
+		fmt.Printf("      auth: %s\n", auth)
+	}
+	if elementID != defaultElement {
+		fmt.Printf("      element: %s\n", elementID)
+	}
+	fmt.Printf("\nThen:\n")
+	fmt.Printf("\tdrift project benchmark   # measure what it actually needs\n")
+	fmt.Printf("\tdrift project deploy      # ship it\n")
 	return nil
+}
+
+// handlerName is the callable the scaffolder writes and names in the Driftfile
+// entry it prints. It is a STARTING POINT — the manifest binds the two, so
+// renaming the function only means editing `handler:` beside it.
+func handlerName(method, route, lang string) string {
+	route = strings.ReplaceAll(route, ":", "")
+	route = strings.ReplaceAll(route, "/", "-")
+
+	switch lang {
+	case "python", "ruby", "php", "rust":
+		return strings.ReplaceAll(method+"_"+route, "-", "_")
+	case "node":
+		parts := strings.Split(method+"-"+route, "-")
+		for i := 1; i < len(parts); i++ {
+			parts[i] = common.CapitalizeFirst(strings.ToLower(parts[i]))
+		}
+		return strings.Join(parts, "")
+	default: // Go: PascalCase, and exported so the entry point can import it
+		out := common.CapitalizeFirst(strings.ToLower(method))
+		for _, seg := range strings.Split(route, "-") {
+			out += common.CapitalizeFirst(strings.ToLower(seg))
+		}
+		return out
+	}
 }
 
 // defaultElement is the implicit flat element (atomic/*.<lang>) — mirrors the

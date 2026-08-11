@@ -94,7 +94,7 @@ func StageElementsLocally(elements []Element, runnerDir string, quiet bool) erro
 		case el.Lang == "python" || el.Lang == "node" || el.Lang == "ruby" || el.Lang == "php":
 			err = DeployInterpretedElement(el, digest, quiet)
 		case len(el.Funcs) == 1:
-			err = DeployFolder(el.Dir, el.Name, quiet)
+			err = DeployFunction(el.Funcs[0].Spec, quiet)
 		default:
 			err = fmt.Errorf("element %q is %s with %d functions — multi-function %s isn't staged for local run yet",
 				el.Name, el.Lang, len(el.Funcs), el.Lang)

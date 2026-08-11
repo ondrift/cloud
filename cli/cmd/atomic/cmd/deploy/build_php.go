@@ -15,14 +15,11 @@ import (
 	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 )
 
-func buildPHP(absFolder, method, name string) (string, error) {
-	funcName := atomic_common.FuncNameForLanguage(method, name, "php")
-
-	_, sourceFile, err := atomic_common.DetectLanguage(absFolder)
-	if err != nil {
-		return "", err
-	}
-	sourceModule := strings.TrimSuffix(filepath.Base(sourceFile), ".php")
+// c names the callable and the file declaring it, both resolved from the
+// Driftfile entry this function is being built for.
+func buildPHP(absFolder, method, name string, c atomic_common.Callable) (string, error) {
+	funcName := c.Handler
+	sourceModule := strings.TrimSuffix(filepath.Base(c.SourceFile), ".php")
 
 	stageDir, err := stageTempDir("drift-php-")
 	if err != nil {

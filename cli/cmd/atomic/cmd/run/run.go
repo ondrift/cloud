@@ -25,11 +25,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 
 	"github.com/fsnotify/fsnotify"
@@ -83,13 +84,23 @@ var cargoTemplate string
 // Public command factory
 // ==========================================================
 
-func Run() *cobra.Command {
+// Run is `drift atomic run <folder>` — one declared function, served locally
+// with hot reload.
+//
+// resolve is supplied by the caller that can read a Driftfile, for the same
+// reason the deploy command takes one: this package sits below the manifest
+// parser and must not import it back.
+func Run(resolve func(dir string) ([]atomic_cmd.FunctionSpec, error)) *cobra.Command {
 	var portOverride int
 	var quiet bool
+	var pick string
 	cmd := &cobra.Command{
-		Use:     "run [function folder]",
-		Short:   "Run an Atomic function locally with hot reload",
-		Example: "  drift atomic run ./send-email\n  drift atomic run ./create-invoice",
+		Use:   "run [function folder]",
+		Short: "Run a declared Atomic function locally with hot reload",
+		Long: "Serve one of the project's functions on localhost, rebuilding it whenever the " +
+			"source changes.\n\nWhich function, and everything about it, comes from the " +
+			"Driftfile. A folder declaring several needs --function to say which one to run.",
+		Example: "  drift atomic run ./atomic\n  drift atomic run ./atomic --function post:users",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			srcDir := args[0]
@@ -98,41 +109,31 @@ func Run() *cobra.Command {
 				return fmt.Errorf("resolve path: %w", err)
 			}
 
-			// Parse metadata (method, name, auth, env)
-			meta, err := atomic_common.ParseAtomicMetadataFromDir(absSrc)
+			specs, err := resolve(absSrc)
 			if err != nil {
-				return fmt.Errorf("parse Atomic metadata: %w", err)
+				return err
 			}
-			// Resolve method/name based on trigger type. For queue and
-			// cron triggers we synthesize a POST handler at the
-			// directory's basename so the function runs as an HTTP
-			// server you can POST to by hand to test it. The user's handler
-			// signature is unchanged — only the wrapper boundary differs.
-			var method, name string
-			switch meta.Trigger {
-			case "http":
-				method, name = meta.Method, meta.Path
-			case "queue", "cron":
+			spec, err := selectFunction(specs, pick, srcDir)
+			if err != nil {
+				return err
+			}
+
+			// A queue function has no URL on the slice — it is registered under
+			// a method no request can match. Locally it is served as a POST so
+			// there is something to push a message at by hand. The handler's own
+			// signature is unchanged; only the wrapper boundary differs.
+			method, name := spec.Wire()
+			if spec.Trigger() == "queue" {
 				method = "post"
-				name = filepath.Base(absSrc)
-			default:
-				return fmt.Errorf("@atomic %s= triggers can't be run locally yet", meta.Trigger)
 			}
 
-			// Detect language from the annotated source file.
-			language, sourceFile, err := atomic_common.DetectLanguage(absSrc)
+			callable, err := atomic_common.FindCallable(absSrc, spec.Handler)
 			if err != nil {
-				return fmt.Errorf("detect language: %w", err)
+				return err
 			}
+			language, sourceFile := atomic_common.BuildLanguage(callable.Language), callable.SourceFile
 
-			// Port resolution order:
-			//   1. --port flag (explicit)
-			//   2. `port=` token on the @atomic annotation
-			//   3. fallback 3000
 			port := portOverride
-			if port == 0 {
-				port = detectPortFromAnnotation(absSrc)
-			}
 			if port == 0 {
 				port = 3000
 			}
@@ -155,6 +156,7 @@ func Run() *cobra.Command {
 				workDir:    workDir,
 				method:     strings.ToLower(method),
 				name:       name,
+				handler:    spec.Handler,
 				port:       port,
 				language:   language,
 				sourceFile: sourceFile,
@@ -179,10 +181,41 @@ func Run() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().IntVar(&portOverride, "port", 0, "Bind to this port (overrides any port= on the @atomic annotation; default 3000)")
+	cmd.Flags().IntVar(&portOverride, "port", 0, "Bind to this port (default 3000)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress the startup banner")
+	cmd.Flags().StringVar(&pick, "function", "", "Which declared function to run, by name (e.g. post:users)")
 
 	return cmd
+}
+
+// selectFunction picks the one function to serve. A folder declaring exactly
+// one needs no flag; several need --function, and the error lists them rather
+// than leaving the reader to open the Driftfile.
+func selectFunction(specs []atomic_cmd.FunctionSpec, pick, dir string) (atomic_cmd.FunctionSpec, error) {
+	if pick != "" {
+		for _, s := range specs {
+			if s.Name == pick {
+				return s, nil
+			}
+		}
+		return atomic_cmd.FunctionSpec{}, fmt.Errorf("no function called %q is declared in %s — declared there: %s",
+			pick, dir, strings.Join(specNames(specs), ", "))
+	}
+	if len(specs) == 1 {
+		return specs[0], nil
+	}
+	return atomic_cmd.FunctionSpec{}, fmt.Errorf(
+		"%s declares %d functions and this serves one at a time — pick it with --function: %s",
+		dir, len(specs), strings.Join(specNames(specs), ", "))
+}
+
+func specNames(specs []atomic_cmd.FunctionSpec) []string {
+	names := make([]string, len(specs))
+	for i, s := range specs {
+		names[i] = s.Name
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ==========================================================
@@ -194,6 +227,7 @@ type devRunner struct {
 	workDir    string
 	method     string // get/post/...
 	name       string // route/resource name
+	handler    string // the callable the Driftfile bound this function to
 	port       int
 	language   string // "native", "python", "node", "ruby", "php", "rust"
 	sourceFile string // filename with extension (e.g., "checkout.py")
@@ -613,49 +647,4 @@ func readDotEnv(path string) ([]string, error) {
 		}
 	}
 	return envs, nil
-}
-
-// Attempt to read `port=####` from the annotation line in any source file at src root.
-func detectPortFromAnnotation(src string) int {
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return 0
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		ext := filepath.Ext(e.Name())
-		if ext != ".go" && ext != ".py" && ext != ".js" && ext != ".rb" && ext != ".php" && ext != ".rs" {
-			continue
-		}
-		b, _ := os.ReadFile(filepath.Join(src, e.Name())) // #nosec G304 — CLI tool reads user's own source files by design
-		line := firstAnnotationLine(string(b))
-		if line == "" {
-			continue
-		}
-		// naive parse for `port=XXXX` tokens
-		for _, tok := range strings.Fields(line) {
-			if strings.HasPrefix(tok, "port=") {
-				p := strings.TrimPrefix(tok, "port=")
-				if n, err := strconv.Atoi(p); err == nil {
-					return n
-				}
-			}
-		}
-	}
-	return 0
-}
-
-func firstAnnotationLine(src string) string {
-	// Expect a line like:
-	//   // @atomic http=get:users auth=apikey port=8081   (Go)
-	//   # @atomic http=get:users auth=apikey port=8081    (Python/Node)
-	for _, ln := range strings.Split(src, "\n") {
-		s := strings.TrimSpace(ln)
-		if strings.HasPrefix(s, "// @atomic ") || strings.HasPrefix(s, "# @atomic ") {
-			return s
-		}
-	}
-	return ""
 }

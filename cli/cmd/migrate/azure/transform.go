@@ -21,8 +21,8 @@ func getTransformCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "transform",
 		Short: "Turn an azure_export/ into a deployable drift_workspace/ (offline)",
-		Long: "Reads a snapshot and emits a Drift project: a Driftfile, a Tier-A scaffold per\n" +
-			"movable function (correct @atomic annotation + Drift return; original body preserved\n" +
+		Long: "Reads a snapshot and emits a Drift project: a Driftfile declaring every movable\n" +
+			"function, a Tier-A scaffold for each (Drift return; original body preserved\n" +
 			"verbatim with TODOs), Cosmos data remapped id→_id, secrets as $ENV refs, and\n" +
 			"REFUSED.md / REPORT.md / PLAN.md. The generated Driftfile is validated before it's\n" +
 			"written. Entirely offline — no Azure, no Drift contact.",
@@ -52,7 +52,16 @@ type transformResult struct {
 	refusals  []Refusal
 }
 
-type driftFn struct{ slug, cron string }
+// driftFn is one migrated function, as the generated Driftfile will declare it:
+// the trigger it answers on, the callable that serves it, and the secrets it
+// may read. All of it goes in the manifest — the scaffolded source carries no
+// Drift-specific marking at all.
+type driftFn struct {
+	slug    string
+	handler string
+	trigger ManifestTrigger
+	secrets []string
+}
 type driftColl struct {
 	name, seed string
 	sizeMB     int // declared backbone.nosql[].size, computed from the migrated data (see collSizeMB)
@@ -78,12 +87,11 @@ func runTransform(inDir, outDir string, m Manifest) (transformResult, error) {
 
 	var fns []driftFn
 	for _, fn := range m.Functions {
-		// Timer triggers: Drift scheduling is wired from a `# drift:schedule`
-		// source comment on an http handler, NOT an `@atomic cron=` trigger (the
-		// interpreted deploy path rejects cron=). Until transform emits that
-		// pattern and it's verified to fire end-to-end, a timer is refused rather
-		// than mapped — a Driftfile `cron:` alone would bill for a job that never
-		// runs. The handler source is still captured in the snapshot.
+		// Timer triggers are refused rather than mapped. A Drift schedule is
+		// additive — a function keeps its own trigger and fires on cron beside
+		// it — so an Azure timer has no route to carry the schedule, and one
+		// invented here would bill for a job nobody verified fires. The handler
+		// source is still captured in the snapshot for a hand-port.
 		if fn.Trigger.Type == "cron" {
 			res.refusals = append(res.refusals, Refusal{
 				RefuseTimerTrigger, fn.Name,
@@ -109,7 +117,7 @@ func runTransform(inDir, outDir string, m Manifest) (transformResult, error) {
 		if err := writeWS(outDir, "atomic/"+slug+"/"+slug+".py", pythonScaffold(fn, orig), 0o644); err != nil {
 			return res, err
 		}
-		fns = append(fns, driftFn{slug, fn.Trigger.Schedule})
+		fns = append(fns, driftFn{slug: slug, handler: fn.Handler, trigger: fn.Trigger, secrets: fn.Secrets})
 		res.scaffolds++
 		todos = append(todos, fmt.Sprintf("%s: scaffolded — replace the commented Azure body with drift.* SDK calls and a real return", slug))
 		for _, b := range fn.Bindings {
@@ -214,12 +222,14 @@ func handlerArgs(t ManifestTrigger) string {
 	return "req"
 }
 
-// pythonScaffold emits a Tier-A Python handler: correct @atomic annotation,
-// Drift signature and return, with the original Azure body preserved verbatim
-// (commented) and a porting TODO. Valid Python that deploys as a stub.
+// pythonScaffold emits a Tier-A Python handler: the Drift signature and return,
+// with the original Azure body preserved verbatim (commented) and a porting
+// TODO. Valid Python that deploys as a stub.
+//
+// Nothing here declares the function. Its trigger, gate and secrets are in the
+// generated Driftfile, which is the file an operator reviews before deploying.
 func pythonScaffold(fn ManifestFunction, orig []byte) []byte {
 	var b strings.Builder
-	b.WriteString("# " + driftDirective(fn.Trigger, fn.Secrets) + "\n#\n")
 	b.WriteString("# Tier-A scaffold from `drift migrate azure transform`. The original Azure handler\n")
 	b.WriteString("# is preserved verbatim below (commented). Replace its Azure bindings with drift.*\n")
 	b.WriteString("# SDK calls and return (status, message, payload). See REPORT.md.\n")
@@ -288,14 +298,7 @@ func buildDriftfile(name string, fns []driftFn, colls []driftColl, secrets []Man
 		b.WriteString("  # for, and under-booking is refused under load.\n")
 		b.WriteString("  functions:\n")
 		for _, fn := range fns {
-			// `post:` because an Azure-migrated HTTP function answers a POST route
-			// unless its own trigger says otherwise, and a name must be
-			// `method:route` — a bare slug is not a function identity any more.
-			name := "post:" + fn.slug
-			b.WriteString("    - name: \"" + name + "\"\n      memory: " + azureStartingMemory + "\n")
-			if fn.cron != "" {
-				b.WriteString("      cron: \"" + fn.cron + "\"\n")
-			}
+			b.WriteString(driftEntry(fn.trigger, fn.handler, fn.secrets, azureStartingMemory))
 		}
 	}
 	if len(colls) > 0 || len(secrets) > 0 {

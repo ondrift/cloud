@@ -28,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 
+	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 	"github.com/ondrift/cloud/cli/cmd/project"
 	"github.com/ondrift/cloud/cli/common"
 	"github.com/spf13/cobra"
@@ -98,6 +99,25 @@ func getLintCmd() *cobra.Command {
 			if perr != nil {
 				return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), perr)
 			}
+
+			// The second half of "exactly as a deploy would": every declared
+			// handler has to resolve to a callable in its element.
+			//
+			// The schema cannot ask this — it validates a DOCUMENT, and whether
+			// `handler: PostUsers` is really in ./atomic is a question only this
+			// machine can answer. Without it a Driftfile lints green and then fails
+			// at deploy, which is the one thing a CI gate exists to prevent.
+			//
+			// Skipped when the source tree is absent rather than reported: a
+			// Driftfile is legitimately linted on its own (a manifest handed over
+			// for review, `drift slice create --from Driftfile` in an empty
+			// directory), and calling that invalid would refuse a file that is fine.
+			if _, serr := os.Stat(m.ResolvePath("atomic")); serr == nil {
+				if _, berr := atomic_cmd.BuildElements(project.FunctionSpecs(m)); berr != nil {
+					return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), berr)
+				}
+			}
+
 			envs := ""
 			if n := len(m.EnvironmentNames()); n > 0 {
 				envs = fmt.Sprintf(", %d environment(s)", n)

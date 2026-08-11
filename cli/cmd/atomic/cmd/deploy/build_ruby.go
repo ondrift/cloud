@@ -17,14 +17,11 @@ import (
 	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 )
 
-func buildRuby(absFolder, method, name string) (string, error) {
-	funcName := atomic_common.FuncNameForLanguage(method, name, "ruby")
-
-	_, sourceFile, err := atomic_common.DetectLanguage(absFolder)
-	if err != nil {
-		return "", err
-	}
-	sourceModule := strings.TrimSuffix(filepath.Base(sourceFile), ".rb")
+// c names the callable and the file declaring it, both resolved from the
+// Driftfile entry this function is being built for.
+func buildRuby(absFolder, method, name string, c atomic_common.Callable) (string, error) {
+	funcName := c.Handler
+	sourceModule := strings.TrimSuffix(filepath.Base(c.SourceFile), ".rb")
 
 	stageDir, err := stageTempDir("drift-ruby-")
 	if err != nil {

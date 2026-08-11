@@ -119,26 +119,36 @@ func driftHandlerName(t ManifestTrigger, fnName string) string {
 	return id
 }
 
-// driftDirective builds the `@atomic` annotation line (without the comment
-// marker) for a trigger + the secrets it may read.
-func driftDirective(t ManifestTrigger, secrets []string) string {
+// driftEntry renders one Driftfile `atomic.functions` entry for a trigger: the
+// identity it answers on, the callable that serves it, the memory it starts
+// with, its gate, and the secrets it may read.
+//
+// This is the whole declaration. Nothing is written into the scaffolded source,
+// which is exactly what makes a migrated project readable — the code that comes
+// out is the code that went in, and everything Drift needs to know about it is
+// in one file the operator can review before deploying.
+func driftEntry(t ManifestTrigger, handler string, secrets []string, memory string) string {
 	var sb strings.Builder
-	sb.WriteString("@atomic ")
 	switch t.Type {
 	case "http":
-		sb.WriteString("http=" + t.Method + ":" + t.Route)
+		sb.WriteString("    - name: \"" + t.Method + ":" + t.Route + "\"\n")
 	case "queue":
-		sb.WriteString("queue=" + t.Queue)
+		sb.WriteString("    - name: \"queue:" + t.Queue + "\"\n")
 	case "cron":
-		sb.WriteString(`cron="` + t.Schedule + `"`)
+		// A schedule is not an identity — it is something a function ALSO does.
+		// The migrated function keeps a POST route and gains the cron beside it.
+		sb.WriteString("    - name: \"post:" + handler + "\"\n")
 	}
-	auth := t.Auth
-	if auth == "" {
-		auth = "none"
+	sb.WriteString("      handler: " + handler + "\n")
+	sb.WriteString("      memory: " + memory + "\n")
+	if auth := t.Auth; auth != "" && auth != "none" {
+		sb.WriteString("      auth: " + auth + "\n")
 	}
-	sb.WriteString(" auth=" + auth)
+	if t.Type == "cron" && t.Schedule != "" {
+		sb.WriteString("      cron: \"" + t.Schedule + "\"\n")
+	}
 	if len(secrets) > 0 {
-		sb.WriteString(" secrets=" + strings.Join(secrets, ","))
+		sb.WriteString("      secrets: [" + strings.Join(secrets, ", ") + "]\n")
 	}
 	return sb.String()
 }

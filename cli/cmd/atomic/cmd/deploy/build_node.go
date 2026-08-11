@@ -18,15 +18,11 @@ import (
 	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 )
 
-func buildNode(absFolder, method, name string) (string, error) {
-	funcName := atomic_common.FuncNameForLanguage(method, name, "node")
-
-	// Find the user's source file.
-	_, sourceFile, err := atomic_common.DetectLanguage(absFolder)
-	if err != nil {
-		return "", err
-	}
-	sourceModule := strings.TrimSuffix(filepath.Base(sourceFile), ".js")
+// c names the callable and the file declaring it, both resolved from the
+// Driftfile entry this function is being built for.
+func buildNode(absFolder, method, name string, c atomic_common.Callable) (string, error) {
+	funcName := c.Handler
+	sourceModule := strings.TrimSuffix(filepath.Base(c.SourceFile), ".js")
 
 	// Create a staging directory.
 	stageDir, err := stageTempDir("drift-node-")

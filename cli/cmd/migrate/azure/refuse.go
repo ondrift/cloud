@@ -80,8 +80,8 @@ func writeRefusedMD(dir string, refs []Refusal) error {
 func writeReportMD(dir string, todos []string) error {
 	var b strings.Builder
 	b.WriteString("# REPORT — manual review needed before deploy\n\n")
-	b.WriteString("The transform scaffolds each movable function: the `@atomic` annotation, the\n")
-	b.WriteString("handler name, and the Drift `(status, message, payload)` return are correct, and\n")
+	b.WriteString("The transform scaffolds each movable function: its Driftfile entry, the handler\n")
+	b.WriteString("name, and the Drift `(status, message, payload)` return are correct, and\n")
 	b.WriteString("the original body is preserved verbatim. What it does **not** do is guess how\n")
 	b.WriteString("your Azure bindings map to Drift SDK calls — those are marked with `TODO(drift)`\n")
 	b.WriteString("in the source and listed here.\n\n")

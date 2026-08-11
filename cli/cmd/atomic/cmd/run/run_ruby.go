@@ -7,12 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 )
 
 func (r *devRunner) generateRuby() error {
-	funcName := atomic_common.FuncNameForLanguage(r.method, r.name, "ruby")
+	funcName := r.handler
 	sourceModule := strings.TrimSuffix(r.sourceFile, ".rb")
 
 	var tmpl string

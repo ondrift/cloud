@@ -26,14 +26,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
-	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
@@ -419,74 +416,24 @@ func waitForSliceReady(name string) error {
 
 // ─── Atomic ─────────────────────────────────────────────────────────
 
-// atomicJob is one function's resolved build inputs, captured in manifest order
-// so the parallel pool's results can be reported back in that same order.
-type atomicJob struct {
-	name, dir, element, display string
-}
-
-// checkRouteCollisions rejects a manifest in which two functions share a
-// deploy identity. A function's identity is its route PATH (for queues, the
-// folder name) — it is method-agnostic — so two functions on the same path
-// with different methods (e.g. get:items + post:items) would silently collide
-// on the slice: the last one deployed wins and shadows the other, and at
-// runtime the surviving handler answers BOTH verbs. We surface that here, up
-// front and offline, instead of letting it become a quiet mis-route in prod.
+// checkRouteCollisions rejects a manifest in which two functions share a deploy
+// identity. Two entries with the same name would shadow each other on the
+// slice: the last one deployed wins, and the survivor answers for both. It is
+// surfaced here, up front and offline, instead of becoming a quiet mis-route in
+// production.
+//
+// It reads the manifest and nothing else, so it costs no filesystem access and
+// runs before anything is built.
 func checkRouteCollisions(m *Manifest) error {
-	// Element layout: dedupe `(method,path)` across ALL discovered elements
-	// (org-only routing shares the /api space). A pure legacy folder tree
-	// falls through to the per-listed-folder check below.
-	elements, err := atomic_cmd.DiscoverElements(m.ResolvePath("atomic"))
-	if err != nil {
-		return err // surface mixed-language elements etc. early, pre-network
-	}
-	if shouldUseElementPath(elements) {
-		return atomic_cmd.CheckElementCollisions(elements)
-	}
-
-	type routeRef struct{ fn, methodPath string }
-	byKey := map[string][]routeRef{}
-	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
-		dir := fn.Str("dir")
-		if dir == "" {
-			dir = filepath.Join("atomic", fn.Str("name"))
-		}
-		dir = m.ResolvePath(dir)
-		key, err := atomic_cmd.FunctionName(dir)
-		if err != nil {
-			continue // a parse/metadata error surfaces later, in the deploy itself
-		}
-		mp := key
-		if meta, mErr := atomic_common.ParseAtomicMetadataFromDir(dir); mErr == nil && meta.Method != "" {
-			mp = strings.ToLower(meta.Method) + ":" + meta.Path
-		}
-		byKey[key] = append(byKey[key], routeRef{fn: fn.Str("name"), methodPath: mp})
-	}
-
-	var collisions []string
-	for key, refs := range byKey {
-		if len(refs) < 2 {
-			continue
-		}
-		parts := make([]string, len(refs))
-		for i, r := range refs {
-			parts[i] = fmt.Sprintf("%s (%s)", r.fn, r.methodPath)
-		}
-		sort.Strings(parts)
-		collisions = append(collisions,
-			fmt.Sprintf("%q is claimed by %d functions: %s", key, len(refs), strings.Join(parts, ", ")))
-	}
-	if len(collisions) == 0 {
-		return nil
-	}
-	sort.Strings(collisions)
-	return fmt.Errorf(
-		"route collision — these functions share a method+path and would shadow each other on "+
-			"deploy (a function is identified by method AND path, so get:items + post:items is "+
-			"fine, but two post:items is not):\n  - %s",
-		strings.Join(collisions, "\n  - "))
+	return atomic_cmd.CheckCollisions(FunctionSpecs(m))
 }
 
+// applyAtomic ships every function the Driftfile declares, element by element.
+//
+// There is ONE path. Which functions exist, which element each belongs to and
+// how each is guarded all come from the manifest, so the deploy no longer has a
+// layout to detect: an element is a group of declared functions, and its
+// directory follows from its name.
 func applyAtomic(m *Manifest, out io.Writer) error {
 	// Publish the Driftfile's declared schedules before anything ships. Every
 	// deploy path reads them while building its artifact, and the operator —
@@ -494,115 +441,15 @@ func applyAtomic(m *Manifest, out io.Writer) error {
 	// envelope on the way in.
 	atomic_cmd.SetDeclaredSchedules(declaredSchedules(m))
 
-	// Element layout: if atomic/ holds a Default element (flat *.go) or any
-	// multi-function element, deploy via the element path. A pure legacy
-	// folder-per-function tree falls through to the unchanged path below.
-	elements, err := atomic_cmd.DiscoverElements(m.ResolvePath("atomic"))
-	if err != nil {
-		return err // mixed-language element, etc. — surface loudly
-	}
-	if shouldUseElementPath(elements) {
-		return applyAtomicElements(elements, out)
-	}
-
-	fns := m.Slice().Entries("name", "atomic", "functions")
-	if len(fns) == 0 {
+	specs := FunctionSpecs(m)
+	if len(specs) == 0 {
 		return nil
 	}
-
-	fmt.Fprintf(out, "  %s\n", common.AtomicHeader())
-
-	// Resolve dir + display name for every function up front, preserving
-	// manifest order. The order drives the ordered result output below.
-	jobs := make([]atomicJob, len(fns))
-	for i, fn := range fns {
-		dir := fn.Str("dir")
-		if dir == "" {
-			dir = filepath.Join("atomic", fn.Str("name"))
-		}
-		dir = m.ResolvePath(dir)
-		display := fn.Str("name")
-		if meta, err := atomic_common.ParseAtomicMetadataFromDir(dir); err == nil && meta.Path != "" {
-			display = meta.Path
-		}
-		jobs[i] = atomicJob{name: fn.Str("name"), dir: dir, element: fn.Str("element"), display: display}
+	elements, err := atomic_cmd.BuildElements(specs)
+	if err != nil {
+		return err // a missing handler, a mixed-language element — surface loudly
 	}
-
-	// Skip functions whose source is unchanged versus what's deployed. The
-	// check is best-effort: if the deployed digests can't be fetched (brand-new
-	// slice, transient error) we deploy everything; --force skips it entirely.
-	// A skipped function does no build and no upload — the expensive part — so
-	// this is where the wall-clock is actually saved.
-	skip := make([]bool, len(jobs))
-	skipByDir := make(map[string]bool, len(jobs))
-	if !atomicForce {
-		if deployed, err := atomic_cmd.DeployedDigests(); err == nil {
-			for i, j := range jobs {
-				key, kErr := atomic_cmd.FunctionName(j.dir)
-				dig, dErr := atomic_cmd.FunctionDigest(j.dir, j.element)
-				if kErr == nil && dErr == nil && dig != "" && deployed[key] == dig {
-					skip[i] = true
-					skipByDir[j.dir] = true
-				}
-			}
-		} else {
-			// Best-effort: a slow/unreachable list endpoint must not stall the
-			// deploy. Say so, then deploy everything (nothing is marked skip).
-			fmt.Fprintf(out, "  %s couldn't check which functions are unchanged — deploying all\n", common.Hint("·"))
-		}
-	}
-
-	results := deployAtomicJobsWith(jobs, func(j atomicJob) error {
-		if skipByDir[j.dir] {
-			return nil
-		}
-		return atomic_cmd.DeployFolder(j.dir, j.element, true)
-	})
-
-	// Ordered output: ✓ per success, ✓ … (unchanged) per skip, ✗ per failure,
-	// in manifest order. Return the first failure with its real error so the
-	// deploy chain surfaces the actual rejection reason (CLAUDE.md), never a
-	// generic one. Unlike the old serial path, a mid-list failure no longer
-	// skips the functions after it — every function is attempted, and you see
-	// all failures at once.
-	var firstErr error
-	deployedCount, skippedCount := 0, 0
-	for i, j := range jobs {
-		switch {
-		case results[i] != nil:
-			fmt.Fprintf(out, "    %s %s\n", common.Cross(), j.display)
-			if firstErr == nil {
-				firstErr = fmt.Errorf("atomic deploy failed for %s: %w", j.name, results[i])
-			}
-		case skip[i]:
-			fmt.Fprintf(out, "    %s %s %s\n", common.Check(), j.display, common.Hint("(unchanged)"))
-			skippedCount++
-		default:
-			fmt.Fprintf(out, "    %s %s\n", common.Check(), j.display)
-			deployedCount++
-		}
-	}
-	if firstErr != nil {
-		return firstErr
-	}
-	if skippedCount > 0 {
-		fmt.Fprintf(out, "    %s\n", common.Hint(fmt.Sprintf("%d deployed, %d unchanged", deployedCount, skippedCount)))
-	}
-	fmt.Fprintln(out)
-	return nil
-}
-
-// shouldUseElementPath returns true when the new Element deploy path applies:
-// a flat Default element is present, or any element has more than one function.
-// A pure legacy tree (only single-function named folders) returns false and
-// uses the original parallel folder-per-function path, unchanged.
-func shouldUseElementPath(elements []atomic_cmd.Element) bool {
-	for _, el := range elements {
-		if el.Name == atomic_cmd.DefaultElementName || len(el.Funcs) > 1 {
-			return true
-		}
-	}
-	return false
+	return applyAtomicElements(elements, out)
 }
 
 // elementUnchanged reports whether every function in el already matches the
@@ -669,10 +516,9 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 			}
 			deployedCount += len(el.Funcs)
 		case len(el.Funcs) == 1:
-			// A single-function non-Go element is a legacy folder — deploy it
-			// the existing per-folder way (works for every language).
-			if err := atomic_cmd.DeployFolder(el.Dir, el.Name, true); err != nil {
-				return fmt.Errorf("atomic deploy failed for %q: %w", el.Name, err)
+			// One function on its own — every language can be built this way.
+			if err := atomic_cmd.DeployFunction(el.Funcs[0].Spec, true); err != nil {
+				return fmt.Errorf("atomic deploy failed for %q: %w", el.Funcs[0].MethodPath(), err)
 			}
 			fmt.Fprintf(out, "    %s %s\n", common.Check(), el.Funcs[0].MethodPath())
 			deployedCount++
@@ -731,57 +577,6 @@ func applySliceTriad(m *Manifest) error {
 		}
 	}
 	return firstErr
-}
-
-// deployAtomicJobs builds and pushes every Atomic function concurrently,
-// bounded by a worker pool, returning each job's error (nil = success) in the
-// input order. The build path is concurrency-safe by design — each build
-// stages into its own tempdir and captures subprocess output rather than
-// streaming it (see build_go.go) — so the only shared surfaces are the spinner
-// and the results slice, both guarded here.
-//
-// Concurrency is capped: parallel Go/Rust compiles are CPU- and RAM-heavy, so
-// an unbounded fan-out would thrash a small box. Most of the wall-clock win
-// comes from overlapping the network-bound phases (SDK fetch, module tidy,
-// upload to the operator) across workers, not from raw compile parallelism.
-func deployAtomicJobs(jobs []atomicJob) []error {
-	return deployAtomicJobsWith(jobs, func(j atomicJob) error {
-		return atomic_cmd.DeployFolder(j.dir, j.element, true)
-	})
-}
-
-// deployAtomicJobsWith is the pool itself, with the deploy step injected so the
-// concurrency/ordering/error-surfacing contract is unit-testable without real
-// builds. deploy is invoked once per job, possibly concurrently.
-func deployAtomicJobsWith(jobs []atomicJob, deploy func(atomicJob) error) []error {
-	results := make([]error, len(jobs))
-
-	// One function: just run it. Progress feedback comes from the caller's
-	// aggregate phase spinner; this returns results for ordered rendering.
-	if len(jobs) == 1 {
-		results[0] = deploy(jobs[0])
-		return results
-	}
-
-	workers := min(runtime.NumCPU(), 8, len(jobs))
-
-	// Each goroutine writes its own distinct results index, so no mutex is
-	// needed; the semaphore bounds concurrency. No spinner here — applyAtomic
-	// runs concurrently with Backbone/Canvas under one aggregate spinner, and a
-	// nested one would clobber the single-line terminal.
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, workers)
-	for i := range jobs {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			results[i] = deploy(jobs[i])
-		}(i)
-	}
-	wg.Wait()
-	return results
 }
 
 // ─── Backbone ───────────────────────────────────────────────────────

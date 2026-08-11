@@ -1,7 +1,7 @@
 // elements_interpreted.go — multi-function element deploys for the interpreted
 // languages (Python/Node/Ruby/PHP). They all share one shape: stage the
 // element's source + install its declared dependencies ONCE, then for each
-// @atomic function generate that language's wrapper (which imports the handler
+// declared function generate that language's wrapper (which imports the handler
 // from its module) and tar the staged dir into one artifact per function.
 //
 // This mirrors DeployGoElement (one dependency resolution per element, one
@@ -34,20 +34,14 @@ var interpretedLangs = map[string]interpretedLang{
 	"php":    {label: "php", exts: map[string]bool{".php": true}, install: installPHPDeps, wrapper: generatePHPWrapper},
 }
 
-// DeployInterpretedElement builds and deploys every @atomic function in a
-// non-Go (interpreted) element. Dependencies are installed once; each function
-// then gets its own wrapper + archive.
+// DeployInterpretedElement builds and deploys every function in a non-Go
+// (interpreted) element. Dependencies are installed once; each function then
+// gets its own wrapper + archive.
 func DeployInterpretedElement(el Element, digest string, quiet bool) error {
 	lg, ok := interpretedLangs[el.Lang]
 	if !ok {
 		return fmt.Errorf("multi-function %s elements aren't built yet (element %q); "+
 			"keep one function per folder for %s until it lands", el.Lang, el.Name, el.Lang)
-	}
-	for _, f := range el.Funcs {
-		if f.Trigger != "http" && f.Trigger != "queue" {
-			return fmt.Errorf("@atomic %s= triggers aren't wired in the deploy path yet "+
-				"(function %s in element %q)", f.Trigger, f.SentinelName, el.Name)
-		}
 	}
 
 	stageDir, err := stageTempDir("drift-" + lg.label + "-element-")
@@ -90,12 +84,9 @@ func DeployInterpretedElement(el Element, digest string, quiet bool) error {
 	// — the dependency install (the cost) is already done; tarring is cheap.
 	var firstErr error
 	for _, f := range el.Funcs {
-		method, name := f.Method, f.Path
-		if f.Trigger == "queue" {
-			method, name = "queue", f.Method
-		}
+		method, name := f.Spec.Wire()
 		sourceModule := strings.TrimSuffix(f.SourceFile, filepath.Ext(f.SourceFile))
-		if werr := lg.wrapper(stageDir, sourceModule, f.SentinelName, method); werr != nil {
+		if werr := lg.wrapper(stageDir, sourceModule, f.Spec.Handler, method); werr != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("%s: generate wrapper: %w", f.MethodPath(), werr)
 			}
@@ -112,23 +103,14 @@ func DeployInterpretedElement(el Element, digest string, quiet bool) error {
 			return fmt.Errorf("%s: archive: %w", f.MethodPath(), terr)
 		}
 
-		var triggers []TriggerSpec
-		if f.Trigger == "queue" {
-			triggers = []TriggerSpec{{Type: "queue", Source: f.Method, Method: "queue", PollMS: 500, MaxRetry: 3}}
-		}
-		// A Driftfile `cron:` is additive — the function keeps its HTTP route
-		// and also fires on schedule, so the trigger carries its own method.
-		if sched := scheduleTriggerFor(name, method); sched != nil {
-			triggers = append(triggers, sched...)
-		}
 		serr := sendSourceToOperator(FuncArtifact{
-			Name: name, Method: method, Language: lg.label, Auth: f.Auth,
-			Element: el.Name, Stream: f.Stream, Secrets: f.Secrets,
-			Triggers: triggers, Digest: digest,
+			Name: name, Method: method, Language: lg.label, Auth: f.Spec.Auth,
+			Element: el.Name, Stream: f.Spec.Stream, Secrets: f.Spec.Secrets,
+			Triggers: triggersFor(f), Digest: digest,
 			SourcePath: archivePath, UserSourcePath: userSrc,
 			// The same two facts the wrapper was just rendered from, so the slice
-			// can render it itself on a restore (#PLATFORM-CORE-OPERATOR-5JPT4H).
-			SourceModule: sourceModule, EntryFunc: f.SentinelName,
+			// can render it itself on a restore.
+			SourceModule: sourceModule, EntryFunc: f.Spec.Handler,
 		})
 		os.Remove(archivePath) // #nosec G104
 		if serr != nil {

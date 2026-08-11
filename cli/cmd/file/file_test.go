@@ -199,3 +199,73 @@ func assertOrder(t *testing.T, doc string, needles ...string) {
 		prev = at
 	}
 }
+
+// ─── lint ───────────────────────────────────────────────────────────────────
+
+// `lint` claims it validates "exactly as a deploy would", and a deploy also
+// binds every declared handler to a callable. A Driftfile that lints green and
+// then fails at deploy is the one thing a CI gate exists to prevent, so the
+// handler check belongs here and not only in the deploy path.
+func TestLint_RefusesAHandlerThatIsNotThere(t *testing.T) {
+	dir := lintFixture(t, "GetPong") // the source declares GetPing
+
+	err := getLintCmd().RunE(nil, []string{dir})
+	if err == nil {
+		t.Fatal("a handler with no callable behind it must fail lint")
+	}
+	// The message has to name the function AND list what is actually there —
+	// "not found" is not actionable when the handler looks right.
+	for _, want := range []string{"get:ping", "GetPong", "GetPing"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("lint error should mention %q, got:\n%v", want, err)
+		}
+	}
+}
+
+func TestLint_PassesWhenTheHandlerResolves(t *testing.T) {
+	dir := lintFixture(t, "GetPing")
+
+	if err := getLintCmd().RunE(nil, []string{dir}); err != nil {
+		t.Fatalf("a Driftfile whose handler resolves must lint clean, got:\n%v", err)
+	}
+}
+
+// A Driftfile is legitimately linted on its own — handed over for review, or
+// used by `drift slice create --from Driftfile` in an empty directory. With no
+// source tree to check against, the handler check is skipped rather than
+// reported: calling that file invalid would refuse one that is fine.
+func TestLint_SkipsTheHandlerCheckWithNoSourceTree(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Driftfile"),
+		[]byte(lintDriftfile("GetAnything")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := getLintCmd().RunE(nil, []string{dir}); err != nil {
+		t.Fatalf("a Driftfile with no source beside it must still lint, got:\n%v", err)
+	}
+}
+
+func lintDriftfile(handler string) string {
+	return "name: lintdemo\natomic:\n  functions:\n    - name: get:ping\n      handler: " +
+		handler + "\n      memory: 8MB\n"
+}
+
+// lintFixture writes a one-function project whose source declares GetPing, and
+// whose Driftfile names whichever handler the caller asks for.
+func lintFixture(t *testing.T, handler string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "atomic"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Driftfile"),
+		[]byte(lintDriftfile(handler)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "atomic", "ping.go"),
+		[]byte("package main\n\nfunc GetPing(req any) {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}

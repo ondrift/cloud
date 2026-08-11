@@ -7,7 +7,13 @@ import (
 	cmd_deploy "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 	cmd_new "github.com/ondrift/cloud/cli/cmd/atomic/cmd/new"
 	cmd_run "github.com/ondrift/cloud/cli/cmd/atomic/cmd/run"
+	"github.com/ondrift/cloud/cli/cmd/project"
 )
+
+// A function's declaration lives in the Driftfile, so the single-folder deploy
+// and the local run both need the manifest parser. This package is the one that
+// may reach for it: `cmd/project` imports the atomic DEPLOY package, never this
+// one, so the arrow still points one way.
 
 func GetCmd() *cobra.Command {
 	atomicCmd := &cobra.Command{
@@ -28,8 +34,8 @@ func GetCmd() *cobra.Command {
 	})
 
 	atomicCmd.AddCommand(
-		cmd_deploy.Deploy(),
-		cmd_run.Run(),
+		cmd_deploy.Deploy(project.FunctionSpecsInDir),
+		cmd_run.Run(project.FunctionSpecsInDir),
 		cmd.Auth(),
 		cmd.Delete(),
 		cmd.Element(),
