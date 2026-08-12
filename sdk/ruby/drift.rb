@@ -240,6 +240,12 @@ module Drift
     _deed_response(code, resp_body, path)
   end
 
+  # The page sizes the platform applies to a list read. Mirrored by the local
+  # store so a local run truncates where a slice would, and used as the page size
+  # list_all walks with.
+  LIST_DEFAULT = 100
+  LIST_MAX = 1000
+
   # In-memory backbone for local dev.
   @local_store = {
     'nosql' => {}, 'cache' => {}, 'queues' => {},
@@ -263,7 +269,10 @@ module Drift
       s['nosql'][col] ||= {}
       s['next_id'] += 1
       key = s['next_id'].to_s
-      s['nosql'][col][key] = body
+      # The platform injects the storage key into the stored document, and paging
+      # reads it back off the last row. A local document without one reads as
+      # un-pageable.
+      s['nosql'][col][key] = (body || {}).merge('_key' => key)
       return { 'key' => key }
     end
     if base_path == 'read' && method == 'GET'
@@ -275,10 +284,20 @@ module Drift
       docs = s['nosql'][col] || {}
       field = query['field']
       value = query['value']
+      # Walk in key order, like the platform's ordered walk, and apply the same
+      # page cap — a local store answering every read in full would hide the
+      # truncation a paged read exists to avoid.
+      after = query['after'].to_s
+      limit = query['limit'].to_i
+      limit = LIST_DEFAULT if limit <= 0
+      limit = LIST_MAX if limit > LIST_MAX
       results = []
-      docs.each_value do |doc|
+      docs.keys.sort.each do |k|
+        next if !after.empty? && k <= after
+        doc = docs[k]
         next if field && doc[field].to_s != value
         results << doc
+        break if results.length >= limit
       end
       return results
     end
@@ -469,7 +488,7 @@ module Drift
           Drift._call('POST', "nosql/delete?collection=#{URI.encode_www_form_component(@name)}&key=#{URI.encode_www_form_component(key)}")
         end
 
-        # Return documents from the collection, optionally filtered by one field.
+        # Return ONE page of documents, optionally filtered by one field.
         #
         # Pass a limit for any collection that grows. Omitting it does not mean
         # "everything" — the platform applies its own default of 100 documents and
@@ -477,7 +496,10 @@ module Drift
         # cannot tell "all of them" from "the first hundred". Rows come back in key
         # order rather than newest-first, so a capped read of an append-only log is
         # missing its most recent entries. The platform clamps the limit to 1000.
-        def list(filter = nil, limit: nil)
+        #
+        # `after` resumes from a document's `_key`. Use list_all for a collection
+        # that can outgrow one page.
+        def list(filter = nil, limit: nil, after: nil)
           path = "nosql/list?collection=#{URI.encode_www_form_component(@name)}"
           if filter
             filter.each do |k, v|
@@ -485,8 +507,41 @@ module Drift
             end
           end
           path += "&limit=#{limit.to_i}" if limit && limit.to_i > 0
+          path += "&after=#{URI.encode_www_form_component(after.to_s)}" if after && !after.to_s.empty?
           resp = Drift._call('GET', path)
           resp.is_a?(Array) ? resp : []
+        end
+
+        # Return EVERY document matching the filter, paging until exhausted.
+        #
+        # One page is capped at 1000 and its response carries nothing marking it
+        # short, so a bigger collection cannot be read correctly with list alone —
+        # and because rows arrive in key order rather than newest-first, what a
+        # capped read omits is arbitrary rather than merely recent. An append-only
+        # log is the case that breaks: a Merkle root over a subset of the log is
+        # not a proof of the log.
+        #
+        # Every matching document is held in memory at once — the point for a
+        # ledger, and a cost worth knowing elsewhere, since a function runs under
+        # a limit.
+        def list_all(filter = nil)
+          page = Drift::LIST_MAX
+          out = []
+          after = nil
+          loop do
+            rows = list(filter, limit: page, after: after)
+            out.concat(rows)
+            return out if rows.length < page
+
+            nxt = rows.last.is_a?(Hash) ? rows.last['_key'] : nil
+            raise 'drift: list row carries no _key, so the collection cannot be paged' if nxt.nil? || nxt.to_s.empty?
+            # A full page that does not move the cursor would loop forever. Report
+            # it rather than returning a short read, which is the failure this
+            # method exists to prevent.
+            raise "drift: listing #{@name} did not advance past _key #{after}" if nxt == after
+
+            after = nxt
+          end
         end
 
         def drop

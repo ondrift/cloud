@@ -294,6 +294,12 @@ fn call_raw(method: &str, path: &str, data_bytes: &[u8], content_type: &str) -> 
 
 use std::sync::{Mutex, OnceLock};
 
+/// The page sizes the platform applies to a list read. Mirrored by the local store
+/// so a local run truncates where a slice would, and used as the page size
+/// `list_all` walks with.
+pub(crate) const LIST_DEFAULT: usize = 100;
+pub(crate) const LIST_MAX: usize = 1000;
+
 struct LocalStore {
     secrets: HashMap<String, String>,
     cache: HashMap<String, Value>,
@@ -395,8 +401,48 @@ fn call_local(_method: &str, path: &str, body: Option<Value>) -> Option<Value> {
         }
         "nosql/list" => {
             let coll = q.get("collection")?;
-            let docs = store.nosql.get(coll).cloned().unwrap_or_default();
-            Some(Value::Array(docs))
+            let mut docs = store.nosql.get(coll).cloned().unwrap_or_default();
+            // Order by storage key, like the platform's ordered walk. Documents are
+            // held in insertion order here, which is numeric — the platform orders
+            // bytewise, where "1000" precedes "999".
+            docs.sort_by(|a, b| {
+                let ka = a.get("_key").and_then(|k| k.as_str()).unwrap_or("");
+                let kb = b.get("_key").and_then(|k| k.as_str()).unwrap_or("");
+                ka.cmp(kb)
+            });
+            let after = q.get("after").map(|s| s.as_str()).unwrap_or("");
+            let limit = q
+                .get("limit")
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|&n| n > 0)
+                .unwrap_or(LIST_DEFAULT)
+                .min(LIST_MAX);
+            // The field filter is applied here too, so a local run narrows a read
+            // the way a slice does instead of answering every filter identically.
+            let field = q.get("field").map(|s| s.as_str()).unwrap_or("");
+            let value = q.get("value").map(|s| s.as_str()).unwrap_or("");
+            let mut out: Vec<Value> = Vec::new();
+            for d in docs {
+                let key = d.get("_key").and_then(|k| k.as_str()).unwrap_or("");
+                if !after.is_empty() && key <= after {
+                    continue;
+                }
+                if !field.is_empty() {
+                    let got = match d.get(field) {
+                        Some(Value::String(s)) => s.clone(),
+                        Some(other) => other.to_string(),
+                        None => String::new(),
+                    };
+                    if got != value {
+                        continue;
+                    }
+                }
+                out.push(d);
+                if out.len() >= limit {
+                    break;
+                }
+            }
+            Some(Value::Array(out))
         }
         "nosql/drop" => {
             let coll = q.get("collection")?;
@@ -607,6 +653,66 @@ pub mod backbone {
                 filter: Option<HashMap<String, String>>,
                 limit: Option<usize>,
             ) -> Vec<Value> {
+                self.list_page(filter, limit, None)
+            }
+
+            /// EVERY document matching the filter, paging until the collection is
+            /// exhausted.
+            ///
+            /// One page is capped at 1000 and its response carries nothing marking
+            /// it short, so a bigger collection cannot be read correctly with
+            /// `list` alone — and because rows arrive in key order rather than
+            /// newest-first, what a capped read omits is arbitrary rather than
+            /// merely recent. An append-only log is the case that breaks: a Merkle
+            /// root over a subset of the log is not a proof of the log.
+            ///
+            /// Every matching document is held in memory at once — the point for a
+            /// ledger, and a cost worth knowing elsewhere, since a function runs
+            /// under a memory limit.
+            ///
+            /// `Err` carries the storage key a page failed to advance past. A short
+            /// read is the failure this method exists to prevent, so it reports
+            /// rather than returning what it managed to collect.
+            pub fn list_all(
+                &self,
+                filter: Option<HashMap<String, String>>,
+            ) -> Result<Vec<Value>, String> {
+                let mut all: Vec<Value> = Vec::new();
+                let mut after: Option<String> = None;
+                loop {
+                    let rows =
+                        self.list_page(filter.clone(), Some(LIST_MAX), after.as_deref());
+                    let got = rows.len();
+                    let next = rows
+                        .last()
+                        .and_then(|d| d.get("_key"))
+                        .and_then(|k| k.as_str())
+                        .map(|s| s.to_string());
+                    all.extend(rows);
+                    if got < LIST_MAX {
+                        return Ok(all);
+                    }
+                    let next = next.ok_or_else(|| {
+                        "drift: list row carries no _key, so the collection cannot be paged"
+                            .to_string()
+                    })?;
+                    if Some(&next) == after.as_ref() {
+                        return Err(format!(
+                            "drift: listing {} did not advance past _key {next}",
+                            self.name
+                        ));
+                    }
+                    after = Some(next);
+                }
+            }
+
+            /// One list request, resuming after a storage key when given one.
+            fn list_page(
+                &self,
+                filter: Option<HashMap<String, String>>,
+                limit: Option<usize>,
+                after: Option<&str>,
+            ) -> Vec<Value> {
                 let mut path = format!("nosql/list?collection={}", percent_encode(&self.name));
                 if let Some(f) = filter {
                     for (k, v) in f {
@@ -615,6 +721,9 @@ pub mod backbone {
                 }
                 if let Some(n) = limit.filter(|&n| n > 0) {
                     path.push_str(&format!("&limit={n}"));
+                }
+                if let Some(a) = after.filter(|a| !a.is_empty()) {
+                    path.push_str(&format!("&after={}", percent_encode(a)));
                 }
                 match call("GET", &path, None) {
                     Some(Value::Array(arr)) => arr,
@@ -1742,4 +1851,60 @@ pub fn caller_slice(req: &Value) -> String {
 /// An environment variable value ("" if unset).
 pub fn env(key: &str) -> String {
     std::env::var(key).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod list_paging_tests {
+    use crate::backbone::nosql;
+
+    // A ledger is only correct when it can be read whole. One page is capped and
+    // the response carries nothing marking it short, so a collection past the cap
+    // has to be paged or it cannot be read correctly at all.
+    //
+    // One test rather than several: the local store is a process-wide OnceLock, so
+    // parallel tests would count each other's documents.
+    #[test]
+    fn list_all_reads_every_document_past_one_page() {
+        std::env::remove_var("BACKBONE_URL");
+        let total = crate::LIST_MAX + 200;
+        let c = nosql::collection("ops");
+        for i in 0..total {
+            c.insert(serde_json::json!({
+                "_id": format!("{i:04x}"),
+                "group_id": "g1",
+                "seq": i,
+            }));
+        }
+
+        // One page stays one page — an unbounded single read is a memory risk
+        // inside a function, so paging must not have removed the cap.
+        assert_eq!(
+            c.list_limited(None, Some(crate::LIST_MAX + 500)).len(),
+            crate::LIST_MAX,
+            "an over-large limit must still clamp to one page"
+        );
+        assert_eq!(
+            c.list(None).len(),
+            crate::LIST_DEFAULT,
+            "an omitted limit is the platform default, not everything"
+        );
+
+        let all = c.list_all(None).expect("list_all");
+        assert_eq!(all.len(), total, "every document must be reachable");
+
+        // Every document exactly once: a cursor that overlapped would double-count
+        // a leaf, which corrupts a Merkle root as surely as dropping one.
+        let keys: std::collections::HashSet<&str> = all
+            .iter()
+            .map(|d| d.get("_key").and_then(|k| k.as_str()).expect("_key"))
+            .collect();
+        assert_eq!(keys.len(), total, "no document may be served twice");
+
+        // The filtered path is the one an indexed read takes, and the one a ledger
+        // uses.
+        let mut filter = std::collections::HashMap::new();
+        filter.insert("group_id".to_string(), "g1".to_string());
+        let filtered = c.list_all(Some(filter)).expect("filtered list_all");
+        assert_eq!(filtered.len(), total, "a filtered read must page too");
+    }
 }

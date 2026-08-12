@@ -300,6 +300,12 @@ def _call(method, path, body=None):
                 raise
 
 
+# The page sizes the platform applies to a list read. Mirrored by the local store
+# so a local run truncates where a slice would, and used as the page size list_all
+# walks with.
+_LIST_DEFAULT = 100
+_LIST_MAX = 1000
+
 # In-memory backbone for local dev (matches Go SDK behavior).
 _local_store = {
     "nosql": {},
@@ -326,6 +332,11 @@ def _call_local(method, path, body=None):
             s["nosql"][col] = {}
         s["next_id"] += 1
         key = str(s["next_id"])
+        # The platform injects the storage key into the stored document, and
+        # paging reads it back off the last row. A local document without one
+        # reads as un-pageable.
+        body = dict(body or {})
+        body["_key"] = key
         s["nosql"][col][key] = body
         return {"key": key}
 
@@ -339,11 +350,27 @@ def _call_local(method, path, body=None):
         docs = s["nosql"].get(col, {})
         field = query.get("field")
         value = query.get("value")
+        # Walk in key order, like the platform's ordered walk, and apply the same
+        # page cap — a local store answering every read in full would hide the
+        # truncation a paged read exists to avoid.
+        after = query.get("after") or ""
+        try:
+            limit = int(query.get("limit") or _LIST_DEFAULT)
+        except (TypeError, ValueError):
+            limit = _LIST_DEFAULT
+        if limit <= 0:
+            limit = _LIST_DEFAULT
+        limit = min(limit, _LIST_MAX)
         results = []
-        for doc in docs.values():
+        for key in sorted(docs):
+            if after and key <= after:
+                continue
+            doc = docs[key]
             if field and str(doc.get(field)) != value:
                 continue
             results.append(doc)
+            if len(results) >= limit:
+                break
         return results
 
     if base_path == "nosql/drop" and method == "POST":
@@ -490,8 +517,8 @@ class _CollectionHandle:
     def delete(self, key):
         return _call("POST", f"nosql/delete?collection={urllib.parse.quote(self.name)}&key={urllib.parse.quote(key)}")
 
-    def list(self, filter=None, limit=None):
-        """Return documents from the collection, optionally filtered by one field.
+    def list(self, filter=None, limit=None, after=None):
+        """Return ONE page of documents, optionally filtered by one field.
 
         Pass a limit for any collection that grows. Omitting it does not mean
         "everything" — the platform applies its own default of 100 documents and
@@ -499,6 +526,9 @@ class _CollectionHandle:
         tell "all of them" from "the first hundred". Rows come back in key order
         rather than newest-first, so a capped read of an append-only log is missing
         its most recent entries. The platform clamps the limit to 1000.
+
+        `after` resumes from a document's `_key`. Use list_all for a collection
+        that can outgrow one page.
         """
         path = f"nosql/list?collection={urllib.parse.quote(self.name)}"
         if filter:
@@ -506,8 +536,41 @@ class _CollectionHandle:
                 path += f"&field={urllib.parse.quote(k)}&value={urllib.parse.quote(v)}"
         if limit:
             path += f"&limit={int(limit)}"
+        if after:
+            path += f"&after={urllib.parse.quote(str(after))}"
         resp = _call("GET", path)
         return resp if isinstance(resp, list) else []
+
+    def list_all(self, filter=None):
+        """Return EVERY document matching the filter, paging until exhausted.
+
+        One page is capped at 1000 and its response carries nothing marking it
+        short, so a bigger collection cannot be read correctly with list() alone —
+        and because rows arrive in key order rather than newest-first, what a capped
+        read omits is arbitrary rather than merely recent. An append-only log is the
+        case that breaks: a Merkle root over a subset of the log is not a proof of
+        the log.
+
+        Every matching document is held in memory at once — the point for a ledger,
+        and a cost worth knowing elsewhere, since a function runs under a limit.
+        """
+        page = _LIST_MAX
+        out = []
+        after = None
+        while True:
+            rows = self.list(filter, limit=page, after=after)
+            out.extend(rows)
+            if len(rows) < page:
+                return out
+            nxt = rows[-1].get("_key") if isinstance(rows[-1], dict) else None
+            if not nxt:
+                raise RuntimeError("drift: list row carries no _key, so the collection cannot be paged")
+            # A full page that does not move the cursor would loop forever. Report
+            # it rather than returning a short read, which is the failure this
+            # method exists to prevent.
+            if nxt == after:
+                raise RuntimeError(f"drift: listing {self.name!r} did not advance past _key {after!r}")
+            after = nxt
 
     def drop(self):
         _call("POST", f"nosql/drop?collection={urllib.parse.quote(self.name)}")

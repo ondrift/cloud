@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -143,6 +144,14 @@ type memBackbone struct {
 	nextID int
 }
 
+// The page sizes the platform applies to a list read, mirrored here so a local
+// run truncates where a slice would. A local store that answered every read in
+// full would hide exactly the bug a paged read exists to avoid.
+const (
+	localListDefault = 100
+	localListMax     = 1000
+)
+
 // localBackbone is an in-memory implementation of backbone services for local
 // development with `drift atomic run`. All state lives in memory and is lost
 // when the process exits.
@@ -188,6 +197,11 @@ func (m *memBackbone) handle(req BackboneRequest) []byte {
 		}
 		m.nextID++
 		key := fmt.Sprintf("%d", m.nextID)
+		// The platform injects the storage key into the stored document, and
+		// paging reads it back off the last row. A local document without one
+		// reads as un-pageable, and any handler touching `_key` behaves
+		// differently here than on a slice.
+		body["_key"] = key
 		doc, _ := json.Marshal(body)
 		m.nosql[col][key] = doc
 		resp, _ := json.Marshal(map[string]string{"key": key})
@@ -217,8 +231,28 @@ func (m *memBackbone) handle(req BackboneRequest) []byte {
 		}
 		filterField := query.Get("field")
 		filterValue := query.Get("value")
-		var results []json.RawMessage
-		for _, doc := range docs {
+		// Iterate in key order, like the platform's ordered walk. A Go map
+		// iterates randomly, which would make a page boundary — and so a
+		// cursor — mean nothing.
+		keys := make([]string, 0, len(docs))
+		for k := range docs {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		after := query.Get("after")
+		limit := localListDefault
+		if n, err := strconv.Atoi(query.Get("limit")); err == nil && n > 0 {
+			limit = n
+		}
+		if limit > localListMax {
+			limit = localListMax
+		}
+		results := []json.RawMessage{}
+		for _, k := range keys {
+			if after != "" && k <= after {
+				continue
+			}
+			doc := docs[k]
 			if filterField != "" {
 				var obj map[string]any
 				json.Unmarshal(doc, &obj) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
@@ -228,9 +262,9 @@ func (m *memBackbone) handle(req BackboneRequest) []byte {
 				}
 			}
 			results = append(results, doc)
-		}
-		if results == nil {
-			results = []json.RawMessage{}
+			if len(results) >= limit {
+				break
+			}
 		}
 		return marshalJSON(results)
 
@@ -625,7 +659,8 @@ func (c collectionHandle) Delete(key string) error {
 	return err
 }
 
-// List returns documents from the collection, optionally filtered by one field.
+// List returns ONE page of documents from the collection, optionally filtered by
+// one field.
 //
 // PASS A LIMIT FOR ANY COLLECTION THAT GROWS. Omitting it does not mean
 // "everything" — the platform applies its own default of 100 documents and
@@ -635,15 +670,68 @@ func (c collectionHandle) Delete(key string) error {
 // missing its most recent entries, because the rows come back in key order rather
 // than newest-first.
 //
-// The platform clamps the limit to 1000. Collections expected to outgrow that need
-// their reads narrowed by filter rather than widened by limit.
+// The platform clamps the limit to 1000. Use ListAll for a collection that can
+// outgrow one page.
 func (c collectionHandle) List(filter map[string]string, limit ...int) ([]json.RawMessage, error) {
+	n := 0
+	if len(limit) > 0 {
+		n = limit[0]
+	}
+	return c.listPage(filter, n, "")
+}
+
+// ListAll returns EVERY document matching the filter, paging until the collection
+// is exhausted.
+//
+// One List is capped at 1000 documents and its response carries nothing marking it
+// short, so a bigger collection cannot be read correctly with List alone — and
+// because rows arrive in key order rather than newest-first, what a capped read
+// omits is arbitrary rather than merely recent. An append-only log is the case that
+// breaks: a Merkle root over a subset of the log is not a proof of the log, and an
+// author whose latest entry falls outside the window is refused for as long as it
+// stays there.
+//
+// Every matching document is held in memory at once. That is the point for a
+// ledger, whose reader needs the whole log to be correct at all, and it is a cost
+// worth knowing for anything else — an Atomic function runs under a memory limit.
+func (c collectionHandle) ListAll(filter map[string]string) ([]json.RawMessage, error) {
+	const page = 1000 // the platform's own ceiling; a smaller page only buys round trips
+	all := []json.RawMessage{}
+	after := ""
+	for {
+		rows, err := c.listPage(filter, page, after)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, rows...)
+		if len(rows) < page {
+			return all, nil
+		}
+		next, err := lastStorageKey(rows)
+		if err != nil {
+			return nil, err
+		}
+		// A full page that does not move the cursor would loop forever. Report it
+		// instead: a short read is the failure this method exists to prevent, so
+		// returning what was collected so far would defeat the purpose.
+		if next == after {
+			return nil, fmt.Errorf("drift: listing %q did not advance past _key %q", c.name, after)
+		}
+		after = next
+	}
+}
+
+// listPage issues one list request, resuming after a storage key when given one.
+func (c collectionHandle) listPage(filter map[string]string, limit int, after string) ([]json.RawMessage, error) {
 	path := "nosql/list?collection=" + url.QueryEscape(c.name)
 	for k, v := range filter {
 		path += "&field=" + url.QueryEscape(k) + "&value=" + url.QueryEscape(v)
 	}
-	if len(limit) > 0 && limit[0] > 0 {
-		path += "&limit=" + strconv.Itoa(limit[0])
+	if limit > 0 {
+		path += "&limit=" + strconv.Itoa(limit)
+	}
+	if after != "" {
+		path += "&after=" + url.QueryEscape(after)
 	}
 	resp, err := callBackbone("GET", path, nil)
 	if err != nil {
@@ -657,6 +745,21 @@ func (c collectionHandle) List(filter map[string]string, limit ...int) ([]json.R
 		return nil, fmt.Errorf("drift: parse list response: %w", err)
 	}
 	return results, nil
+}
+
+// lastStorageKey reads the `_key` off the final row of a page — the position the
+// next page resumes from.
+func lastStorageKey(rows []json.RawMessage) (string, error) {
+	var doc struct {
+		Key string `json:"_key"`
+	}
+	if err := json.Unmarshal(rows[len(rows)-1], &doc); err != nil {
+		return "", fmt.Errorf("drift: parse list cursor: %w", err)
+	}
+	if doc.Key == "" {
+		return "", fmt.Errorf("drift: list row carries no _key, so the collection cannot be paged")
+	}
+	return doc.Key, nil
 }
 
 func (c collectionHandle) Drop() error {
