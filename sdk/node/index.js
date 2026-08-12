@@ -347,6 +347,12 @@ async function _callAuth(method, path, token, body) {
   }
 }
 
+// The page sizes the platform applies to a list read. Mirrored by the local store
+// so a local run truncates where a slice would, and used as the page size listAll
+// walks with.
+const LIST_DEFAULT = 100;
+const LIST_MAX = 1000;
+
 // In-memory backbone for local dev.
 const _store = {
   nosql: {},
@@ -373,7 +379,10 @@ function _callLocal(method, path, body) {
     if (!_store.nosql[col]) _store.nosql[col] = {};
     _store.nextId++;
     const key = String(_store.nextId);
-    _store.nosql[col][key] = body;
+    // The platform injects the storage key into the stored document, and paging
+    // reads it back off the last row. A local document without one reads as
+    // un-pageable.
+    _store.nosql[col][key] = { ...body, _key: key };
     return { key };
   }
   if (basePath === "read" && method === "GET") {
@@ -383,10 +392,21 @@ function _callLocal(method, path, body) {
   if (basePath === "nosql/list" && method === "GET") {
     const col = query.collection || "default";
     const docs = _store.nosql[col] || {};
+    // Walk in key order, like the platform's ordered walk, and apply the same page
+    // cap. An object with integer-like keys enumerates numerically, so the sort is
+    // explicit: the platform orders bytewise, where "1000" precedes "999".
+    const keys = Object.keys(docs).sort();
+    const after = query.after || "";
+    let limit = parseInt(query.limit, 10);
+    if (!Number.isInteger(limit) || limit <= 0) limit = LIST_DEFAULT;
+    if (limit > LIST_MAX) limit = LIST_MAX;
     const results = [];
-    for (const doc of Object.values(docs)) {
+    for (const k of keys) {
+      if (after && k <= after) continue;
+      const doc = docs[k];
       if (query.field && String(doc[query.field]) !== query.value) continue;
       results.push(doc);
+      if (results.length >= limit) break;
     }
     return results;
   }
@@ -513,13 +533,15 @@ const nosql = {
     },
     delete: (key) =>
       _call("POST", `nosql/delete?collection=${encodeURIComponent(name)}&key=${encodeURIComponent(key)}`),
-    // Pass a limit for any collection that grows. Omitting it does not mean
-    // "everything" — the platform applies its own default of 100 documents and
-    // returns a short list with nothing to mark it as truncated, so a caller
-    // cannot tell "all of them" from "the first hundred". Rows come back in key
-    // order rather than newest-first, so a capped read of an append-only log is
-    // missing its most recent entries. The platform clamps the limit to 1000.
-    list: (filter, limit) => {
+    // Returns ONE page. Pass a limit for any collection that grows: omitting it
+    // does not mean "everything" — the platform applies its own default of 100
+    // documents and returns a short list with nothing to mark it as truncated, so
+    // a caller cannot tell "all of them" from "the first hundred". Rows come back
+    // in key order rather than newest-first, so a capped read of an append-only
+    // log is missing its most recent entries. The platform clamps the limit to
+    // 1000. `after` resumes from a document's `_key`; use listAll for a collection
+    // that can outgrow one page.
+    list: (filter, limit, after) => {
       let path = `nosql/list?collection=${encodeURIComponent(name)}`;
       if (filter) {
         for (const [k, v] of Object.entries(filter)) {
@@ -527,7 +549,40 @@ const nosql = {
         }
       }
       if (limit > 0) path += `&limit=${encodeURIComponent(limit)}`;
+      if (after) path += `&after=${encodeURIComponent(after)}`;
       return _call("GET", path).then((r) => (Array.isArray(r) ? r : []));
+    },
+    // Returns EVERY document matching the filter, paging until exhausted.
+    //
+    // One page is capped at 1000 and its response carries nothing marking it
+    // short, so a bigger collection cannot be read correctly with list() alone —
+    // and because rows arrive in key order rather than newest-first, what a capped
+    // read omits is arbitrary rather than merely recent. An append-only log is the
+    // case that breaks: a Merkle root over a subset of the log is not a proof of
+    // the log.
+    //
+    // Every matching document is held in memory at once — the point for a ledger,
+    // and a cost worth knowing elsewhere, since a function runs under a limit.
+    listAll: async (filter) => {
+      const page = LIST_MAX;
+      const all = [];
+      let after = "";
+      for (;;) {
+        const rows = await nosql.collection(name).list(filter, page, after);
+        all.push(...rows);
+        if (rows.length < page) return all;
+        const next = rows[rows.length - 1] && rows[rows.length - 1]._key;
+        if (!next) {
+          throw new Error("drift: list row carries no _key, so the collection cannot be paged");
+        }
+        // A full page that does not move the cursor would loop forever. Report it
+        // rather than returning a short read, which is the failure this exists to
+        // prevent.
+        if (next === after) {
+          throw new Error(`drift: listing ${name} did not advance past _key ${after}`);
+        }
+        after = next;
+      }
     },
     drop: () => _call("POST", `nosql/drop?collection=${encodeURIComponent(name)}`),
   }),

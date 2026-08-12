@@ -208,6 +208,13 @@ function _call_raw(string $method, string $path, string $data_bytes, string $con
     return ($status >= 200 && $status < 300) ? $result : null;
 }
 
+// The page sizes the platform applies to a list read. Mirrored by the local store
+// so a local run truncates where a slice would, and used as the page size list_all
+// walks with. Referenced from Drift\Backbone as \Drift\LIST_MAX — an unqualified
+// constant falls back to the global namespace, never to the parent one.
+const LIST_DEFAULT = 100;
+const LIST_MAX = 1000;
+
 // In-memory backbone for local dev.
 $_local_store = [
     'nosql' => [], 'cache' => [], 'queues' => [],
@@ -229,7 +236,12 @@ function _call_local(string $method, string $path, $body = null) {
         if (!isset($s['nosql'][$col])) $s['nosql'][$col] = [];
         $s['next_id']++;
         $key = (string)$s['next_id'];
-        $s['nosql'][$col][$key] = $body;
+        // The platform injects the storage key into the stored document, and
+        // paging reads it back off the last row. A local document without one
+        // reads as un-pageable.
+        $doc = ($body ?? []);
+        $doc['_key'] = $key;
+        $s['nosql'][$col][$key] = $doc;
         return ['key' => $key];
     }
     if ($base_path === 'read' && $method === 'GET') {
@@ -241,10 +253,25 @@ function _call_local(string $method, string $path, $body = null) {
         $docs = $s['nosql'][$col] ?? [];
         $field = $query['field'] ?? null;
         $value = $query['value'] ?? null;
+        // Walk in key order, like the platform's ordered walk, and apply the same
+        // page cap — a local store answering every read in full would hide the
+        // truncation a paged read exists to avoid.
+        $after = (string)($query['after'] ?? '');
+        $limit = (int)($query['limit'] ?? 0);
+        if ($limit <= 0) $limit = LIST_DEFAULT;
+        if ($limit > LIST_MAX) $limit = LIST_MAX;
+        $keys = array_keys($docs);
+        sort($keys, SORT_STRING);
         $results = [];
-        foreach ($docs as $doc) {
+        foreach ($keys as $k) {
+            // strcmp, not <=. An array key that looks like an integer is stored as
+            // one, and PHP compares two numeric strings NUMERICALLY — which would
+            // disagree with the bytewise sort above and both skip and repeat rows.
+            if ($after !== '' && strcmp((string)$k, $after) <= 0) continue;
+            $doc = $docs[$k];
             if ($field !== null && (string)($doc[$field] ?? '') !== $value) continue;
             $results[] = $doc;
+            if (count($results) >= $limit) break;
         }
         return $results;
     }
@@ -697,7 +724,19 @@ class NosqlCollection {
      * rather than newest-first, so a capped read of an append-only log is missing
      * its most recent entries. The platform clamps the limit to 1000.
      */
-    public function list(?array $filter = null, ?int $limit = null): array {
+    /**
+     * Return ONE page of documents, optionally filtered by one field.
+     *
+     * Pass a limit for any collection that grows. Omitting it does not mean
+     * "everything" — the platform applies its own default of 100 documents and
+     * returns a short list with nothing marking it truncated. Rows come back in key
+     * order rather than newest-first, so a capped read of an append-only log is
+     * missing its most recent entries. The platform clamps the limit to 1000.
+     *
+     * $after resumes from a document's `_key`. Use list_all for a collection that
+     * can outgrow one page.
+     */
+    public function list(?array $filter = null, ?int $limit = null, ?string $after = null): array {
         $path = 'nosql/list?collection=' . urlencode($this->name);
         if ($filter) {
             foreach ($filter as $k => $v) {
@@ -707,8 +746,46 @@ class NosqlCollection {
         if ($limit !== null && $limit > 0) {
             $path .= '&limit=' . urlencode((string) $limit);
         }
+        if ($after !== null && $after !== '') {
+            $path .= '&after=' . urlencode($after);
+        }
         $resp = _call('GET', $path);
         return is_array($resp) ? $resp : [];
+    }
+
+    /**
+     * Return EVERY document matching the filter, paging until exhausted.
+     *
+     * One page is capped at 1000 and its response carries nothing marking it short,
+     * so a bigger collection cannot be read correctly with list() alone — and
+     * because rows arrive in key order rather than newest-first, what a capped read
+     * omits is arbitrary rather than merely recent. An append-only log is the case
+     * that breaks: a Merkle root over a subset of the log is not a proof of the log.
+     *
+     * Every matching document is held in memory at once — the point for a ledger,
+     * and a cost worth knowing elsewhere, since a function runs under a limit.
+     */
+    public function list_all(?array $filter = null): array {
+        $page = \Drift\LIST_MAX;
+        $out = [];
+        $after = null;
+        while (true) {
+            $rows = $this->list($filter, $page, $after);
+            $out = array_merge($out, $rows);
+            if (count($rows) < $page) return $out;
+            $last = $rows[count($rows) - 1];
+            $next = is_array($last) ? ($last['_key'] ?? null) : null;
+            if ($next === null || $next === '') {
+                throw new \RuntimeException('drift: list row carries no _key, so the collection cannot be paged');
+            }
+            // A full page that does not move the cursor would loop forever. Report
+            // it rather than returning a short read, which is the failure this
+            // method exists to prevent.
+            if ($next === $after) {
+                throw new \RuntimeException("drift: listing {$this->name} did not advance past _key {$after}");
+            }
+            $after = (string) $next;
+        }
     }
 
     public function drop(): void {
