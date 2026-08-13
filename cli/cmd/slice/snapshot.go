@@ -313,7 +313,10 @@ func getSnapshotDeleteCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "Skip confirmation prompt")
+	// The snapshot id is a REQUIRED argument, so --yes drops a first-stage
+	// [y/N] and never the identity of what is being deleted. Said here because
+	// "Skip confirmation prompt" alone reads as a complete bypass.
+	cmd.Flags().BoolVar(&yes, "yes", false, "Skip confirmation prompt (for scripts). The snapshot id argument must still match exactly.")
 	return cmd
 }
 
