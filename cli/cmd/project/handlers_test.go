@@ -134,6 +134,120 @@ func TestFunctionSpecs_BuildIntoElements(t *testing.T) {
 	}
 }
 
+// --- the compiled floor -----------------------------------------------------
+
+// A schema stub carrying only what CompiledMemoryFloor reads. Permissive
+// everywhere else: these tests are about the floor, and a full copy of the format
+// here would be the second definition the CLI exists without.
+const floorSchema = `{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "definitions": {
+    "atomicEntry": {
+      "properties": {
+        "memory": {
+          "type": "string",
+          "x-drift-compiled-minimum": "16MB",
+          "x-drift-interpreted-languages": ["node", "php", "python", "ruby"]
+        }
+      }
+    }
+  }
+}`
+
+// checkFixture parses a project and runs the floor check over its elements.
+func checkFixture(t *testing.T, root string) error {
+	t.Helper()
+	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
+	if err != nil {
+		t.Fatalf("ParseDriftfile: %v", err)
+	}
+	els, err := atomic_cmd.BuildElements(FunctionSpecs(m))
+	if err != nil {
+		t.Fatalf("BuildElements: %v", err)
+	}
+	return CheckCompiledBookings(m, els)
+}
+
+// THE case this exists for: the Driftfile printed in the getting-started
+// tutorial. Its functions are Go and it booked one of them at 8MB, which the
+// schema's `pattern` accepts — 8MB is a legal booking — and the api then refuses
+// at deploy, after the cost-confirm and the upload.
+//
+// The document cannot express this, which is why it is checked here: nothing in
+// a Driftfile says what language a function is written in.
+func TestCheckCompiledBookings_RefusesACompiledFunctionUnderTheFloor(t *testing.T) {
+	withSchema(t, floorSchema)
+	root := demoProject(t, demoDriftfile) // get:ping books 8MB, in Go
+
+	err := checkFixture(t, root)
+	if err == nil {
+		t.Fatal("a Go function booked at 8MB was accepted — the deploy would 400 after " +
+			"the upload, which is the failure moving this check to the laptop removes")
+	}
+	if !strings.Contains(err.Error(), "get:ping") {
+		t.Errorf("the error must name the function that has to change, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "16MB") {
+		t.Errorf("the error must state the floor to raise it to, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "go") {
+		t.Errorf("the error must name the language that carries the floor, got: %v", err)
+	}
+}
+
+// The control that must keep passing: the same project at the floor. Without it
+// the test above would pass for a check that refused everything.
+func TestCheckCompiledBookings_AcceptsACompiledFunctionAtTheFloor(t *testing.T) {
+	withSchema(t, floorSchema)
+	root := demoProject(t, strings.Replace(demoDriftfile, "memory: 8MB", "memory: 16MB", 1))
+
+	if err := checkFixture(t, root); err != nil {
+		t.Fatalf("a Go function booked at the floor was refused: %v", err)
+	}
+}
+
+// The other control, and the one that would make this check a regression if it
+// broke: 8MB is a legal booking for an interpreted function and must stay legal.
+// The interpreted four share one language server per language, so their working
+// set genuinely fits — raising the floor for them would price the platform's own
+// overhead as though the tenant had asked for it.
+func TestCheckCompiledBookings_LeavesInterpretedBookingsAlone(t *testing.T) {
+	withSchema(t, floorSchema)
+
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "Driftfile"), `
+name: demo
+atomic:
+  functions:
+    - name: get:ping
+      handler: get_ping
+      memory: 8MB
+`)
+	mustWrite(t, filepath.Join(root, "atomic", "api.py"), "def get_ping(req):\n    return {}\n")
+
+	if err := checkFixture(t, root); err != nil {
+		t.Fatalf("a Python function booked at 8MB was refused, but the floor is compiled-only: %v", err)
+	}
+}
+
+// A machine whose cached schema predates the annotation publishes no floor. The
+// check then does nothing rather than inventing one — the same choice
+// NamePattern makes, and for the same reason: the api is the enforcing owner
+// either way, and a CLI that guesses a bound is a CLI holding a rule of its own.
+func TestCheckCompiledBookings_SkipsWhenTheSchemaPublishesNoFloor(t *testing.T) {
+	withSchema(t, `{
+	  "$schema": "http://json-schema.org/draft-07/schema#",
+	  "type": "object",
+	  "definitions": {"atomicEntry": {"properties": {"memory": {"type": "string"}}}}
+	}`)
+	root := demoProject(t, demoDriftfile)
+
+	if err := checkFixture(t, root); err != nil {
+		t.Fatalf("a schema with no published floor must produce no verdict, got: %v", err)
+	}
+}
+
 // A handler the manifest names and the source lacks fails the deploy BEFORE
 // anything is built or uploaded, and the message names the file it looked in.
 func TestFunctionSpecs_MissingHandlerFailsBeforeAnythingShips(t *testing.T) {

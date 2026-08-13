@@ -214,6 +214,88 @@ func instanceLocation(msg string) string {
 	return rest[:j]
 }
 
+// CompiledFloor is the platform's per-language floor on a function's booking:
+// how little a COMPILED function may book, and the languages that rule exempts.
+//
+// Both are read from the fetched schema for the same reason NamePattern is. The
+// bound belongs to the platform — `tier.MinCompiledFunctionMemoryBytes` refuses
+// the deploy, and the interpreted set is the branch the slice itself takes — so a
+// copy compiled into this binary would be a second definition that drifts, and
+// would drift in the direction that costs most: a CLI refusing a booking the
+// platform accepts is a CLI that has invented a rule.
+//
+// It cannot be a `pattern` on `memory`, which is why it is read rather than
+// validated. A pattern constrains the DOCUMENT, and the Driftfile never says what
+// language a function is written in — that is detected from the source beside it,
+// which only this machine can see.
+type CompiledFloor struct {
+	// Bytes is the minimum a compiled function may book. Zero means the schema
+	// did not publish one.
+	Bytes int
+	// Declared is the floor as the schema writes it ("16MB"), for the message.
+	Declared string
+	// interpreted is the set the floor does NOT apply to.
+	interpreted map[string]bool
+}
+
+// Applies reports whether the floor binds a function written in lang.
+//
+// Keyed on the interpreted set rather than a list of compiled languages because
+// that is the stable side, and the same side the operator and the slice key on:
+// the wire value for a compiled language is a known-moving target, while the
+// interpreted four are not. An unrecognised language is therefore treated as
+// compiled — matching what the platform will do with it.
+func (c CompiledFloor) Applies(lang string) bool {
+	if c.Bytes <= 0 || len(c.interpreted) == 0 {
+		return false
+	}
+	return !c.interpreted[strings.ToLower(lang)]
+}
+
+// CompiledMemoryFloor reads the floor this machine's schema publishes.
+//
+// Returns a zero CompiledFloor when the schema is absent, predates the
+// annotation, or publishes it unusably — and callers then skip the check rather
+// than inventing one. That is the same choice NamePattern makes and the same
+// reason: the api is the final enforcer either way, so a guess buys nothing and
+// costs the CLI its claim to hold no rules of its own. The cost of skipping is
+// that the tenant meets the floor at deploy instead of at lint, which is exactly
+// where they met it before.
+func CompiledMemoryFloor() CompiledFloor {
+	raw, err := common.LocalDriftfileSchema()
+	if err != nil {
+		return CompiledFloor{}
+	}
+	var doc struct {
+		Definitions struct {
+			AtomicEntry struct {
+				Properties struct {
+					Memory struct {
+						CompiledMinimum string   `json:"x-drift-compiled-minimum"`
+						Interpreted     []string `json:"x-drift-interpreted-languages"`
+					} `json:"memory"`
+				} `json:"properties"`
+			} `json:"atomicEntry"`
+		} `json:"definitions"`
+	}
+	if jerr := json.Unmarshal(raw, &doc); jerr != nil {
+		return CompiledFloor{}
+	}
+	mem := doc.Definitions.AtomicEntry.Properties.Memory
+	if mem.CompiledMinimum == "" || len(mem.Interpreted) == 0 {
+		return CompiledFloor{}
+	}
+	bytes, perr := parseSizeBytes(mem.CompiledMinimum)
+	if perr != nil || bytes <= 0 {
+		return CompiledFloor{}
+	}
+	set := make(map[string]bool, len(mem.Interpreted))
+	for _, l := range mem.Interpreted {
+		set[strings.ToLower(l)] = true
+	}
+	return CompiledFloor{Bytes: bytes, Declared: mem.CompiledMinimum, interpreted: set}
+}
+
 // NamePattern is the platform's rule for a project/slice identifier, read out of
 // the fetched schema rather than restated here.
 //
