@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 )
@@ -49,6 +50,70 @@ func FunctionSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
 		})
 	}
 	return specs
+}
+
+// CheckCompiledBookings refuses a compiled function booked under the floor its
+// own language runtime needs, on this machine, before anything is uploaded.
+//
+// This is the half of the booking rule the schema cannot state. `pattern` already
+// refuses anything outside 8MB-256MB offline; the compiled floor needs the
+// LANGUAGE, and the Driftfile never says what language a function is written in —
+// it is detected from the source beside it. So the bound is read from the schema
+// (CompiledMemoryFloor) and applied here, where `elements` has already bound each
+// function to the element whose language was detected.
+//
+// Why it is worth catching here at all, given the api refuses it anyway: a
+// booking under the floor does not fail cleanly at run time. The reservation
+// clamps to the pool, so the function admits one invocation at a time rather than
+// none — single requests return 200 and the slice only gives way under
+// concurrency. The api turning that into a 400 is what makes it visible, and this
+// moves the same answer to the laptop.
+//
+// Reports every offending function rather than the first: a tutorial Driftfile
+// booking three Go functions at 8MB should be fixed in one pass, not three.
+func CheckCompiledBookings(m *Manifest, elements []atomic_cmd.Element) error {
+	floor := CompiledMemoryFloor()
+	if floor.Bytes <= 0 {
+		return nil
+	}
+
+	// The declared booking, by function name. Read from the manifest rather than
+	// the spec because a FunctionSpec carries what it takes to BUILD a function,
+	// and memory is not one of those things.
+	declared := map[string]string{}
+	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+		declared[fn.Str("name")] = fn.Str("memory")
+	}
+
+	var bad []string
+	for _, el := range elements {
+		if !floor.Applies(el.Lang) {
+			continue
+		}
+		for _, f := range el.Funcs {
+			raw := declared[f.Spec.Name]
+			if raw == "" {
+				continue // a missing booking is already reported, with its own message
+			}
+			bytes, err := parseSizeBytes(raw)
+			if err != nil || bytes >= floor.Bytes {
+				continue
+			}
+			bad = append(bad, fmt.Sprintf("  %s booked %s, in %s", f.Spec.Name, raw, el.Lang))
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"a compiled function needs at least %s, and %d of these book less:\n%s\n\n"+
+			"A compiled language carries a private language runtime inside every invocation, "+
+			"and the pool is charged what an invocation is measured to cost — that runtime "+
+			"included. The interpreted languages share one language server each and can book "+
+			"as little as 8MB.\n"+
+			"Raise each of them to %s or higher, or run `drift project benchmark` against a "+
+			"deployed slice to size them from what they actually hold.",
+		floor.Declared, len(bad), strings.Join(bad, "\n"), floor.Declared)
 }
 
 // FindDriftfileFor locates the project a directory belongs to, by walking UP

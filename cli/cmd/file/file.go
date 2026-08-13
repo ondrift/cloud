@@ -113,8 +113,16 @@ func getLintCmd() *cobra.Command {
 			// for review, `drift slice create --from Driftfile` in an empty
 			// directory), and calling that invalid would refuse a file that is fine.
 			if _, serr := os.Stat(m.ResolvePath("atomic")); serr == nil {
-				if _, berr := atomic_cmd.BuildElements(project.FunctionSpecs(m)); berr != nil {
+				els, berr := atomic_cmd.BuildElements(project.FunctionSpecs(m))
+				if berr != nil {
 					return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), berr)
+				}
+				// The third half: a booking the schema accepts but the function's
+				// LANGUAGE does not. Only reachable once the elements are built,
+				// because that is where the language was detected — the document
+				// never says it.
+				if cerr := project.CheckCompiledBookings(m, els); cerr != nil {
+					return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), cerr)
 				}
 			}
 

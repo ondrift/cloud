@@ -139,6 +139,20 @@ single slice otherwise.`,
 				return err
 			}
 
+			// Same preflight, for a booking the function's LANGUAGE refuses. The
+			// api is the enforcing owner and answers 400, but it answers it after
+			// the cost-confirm and the upload — so the same verdict is reached
+			// here, from the floor the schema publishes.
+			//
+			// A build failure is not reported here: applyAtomic already surfaces a
+			// missing handler or a mixed-language element with the message built
+			// for it, and pre-empting that would report the wrong cause.
+			if els, berr := atomic_cmd.BuildElements(FunctionSpecs(m)); berr == nil {
+				if err := CheckCompiledBookings(m, els); err != nil {
+					return err
+				}
+			}
+
 			// In --plan mode, the slice diff drives output and we
 			// never call code-deploy paths. Fetch live + classify
 			// + render, and exit with the appropriate status.
