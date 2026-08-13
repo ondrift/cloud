@@ -18,10 +18,10 @@ import (
 func GetDeleteCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use:     "delete",
+		Use:     "delete [username]",
 		Short:   "Delete your account and everything in it (irreversible)",
-		Args:    cobra.NoArgs,
-		Example: "  drift account delete\n  drift account delete --yes",
+		Args:    cobra.MaximumNArgs(1),
+		Example: "  drift account delete\n  drift account delete alice --yes",
 		Run: func(cmd *cobra.Command, args []string) {
 			username := common.GetUsername()
 			if username == "" {
@@ -29,7 +29,25 @@ func GetDeleteCmd() *cobra.Command {
 				return
 			}
 
-			// --yes skips both prompts (for scripts). Mirrors `slice delete`.
+			// --yes drops the PROMPTS. It must never drop the identity check,
+			// so the name the prompt would have asked for has to be on the
+			// command line instead — the same shape `slice delete` uses.
+			//
+			// Interactively the argument is optional, because the typed
+			// confirmation below already asks for it and demanding both would
+			// be friction with no extra proof of intent.
+			if yes {
+				if len(args) == 0 {
+					fmt.Printf("Refusing to delete account '%s': --yes skips the prompts, so the account name must be given on the command line.\n"+
+						"  drift account delete %s --yes\n", username, username)
+					return
+				}
+				if args[0] != username {
+					fmt.Printf("Refusing to delete account '%s': you named '%s'.\n", username, args[0])
+					return
+				}
+			}
+
 			if !yes {
 				printAccountDeleteWarning(username)
 
@@ -71,7 +89,7 @@ func GetDeleteCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&yes, "yes", false, "Skip confirmation prompts (for scripts).")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Skip confirmation prompts (for scripts). The account name argument must still match exactly.")
 	return cmd
 }
 
