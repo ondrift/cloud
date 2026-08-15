@@ -47,19 +47,9 @@ func GetCmd(version string) *cobra.Command {
 		Hidden:  true, // primary entrypoint is bare `drift`; kept as an alias
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("create") {
-				name, _ := cmd.Flags().GetString("create")
-				return Run(version, &name)
-			}
-			return Run(version, nil)
+			return Run(version)
 		},
 	}
-	// Internal-only: `drift slice create <name>`'s default path re-execs into
-	// this instead of importing cmd/portal directly (cmd/portal already
-	// imports cmd/slice for SliceEntry/FetchSlices/TierLabel, so the reverse
-	// import would be a cycle). Not meant to be typed by a user directly.
-	cmd.Flags().String("create", "", "internal: launch straight into create-slice mode, pre-filled with this name")
-	_ = cmd.Flags().MarkHidden("create")
 	return cmd
 }
 
@@ -108,7 +98,6 @@ type model struct {
 	detail   *detailView     // non-nil = scrollable drill-down (Backbone dump / Atomic metrics+logs)
 	chooser  *newChooser     // non-nil = the "+ New slice" method chooser (modal)
 	explorer *fileExplorer   // non-nil = the Driftfile directory explorer (modal)
-	form     *configForm     // non-nil = the new-slice configurator (modal)
 	deleting *deleteSlice    // non-nil = the "Deleting <name>" confirmation mode
 	platform *platformStatus // non-nil = the Ctrl-S platform-status popup is open
 
@@ -143,14 +132,12 @@ type model struct {
 
 // Run launches the full-screen dashboard. It's the bare `drift` entrypoint
 // (and the hidden `drift portal` alias). version is the running CLI version,
-// used for the "update available" banner. createName is non-nil when the
-// dashboard should open straight into create-slice mode instead of the
-// normal sidebar/tabs view — *createName pre-fills the form's name field
-// (possibly empty, letting the user type it in the form). This is how
-// `drift slice create <name>`'s default path lands the user directly in the
-// configurator-equivalent view, now that the old browser-based configurator
-// service is retired.
-func Run(version string, createName *string) error {
+// used for the "update available" banner.
+//
+// Configuring a slice is not done here: both "+ New slice" and the settings
+// tab's configure action suspend the dashboard and run the ordinary CLI verb,
+// which hands off to the configurator in the browser. One form, in one place.
+func Run(version string) error {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
 		return fmt.Errorf("the drift dashboard needs an interactive terminal")
@@ -169,11 +156,6 @@ func Run(version string, createName *string) error {
 	}
 	m.loadSlices() // sidebar is always populated, independent of the active tab
 	m.load(m.tab)
-	if createName != nil {
-		m.form = newConfigForm()
-		m.form.name = *createName
-		m.recomputePrice()
-	}
 
 	old, err := term.MakeRaw(fd)
 	if err != nil {
@@ -214,7 +196,7 @@ func Run(version string, createName *string) error {
 			mu.Lock()
 			fn := ""
 			if m.tab == tabAtomic && m.fnExp >= 0 && m.fnExp < len(m.fns) &&
-				m.detail == nil && m.form == nil && m.chooser == nil &&
+				m.detail == nil && m.chooser == nil &&
 				m.explorer == nil && m.input == nil && m.conf == nil && m.platform == nil {
 				fn = fnKey(m.fns[m.fnExp]) // element/name — the slice's metrics key
 			}
@@ -449,10 +431,6 @@ func (m *model) handle(k key) bool {
 	if m.explorer != nil {
 		return m.handleExplorer(k)
 	}
-	if m.form != nil {
-		return m.handleForm(k)
-	}
-
 	// A scrollable detail view (any tab) captures all keys.
 	if m.detail != nil {
 		return m.handleDetailKeys(k)
@@ -878,12 +856,6 @@ func (m *model) hintGroups() []hintGroup {
 		return only([]hint{{"↑/↓", "choose"}, {"enter", "select"}, {"esc", "cancel"}})
 	case m.explorer != nil:
 		return only([]hint{{"↑/↓", "move"}, {"enter", "open / deploy"}, {"←", "up a level"}, {"g", "go to path"}, {"esc", "cancel"}})
-	case m.form != nil:
-		apply := "create"
-		if m.form.resize {
-			apply = "apply"
-		}
-		return only([]hint{{"↑/↓", "move"}, {"←/→", "adjust"}, {"enter", "edit / fold"}, {"tab", apply}, {"esc", "cancel"}})
 	}
 	var ctx []hint
 	switch {

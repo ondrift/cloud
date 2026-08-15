@@ -36,11 +36,12 @@ import (
 // on a server-side service module.
 type handoffMode string
 
-// modeCreate ("create") no longer has a CLI call site — `drift slice create`'s
-// default path moved to the dashboard (cmd/portal) instead of a configurator
-// handoff, see cmd/slice/create.go's openPortalCreate. Only resize still hands
-// off to the configurator.
-const modeResize handoffMode = "resize"
+// The two flows the configurator renders. Create may arrive with no slice name
+// — the form collects it — while resize always names the slice it is changing.
+const (
+	modeCreate handoffMode = "create"
+	modeResize handoffMode = "resize"
+)
 
 // handoffResponse is the configurator's reply to /ops/session/handoff.
 type handoffResponse struct {
@@ -160,6 +161,19 @@ func pollRedeem(op, token string) (json.RawMessage, error) {
 		}
 	}
 	return nil, fmt.Errorf("Couldn't %s: timed out waiting for the configurator (15 minutes). The browser session has been discarded.", op)
+}
+
+// sliceNameFrom reads the name out of the api's Slice document. The create
+// form may collect the name itself, so this is the only place the CLI learns
+// what the slice ended up being called.
+func sliceNameFrom(raw json.RawMessage) string {
+	var s struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return s.Name
 }
 
 // printSliceSummary prints a one-line confirmation for the user.

@@ -415,13 +415,12 @@ func fetchPrice(config map[string]any, months int) (*priceResult, error) {
 	return &pr, nil
 }
 
-// fetchDocPrice prices a slice doc's CURRENT config (#CLITUI1's itemized
-// bill on the Slice tab) — doc.Config is the typed sliceCfg fetchSliceDoc
-// already decoded, round-tripped through JSON into the map[string]any
-// shape fetchPrice (and the /ops/slice/price endpoint) expects, same as
-// the configurator's own hand-built gatherConfig(). Always prices at 1
-// month, same as project.PriceConfig's convention — this is the itemized
-// unit breakdown, not the slice's actual prepaid total.
+// fetchDocPrice prices a slice doc's CURRENT config for the itemized bill on
+// the Slice tab. doc.Config is the typed sliceCfg fetchSliceDoc already
+// decoded, round-tripped through JSON into the map[string]any shape fetchPrice
+// and /ops/slice/price expect. Always prices at 1 month, matching
+// project.PriceConfig's convention — this is the itemized unit breakdown, not
+// the slice's actual prepaid total.
 func fetchDocPrice(doc *sliceDoc) (*priceResult, error) {
 	raw, err := json.Marshal(doc.Config)
 	if err != nil {
