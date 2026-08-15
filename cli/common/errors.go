@@ -90,7 +90,16 @@ const MaintenanceMessage = "Drift is temporarily unavailable — most likely bri
 // improves, and a code that moved with the wording would not be stable enough to
 // paste. A status with no registered code renders exactly as before.
 func (e *APIError) Error() string {
-	return withCode(e.message(), e.code())
+	out := withCode(e.message(), e.code())
+	// Only a 5xx. A 4xx is the platform telling the user something true about
+	// their request, and checking component health there would offer an excuse
+	// for a refusal that is correct.
+	if e.Status >= 500 {
+		if note := platformFaultNote(DegradedComponents()); note != "" {
+			out += "\n" + note
+		}
+	}
+	return out
 }
 
 // code names this failure, or "" for a status that has none yet.
@@ -369,8 +378,15 @@ func TransportError(op string, err error) error {
 	if strings.Contains(msg, "connection refused") ||
 		strings.Contains(msg, "no such host") ||
 		strings.Contains(msg, "dial tcp") {
-		return errors.New(withCode(
-			fmt.Sprintf("%scouldn't reach the Drift API. Is the platform up? (%v)", lead, err), "DRIFT-1006"))
+		out := withCode(
+			fmt.Sprintf("%scouldn't reach the Drift API. Is the platform up? (%v)", lead, err), "DRIFT-1006")
+		// The status page is a different host, so it can often answer when the
+		// API cannot — which is exactly the case where the user most needs to
+		// hear that the fault is not theirs.
+		if note := platformFaultNote(DegradedComponents()); note != "" {
+			out += "\n" + note
+		}
+		return errors.New(out)
 	}
 
 	// Unknown — wrap it unchanged so the user still sees something.

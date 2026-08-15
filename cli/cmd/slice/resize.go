@@ -86,6 +86,58 @@ func getResizeCmd() *cobra.Command {
 	return cmd
 }
 
+// getShrinkCmd is `drift slice shrink` — apply a Driftfile INCLUDING the
+// reductions in it.
+//
+// It exists because the remedy for a refused deploy was
+// `drift slice resize --from Driftfile --allow-destructive`: six words, for the
+// one verdict where a user is stopped and needs to act. That is the worst place
+// for the three-word rule to break, and no shorter spelling of that flag pair is
+// possible — so the verb had to exist rather than the string get shorter.
+//
+// The destructive intent lives in the VERB now, which is also better than a
+// flag: "shrink" is what the user meant, and a name is harder to pass by
+// accident than an option they copied from somewhere.
+//
+// It delegates to the same resizeFromDriftfile the flags reach, so there is one
+// implementation and the confirmation, the diff and the refusal cannot differ
+// between the two spellings.
+func getShrinkCmd() *cobra.Command {
+	var (
+		fromPath      string
+		autoYes       bool
+		billingMonths int
+	)
+
+	cmd := &cobra.Command{
+		Use:   "shrink",
+		Short: "Apply a Driftfile including its reductions — the destructive resize",
+		Long: "Apply the shape a Driftfile declares, INCLUDING limits it lowers.\n\n" +
+			"An ordinary deploy only ever creates or grows, because shrinking deletes data the\n" +
+			"manifest cannot know about. This is the deliberate version of that, and it still\n" +
+			"shows what it will remove and asks before doing it.\n\n" +
+			"Identical to `drift slice resize --from <file> --allow-destructive`, which remains\n" +
+			"for scripts that already use it.",
+		Example: "  drift slice shrink\n  drift slice shrink --from Driftfile",
+		Args:    cobra.NoArgs,
+		// A refused shrink is the platform answering, not the command being held
+		// wrong, so the usage block would bury the list of what it would remove.
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if fromPath == "" {
+				fromPath = "Driftfile"
+			}
+			// allowDestructive is true by construction: it is what the verb means.
+			return resizeFromDriftfile(fromPath, true, autoYes, billingMonths)
+		},
+	}
+
+	cmd.Flags().StringVar(&fromPath, "from", "", "Driftfile to apply (default: ./Driftfile)")
+	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm the prompt (for CI)")
+	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period in months")
+	return cmd
+}
+
 // resizeFromDriftfile applies a Driftfile's declared shape to a live
 // slice, including shrinks when --allow-destructive is set.
 //

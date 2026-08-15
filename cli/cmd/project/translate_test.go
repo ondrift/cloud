@@ -263,12 +263,23 @@ func TestRenderDiff_AbortMessage(t *testing.T) {
 		"Refusing to deploy",
 		"backbone.nosql_collections",
 		"6 (current) > 4 (declared)",
-		"drift slice resize --from Driftfile --allow-destructive",
+		// Three words. This is the one verdict where a user is stopped and has
+		// to act, so it is the worst place for the remedy to be four words away
+		// — the reason `drift slice shrink` exists at all rather than the
+		// six-word flag pair that used to be printed here.
+		"drift slice shrink",
 		"--no-slice-reconcile",
 	} {
 		if !contains(out, want) {
 			t.Errorf("abort message missing %q\nfull output:\n%s", want, out)
 		}
+	}
+
+	// The retired spelling must be gone from the output, not merely joined by
+	// the short one — printing both would leave the long form as the thing a
+	// user copies.
+	if contains(out, "--allow-destructive") {
+		t.Errorf("the six-word remedy is still being printed:\n%s", out)
 	}
 }
 

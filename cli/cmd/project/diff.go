@@ -306,11 +306,11 @@ func RenderDiff(d DiffResult) string {
 				formatValue(s, s.Live),
 				formatValue(s, s.Wanted))
 		}
-		sb.WriteString("\n  drift deploy will never shrink a slice. Shrinking deletes\n")
-		sb.WriteString("  data that the manifest cannot know about.\n\n")
+		sb.WriteString("\n  Applying never shrinks a slice. Shrinking deletes data the\n")
+		sb.WriteString("  manifest cannot know about.\n\n")
 		sb.WriteString("  To apply the manifest's shape including shrinks:\n")
-		sb.WriteString("    drift slice resize --from Driftfile --allow-destructive\n\n")
-		sb.WriteString("  To leave the slice's shape alone and deploy code only:\n")
+		sb.WriteString("    drift slice shrink\n\n")
+		sb.WriteString("  To leave the slice's shape alone and ship code only:\n")
 		sb.WriteString("    drift file apply --no-slice-reconcile\n")
 	}
 

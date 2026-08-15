@@ -124,6 +124,11 @@ func TestWithCode_LeavesAnUncodedMessageAlone(t *testing.T) {
 // nobody reaches. Keyed on STATUS rather than wording, so improving a message
 // cannot silently drop the code.
 func TestAPIError_CarriesItsCode(t *testing.T) {
+	// A 5xx consults component health, so without a stub this test would reach
+	// the real status page: slow, and dependent on the platform being up to
+	// assert something that has nothing to do with it.
+	withStatusFeed(t, 200, feedOK)
+
 	for _, tc := range []struct {
 		name   string
 		err    APIError
