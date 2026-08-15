@@ -106,16 +106,20 @@ func main() {
 
 	// One noun for the Driftfile. `drift project` keeps working as a deprecated
 	// spelling that re-runs under `drift file`, so nothing anyone has typed or
-	// scripted breaks; it goes after v0.20.0.
+	// scripted breaks.
+	//
+	// No RemoveAfter: naming a version would promise a date this has not chosen,
+	// and a promise the release then misses teaches people to ignore the notice.
+	// The alias goes when the old spelling stops showing up, and the notice says
+	// what to type rather than when to panic.
 	fileCmd := file.GetCmd()
 
 	rootCmd.AddCommand(
 		// File (everything a Driftfile does — lint it, apply it, run it)
 		fileCmd,
 		common.AliasCommand(fileCmd, "project", common.Deprecation{
-			Old:         "drift project",
-			New:         "drift file",
-			RemoveAfter: "v0.20.0",
+			Old: "drift project",
+			New: "drift file",
 		}),
 
 		// Migrate (read-only lift-off from another cloud, e.g. Azure)

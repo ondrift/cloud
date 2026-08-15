@@ -56,14 +56,15 @@ func GetCmd() *cobra.Command {
 	cmd.AddCommand(project.Verbs()...)
 
 	// The two verbs that changed spelling in the move. Each keeps working and
-	// says once what to type instead; both go after v0.20.0.
+	// says once what to type instead. No RemoveAfter, for the reason in main.go:
+	// a version named here is a promise about a release nobody has planned.
 	apply, simulate := findVerb(cmd, "apply"), findVerb(cmd, "simulate")
 	cmd.AddCommand(
 		common.AliasCommand(apply, "deploy", common.Deprecation{
-			Old: "drift file deploy", New: "drift file apply", RemoveAfter: "v0.20.0",
+			Old: "drift file deploy", New: "drift file apply",
 		}),
 		common.AliasCommand(simulate, "diff", common.Deprecation{
-			Old: "drift file diff", New: "drift file simulate", RemoveAfter: "v0.20.0",
+			Old: "drift file diff", New: "drift file simulate",
 		}),
 	)
 	return cmd
