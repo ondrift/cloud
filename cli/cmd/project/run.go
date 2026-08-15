@@ -309,14 +309,16 @@ func layoutCanvas(m *Manifest, dir string) error {
 		Slug  string `json:"slug"`
 		Route string `json:"route"`
 	}
+	sites, err := canvasSites(m)
+	if err != nil {
+		return err
+	}
 	var registry []siteEntry
-	for _, s := range m.Slice().Entries("dir", "canvas", "sites") {
-		route := canonicalRoute(s.Str("route"))
-		slug := SlugifyRoute(route)
-		if err := copyTree(m.ResolvePath(s.Str("dir")), filepath.Join(dir, slug)); err != nil {
+	for _, s := range sites {
+		if err := copyTree(m.ResolvePath(s.Dir), filepath.Join(dir, s.Slug)); err != nil {
 			return err
 		}
-		registry = append(registry, siteEntry{Slug: slug, Route: route})
+		registry = append(registry, siteEntry{Slug: s.Slug, Route: s.Route})
 	}
 	b, _ := json.Marshal(registry)
 	return os.WriteFile(filepath.Join(dir, "registry.json"), b, 0o644)

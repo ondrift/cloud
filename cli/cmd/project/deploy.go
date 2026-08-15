@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -139,6 +140,13 @@ single slice otherwise.`,
 			// slice diff / cost-confirm, so a path clash fails immediately
 			// rather than mid-deploy after you've already paid the ceremony.
 			if err := checkRouteCollisions(m); err != nil {
+				return err
+			}
+
+			// Same preflight for canvas: two sites landing on one slug overwrite
+			// each other in the slice's layout, and the survivor is whichever
+			// uploaded last.
+			if _, err := canvasSites(m); err != nil {
 				return err
 			}
 
@@ -694,50 +702,92 @@ func applyCanvas(m *Manifest, out io.Writer) error {
 		return nil
 	}
 
+	resolved, err := canvasSites(m)
+	if err != nil {
+		return err
+	}
+
 	fmt.Fprintf(out, "  %s\n", common.CanvasHeader())
-	for _, s := range sites {
-		dir := m.ResolvePath(s.Str("dir"))
-		route := canonicalRoute(s.Str("route"))
-		slug := SlugifyRoute(route)
-		label := fmt.Sprintf("%s → %s", s.Str("dir"), route)
-		if err := deployCanvas(dir, slug, route); err != nil {
-			return fmt.Errorf("canvas deploy failed for %s: %w", s.Str("dir"), err)
+	for _, s := range resolved {
+		if err := deployCanvas(m.ResolvePath(s.Dir), s.Slug, s.Route); err != nil {
+			return fmt.Errorf("canvas deploy failed for %s: %w", s.Dir, err)
 		}
-		fmt.Fprintf(out, "    %s %s\n", common.Check(), label)
+		fmt.Fprintf(out, "    %s %s → %s\n", common.Check(), s.Dir, s.Route)
 	}
 	fmt.Fprintln(out)
 	return nil
 }
 
-// canonicalRoute normalises the Driftfile's optional route value. Empty or
-// missing means "/", trailing slash is stripped (except the bare "/").
-func canonicalRoute(route string) string {
-	if route == "" {
-		return "/"
-	}
-	if !strings.HasPrefix(route, "/") {
-		route = "/" + route
-	}
-	route = strings.TrimRight(route, "/")
-	if route == "" {
-		return "/"
-	}
-	return route
+// canvasSite is one resolved `canvas.sites[]` entry — the directory as the
+// document writes it, where it mounts, and the slug the slice stores it under.
+type canvasSite struct {
+	Dir   string
+	Route string
+	Slug  string
 }
 
-// SlugifyRoute derives the per-site directory name from a route. The slug
-// is what the slice uses to lay sites out under /data/canvas/<slug>/.
+// siteMount reads where one `canvas.sites[]` entry mounts, and the slug the
+// slice stores it under. `path` is the key; `route` is the older spelling of
+// the same value and reads identically.
 //
-//	"/"               -> "default"
-//	"/reviewer"       -> "reviewer"
-//	"/admin/portal"   -> "admin-portal"
-func SlugifyRoute(route string) string {
-	r := canonicalRoute(route)
-	if r == "/" {
-		return "default"
+// An entry naming NEITHER mounts at the root — that is what the short form
+// `canvas: ./site` means. An entry naming one and leaving it empty is refused,
+// because a mount path nobody can read is how every site on a project ends up
+// sharing one slug.
+func siteMount(s Node) (route, slug string, err error) {
+	key := ""
+	switch {
+	case s.Has("path"):
+		key = "path"
+	case s.Has("route"):
+		key = "route"
+	default:
+		return "/", "default", nil
 	}
-	r = strings.TrimPrefix(r, "/")
-	return strings.ReplaceAll(r, "/", "-")
+
+	route, err = common.CanonicalRoute(s.Str(key))
+	if err != nil {
+		return "", "", fmt.Errorf("canvas site %q: %s: %w", s.Str("dir"), key, err)
+	}
+	slug, err = common.SlugifyRoute(route)
+	if err != nil {
+		return "", "", fmt.Errorf("canvas site %q: %s: %w", s.Str("dir"), key, err)
+	}
+	return route, slug, nil
+}
+
+// canvasSites resolves every declared site, and refuses a document in which two
+// of them land on one slug. Two sites sharing a slug overwrite each other in
+// the slice's layout, so the refusal has to come before the first upload rather
+// than after the site it replaced is already gone.
+func canvasSites(m *Manifest) ([]canvasSite, error) {
+	entries := m.Slice().Entries("dir", "canvas", "sites")
+	out := make([]canvasSite, 0, len(entries))
+	bySlug := map[string][]string{}
+
+	for _, s := range entries {
+		route, slug, err := siteMount(s)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, canvasSite{Dir: s.Str("dir"), Route: route, Slug: slug})
+		bySlug[slug] = append(bySlug[slug], fmt.Sprintf("%s → %s", s.Str("dir"), route))
+	}
+
+	var collisions []string
+	for slug, sites := range bySlug {
+		if len(sites) > 1 {
+			sort.Strings(sites)
+			collisions = append(collisions,
+				fmt.Sprintf("%q is served by %d sites: %s", slug, len(sites), strings.Join(sites, ", ")))
+		}
+	}
+	if len(collisions) > 0 {
+		sort.Strings(collisions)
+		return nil, fmt.Errorf("canvas site collision — these sites share a slug and would "+
+			"overwrite each other on the slice:\n  - %s", strings.Join(collisions, "\n  - "))
+	}
+	return out, nil
 }
 
 // ─── API gateway calls (resource-application path) ─────────────────
