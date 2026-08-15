@@ -177,3 +177,52 @@ func TestAPIError_EveryRenderedCodeIsRegistered(t *testing.T) {
 		}
 	}
 }
+
+// A refusal must say what the ceiling is and where the user is against it,
+// without them running anything else. The numbers come from the server's FIELDS,
+// so the CLI cannot be wrong about someone's quota.
+func TestAPIError_ARefusalCarriesTheNumbers(t *testing.T) {
+	withStatusFeed(t, 200, feedOK)
+
+	body := []byte(`{"error":"limit reached for atomic.deploy_function (current: 6, max: 6)",` +
+		`"action":"atomic.deploy_function","limit":6,"current":6}`)
+	action, limit, current, has := quotaFromBody(body)
+	if !has || limit != 6 || current != 6 || action != "atomic.deploy_function" {
+		t.Fatalf("the fields did not parse: %q %d %d %v", action, limit, current, has)
+	}
+
+	e := &APIError{Op: "deploy", Status: 429, Detail: "limit reached",
+		Action: action, Limit: limit, Current: current, HasLimit: has}
+	got := e.Error()
+	if !strings.Contains(got, "6 of 6 used") {
+		t.Errorf("the refusal must state current and ceiling, got: %s", got)
+	}
+	if !strings.Contains(got, "atomic.deploy_function") {
+		t.Errorf("the refusal must name WHICH limit, got: %s", got)
+	}
+	if !strings.Contains(got, "DRIFT-1004") {
+		t.Errorf("the refusal must still carry its code, got: %s", got)
+	}
+}
+
+// The control, and the honest case: a platform that publishes no ceiling must
+// produce a refusal that says nothing about limits rather than inventing "0 of 0".
+func TestAPIError_ARefusalWithoutNumbersSaysNothingAboutThem(t *testing.T) {
+	withStatusFeed(t, 200, feedOK)
+
+	if _, _, _, has := quotaFromBody([]byte(`{"error":"limit reached"}`)); has {
+		t.Fatal("a body with no ceiling must not report one")
+	}
+	got := (&APIError{Op: "deploy", Status: 429, Detail: "limit reached"}).Error()
+	if strings.Contains(got, "used") {
+		t.Errorf("no ceiling was published, so none should be rendered, got: %s", got)
+	}
+}
+
+// Numbers are read from the fields, never re-parsed out of the sentence — that
+// coupling is what publishing fields exists to remove.
+func TestQuotaFromBody_IgnoresNumbersInTheProse(t *testing.T) {
+	if _, _, _, has := quotaFromBody([]byte(`{"error":"limit reached (current: 6, max: 6)"}`)); has {
+		t.Error("the figures in the message must NOT be scraped — only fields count")
+	}
+}
