@@ -108,14 +108,15 @@ type BackboneBlobsLimits struct {
 }
 
 type BackboneNoSQLLimits struct {
-	MaxCollections int
 	// Collections carries each declared collection's own storage quota,
-	// keyed by collection name — the billing/enforcement driver.
+	// keyed by collection name — the billing/enforcement driver. The COUNT is
+	// len(this map) rather than a field of its own: two fields for one fact is
+	// two fields that can disagree, and the count that used to sit here was
+	// billed while reaching no enforcement path at all.
 	Collections map[string]int
 }
 
 type BackboneQueuesLimits struct {
-	MaxQueues    int
 	MaxDepthEach int
 }
 
@@ -159,9 +160,9 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 		cfg.Atomic.MaxNumberOfDeploymentsInHistory = v
 	}
 
-	cfg.Backbone.NoSQL.MaxCollections = len(m.Slice().Entries("name", "backbone", "nosql"))
+	// Collections and queues carry no count field: the number of them IS the
+	// number declared, and it is read off the maps below.
 	cfg.Backbone.SQL.MaxDatabases = len(m.Slice().Entries("name", "backbone", "sql"))
-	cfg.Backbone.Queues.MaxQueues = len(m.Slice().Entries("name", "backbone", "queues"))
 	cfg.Backbone.Secrets.MaxCount = len(m.Slice().Sub("backbone", "secrets"))
 
 	// Realtime is a scalar knob (a connection budget), not a list of named

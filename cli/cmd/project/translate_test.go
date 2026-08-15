@@ -1,8 +1,20 @@
 package project
 
 import (
+	"fmt"
 	"testing"
 )
+
+// colls builds a declared-collection map of n entries. The COUNT of collections
+// is len(the map) rather than a field, so a test that used to set a number now
+// has to declare that many — which is the model these tests are guarding.
+func colls(n int) map[string]int {
+	m := make(map[string]int, n)
+	for i := 0; i < n; i++ {
+		m[fmt.Sprintf("c%d", i)] = 5 * 1024 * 1024
+	}
+	return m
+}
 
 // TestManifestToSliceConfig_Counts verifies that resource lists are
 // counted correctly and land in the right Max… fields.
@@ -38,11 +50,9 @@ func TestManifestToSliceConfig_Counts(t *testing.T) {
 	if cfg.Atomic.MaxNumberOfScheduledJobs != 1 {
 		t.Errorf("scheduled: got %d, want 1", cfg.Atomic.MaxNumberOfScheduledJobs)
 	}
-	if cfg.Backbone.NoSQL.MaxCollections != 2 {
-		t.Errorf("collections: got %d, want 2", cfg.Backbone.NoSQL.MaxCollections)
-	}
-	if cfg.Backbone.Queues.MaxQueues != 3 {
-		t.Errorf("queues: got %d, want 3", cfg.Backbone.Queues.MaxQueues)
+	// The count IS the number declared, read off the map rather than a field.
+	if len(cfg.Backbone.NoSQL.Collections) != 2 {
+		t.Errorf("collections: got %d, want 2", len(cfg.Backbone.NoSQL.Collections))
 	}
 	if cfg.Backbone.Secrets.MaxCount != 2 {
 		t.Errorf("secrets: got %d, want 2", cfg.Backbone.Secrets.MaxCount)
@@ -137,7 +147,7 @@ func TestManifestToSliceConfig_RatePerS(t *testing.T) {
 func TestDiff_CreatePath(t *testing.T) {
 	manifest := SliceConfig{
 		Atomic:   AtomicLimits{MaxNumberOfFunctions: 5, MaxFunctionMemoryBytes: 64 * 1024 * 1024},
-		Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{MaxCollections: 2}},
+		Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{Collections: colls(2)}},
 	}
 	d := Diff("hello", manifest, nil, "", 0, 0)
 	if d.Verdict != VerdictCreate {
@@ -146,8 +156,11 @@ func TestDiff_CreatePath(t *testing.T) {
 	if !d.IsNewSlice {
 		t.Error("IsNewSlice should be true on Create")
 	}
-	if len(d.Grows) != 3 { // functions, memory, collections
-		t.Errorf("grows: got %d, want 3 (got %+v)", len(d.Grows), d.Grows)
+	// functions, memory, the collection COUNT, and one row per declared
+	// collection — the count is len(the map), so declaring two of them is two
+	// per-collection storage rows as well.
+	if len(d.Grows) != 5 {
+		t.Errorf("grows: got %d, want 5 (got %+v)", len(d.Grows), d.Grows)
 	}
 }
 
@@ -208,18 +221,21 @@ func TestDiff_GrowPath(t *testing.T) {
 func TestDiff_AbortPath(t *testing.T) {
 	live := SliceConfig{
 		Atomic:   AtomicLimits{MaxNumberOfFunctions: 5},
-		Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{MaxCollections: 6}},
+		Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{Collections: colls(6)}},
 	}
 	manifest := SliceConfig{
 		Atomic:   AtomicLimits{MaxNumberOfFunctions: 5},
-		Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{MaxCollections: 4}},
+		Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{Collections: colls(4)}},
 	}
 	d := Diff("hello", manifest, &live, "", 3000, 1500)
 	if d.Verdict != VerdictAbort {
 		t.Errorf("verdict: got %s, want abort", d.Verdict)
 	}
-	if len(d.Shrinks) != 1 || d.Shrinks[0].Path != "backbone.nosql_collections" {
-		t.Errorf("shrinks: got %+v, want one entry for nosql_collections", d.Shrinks)
+	// Going from six declared collections to four shrinks the count AND drops
+	// two named collections, each of which is its own row. All three are real
+	// reductions and the abort has to see every one of them.
+	if len(d.Shrinks) != 3 || d.Shrinks[0].Path != "backbone.nosql_collections" {
+		t.Errorf("shrinks: got %+v, want the count plus the two dropped collections", d.Shrinks)
 	}
 }
 
@@ -254,8 +270,8 @@ func TestRenderDiff_FreeToPaidCrossing(t *testing.T) {
 // TestRenderDiff_AbortMessage verifies the abort UX names the offending
 // fields and gives the operator the escape hatch (`drift slice resize`).
 func TestRenderDiff_AbortMessage(t *testing.T) {
-	live := SliceConfig{Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{MaxCollections: 6}}}
-	manifest := SliceConfig{Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{MaxCollections: 4}}}
+	live := SliceConfig{Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{Collections: colls(6)}}}
+	manifest := SliceConfig{Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{Collections: colls(4)}}}
 	d := Diff("hello", manifest, &live, "", 1500, 1000)
 	out := RenderDiff(d)
 

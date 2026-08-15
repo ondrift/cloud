@@ -212,8 +212,7 @@ func compareFields(live, wanted SliceConfig, includeZeroLive bool) []FieldDelta 
 		// are never Omittable.
 		{Path: "atomic.functions", Live: live.Atomic.MaxNumberOfFunctions, Wanted: wanted.Atomic.MaxNumberOfFunctions},
 		{Path: "atomic.scheduled_jobs", Live: live.Atomic.MaxNumberOfScheduledJobs, Wanted: wanted.Atomic.MaxNumberOfScheduledJobs},
-		{Path: "backbone.nosql_collections", Live: live.Backbone.NoSQL.MaxCollections, Wanted: wanted.Backbone.NoSQL.MaxCollections},
-		{Path: "backbone.queues", Live: live.Backbone.Queues.MaxQueues, Wanted: wanted.Backbone.Queues.MaxQueues},
+		{Path: "backbone.nosql_collections", Live: len(live.Backbone.NoSQL.Collections), Wanted: len(wanted.Backbone.NoSQL.Collections)},
 		{Path: "backbone.secrets", Live: live.Backbone.Secrets.MaxCount, Wanted: wanted.Backbone.Secrets.MaxCount},
 
 		// Envelope knobs — translate.go leaves these at 0 whenever the

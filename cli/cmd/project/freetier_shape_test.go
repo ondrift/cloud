@@ -51,10 +51,9 @@ func hackerPresetLive() SliceConfig {
 		},
 		Backbone: BackboneLimits{
 			Secrets:             BackboneSecretsLimits{MaxCount: 5, MaxSizeInBytesEach: 1024},
-			Blobs:               BackboneBlobsLimits{MaxCount: 10, MaxSizeInBytesEach: 5 * 1024 * 1024},
-			NoSQL:               BackboneNoSQLLimits{MaxCollections: 2},
+			Blobs:               BackboneBlobsLimits{MaxSizeInBytesEach: 5 * 1024 * 1024},
 			SQL:                 BackboneSQLLimits{MaxDatabases: 1},
-			Queues:              BackboneQueuesLimits{MaxQueues: 1, MaxDepthEach: 500},
+			Queues:              BackboneQueuesLimits{MaxDepthEach: 500},
 			Realtime:            BackboneRealtimeLimits{MaxConcurrentConnections: 50},
 			Locks:               BackboneLocksLimits{MaxConcurrent: 100000},
 			BackupRetentionDays: 3,
@@ -70,8 +69,7 @@ func honestFirstProject() SliceConfig {
 		Atomic: AtomicLimits{MaxNumberOfFunctions: 2},
 		Backbone: BackboneLimits{
 			NoSQL: BackboneNoSQLLimits{
-				MaxCollections: 1,
-				Collections:    map[string]int{"notes": 5 * 1024 * 1024},
+				Collections: map[string]int{"notes": 5 * 1024 * 1024},
 			},
 		},
 	}
@@ -177,8 +175,7 @@ func TestFreeTier_PaidSliceStillRefusesAShrink(t *testing.T) {
 		Atomic: AtomicLimits{MaxNumberOfFunctions: 40},
 		Backbone: BackboneLimits{
 			NoSQL: BackboneNoSQLLimits{
-				MaxCollections: 12,
-				Collections:    map[string]int{"events": 2 * 1024 * 1024 * 1024},
+				Collections: map[string]int{"events": 2 * 1024 * 1024 * 1024},
 			},
 		},
 	}
@@ -186,8 +183,7 @@ func TestFreeTier_PaidSliceStillRefusesAShrink(t *testing.T) {
 		Atomic: AtomicLimits{MaxNumberOfFunctions: 3},
 		Backbone: BackboneLimits{
 			NoSQL: BackboneNoSQLLimits{
-				MaxCollections: 1,
-				Collections:    map[string]int{"events": 5 * 1024 * 1024},
+				Collections: map[string]int{"events": 5 * 1024 * 1024},
 			},
 		},
 	}
