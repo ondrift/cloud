@@ -178,6 +178,25 @@ single slice otherwise.`,
 				}
 			}
 
+			// Does the slice actually hold what the manifest names? A write to
+			// an undeclared collection or bucket is refused by the slice with a
+			// 400 — at runtime, on a live slice, after the upload — and a
+			// function the config does not name silently draws on the shared
+			// pool. Both become a refusal here instead.
+			//
+			// The referent is the config that will be LIVE when the deploy runs,
+			// so this reads after the reconcile rather than before it. With
+			// reconcile on, anything the manifest declares has just been created
+			// and the check passes by construction; it bites where nothing
+			// created them.
+			liveSlice, err := FetchLiveSlice(m.Name())
+			if err != nil {
+				return err
+			}
+			if err := CheckSliceReferences(m, liveSlice); err != nil {
+				return err
+			}
+
 			// At this point the slice exists at >= the declared shape.
 			// Set it as the active slice for subsequent api calls.
 			if err := common.SaveActiveSlice(m.Name()); err != nil {
