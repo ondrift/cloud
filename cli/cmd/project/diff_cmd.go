@@ -1,7 +1,7 @@
 package project
 
-// diff_cmd.go exposes `drift project diff` — the same divergence
-// summary `drift project deploy --plan` produces, surfaced as its own
+// diff_cmd.go exposes `drift file simulate` — the same divergence
+// summary `drift file apply --plan` produces, surfaced as its own
 // verb. The motivation (per the DevEx roadmap): "diff" is a word every
 // developer reaches for *while debugging*, not as a flag on apply, and
 // it's a one-word answer to "what's actually deployed?"
@@ -18,22 +18,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func getDiffCmd() *cobra.Command {
+func getSimulateCmd() *cobra.Command {
 	var (
 		envName         string
 		secretOverrides []string
 		noEnvFile       bool
 	)
 	cmd := &cobra.Command{
-		Use:   "diff [environment]",
-		Short: "Show the divergence between the local Driftfile and the live slice",
-		Long: `Print the same diff that 'drift project deploy --plan' produces:
+		// `simulate` rather than `diff`: it answers "what would applying this
+		// do", which is a dry run rather than a comparison of two texts.
+		// `diff` still resolves, as a deprecated spelling.
+		Use:   "simulate [environment]",
+		Short: "Show what applying the local Driftfile would change on the live slice",
+		Long: `Print the same diff that 'drift file apply --plan' produces:
 resource counts, envelope shape, and the cost change a deploy would apply.
 
 If the Driftfile declares environments, pass one to diff that environment's
 merged shape against its slice. Never applies. Exits non-zero if the manifest
 would abort the deploy (slice oversized vs declared shape).`,
-		Example: "  drift project diff\n  drift project diff staging",
+		Example: "  drift file simulate\n  drift file simulate staging",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))

@@ -75,7 +75,7 @@ func TestSetDeclaredSchedules_EmptyExpressionsAreDropped(t *testing.T) {
 	}
 }
 
-// The registry is replaced, not merged. Two `drift project deploy` runs in one
+// The registry is replaced, not merged. Two `drift file apply` runs in one
 // process (the test suite, or a future multi-slice deploy) must not leak the
 // first Driftfile's schedules into the second.
 func TestSetDeclaredSchedules_ReplacesRatherThanMerges(t *testing.T) {

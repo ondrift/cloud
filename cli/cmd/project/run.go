@@ -1,6 +1,6 @@
 package project
 
-// run.go — `drift project run`: build the project's functions + canvas locally,
+// run.go — `drift file run`: build the project's functions + canvas locally,
 // bake them into a thin image on top of ondrift/runner, and launch a detached
 // container that boot-scans the layout and serves the app on localhost. The
 // "Run it locally" half of the two-button promise (Host on Drift · Run it
@@ -53,7 +53,7 @@ same code that runs on Drift Cloud, on your own machine.
 Needs Docker — and only Docker. Every language builds in a throwaway container
 (Go, Rust, Python, Node, PHP, Ruby), so you install no toolchain at all. Set
 DRIFT_RUN_HOST_BUILD=1 to use your host toolchains instead (faster, no pulls).`,
-		Example: "  drift project run\n  drift project run --port 9000\n  drift project run --persist",
+		Example: "  drift file run\n  drift file run --port 9000\n  drift file run --persist",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			selectedEnv := envName
@@ -66,7 +66,7 @@ DRIFT_RUN_HOST_BUILD=1 to use your host toolchains instead (faster, no pulls).`,
 			}
 			fmt.Printf("\n  %s %s running (container %s)\n", common.Check(), common.Highlight(app), container)
 			fmt.Printf("     → %s\n", common.Highlight(url))
-			fmt.Printf("     %s\n\n", common.Hint("drift project logs · drift project stop"))
+			fmt.Printf("     %s\n\n", common.Hint("drift file logs · drift file stop"))
 			return nil
 		},
 	}
@@ -77,7 +77,7 @@ DRIFT_RUN_HOST_BUILD=1 to use your host toolchains instead (faster, no pulls).`,
 	return cmd
 }
 
-// startLocal is `drift project run`'s actual work, extracted so `drift
+// startLocal is `drift file run`'s actual work, extracted so `drift
 // project test` can start the same local instance, run tests against it, and
 // tear it down — without duplicating the build → bake → launch → health-poll
 // sequence. Returns the app name, container name, and base URL of the now-
@@ -202,7 +202,7 @@ func getStopCmd() *cobra.Command {
 	var envName string
 	cmd := &cobra.Command{
 		Use:   "stop [environment]",
-		Short: "Stop the local container started by 'drift project run'",
+		Short: "Stop the local container started by 'drift file run'",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := requireDocker(); err != nil {
@@ -238,7 +238,7 @@ func getLogsCmd() *cobra.Command {
 	var envName string
 	cmd := &cobra.Command{
 		Use:   "logs [environment]",
-		Short: "Show logs for the local container started by 'drift project run'",
+		Short: "Show logs for the local container started by 'drift file run'",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := requireDocker(); err != nil {
@@ -271,7 +271,7 @@ func getLogsCmd() *cobra.Command {
 
 func requireDocker() error {
 	if _, err := exec.LookPath("docker"); err != nil {
-		return fmt.Errorf("`drift project run` needs Docker — install Docker Desktop or the engine and try again")
+		return fmt.Errorf("`drift file run` needs Docker — install Docker Desktop or the engine and try again")
 	}
 	if err := exec.Command("docker", "info").Run(); err != nil {
 		return fmt.Errorf("Docker is installed but the daemon isn't reachable — is Docker running?")

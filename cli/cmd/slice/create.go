@@ -33,7 +33,7 @@ import (
 // sessions.
 //
 // Driftfile flow (--from <path>): the slice is born at the shape the
-// manifest declares, which is what `drift project deploy` would have
+// manifest declares, which is what `drift file apply` would have
 // provisioned had the slice not existed. Without this, the two-command
 // path (`slice create` then `project deploy`) starts from a shape nobody
 // declared — the fixed free preset, which is larger than any honest first
@@ -140,7 +140,7 @@ func createFromDriftfile(path string, autoYes bool, billingMonths int) error {
 		return fmt.Errorf("fetch slice: %w", err)
 	}
 	if live != nil {
-		return fmt.Errorf("slice %q already exists — use `drift project deploy` to deploy into it, or `drift slice resize --from %s` to change its shape", m.Name(), path)
+		return fmt.Errorf("slice %q already exists — use `drift file apply` to deploy into it, or `drift slice resize --from %s` to change its shape", m.Name(), path)
 	}
 
 	d := project.Diff(m.Name(), manifestCfg, nil, "", 0, wantedCost)

@@ -46,7 +46,7 @@ const driftfileName = "Driftfile"
 // concurrently under applySliceTriad and can't easily take extra parameters.
 var atomicForce bool
 
-func getDeployCmd() *cobra.Command {
+func getApplyCmd() *cobra.Command {
 	var (
 		planOnly        bool
 		noReconcile     bool
@@ -58,8 +58,11 @@ func getDeployCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "deploy [environment]",
-		Short: "Deploy a project from its Driftfile (optionally for a named environment)",
+		// `apply` rather than `deploy`: a Driftfile is a destination, not a
+		// script, and the verb should say so — you apply the file to an
+		// environment. `deploy` still resolves, as a deprecated spelling.
+		Use:   "apply [environment]",
+		Short: "Apply a Driftfile to a slice (optionally for a named environment)",
 		Long: `Deploy every resource declared in the project's Driftfile.
 
 If the Driftfile declares environments, pass one as the positional argument to
@@ -67,7 +70,7 @@ deploy that environment's merged shape (its overrides on top of the base);
 prod/production deploys under the bare project name, others under <name>-<env>.
 With no argument the deploy targets prod/production when declared, or the
 single slice otherwise.`,
-		Example: "  drift project deploy\n  drift project deploy staging\n  drift project deploy prod --yes\n  drift project deploy --plan",
+		Example: "  drift file apply\n  drift file apply staging\n  drift file apply prod --yes\n  drift file apply --plan",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))

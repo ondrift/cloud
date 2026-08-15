@@ -270,8 +270,8 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	// The function does not exist until the Driftfile says so: the manifest is
 	// what the slice is contracted to run, and a booking nobody wrote is one the
 	// platform cannot size, price or admit work against. Print the entry rather
-	// than guess a memory figure — that number is a decision, and `drift project
-	// benchmark` is what measures it.
+	// than guess a memory figure — that number is a decision, and
+	// `drift file benchmark` is what measures it.
 	fmt.Printf("\nDeclare it in your Driftfile, under atomic.functions:\n\n")
 	fmt.Printf("    - name: %s\n", declaredName)
 	fmt.Printf("      handler: %s\n", funcName)
@@ -283,8 +283,8 @@ func runNew(name, lang, method, queue, auth, element string) error {
 		fmt.Printf("      element: %s\n", elementID)
 	}
 	fmt.Printf("\nThen:\n")
-	fmt.Printf("\tdrift project benchmark   # measure what it actually needs\n")
-	fmt.Printf("\tdrift project deploy      # ship it\n")
+	fmt.Printf("\tdrift file benchmark   # measure what it actually needs\n")
+	fmt.Printf("\tdrift file apply      # ship it\n")
 	return nil
 }
 

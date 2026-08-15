@@ -5,8 +5,8 @@ package atomic_cmd
 // The build paths (DeployFolder / DeployGoElement / DeployInterpretedElement)
 // all funnel through sendSourceToOperator. That used to upload to the operator
 // directly; now it routes through the active SlotSink. The default sink
-// (operatorSink, in deploy.go) is the cloud upload, unchanged. `drift project
-// run` swaps in localSlotSink to write the slice's on-disk slot layout to a
+// (operatorSink, in deploy.go) is the cloud upload, unchanged. `drift file run`
+// swaps in localSlotSink to write the slice's on-disk slot layout to a
 // local directory instead — reusing the EXACT same build, just a different
 // destination. The slice then boot-scans that directory and serves the app with
 // no control plane (atomic/ops/deploy_http.rs writes the same layout on the
@@ -59,7 +59,7 @@ type SlotSink func(FuncArtifact) error
 var slotSink SlotSink = operatorSink
 
 // sendSourceToOperator is the build paths' single exit. It routes through the
-// active sink so `drift project run` can redirect to local disk without
+// active sink so `drift file run` can redirect to local disk without
 // touching any build logic. (Name kept for the call sites; it no longer always
 // talks to the operator.)
 // It takes the artifact it was already constructing. It used to take eleven

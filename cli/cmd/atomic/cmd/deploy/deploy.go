@@ -412,7 +412,7 @@ func createUserSourceArchive(absFolder, name string) (string, error) {
 }
 
 // operatorSink is the default SlotSink: it uploads the built function to the
-// operator (the cloud deploy path). `drift project run` swaps in localSlotSink
+// operator (the cloud deploy path). `drift file run` swaps in localSlotSink
 // to write the on-disk slot layout instead — see sink.go.
 // invocationProtocol says how the slice may talk to this artifact.
 //
@@ -502,7 +502,7 @@ func operatorSink(a FuncArtifact) error {
 	// The operator serializes atomic deploys per slice behind a non-blocking
 	// lock — that lock is what makes the function-quota check atomic (count →
 	// compare to limit → assign slot, all as one critical section). When
-	// `drift project deploy` builds functions in parallel and they reach the
+	// `drift file apply` builds functions in parallel and they reach the
 	// deploy step together, the losers get 409 "another deploy in progress".
 	// Retry those (with backoff) so they serialize through the lock instead of
 	// failing spuriously. A 429 (function limit reached) is a REAL rejection
@@ -540,7 +540,7 @@ func operatorSink(a FuncArtifact) error {
 }
 
 // DeployFunction builds and deploys one declared function. It is exported so
-// `drift project deploy` can call it directly without going through the cobra
+// `drift file apply` can call it directly without going through the cobra
 // command layer. When quiet is true, all per-function status chatter is
 // suppressed so the manifest deploy can render its own clean summary line for
 // each function.
@@ -649,7 +649,7 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	}
 
 	// Content fingerprint of this function's source, recorded with the deploy
-	// so a later `drift project deploy` can skip it if nothing changed.
+	// so a later `drift file apply` can skip it if nothing changed.
 	// Best-effort: on error we send "" — the deploy still succeeds, it just
 	// won't be skippable next time (an empty digest never matches).
 	digest, dErr := FunctionDigest(absFolder, element)

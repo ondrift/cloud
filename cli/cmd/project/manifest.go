@@ -127,7 +127,7 @@ func (m *Manifest) HasEnvironment(name string) bool {
 func (m *Manifest) PreDeploy() []string  { return m.doc.Strings("hooks", "pre_deploy") }
 func (m *Manifest) PostDeploy() []string { return m.doc.Strings("hooks", "post_deploy") }
 
-// E2ETests are the commands `drift project test` runs against a local instance.
+// E2ETests are the commands `drift file test` runs against a local instance.
 func (m *Manifest) E2ETests() []string { return m.doc.Strings("tests", "e2e") }
 
 type ParseErrors []string
@@ -152,7 +152,7 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	// Expand ${VAR} placeholders against the process environment before
 	// YAML parsing — the env-aware Driftfile feature. ${VAR} is the
 	// staging/prod overlay primitive: typically `slice.name: ${ENV}-myapp`
-	// resolved by `drift project deploy --env=prod` setting ENV=prod.
+	// resolved by `drift file apply --env=prod` setting ENV=prod.
 	// Distinct from `$VAR` (no braces) which is the secret-envref shape
 	// in slice.backbone.secrets — that path runs later, on already-parsed
 	// values, and is unaffected by this substitution.
@@ -365,7 +365,7 @@ func SchemaAvailable() bool {
 
 // ParseProjectName cheaply decodes ONLY the top-level `name` — no validation,
 // no `${VAR}`/`$ENVREF` resolution — so commands that just need the project's
-// identity (e.g. `drift project stop`/`logs` finding the container) work without
+// identity (e.g. `drift file stop`/`logs` finding the container) work without
 // the project's secrets being set in the environment.
 func ParseProjectName(path string) (string, error) {
 	data, err := os.ReadFile(path) // #nosec G304 — CLI reads the user's manifest by design
@@ -421,7 +421,7 @@ func (m *Manifest) SelectEnvironment(env string, explicit bool) (string, error) 
 		case m.HasEnvironment("production"):
 			env = "production"
 		default:
-			return "", fmt.Errorf("this project declares environments (%s) but no default — pick one: drift project deploy <env>", strings.Join(names, ", "))
+			return "", fmt.Errorf("this project declares environments (%s) but no default — pick one: drift file apply <env>", strings.Join(names, ", "))
 		}
 	}
 	if !m.HasEnvironment(env) {

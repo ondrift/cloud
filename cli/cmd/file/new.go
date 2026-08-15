@@ -115,7 +115,7 @@ func starterDriftfile(name, canvasDir string) string {
 	b.WriteString("  #   handler  the callable in your source, found in the element's folder\n")
 	b.WriteString("  #   memory   its own pool — concurrent invocations together stay inside\n")
 	b.WriteString("  #            it — and what it is billed at. No default: measure it with\n")
-	b.WriteString("  #            `drift project benchmark`, because booking more than you\n")
+	b.WriteString("  #            `drift file benchmark`, because booking more than you\n")
 	b.WriteString("  #            need is paid for and booking less refuses calls under load.\n")
 	b.WriteString("  #            8MB–256MB.\n")
 	b.WriteString("  #   auth     `none` (the default) or `apikey`\n")

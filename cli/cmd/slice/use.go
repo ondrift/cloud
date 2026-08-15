@@ -79,7 +79,7 @@ func getUseCmd() *cobra.Command {
 func unknownSliceMessage(name string, existing []string) string {
 	if len(existing) == 0 {
 		return fmt.Sprintf("No slice named '%s' — and this account has no slices yet.\n"+
-			"Create one with 'drift slice create <name>' or 'drift project deploy'.\n", name)
+			"Create one with 'drift slice create <name>' or 'drift file apply'.\n", name)
 	}
 	sort.Strings(existing)
 	var b strings.Builder

@@ -95,10 +95,10 @@ func writeReportMD(dir string, todos []string) error {
 	return os.WriteFile(filepath.Join(dir, "REPORT.md"), []byte(b.String()), 0o644)
 }
 
-// writePlanMD renders what a subsequent `drift project deploy` would create.
+// writePlanMD renders what a subsequent `drift file apply` would create.
 func writePlanMD(dir string, m Manifest, driftfile string) error {
 	var b strings.Builder
-	b.WriteString("# PLAN — what `drift project deploy` will create\n\n")
+	b.WriteString("# PLAN — what `drift file apply` will create\n\n")
 	b.WriteString(fmt.Sprintf("Slice: **%s**\n\n", m.slug()))
 	b.WriteString(fmt.Sprintf("- %d Atomic function(s)\n", len(m.Functions)))
 	b.WriteString(fmt.Sprintf("- %d NoSQL collection(s)\n", len(m.Collections)))
@@ -106,6 +106,6 @@ func writePlanMD(dir string, m Manifest, driftfile string) error {
 	b.WriteString(fmt.Sprintf("- %d Canvas site(s)\n\n", len(m.Sites)))
 	b.WriteString("Generated Driftfile:\n\n```yaml\n")
 	b.WriteString(driftfile)
-	b.WriteString("\n```\n\nFrom this folder:\n\n```bash\ndrift project deploy\n```\n")
+	b.WriteString("\n```\n\nFrom this folder:\n\n```bash\ndrift file apply\n```\n")
 	return os.WriteFile(filepath.Join(dir, "PLAN.md"), []byte(b.String()), 0o644)
 }

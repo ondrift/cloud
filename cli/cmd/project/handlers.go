@@ -111,7 +111,7 @@ func CheckCompiledBookings(m *Manifest, elements []atomic_cmd.Element) error {
 			"and the pool is charged what an invocation is measured to cost — that runtime "+
 			"included. The interpreted languages share one language server each and can book "+
 			"as little as 8MB.\n"+
-			"Raise each of them to %s or higher, or run `drift project benchmark` against a "+
+			"Raise each of them to %s or higher, or run `drift file benchmark` against a "+
 			"deployed slice to size them from what they actually hold.",
 		floor.Declared, len(bad), strings.Join(bad, "\n"), floor.Declared)
 }

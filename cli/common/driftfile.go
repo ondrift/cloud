@@ -47,7 +47,7 @@ import (
 
 // driftfileRefreshOnce bounds the refresh to a single attempt per invocation.
 // "Whenever we call the API" is the intent; once per PROCESS is the honest
-// implementation — a single `drift project deploy` makes many HTTP calls, and
+// implementation — a single `drift file apply` makes many HTTP calls, and
 // paying a schema round-trip on each would be latency nobody asked for.
 var driftfileRefreshOnce sync.Once
 

@@ -2,7 +2,7 @@
 // slice, a session, or a network round trip.
 //
 // The Driftfile used to be validated only as a side effect of
-// `drift project deploy` / `--plan`. So "is line 9 a typo?" required an account,
+// `drift file apply` / `--plan`. So "is line 9 a typo?" required an account,
 // a login and a call to the platform, and the answer arrived as a failed deploy.
 // Every question the golden-path run actually hit — `nosql_storage` not being a
 // field, `queues:` taking a shape the spec did not, an element being per-language,
@@ -34,17 +34,54 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// GetCmd returns the `drift file` command group.
+// GetCmd returns the `drift file` command group — everything you do with a
+// Driftfile, whether or not it touches a slice.
+//
+// One noun, because the Driftfile IS the project: the resources and their sizes
+// are the whole declaration, so `project` and `file` addressed the same thing
+// under two names and cost a user the choice between them. The offline verbs
+// (lint, fmt, explain, new) and the ones that reach a slice (apply, simulate,
+// run, test, benchmark, stop, logs) live together for that reason.
+//
+// `drift project` still resolves to this group, deprecated — see main.go.
 func GetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "file",
-		Short:   "Work on a Driftfile without deploying it",
-		Long:    "Lint, format, explain or scaffold a Driftfile. Offline — no account, no slice, no network.",
-		Example: "  drift file lint\n  drift file explain --env staging\n  drift file fmt --write\n  drift file new",
+		Short:   "Work on a Driftfile — lint it, apply it, run what it declares",
+		Long:    "Everything a Driftfile does: lint, format, explain and scaffold offline; apply, simulate, run, test, benchmark, stop and tail against a slice.",
+		Example: "  drift file lint\n  drift file apply\n  drift file simulate\n  drift file logs",
 		GroupID: "project",
 	}
 	cmd.AddCommand(getLintCmd(), getExplainCmd(), getFmtCmd(), getNewCmd())
+	cmd.AddCommand(project.Verbs()...)
+
+	// The two verbs that changed spelling in the move. Each keeps working and
+	// says once what to type instead; both go after v0.20.0.
+	apply, simulate := findVerb(cmd, "apply"), findVerb(cmd, "simulate")
+	cmd.AddCommand(
+		common.AliasCommand(apply, "deploy", common.Deprecation{
+			Old: "drift file deploy", New: "drift file apply", RemoveAfter: "v0.20.0",
+		}),
+		common.AliasCommand(simulate, "diff", common.Deprecation{
+			Old: "drift file diff", New: "drift file simulate", RemoveAfter: "v0.20.0",
+		}),
+	)
 	return cmd
+}
+
+// findVerb returns a registered subcommand by name, panicking if it is absent.
+//
+// Panics rather than returning an error: this runs at command-tree construction
+// with a name written three lines above, so a miss is a typo in this file and
+// not a condition any user can reach. A nil alias target would instead fail at
+// the moment someone typed the old spelling.
+func findVerb(parent *cobra.Command, name string) *cobra.Command {
+	for _, c := range parent.Commands() {
+		if c.Name() == name {
+			return c
+		}
+	}
+	panic("file: no subcommand named " + name)
 }
 
 // resolvePath turns an optional positional argument into a Driftfile path.

@@ -11,7 +11,7 @@
 //
 // There is intentionally no `add`/`remove`. The Driftfile is the
 // single source of truth — users edit `slice.atomic.egress.hosts`
-// and run `drift project deploy`. The deploy reconcile path
+// and run `drift file apply`. The deploy reconcile path
 // invokes `refresh` automatically when the egress section
 // changes (see cli/cmd/project/deploy.go).
 package atomic_cmd
@@ -55,7 +55,7 @@ The Driftfile's slice.atomic.egress block is the source of truth:
           - hooks.slack.com
           - smtp.sendgrid.net:587
 
-To change the list, edit your Driftfile and run 'drift project deploy'.
+To change the list, edit your Driftfile and run 'drift file apply'.
 This command exists for inspection, ad-hoc refresh, and local pattern
 testing.`,
 		Example: "  drift atomic egress list\n" +
@@ -144,7 +144,7 @@ func getEgressTestCmd() *cobra.Command {
 			match := matchHostAgainstList(target, v.DeclaredHosts)
 			if match == "" {
 				fmt.Printf("✗  %s is NOT on the allowlist.\n", target)
-				fmt.Printf("    Add it to your Driftfile under slice.atomic.egress.hosts and run 'drift project deploy'.\n")
+				fmt.Printf("    Add it to your Driftfile under slice.atomic.egress.hosts and run 'drift file apply'.\n")
 				return fmt.Errorf("not on allowlist")
 			}
 			fmt.Printf("✔  %s matches %q on the allowlist.\n", target, match)

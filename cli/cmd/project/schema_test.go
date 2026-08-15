@@ -124,7 +124,7 @@ func TestSchema_RejectsWhatTheSchemaRejects(t *testing.T) {
 }
 
 // A machine that has never reached the platform holds no schema. Parsing still
-// works — `drift project run` needs no platform at all — but SchemaAvailable must
+// works — `drift file run` needs no platform at all — but SchemaAvailable must
 // say so, because a caller that reports "valid" after validating nothing is worse
 // than one that refuses.
 func TestSchema_AbsentIsReportedNotFaked(t *testing.T) {

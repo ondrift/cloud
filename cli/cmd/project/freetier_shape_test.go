@@ -12,10 +12,10 @@ package project
 //
 // Two distinct ways in, both reproduced below:
 //
-//  1. `drift slice create <name> --free` followed by `drift project deploy`.
+//  1. `drift slice create <name> --free` followed by `drift file apply`.
 //     Independent of price — the slice is already sitting at the preset.
 //
-//  2. `drift project deploy` twice, no `slice create` at all, when the
+//  2. `drift file apply` twice, no `slice create` at all, when the
 //     manifest prices at €0. reconcileSlice picks tier "hacker" for a
 //     zero-cost manifest, CreateSlice then omits the config entirely for
 //     that tier (api.go), and the operator's priceAndValidate discards any

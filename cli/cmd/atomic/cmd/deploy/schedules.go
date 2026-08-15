@@ -17,7 +17,7 @@
 //
 // # Why a package-level registry
 //
-// The element deploy functions are called from `drift project deploy` (which
+// The element deploy functions are called from `drift file apply` (which
 // has read the Driftfile) and from `drift atomic deploy` (which has not). Only
 // the first can supply schedules, and threading a manifest through three deploy
 // signatures to carry one optional map would put a Driftfile concept into the
@@ -34,7 +34,7 @@ var (
 )
 
 // SetDeclaredSchedules records the `atomic.functions[].cron` expressions from a
-// Driftfile, keyed by function name. Called once by `drift project deploy`
+// Driftfile, keyed by function name. Called once by `drift file apply`
 // before any function ships; a nil or empty map clears it.
 //
 // The key is the FUNCTION name, which for an HTTP function is also its route —

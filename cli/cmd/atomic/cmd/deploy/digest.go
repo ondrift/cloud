@@ -1,6 +1,6 @@
 // digest.go — content-addressed fingerprinting for atomic functions.
 //
-// `drift project deploy` skips functions whose source hasn't changed. To do
+// `drift file apply` skips functions whose source hasn't changed. To do
 // that safely it needs a stable fingerprint of a function's deploy inputs that
 // it can compare against the digest the platform recorded at the last deploy.
 //
@@ -206,7 +206,7 @@ func deployedKey(method, functionName string) string {
 const deployedDigestsTimeout = 8 * time.Second
 
 // DeployedDigests returns function_name -> last-deployed source digest for the
-// active slice. `drift project deploy` uses it to skip functions whose source
+// active slice. `drift file apply` uses it to skip functions whose source
 // is unchanged. Records with no recorded digest (deployed by an older CLI, or
 // after a rollback / snapshot restore) are omitted, so they always redeploy.
 func DeployedDigests() (map[string]string, error) {

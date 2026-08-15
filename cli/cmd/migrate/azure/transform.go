@@ -38,7 +38,7 @@ func getTransformCmd() *cobra.Command {
 			}
 			fmt.Printf("\n%s  %d scaffold(s) · %d collection(s) · %d refused → %s\n",
 				common.Check(), res.scaffolds, len(m.Collections), len(res.refusals), common.Highlight(out))
-			fmt.Printf("  review %s, then: %s\n", common.BoldText("REPORT.md"), common.BoldText("cd "+out+" && drift project deploy"))
+			fmt.Printf("  review %s, then: %s\n", common.BoldText("REPORT.md"), common.BoldText("cd "+out+" && drift file apply"))
 			return nil
 		},
 	}
@@ -147,7 +147,7 @@ func runTransform(inDir, outDir string, m Manifest) (transformResult, error) {
 
 	if len(m.Secrets) > 0 {
 		var env strings.Builder
-		env.WriteString("# Secret values for `drift project deploy` (referenced as $NAME in the Driftfile).\n")
+		env.WriteString("# Secret values for `drift file apply` (referenced as $NAME in the Driftfile).\n")
 		for _, s := range m.Secrets {
 			env.WriteString(s.Name + "=" + s.Value + "\n")
 		}
@@ -189,7 +189,7 @@ func runTransform(inDir, outDir string, m Manifest) (transformResult, error) {
 		return res, err
 	}
 
-	// Validate in the same context `drift project deploy` will run in: the
+	// Validate in the same context `drift file apply` will run in: the
 	// Driftfile's `$NAME` secret refs resolve from the environment, which at
 	// deploy time is `source .env.migrate`. Seed any unset secret var from the
 	// value we just wrote (never clobbering a real one the operator already has)
@@ -279,7 +279,7 @@ func cosmosIDToMongo(jsonl []byte) (out []byte, lossy bool) {
 //
 // 128MB is deliberately generous rather than tight: a migration that refuses
 // invocations on its first day reads as "Drift cannot run my workload", while
-// one that over-books reads as a number to lower once `drift project benchmark`
+// one that over-books reads as a number to lower once `drift file benchmark`
 // says what it should be. The first is a lost migration; the second is a
 // two-minute edit.
 const azureStartingMemory = "128MB"
@@ -293,7 +293,7 @@ func buildDriftfile(name string, fns []driftFn, colls []driftColl, secrets []Man
 		b.WriteString("  # Each function books its own memory, and there is no default. The\n")
 		b.WriteString("  # figures below are a STARTING POINT, not a measurement: an Azure\n")
 		b.WriteString("  # manifest says nothing about what these functions cost on Drift, and\n")
-		b.WriteString("  # nobody has run them here yet. Deploy, then `drift project benchmark`\n")
+		b.WriteString("  # nobody has run them here yet. Deploy, then `drift file benchmark`\n")
 		b.WriteString("  # and size each one from what it actually holds — over-booking is paid\n")
 		b.WriteString("  # for, and under-booking is refused under load.\n")
 		b.WriteString("  functions:\n")
