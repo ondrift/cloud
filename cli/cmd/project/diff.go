@@ -225,7 +225,6 @@ func compareFields(live, wanted SliceConfig, includeZeroLive bool) []FieldDelta 
 		{Path: "atomic.log_retention", Live: live.Atomic.MaxNumberOfHoursForLogRetention, Wanted: wanted.Atomic.MaxNumberOfHoursForLogRetention, IsHours: true, Omittable: true},
 		{Path: "backbone.queue_max_depth", Live: live.Backbone.Queues.MaxDepthEach, Wanted: wanted.Backbone.Queues.MaxDepthEach, Omittable: true},
 		{Path: "backbone.blob_max_size", Live: live.Backbone.Blobs.MaxSizeInBytesEach, Wanted: wanted.Backbone.Blobs.MaxSizeInBytesEach, IsBytes: true, Omittable: true},
-		{Path: "backbone.blob_max_count", Live: live.Backbone.Blobs.MaxCount, Wanted: wanted.Backbone.Blobs.MaxCount, Omittable: true},
 		{Path: "backbone.backup_retention", Live: live.Backbone.BackupRetentionDays, Wanted: wanted.Backbone.BackupRetentionDays, IsDays: true, Omittable: true},
 		{Path: "canvas.max_size", Live: live.Canvas.TotalMaxSizeInBytes, Wanted: wanted.Canvas.TotalMaxSizeInBytes, IsBytes: true, Omittable: true},
 	}
