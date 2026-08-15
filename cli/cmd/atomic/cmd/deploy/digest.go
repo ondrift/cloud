@@ -205,11 +205,23 @@ func deployedKey(method, functionName string) string {
 // rather than stalling the whole deploy on the default 30s client timeout.
 const deployedDigestsTimeout = 8 * time.Second
 
-// DeployedDigests returns function_name -> last-deployed source digest for the
-// active slice. `drift file apply` uses it to skip functions whose source
-// is unchanged. Records with no recorded digest (deployed by an older CLI, or
-// after a rollback / snapshot restore) are omitted, so they always redeploy.
-func DeployedDigests() (map[string]string, error) {
+// DeployedFunction is one function the slice currently serves, as its slot
+// record reports it. Key is the identity the Driftfile uses and the slice books
+// against, so a caller compares it against a manifest without rebuilding it.
+type DeployedFunction struct {
+	Key    string
+	Name   string
+	Method string
+	Digest string
+}
+
+// DeployedFunctions returns every function deployed on the active slice.
+//
+// It is the one decode of `/ops/atomic/list`, and `DeployedDigests` derives from
+// it — two consumers, one fetch, one notion of what "deployed" means. Unlike the
+// digest map it keeps records carrying no digest, because a function deployed by
+// an older CLI is still occupying a slot and still serving.
+func DeployedFunctions() ([]DeployedFunction, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), deployedDigestsTimeout)
 	defer cancel()
 
@@ -229,10 +241,34 @@ func DeployedDigests() (map[string]string, error) {
 		return nil, fmt.Errorf("list atomic functions: unexpected response (%w)", err)
 	}
 
-	out := make(map[string]string, len(records))
+	out := make([]DeployedFunction, 0, len(records))
 	for _, r := range records {
-		if r.FunctionName != "" && r.Digest != "" {
-			out[deployedKey(r.Method, r.FunctionName)] = r.Digest
+		if r.FunctionName == "" {
+			continue // a pre-warmed slot holding nothing
+		}
+		out = append(out, DeployedFunction{
+			Key:    deployedKey(r.Method, r.FunctionName),
+			Name:   r.FunctionName,
+			Method: r.Method,
+			Digest: r.Digest,
+		})
+	}
+	return out, nil
+}
+
+// DeployedDigests returns function_name -> last-deployed source digest for the
+// active slice. `drift file apply` uses it to skip functions whose source
+// is unchanged. Records with no recorded digest (deployed by an older CLI, or
+// after a rollback / snapshot restore) are omitted, so they always redeploy.
+func DeployedDigests() (map[string]string, error) {
+	fns, err := DeployedFunctions()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(fns))
+	for _, f := range fns {
+		if f.Digest != "" {
+			out[f.Key] = f.Digest
 		}
 	}
 	return out, nil

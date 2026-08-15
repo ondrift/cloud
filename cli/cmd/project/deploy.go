@@ -197,6 +197,19 @@ single slice otherwise.`,
 				return err
 			}
 
+			// The mirror of that check: what the slice serves and the manifest
+			// no longer names. A rename leaves the old route deployed, serving,
+			// re-registering on every restart and holding a slot the slice was
+			// sold. A fetch failure is STATED rather than swallowed — the
+			// best-effort silence that suits skip-unchanged would be a false
+			// all-clear here.
+			if deployedFns, derr := atomic_cmd.DeployedFunctions(); derr != nil {
+				fmt.Printf("  %s couldn't check for functions the Driftfile no longer names: %v\n",
+					common.Hint("·"), derr)
+			} else {
+				ReportOrphanedFunctions(m, deployedFns, os.Stdout)
+			}
+
 			// At this point the slice exists at >= the declared shape.
 			// Set it as the active slice for subsequent api calls.
 			if err := common.SaveActiveSlice(m.Name()); err != nil {

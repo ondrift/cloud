@@ -13,9 +13,11 @@ package project
 
 import (
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
+	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 	"github.com/ondrift/cloud/cli/common"
 )
 
@@ -161,4 +163,57 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// ReportOrphanedFunctions prints every function deployed on the slice that the
+// manifest no longer names.
+//
+// A rename produces an orphan, not a move: the slot is matched on (name,
+// method), so the old record keeps its own and nothing on the apply path
+// removes it. It keeps serving — the slice re-registers every slot directory it
+// finds at boot — it keeps consuming one of the function slots the configurator
+// sold, and because the new config names only the new key, it falls to the
+// shared pool with no error, no log line and no metric.
+//
+// IT REPORTS. It does not refuse and it does not delete. Nothing anywhere
+// records which project owns a function, so once a slice reference is a plain
+// name two Driftfiles can legitimately share one slice — and a reconcile that
+// cannot tell "not mine" from "deleted" must do neither. Refusing would make the
+// second project undeployable; deleting would delete the first project's work.
+func ReportOrphanedFunctions(m *Manifest, deployed []atomic_cmd.DeployedFunction, out io.Writer) {
+	named := map[string]bool{}
+	for _, s := range FunctionSpecs(m) {
+		named[atomic_cmd.DeployedKey(specMethodAndPath(s.Name))] = true
+	}
+
+	var orphans []atomic_cmd.DeployedFunction
+	for _, d := range deployed {
+		if !named[d.Key] {
+			orphans = append(orphans, d)
+		}
+	}
+	if len(orphans) == 0 {
+		return
+	}
+	sort.Slice(orphans, func(i, j int) bool { return orphans[i].Key < orphans[j].Key })
+
+	fmt.Fprintf(out, "\n  %s %s deployed on this slice that your Driftfile no longer names:\n",
+		common.Hint("·"), plural(len(orphans), "One function is", "Functions are"))
+	for _, o := range orphans {
+		fmt.Fprintf(out, "      %s — still serving, still holding one of the slice's function slots\n", o.Key)
+		fmt.Fprintf(out, "        free it with: drift atomic delete %s\n", o.Name)
+	}
+	fmt.Fprintf(out, "    Nothing was removed: a slice can serve more than one project, and a\n"+
+		"    deploy cannot tell a function that is not yours from one you deleted.\n")
+}
+
+// specMethodAndPath splits a manifest function identity back into the method and
+// path a deployed record reports, so both sides build their key with one
+// function. A queue handler's identity has no HTTP method and keys on its name.
+func specMethodAndPath(name string) (string, string) {
+	method, path, found := strings.Cut(name, ":")
+	if !found {
+		return "", name
+	}
+	return method, path
 }
