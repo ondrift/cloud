@@ -19,7 +19,7 @@ func getApplyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apply",
 		Short: "Deploy a drift_workspace/ to your active Drift slice",
-		Long: "The one command in this tool that touches Drift. It runs `drift project deploy`\n" +
+		Long: "The one command in this tool that touches Drift. It runs `drift file apply`\n" +
 			"from the workspace `transform` produced — deploying to your ACTIVE slice over the\n" +
 			"authenticated API. Review REPORT.md and acknowledge the REFUSED list first; the\n" +
 			"refused workloads stay on Azure, by design.",
@@ -28,7 +28,7 @@ func getApplyCmd() *cobra.Command {
 			if err := applyGate(in, acceptRefusals); err != nil {
 				return err
 			}
-			fmt.Printf("%s  deploying %s to your active slice via `drift project deploy`…\n\n",
+			fmt.Printf("%s  deploying %s to your active slice via `drift file apply`…\n\n",
 				common.Check(), common.Highlight(in))
 			return runProjectDeploy(in)
 		},
@@ -69,7 +69,7 @@ func migrationRefusedCount(dir string) int {
 	return s.Refused
 }
 
-// runProjectDeploy shells out to `drift project deploy` from the workspace,
+// runProjectDeploy shells out to `drift file apply` from the workspace,
 // having loaded .env.migrate so the Driftfile's $ENV secret refs resolve. This
 // is the deliberate MVP shape (shell-out, not in-process) — clean isolation,
 // and the migration pipeline borrows no privileges the deploy doesn't already
@@ -78,7 +78,7 @@ func runProjectDeploy(dir string) error {
 	loadDotEnv(filepath.Join(dir, ".env.migrate"))
 	bin, err := exec.LookPath("drift")
 	if err != nil {
-		return fmt.Errorf("`drift` is not on PATH — install the CLI, then run `drift project deploy` from %s", dir)
+		return fmt.Errorf("`drift` is not on PATH — install the CLI, then run `drift file apply` from %s", dir)
 	}
 	cmd := exec.Command(bin, "project", "deploy")
 	cmd.Dir = dir

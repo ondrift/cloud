@@ -17,7 +17,7 @@ func writeSrc(t *testing.T, path, content string) {
 	}
 }
 
-// specs is the shape `drift project deploy` hands in: the Driftfile's entries,
+// specs is the shape `drift file apply` hands in: the Driftfile's entries,
 // with each one's directory already resolved.
 func spec(name, handler, element, dir string) FunctionSpec {
 	return FunctionSpec{Name: name, Handler: handler, Element: element, Dir: dir}

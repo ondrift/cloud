@@ -14,7 +14,6 @@ import (
 	file "github.com/ondrift/cloud/cli/cmd/file"
 	migrate "github.com/ondrift/cloud/cli/cmd/migrate"
 	portal "github.com/ondrift/cloud/cli/cmd/portal"
-	project "github.com/ondrift/cloud/cli/cmd/project"
 	slice "github.com/ondrift/cloud/cli/cmd/slice"
 	upgrade "github.com/ondrift/cloud/cli/cmd/upgrade"
 	"github.com/ondrift/cloud/cli/common"
@@ -105,12 +104,19 @@ func main() {
 		Title: "Project:",
 	})
 
-	rootCmd.AddCommand(
-		// Project (Driftfile-driven deploy + diff)
-		project.GetCmd(),
+	// One noun for the Driftfile. `drift project` keeps working as a deprecated
+	// spelling that re-runs under `drift file`, so nothing anyone has typed or
+	// scripted breaks; it goes after v0.20.0.
+	fileCmd := file.GetCmd()
 
-		// File (work on a Driftfile without deploying it)
-		file.GetCmd(),
+	rootCmd.AddCommand(
+		// File (everything a Driftfile does — lint it, apply it, run it)
+		fileCmd,
+		common.AliasCommand(fileCmd, "project", common.Deprecation{
+			Old:         "drift project",
+			New:         "drift file",
+			RemoveAfter: "v0.20.0",
+		}),
 
 		// Migrate (read-only lift-off from another cloud, e.g. Azure)
 		migrate.GetCmd(),

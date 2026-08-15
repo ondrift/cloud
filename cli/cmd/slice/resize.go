@@ -22,7 +22,7 @@ import (
 //
 //  2. **Driftfile mode** (`--from <path>`). Reads a Driftfile,
 //     diffs it against the live slice, and applies the divergence
-//     directly via /ops/slice/resize. Unlike `drift project deploy`
+//     directly via /ops/slice/resize. Unlike `drift file apply`
 //     (which aborts on shrink), this command is the named verb for
 //     shrinking — it requires `--allow-destructive` to actually
 //     apply any field that goes down.
@@ -120,7 +120,7 @@ func resizeFromDriftfile(path string, allowDestructive, autoYes bool, billingMon
 		return fmt.Errorf("fetch slice: %w", err)
 	}
 	if live == nil {
-		return fmt.Errorf("slice %q does not exist; create it first with `drift project deploy`", m.Name())
+		return fmt.Errorf("slice %q does not exist; create it first with `drift file apply`", m.Name())
 	}
 
 	d := project.Diff(m.Name(), manifestCfg, &live.Config, live.Tier, live.MonthlyCostCents, wantedCost)

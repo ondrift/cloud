@@ -1,11 +1,11 @@
 package project
 
-// test.go — `drift project test`: start the project locally (the same
-// mechanism `drift project run` uses), run the Driftfile's declared
+// test.go — `drift file test`: start the project locally (the same
+// mechanism `drift file run` uses), run the Driftfile's declared
 // `tests.e2e` commands against it, and always tear the local instance down
 // afterward. The "test before you ship" half of the local-first promise —
-// no account, no cloud, e2e against the real running app before `drift
-// project deploy` ever touches Drift.
+// no account, no cloud, e2e against the real running app before
+// `drift file apply` ever touches Drift.
 
 import (
 	"fmt"
@@ -27,7 +27,7 @@ func getTestCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "test [environment]",
 		Short: "Run the project locally and run its declared e2e tests against it",
-		Long: `Build and run the project locally (same as 'drift project run'), wait for
+		Long: `Build and run the project locally (same as 'drift file run'), wait for
 it to be healthy, then run every command declared under the Driftfile's
 tests.e2e — same shape and semantics as hooks.pre_deploy/post_deploy. The
 instance's local URL rides in as DRIFT_TEST_URL, so a test command knows
@@ -35,7 +35,7 @@ where to point (the port is picked at runtime, never fixed).
 
 The local instance is always torn down afterward, whether the tests pass,
 fail, or error out.`,
-		Example: "  drift project test\n  drift project test staging",
+		Example: "  drift file test\n  drift file test staging",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))

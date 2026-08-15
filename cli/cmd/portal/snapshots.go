@@ -269,7 +269,7 @@ func (m *model) settingsLines() []string {
 }
 
 // itemizedBillLines renders the active slice's current monthly cost
-// breakdown (#CLITUI1) — same shape as `drift project deploy`'s itemized
+// breakdown (#CLITUI1) — same shape as `drift file apply`'s itemized
 // bill (cmd/project's LineItem/renderLineItems), fetched via the same
 // /ops/slice/price endpoint the configurator's own live-pricing already
 // uses (see fetchDocPrice).

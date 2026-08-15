@@ -5,7 +5,7 @@ package portal
 //   Empty slice      → the configurator (build the envelope by hand).
 //   From a Driftfile → a minimal directory explorer to locate a Driftfile,
 //                      then SUSPEND the dashboard and run the real
-//                      `drift project deploy` (full build/upload pipeline,
+//                      `drift file apply` (full build/upload pipeline,
 //                      streaming output), then re-enter.
 //
 // A slice is the remote envelope (what the sidebar lists); a Driftfile is the
@@ -132,7 +132,7 @@ const (
 
 // explorer modes — what "select" ultimately does.
 const (
-	exDriftfile = iota // a Driftfile → drift project deploy (provision a slice)
+	exDriftfile = iota // a Driftfile → drift file apply (provision a slice)
 	exFnDeploy         // a directory  → drift atomic deploy <dir>
 	exFnNew            // a directory  → drift atomic new (scaffold there)
 )
@@ -425,13 +425,13 @@ func (m *model) suspendAndRun(banner string, cmd *exec.Cmd, okMsg, failMsg strin
 	}
 }
 
-// deployDriftfile suspends the dashboard, runs the real `drift project deploy`
+// deployDriftfile suspends the dashboard, runs the real `drift file apply`
 // in dir, then re-enters with a fresh slice list.
 func (m *model) deployDriftfile(dir string) {
 	m.explorer = nil
-	cmd := exec.Command(driftExe(), "project", "deploy") // #nosec G204 -- our own binary, fixed args
+	cmd := exec.Command(driftExe(), "file", "apply") // #nosec G204 -- our own binary, fixed args
 	cmd.Dir = dir
-	m.suspendAndRun("drift project deploy  "+abbrevHome(dir), cmd,
+	m.suspendAndRun("drift file apply  "+abbrevHome(dir), cmd,
 		"deployed "+filepath.Base(dir), "✗ deploy failed (see output above)",
 		func() { m.active = common.GetActiveSlice(); m.loadSlices() })
 }

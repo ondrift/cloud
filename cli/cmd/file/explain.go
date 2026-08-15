@@ -12,7 +12,7 @@ package file
 // It does NOT print a price. The server is the single authority on cost
 // (`plan.PriceConfig`, reached via POST /ops/slice/price) and computing one here
 // would be a second source of truth for the number a user is billed — the exact
-// thing pricing is centralised to avoid. `drift project deploy --plan` shows it,
+// thing pricing is centralised to avoid. `drift file apply --plan` shows it,
 // with a session, from the server.
 
 import (
@@ -135,5 +135,5 @@ func printResolved(m *project.Manifest, env string) {
 	if envs := m.EnvironmentNames(); len(envs) > 0 {
 		fmt.Printf("\n  %s %s\n", common.Hint("environments:"), strings.Join(envs, ", "))
 	}
-	fmt.Printf("\n  %s\n", common.Hint("cost comes from the server — drift project deploy --plan"))
+	fmt.Printf("\n  %s\n", common.Hint("cost comes from the server — drift file apply --plan"))
 }

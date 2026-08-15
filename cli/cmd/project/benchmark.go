@@ -1,6 +1,6 @@
 package project
 
-// benchmark.go — `drift project benchmark`. What each function actually costs,
+// benchmark.go — `drift file benchmark`. What each function actually costs,
 // and what it should therefore book.
 //
 // `atomic.functions[].memory` is mandatory and has no default, which is correct
@@ -87,7 +87,7 @@ nobody has called yet says so, rather than reporting a confidently small number.
 With --write, each function's memory in the Driftfile is set to the
 recommendation. Comments, ordering and everything else in the file are left
 alone.`),
-		Example: "  drift project benchmark\n  drift project benchmark --write",
+		Example: "  drift file benchmark\n  drift file benchmark --write",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))
 			if err != nil {
