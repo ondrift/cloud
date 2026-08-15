@@ -83,7 +83,40 @@ var (
 const MaintenanceMessage = "Drift is temporarily unavailable — most likely brief maintenance. " +
 	"Your login is still valid; nothing to do but try again in a few minutes."
 
+// Error renders the failure and, where the failure has a name, appends it.
+//
+// The code is chosen from the STATUS rather than the message, because the status
+// is what the platform actually said — a message is rewritten as wording
+// improves, and a code that moved with the wording would not be stable enough to
+// paste. A status with no registered code renders exactly as before.
 func (e *APIError) Error() string {
+	return withCode(e.message(), e.code())
+}
+
+// code names this failure, or "" for a status that has none yet.
+func (e *APIError) code() string {
+	switch {
+	case e.Status == http.StatusUnauthorized:
+		// A refused LOGIN is not an expired session — the message already says
+		// the password was wrong, and pointing at `account login` would send the
+		// user to the command they just ran.
+		if e.Op == "log in" {
+			return ""
+		}
+		return "DRIFT-1001"
+	case e.Status == http.StatusForbidden:
+		return "DRIFT-1002"
+	case e.Status == http.StatusNotFound:
+		return "DRIFT-1003"
+	case e.Status == http.StatusPaymentRequired || e.Status == http.StatusTooManyRequests:
+		return "DRIFT-1004"
+	case e.Status >= 500:
+		return "DRIFT-1005"
+	}
+	return ""
+}
+
+func (e *APIError) message() string {
 	lead := "Something went wrong"
 	if e.Op != "" {
 		lead = "Couldn't " + e.Op
@@ -320,13 +353,15 @@ func TransportError(op string, err error) error {
 	}
 
 	// Timeouts — check both url.Error and the generic net.Error interface.
+	// Distinct from unreachable: the platform ANSWERED the connection and then
+	// did not finish, so a deploy may have landed even though this failed.
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) && urlErr.Timeout() {
-		return fmt.Errorf("%scouldn't reach the Drift API (timed out). Is the platform up?", lead)
+		return errors.New(withCode(lead+"couldn't reach the Drift API (timed out). Is the platform up?", "DRIFT-1007"))
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
-		return fmt.Errorf("%scouldn't reach the Drift API (timed out). Is the platform up?", lead)
+		return errors.New(withCode(lead+"couldn't reach the Drift API (timed out). Is the platform up?", "DRIFT-1007"))
 	}
 
 	// Connection refused / DNS failure / dial errors.
@@ -334,7 +369,8 @@ func TransportError(op string, err error) error {
 	if strings.Contains(msg, "connection refused") ||
 		strings.Contains(msg, "no such host") ||
 		strings.Contains(msg, "dial tcp") {
-		return fmt.Errorf("%scouldn't reach the Drift API. Is the platform up? (%v)", lead, err)
+		return errors.New(withCode(
+			fmt.Sprintf("%scouldn't reach the Drift API. Is the platform up? (%v)", lead, err), "DRIFT-1006"))
 	}
 
 	// Unknown — wrap it unchanged so the user still sees something.

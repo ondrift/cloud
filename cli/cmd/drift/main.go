@@ -11,6 +11,7 @@ import (
 	backbone "github.com/ondrift/cloud/cli/cmd/backbone"
 	canvas "github.com/ondrift/cloud/cli/cmd/canvas"
 	deed "github.com/ondrift/cloud/cli/cmd/deed"
+	doctor "github.com/ondrift/cloud/cli/cmd/doctor"
 	file "github.com/ondrift/cloud/cli/cmd/file"
 	migrate "github.com/ondrift/cloud/cli/cmd/migrate"
 	portal "github.com/ondrift/cloud/cli/cmd/portal"
@@ -121,6 +122,10 @@ func main() {
 			Old: "drift project",
 			New: "drift file",
 		}),
+
+		// Doctor — the one place to go when something is wrong. Offline by
+		// design: the moment you need it is the moment something else failed.
+		doctor.GetCmd(),
 
 		// Migrate (read-only lift-off from another cloud, e.g. Azure)
 		migrate.GetCmd(),
