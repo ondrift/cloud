@@ -54,6 +54,19 @@ type APIError struct {
 	// fallback when Detail is empty AND the status code has no specific
 	// mapping — we'd rather show the raw body than nothing.
 	Raw string
+
+	// Action, Limit and Current are a refusal's numbers, taken from the response
+	// FIELDS rather than parsed out of Detail.
+	//
+	// The server is the only thing that knows a quota, so it is the only thing
+	// allowed to state one: a ceiling the CLI re-derived is a ceiling the CLI can
+	// be wrong about, and being confidently wrong about someone's limit is worse
+	// than saying nothing. HasLimit distinguishes "the server published no
+	// ceiling" from "the ceiling is zero".
+	Action   string
+	Limit    int
+	Current  int
+	HasLimit bool
 }
 
 // ErrPlatformUnavailable and ErrSessionRejected split the two ways a token
@@ -91,6 +104,16 @@ const MaintenanceMessage = "Drift is temporarily unavailable — most likely bri
 // paste. A status with no registered code renders exactly as before.
 func (e *APIError) Error() string {
 	out := withCode(e.message(), e.code())
+	// The numbers, on their own line, from the server's fields. A refusal that
+	// does not say what the ceiling is leaves the user to guess how much to free
+	// up, which is a second command away at best.
+	if e.HasLimit {
+		what := e.Action
+		if what == "" {
+			what = "this resource"
+		}
+		out += fmt.Sprintf("\n  %s: %d of %d used.", what, e.Current, e.Limit)
+	}
 	// Only a 5xx. A 4xx is the platform telling the user something true about
 	// their request, and checking component health there would offer an excuse
 	// for a refusal that is correct.
@@ -216,12 +239,41 @@ func CheckResponse(resp *http.Response, op string) ([]byte, error) {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return body, nil
 	}
-	return nil, &APIError{
+	e := &APIError{
 		Op:     op,
 		Status: resp.StatusCode,
 		Detail: detailForStatus(resp.StatusCode, body),
 		Raw:    strings.TrimSpace(string(body)),
 	}
+	e.Action, e.Limit, e.Current, e.HasLimit = quotaFromBody(body)
+	return nil, e
+}
+
+// quotaFromBody reads a refusal's numbers out of the response FIELDS.
+//
+// Never out of Detail: the sentence carries the same figures, and parsing them
+// back out would make the CLI's rendering depend on the server's wording — the
+// exact coupling that publishing fields removes.
+//
+// A body with no ceiling yields hasLimit=false, and callers then say nothing
+// about limits. That is the honest reading of an older platform, or of an action
+// with no quota at all.
+func quotaFromBody(body []byte) (action string, limit, current int, hasLimit bool) {
+	var parsed struct {
+		Action  string `json:"action"`
+		Limit   *int   `json:"limit"`
+		Current *int   `json:"current"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", 0, 0, false
+	}
+	if parsed.Limit == nil {
+		return parsed.Action, 0, 0, false
+	}
+	if parsed.Current != nil {
+		current = *parsed.Current
+	}
+	return parsed.Action, *parsed.Limit, current, true
 }
 
 // extractDetail pulls a human-readable message out of a JSON error body.
