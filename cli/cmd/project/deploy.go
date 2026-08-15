@@ -695,7 +695,6 @@ func applyCanvas(m *Manifest, out io.Writer) error {
 	}
 
 	fmt.Fprintf(out, "  %s\n", common.CanvasHeader())
-	keep := make([]string, 0, len(sites))
 	for _, s := range sites {
 		dir := m.ResolvePath(s.Str("dir"))
 		route := canonicalRoute(s.Str("route"))
@@ -705,10 +704,6 @@ func applyCanvas(m *Manifest, out io.Writer) error {
 			return fmt.Errorf("canvas deploy failed for %s: %w", s.Str("dir"), err)
 		}
 		fmt.Fprintf(out, "    %s %s\n", common.Check(), label)
-		keep = append(keep, slug)
-	}
-	if err := pruneCanvas(keep); err != nil {
-		return fmt.Errorf("canvas prune failed: %w", err)
 	}
 	fmt.Fprintln(out)
 	return nil
@@ -766,17 +761,6 @@ func deployCanvas(dir, slug, route string) error {
 	}
 	defer resp.Body.Close()
 	_, err = common.CheckResponse(resp, "deploy canvas site")
-	return err
-}
-
-func pruneCanvas(keep []string) error {
-	body, _ := json.Marshal(map[string]any{"keep": keep})
-	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/canvas/prune", bytes.NewBuffer(body))
-	if err != nil {
-		return common.TransportError("prune canvas sites", err)
-	}
-	defer resp.Body.Close()
-	_, err = common.CheckResponse(resp, "prune canvas sites")
 	return err
 }
 
