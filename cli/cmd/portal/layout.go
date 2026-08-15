@@ -354,13 +354,11 @@ func (m *model) render() {
 	// slice" while creating, red "Deleting <name>" while confirming) with no tabs,
 	// name, or URL. In the normal view drawPanel gets no title — the slice name is
 	// incrusted top-RIGHT, the tabs top-LEFT, and the URL bottom-LEFT (below).
-	creating := m.chooser != nil || m.explorer != nil || m.form != nil
+	creating := m.chooser != nil || m.explorer != nil
 	panelTitle, mainColor := "", tabFG(m.tab)
 	switch {
 	case m.deleting != nil:
 		panelTitle, mainColor = "Deleting "+m.deleting.name, cRed
-	case m.form != nil && m.form.resize:
-		panelTitle, mainColor = "Configure "+m.form.name, cBlue
 	case m.creatingFunction():
 		panelTitle, mainColor = "New function", cOrange
 	case creating:
@@ -596,9 +594,6 @@ func (m *model) mainLines() []string {
 	}
 	if m.explorer != nil {
 		return m.explorerLines()
-	}
-	if m.form != nil {
-		return m.formLines()
 	}
 	out := []string{""} // breathing room under the title (tabs live in the bottom border)
 	var cb strings.Builder

@@ -96,7 +96,7 @@ func newRootCmd(shownVersion string) *cobra.Command {
 			if !term.IsTerminal(int(os.Stdin.Fd())) {
 				return cmd.Help()
 			}
-			return portal.Run(shownVersion, nil)
+			return portal.Run(shownVersion)
 		},
 	}
 

@@ -7,6 +7,7 @@ package portal
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 
 	sliceCmd "github.com/ondrift/cloud/cli/cmd/slice"
@@ -84,16 +85,23 @@ func (m *model) loadSnaps() {
 	}
 }
 
-// openConfigure opens the configurator pre-filled with the active slice's
-// current settings, in resize mode (Apply changes → /ops/slice/resize).
+// openConfigure suspends the dashboard and runs `drift slice resize`, which
+// hands off to the configurator in the browser with the slice's current
+// settings pre-loaded.
+//
+// The name is passed explicitly rather than left to the active slice: the
+// settings tab can be showing a slice the user selected in the sidebar without
+// making it active, and resizing a different one than the screen shows is the
+// kind of mistake a confirmation cannot catch.
 func (m *model) openConfigure() {
 	if m.cfg == nil {
 		m.status = "✗ settings not loaded yet — press r"
 		return
 	}
-	m.form = newResizeForm(m.cfg.Name, m.cfg.Config, m.cfg.BillingPeriodMonths)
-	m.focus = focusMain
-	m.recomputePrice()
+	cmd := exec.Command(driftExe(), "slice", "resize", m.cfg.Name) // #nosec G204 -- our own binary, fixed args
+	m.suspendAndRun("drift slice resize "+m.cfg.Name+"  (configurator opens in your browser)", cmd,
+		"resized "+m.cfg.Name, "✗ resize failed (see output above)",
+		func() { m.invalidateAll(); m.load(m.tab) })
 }
 
 // sliceSummaryCards is the at-a-glance headline above the census: the slice's
