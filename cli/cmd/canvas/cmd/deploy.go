@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/ondrift/cloud/cli/common"
 
@@ -22,8 +21,16 @@ func Deploy() *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			folder := args[0]
-			r := canonicalRoute(route)
-			slug := slugifyRoute(r)
+			r, err := common.CanonicalRoute(route)
+			if err != nil {
+				fmt.Printf("Couldn't deploy canvas site: %v\n", err)
+				return
+			}
+			slug, err := common.SlugifyRoute(r)
+			if err != nil {
+				fmt.Printf("Couldn't deploy canvas site: %v\n", err)
+				return
+			}
 			fmt.Printf("Deploying canvas site from %s → %s\n", folder, r)
 
 			zipData, err := common.ZipFolder(folder)
@@ -59,26 +66,4 @@ func Deploy() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&route, "route", "/", "URL prefix to mount the site at (e.g. /admin)")
 	return cmd
-}
-
-func canonicalRoute(route string) string {
-	if route == "" {
-		return "/"
-	}
-	if !strings.HasPrefix(route, "/") {
-		route = "/" + route
-	}
-	route = strings.TrimRight(route, "/")
-	if route == "" {
-		return "/"
-	}
-	return route
-}
-
-func slugifyRoute(route string) string {
-	r := canonicalRoute(route)
-	if r == "/" {
-		return "default"
-	}
-	return strings.ReplaceAll(strings.TrimPrefix(r, "/"), "/", "-")
 }

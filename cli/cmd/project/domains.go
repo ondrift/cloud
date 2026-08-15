@@ -1,7 +1,8 @@
 // domains.go — Driftfile reconcile of `slice.domains[]`. Adds any
-// host that's declared in the manifest but missing on the slice;
-// removes any host that's live on the slice but absent from the
-// manifest. After add, the user still has to flip DNS and run
+// host that's declared in the manifest but missing on the slice. A
+// host the manifest does not name is left attached: a project
+// declares the hosts it wants, and two projects can share a slice.
+// After add, the user still has to flip DNS and run
 // `drift slice domain verify <host>` — that step requires the
 // CNAME / TXT to be live and is not something we can do
 // automatically from the deploy path.
@@ -11,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/ondrift/cloud/cli/common"
@@ -22,11 +22,11 @@ type liveDomain struct {
 	Status string `json:"status"`
 }
 
-// applyDomains reconciles the slice's custom-domain set against the
-// Driftfile. The function is best-effort: failures are surfaced but
-// don't abort the deploy — the rest of the slice (atomic, backbone,
-// canvas) is more important than the cosmetic step of attaching a
-// hostname.
+// applyDomains attaches every host the Driftfile declares, reading
+// the live set to skip the ones already there. The function is
+// best-effort: failures are surfaced but don't abort the deploy —
+// the rest of the slice (atomic, backbone, canvas) is more important
+// than the cosmetic step of attaching a hostname.
 func applyDomains(m *Manifest) error {
 	declared := map[string]Manifest{}
 	for _, d := range m.Slice().Entries("host", "domains") {
@@ -49,7 +49,6 @@ func applyDomains(m *Manifest) error {
 	}
 
 	added := 0
-	removed := 0
 
 	for host := range declared {
 		if _, ok := liveByHost[host]; ok {
@@ -64,19 +63,7 @@ func applyDomains(m *Manifest) error {
 			common.Check(), host, host)
 	}
 
-	for host := range liveByHost {
-		if _, ok := declared[host]; ok {
-			continue
-		}
-		if err := removeDomain(host); err != nil {
-			fmt.Printf("  %s remove domain %s: %v\n", common.Hint("·"), host, err)
-			continue
-		}
-		removed++
-		fmt.Printf("  %s domain removed: %s\n", common.Check(), host)
-	}
-
-	if added == 0 && removed == 0 && len(declared) > 0 {
+	if added == 0 && len(declared) > 0 {
 		fmt.Printf("  %s domains in sync (%d declared)\n", common.Hint("·"), len(declared))
 	}
 	return nil
@@ -109,20 +96,6 @@ func addDomain(host string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		_, e := common.CheckResponse(resp, "add domain")
-		return e
-	}
-	return nil
-}
-
-func removeDomain(host string) error {
-	resp, err := common.DoRequest(http.MethodDelete,
-		common.APIBaseURL+"/ops/slice/domain?host="+url.QueryEscape(host), nil)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		_, e := common.CheckResponse(resp, "remove domain")
 		return e
 	}
 	return nil

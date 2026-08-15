@@ -4,9 +4,11 @@
 // to be `CREATE … IF NOT EXISTS`, seeds are only applied when the
 // database has no user tables yet (the slice handles this).
 //
-// Removal: a database that's live on the slice but not in the
-// Driftfile is dropped. The same shape as `applyDomains` /
-// `applyAlerts` so the deploy chain reads consistently.
+// A manifest names a database because it has a schema or a seed for
+// it, not because it is the slice's whole inventory. A database the
+// document does not mention is left alone — dropping one closes its
+// connection and removes the .db, -wal and -shm files, so it has to
+// be a deliberate act and never the consequence of an omission.
 package project
 
 import (
@@ -20,21 +22,7 @@ import (
 	"github.com/ondrift/cloud/cli/common"
 )
 
-type liveSQL struct {
-	Name      string `json:"name"`
-	SizeBytes int64  `json:"size_bytes"`
-}
-
 func applySQL(m *Manifest) error {
-	if len(m.Slice().Entries("name", "backbone", "sql")) == 0 {
-		return nil
-	}
-
-	live, err := fetchLiveSQL()
-	if err != nil {
-		fmt.Printf("  %s sql reconcile skipped: %v\n", common.Hint("·"), err)
-		return nil
-	}
 	declared := map[string]Node{}
 	for _, e := range m.Slice().Entries("name", "backbone", "sql") {
 		name := strings.ToLower(strings.TrimSpace(e.Str("name")))
@@ -63,36 +51,7 @@ func applySQL(m *Manifest) error {
 				common.Check(), name, entry.Str("seed"))
 		}
 	}
-
-	for _, l := range live {
-		if _, keep := declared[l.Name]; keep {
-			continue
-		}
-		if err := dropSQL(l.Name); err != nil {
-			fmt.Printf("  %s sql drop %s: %v\n", common.Hint("·"), l.Name, err)
-			continue
-		}
-		fmt.Printf("  %s sql database removed: %s\n", common.Check(), l.Name)
-	}
 	return nil
-}
-
-func fetchLiveSQL() ([]liveSQL, error) {
-	resp, err := common.DoRequest(http.MethodGet,
-		common.APIBaseURL+"/ops/backbone/sql/admin/list", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := common.CheckResponse(resp, "list sql")
-	if err != nil {
-		return nil, err
-	}
-	var out []liveSQL
-	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func uploadSchema(baseDir, name, schemaPath string) error {
@@ -144,22 +103,6 @@ func uploadSeed(baseDir, name, seedPath string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		_, e := common.CheckResponse(resp, "load seed")
-		return e
-	}
-	return nil
-}
-
-func dropSQL(name string) error {
-	body, _ := json.Marshal(map[string]string{"db": name})
-	resp, err := common.DoJSONRequest(http.MethodPost,
-		common.APIBaseURL+"/ops/backbone/sql/admin/drop",
-		strings.NewReader(string(body)))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		_, e := common.CheckResponse(resp, "drop sql")
 		return e
 	}
 	return nil

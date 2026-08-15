@@ -160,3 +160,36 @@ func TestRenderLineItems_FiltersZeroCostRows(t *testing.T) {
 		t.Fatalf("expected zero-cost item to be filtered out, got: %q", out)
 	}
 }
+
+// A field the platform does not carry cannot be a reason to resize. The api
+// decodes a resize body into its own typed struct and drops what it has never
+// heard of, so a live config always reads back zero for a blob object count —
+// and a manifest that declares one therefore compared as a grow on EVERY
+// apply, prompted for cost, and fired a full slice resize that changed nothing.
+func TestDiff_ABlobCountThePlatformDoesNotCarryIsNotAGrow(t *testing.T) {
+	live := SliceConfig{
+		Atomic: AtomicLimits{
+			MaxNumberOfFunctions: 1,
+			Functions:            []AtomicFunction{{Name: "get:ping", MemoryBytes: 8 * 1024 * 1024}},
+		},
+		Backbone: BackboneLimits{Blobs: BackboneBlobsLimits{Buckets: map[string]int{"receipts": 5 * 1024 * 1024}}},
+	}
+
+	slice := Node{
+		"name":   "myapp",
+		"atomic": map[string]any{"functions": []any{map[string]any{"name": "get:ping", "handler": "GetPing", "memory": "8MB"}}},
+		"backbone": map[string]any{
+			"blob_max_count": 1000000,
+			"blobs":          []any{map[string]any{"name": "receipts", "size": "5MB"}},
+		},
+	}
+	wanted, err := ManifestToSliceConfig(manifestFrom(slice))
+	if err != nil {
+		t.Fatalf("translating the manifest: %v", err)
+	}
+
+	d := Diff("myapp", wanted, &live, "", 0, 0)
+	if d.Verdict != VerdictMatch {
+		t.Fatalf("verdict = %s, want match — a key the platform dropped must not classify as a grow (grows: %+v)", d.Verdict, d.Grows)
+	}
+}

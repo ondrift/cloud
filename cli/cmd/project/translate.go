@@ -100,10 +100,11 @@ type BackboneSecretsLimits struct {
 }
 
 type BackboneBlobsLimits struct {
-	MaxCount           int
 	MaxSizeInBytesEach int
 	// Buckets carries each declared bucket's own storage quota, keyed by
-	// bucket name — the billing/enforcement driver.
+	// bucket name — the billing/enforcement driver. Bytes are what is billed,
+	// so there is no object COUNT beside it: the platform's model carries none,
+	// and a field only this side holds is one the api decodes away.
 	Buckets map[string]int
 }
 
@@ -268,9 +269,6 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 			}
 			cfg.Backbone.Blobs.Buckets[bk.Str("name")] = bytes
 		}
-	}
-	if v := m.Slice().Int("backbone", "blob_max_count"); v > 0 {
-		cfg.Backbone.Blobs.MaxCount = v
 	}
 	if v := m.Slice().Int("backbone", "queue_max_depth"); v > 0 {
 		cfg.Backbone.Queues.MaxDepthEach = v

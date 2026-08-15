@@ -1,16 +1,17 @@
 // alerts.go — Driftfile reconcile of per-function alerts. The
 // alert-spec name on the slice is `<function>-<index>` so multiple
-// alerts on the same function get stable names; reconcile is
-// idempotent (existing names are replaced wholesale; absent names
-// are removed). v1: errors trigger only, webhook notify only —
-// matches the slice's per-user-alerting primitive.
+// alerts on the same function get stable names; applying is
+// idempotent, existing names being replaced wholesale. An alert the
+// manifest does not declare is left alone: a project declares the
+// alerts it wants, not the registry's whole contents, and several
+// projects can share one slice. v1: errors trigger only, webhook
+// notify only — matches the slice's per-user-alerting primitive.
 package project
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -31,9 +32,10 @@ type alertSpec struct {
 	NotifyTarget string `json:"notify_target"`
 }
 
-// applyAlerts reconciles `slice.atomic.functions[].alerts[]` against
-// the live alert registry. Best-effort: per-alert failures are
-// surfaced but don't abort the deploy.
+// applyAlerts writes every alert `slice.atomic.functions[].alerts[]`
+// declares, and reads the live registry only to report which of them
+// are new. Best-effort: per-alert failures are surfaced but don't
+// abort the deploy.
 func applyAlerts(m *Manifest) error {
 	declared := map[string]alertSpec{}
 	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
@@ -58,7 +60,7 @@ func applyAlerts(m *Manifest) error {
 		liveByName[a.Name] = a
 	}
 
-	added, removed := 0, 0
+	added := 0
 
 	// POST replaces an existing spec by name → safe to send
 	// every declared alert unconditionally. Lets us update
@@ -76,19 +78,7 @@ func applyAlerts(m *Manifest) error {
 		}
 	}
 
-	for name := range liveByName {
-		if _, ok := declared[name]; ok {
-			continue
-		}
-		if err := deleteAlert(name); err != nil {
-			fmt.Printf("  %s remove alert %s: %v\n", common.Hint("·"), name, err)
-			continue
-		}
-		removed++
-		fmt.Printf("  %s alert removed: %s\n", common.Check(), name)
-	}
-
-	if added == 0 && removed == 0 && len(declared) > 0 {
+	if added == 0 && len(declared) > 0 {
 		fmt.Printf("  %s alerts in sync (%d declared)\n", common.Hint("·"), len(declared))
 	}
 	return nil
@@ -152,20 +142,6 @@ func putAlert(spec alertSpec) error {
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		_, e := common.CheckResponse(resp, "add alert")
-		return e
-	}
-	return nil
-}
-
-func deleteAlert(name string) error {
-	resp, err := common.DoRequest(http.MethodDelete,
-		common.APIBaseURL+"/ops/atomic/alert?name="+url.QueryEscape(name), nil)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		_, e := common.CheckResponse(resp, "remove alert")
 		return e
 	}
 	return nil
