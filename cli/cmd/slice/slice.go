@@ -13,6 +13,7 @@ func GetCmd() *cobra.Command {
 	cmd.AddCommand(
 		getCreateCmd(),
 		getResizeCmd(),
+		getShrinkCmd(),
 		getListCmd(),
 		getUseCmd(),
 		getDeleteCmd(),

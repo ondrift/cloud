@@ -9,6 +9,11 @@ import (
 )
 
 func TestAPIError_StatusMessages(t *testing.T) {
+	// The 5xx rows consult component health, so without a stub this table would
+	// reach the real status page — slow, and dependent on the platform being up
+	// to assert wording that has nothing to do with it.
+	withStatusFeed(t, 200, feedOK)
+
 	tests := []struct {
 		name   string
 		err    APIError
