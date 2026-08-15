@@ -246,9 +246,13 @@ func TestLint_SkipsTheHandlerCheckWithNoSourceTree(t *testing.T) {
 	}
 }
 
+// 16MB, not 8: the fixture's source is Go, and a compiled function books at
+// least the compiled floor the schema publishes. At 8MB these tests would be
+// asserting a lint result on a Driftfile the platform refuses, which is the
+// opposite of what they exist to pin.
 func lintDriftfile(handler string) string {
 	return "name: lintdemo\natomic:\n  functions:\n    - name: get:ping\n      handler: " +
-		handler + "\n      memory: 8MB\n"
+		handler + "\n      memory: 16MB\n"
 }
 
 // lintFixture writes a one-function project whose source declares GetPing, and
