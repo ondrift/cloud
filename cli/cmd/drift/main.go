@@ -58,8 +58,21 @@ func resolveVersion() string {
 func main() {
 	// Resolved once, so `--version`, the dashboard header and `drift upgrade`
 	// cannot disagree about which binary this is.
-	shownVersion := resolveVersion()
+	rootCmd := newRootCmd(resolveVersion())
 
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// newRootCmd assembles the whole command tree.
+//
+// Extracted from main so a test can hold the tree and ask questions of it —
+// specifically, whether every remedy the error registry suggests resolves to a
+// command that exists. A remedy naming a command nobody implemented is worse
+// than none: it sends a stuck user somewhere that fails again.
+func newRootCmd(shownVersion string) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:     "drift",
 		Short:   "Drift is a minimalist cloud hosting service.",
@@ -155,8 +168,5 @@ func main() {
 		portal.GetCmd(version),
 	)
 
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	return rootCmd
 }

@@ -4,57 +4,68 @@
     {
       "code": "DRIFT-1001",
       "meaning": "Your session has expired, so the platform refused the request.",
-      "remedy": "Run `drift account login` and try again. Sessions are 12 hours; this is the ordinary way one ends."
+      "remedy": "Run `drift account login` and try again. Sessions are 12 hours; this is the ordinary way one ends.",
+      "command": "drift account login"
     },
     {
       "code": "DRIFT-1002",
       "meaning": "The platform accepted your identity but refused the action.",
-      "remedy": "The account is authenticated and lacks the scope for this operation. If it is your own slice, check you are on the right account with `drift account whoami`."
+      "remedy": "The account is authenticated and lacks the permission for this operation. If it is meant to be your own slice, you may be on a different account than you think — `drift slice list` shows what this one actually has.",
+      "command": "drift slice list"
     },
     {
       "code": "DRIFT-1003",
       "meaning": "The thing you named does not exist on the platform.",
-      "remedy": "Check the spelling, and that your active slice is the one you mean — `drift slice list` shows what the account actually has."
+      "remedy": "Check the spelling, and that your active slice is the one you mean — `drift slice list` shows what the account actually has.",
+      "command": "drift slice list"
     },
     {
       "code": "DRIFT-1004",
       "meaning": "You have hit a quota on your plan.",
-      "remedy": "The message names which one. Free a slot by deleting something you no longer need, or resize the slice with `drift slice resize --from Driftfile`."
+      "remedy": "The message names which one. Free a slot by deleting something you no longer need, or resize the slice with `drift slice resize --from Driftfile`.",
+      "command": "drift slice resize"
     },
     {
       "code": "DRIFT-1005",
       "meaning": "The platform failed while handling the request. This one is ours, not yours.",
-      "remedy": "Nothing you changed caused it. Retry once; if it persists, the failure is on the platform side and status.ondrift.eu carries the per-component picture."
+      "remedy": "Nothing you changed caused it. Retry once; if it persists, the failure is on the platform side and status.ondrift.eu carries the per-component picture.",
+      "command": ""
     },
     {
       "code": "DRIFT-1006",
       "meaning": "The CLI could not reach the Drift API at all.",
-      "remedy": "No response came back, so this is the network between you and the platform, or the platform being down. Check your connection first, then status.ondrift.eu."
+      "remedy": "No response came back, so this is the network between you and the platform, or the platform being down. Check your connection first, then status.ondrift.eu.",
+      "command": ""
     },
     {
       "code": "DRIFT-1007",
       "meaning": "The request to the platform timed out.",
-      "remedy": "The platform accepted the connection and did not answer in time. Retry; a deploy that timed out may still have landed, so check with `drift file simulate` before deploying again."
+      "remedy": "The platform accepted the connection and did not answer in time. Retry; a deploy that timed out may still have landed, so check with `drift file simulate` before deploying again.",
+      "command": "drift file simulate"
     },
     {
       "code": "DRIFT-1008",
       "meaning": "This machine has no copy of the Driftfile format, so a Driftfile cannot be validated.",
-      "remedy": "The platform defines the format and the CLI caches it on first contact. Run any online command once — `drift account login` or `drift slice list` — and it is cached permanently at ~/.drift/driftfile.schema.json."
+      "remedy": "The platform defines the format and the CLI caches it on first contact. Run any online command once — `drift account login` or `drift slice list` — and it is cached permanently at ~/.drift/driftfile.schema.json.",
+      "command": "drift slice list"
     },
     {
       "code": "DRIFT-1009",
       "meaning": "The Driftfile is not valid.",
-      "remedy": "The message names the field and what it expected. `drift file lint` reports every problem at once, offline, which is faster than fixing them one deploy at a time."
+      "remedy": "The message names the field and what it expected. `drift file lint` reports every problem at once, offline, which is faster than fixing them one deploy at a time.",
+      "command": "drift file lint"
     },
     {
       "code": "DRIFT-1010",
       "meaning": "A compiled function booked less memory than its language runtime needs.",
-      "remedy": "Go and Rust carry a private runtime inside every invocation, so they floor at 16MB where the interpreted languages floor at 8MB. Raise the booking, or run `drift file benchmark` against a deployed slice to size it from what it actually holds."
+      "remedy": "Go and Rust carry a private runtime inside every invocation, so they floor at 16MB where the interpreted languages floor at 8MB. Raise the booking, or run `drift file benchmark` against a deployed slice to size it from what it actually holds.",
+      "command": "drift file benchmark"
     },
     {
       "code": "DRIFT-1011",
       "meaning": "You are not logged in, so the CLI has no credential to send.",
-      "remedy": "Run `drift account login`, or `drift account signup` if you do not have an account yet. This is different from an expired session (DRIFT-1001): there is no session on this machine at all."
+      "remedy": "Run `drift account login`, or `drift account signup` if you do not have an account yet. This is different from an expired session (DRIFT-1001): there is no session on this machine at all.",
+      "command": "drift account login"
     }
   ]
 }
