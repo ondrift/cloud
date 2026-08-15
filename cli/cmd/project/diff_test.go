@@ -29,7 +29,7 @@ func TestDiff_OmittedEnvelopeKnobsDoNotShrink(t *testing.T) {
 			MaxNumberOfHoursForLogRetention: 24,
 		},
 		Backbone: BackboneLimits{
-			NoSQL: BackboneNoSQLLimits{MaxCollections: 2, Collections: map[string]int{"a": 5 * 1024 * 1024, "b": 5 * 1024 * 1024}},
+			NoSQL: BackboneNoSQLLimits{Collections: map[string]int{"a": 5 * 1024 * 1024, "b": 5 * 1024 * 1024}},
 		},
 	}
 
@@ -43,7 +43,7 @@ func TestDiff_OmittedEnvelopeKnobsDoNotShrink(t *testing.T) {
 			// MaxNumberOfRequestsPerMinute, MaxNumberOfHoursForLogRetention: omitted (0)
 		},
 		Backbone: BackboneLimits{
-			NoSQL: BackboneNoSQLLimits{MaxCollections: 2, Collections: map[string]int{"a": 5 * 1024 * 1024, "b": 5 * 1024 * 1024}},
+			NoSQL: BackboneNoSQLLimits{Collections: map[string]int{"a": 5 * 1024 * 1024, "b": 5 * 1024 * 1024}},
 		},
 	}
 
