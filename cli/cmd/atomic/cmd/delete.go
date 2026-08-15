@@ -18,7 +18,14 @@ func Delete() *cobra.Command {
 		Example: "  drift atomic delete send-email\n  drift atomic delete users --method get",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		// SilenceUsage: a refused delete is the platform answering, not the command
+		// being held wrong, and printing the usage block after it buries the reason.
+		SilenceUsage: true,
+		// RunE, and the error is RETURNED rather than printed: main() renders it to
+		// stderr and exits non-zero. Under Run the command could only print and fall
+		// off the end, so a delete the platform refused still exited 0 — which a CI
+		// gate reads as "the function is gone" and a shell `&&` chain carries on from.
+		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
 			target := common.APIBaseURL + "/ops/atomic/delete?name=" + url.QueryEscape(name)
@@ -27,17 +34,16 @@ func Delete() *cobra.Command {
 			}
 			resp, err := common.DoRequest(http.MethodDelete, target, nil)
 			if err != nil {
-				fmt.Println(common.TransportError("delete atomic function", err))
-				return
+				return common.TransportError("delete atomic function", err)
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "delete atomic function"); err != nil {
-				fmt.Println(err)
-				return
+				return err
 			}
 
 			fmt.Printf("Function %q deleted.\n", name)
+			return nil
 		},
 	}
 	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path")
