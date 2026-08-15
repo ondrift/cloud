@@ -45,9 +45,18 @@ type ErrorCode struct {
 	Code string `json:"code"`
 	// Meaning is one line saying what happened, in the user's terms.
 	Meaning string `json:"meaning"`
-	// Remedy is what to do about it. Written for someone who is stuck, so it
-	// names the command rather than describing it.
+	// Remedy is the prose: what to do and why, for `doctor explain`.
 	Remedy string `json:"remedy"`
+	// Command is the fix, in at most THREE WORDS — "drift account login".
+	//
+	// Separate from Remedy because it is machine-checkable and the prose is not:
+	// a test asserts every one of these is three words or fewer AND resolves to a
+	// command that exists, which is the whole reason the rule survives contact.
+	//
+	// Empty is a real answer, and an important one: DRIFT-1005 and DRIFT-1006 are
+	// a platform fault and an unreachable network, where inventing a command for
+	// the user to run would send them somewhere that fails again.
+	Command string `json:"command"`
 	// Retired marks a code that is no longer produced. It stays in the registry
 	// so an old paste still resolves, and so the sequence stays dense.
 	Retired bool `json:"retired,omitempty"`

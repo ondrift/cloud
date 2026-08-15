@@ -59,6 +59,15 @@ func getExplainCmd() *cobra.Command {
 			for _, line := range wrap(entry.Remedy, 76) {
 				fmt.Printf("  %s\n", line)
 			}
+			// The fix, on its own line, in three words. Where there is none —
+			// a platform fault, an unreachable network — say so rather than
+			// inventing a command that would fail again.
+			fmt.Println()
+			if entry.Command != "" {
+				fmt.Printf("  %s  %s\n", common.Hint("fix:"), common.Highlight(entry.Command))
+			} else {
+				fmt.Printf("  %s\n", common.Hint("There is no command you can run for this one."))
+			}
 			if entry.Retired {
 				fmt.Printf("\n  %s\n", common.Hint("This code is retired — a current CLI no longer produces it."))
 			}
