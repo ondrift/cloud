@@ -20,7 +20,12 @@ func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request,
 func newAuthenticatedRequestCtx(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
 	token, _, err := GetTokenFromSession()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get token from session: %w", err)
+		// The first failure a new install hits, and it used to surface as the
+		// raw filesystem error — an absolute path to a session file the user has
+		// never heard of, for the condition "you have not logged in yet".
+		return nil, errors.New(withCode(
+			"you're not logged in. Run `drift account login` (or `drift account signup` if you don't have an account yet).",
+			"DRIFT-1011"))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
