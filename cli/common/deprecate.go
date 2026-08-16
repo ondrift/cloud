@@ -186,3 +186,81 @@ func AliasCommand(target *cobra.Command, oldName string, d Deprecation) *cobra.C
 		},
 	}
 }
+
+// ---------- key-level deprecations ----------
+//
+// A command is not the only user-facing name that gets retired. A Driftfile key
+// is one too, and JSON Schema draft-07 cannot express "deprecated but working":
+// with `additionalProperties: false` a key is legal or it is an error, so a key
+// removed from `properties` breaks every existing document on the next api
+// deploy, with no notice. The standing rule is deprecate, alias, then remove —
+// which means the key stays in the schema and the CLIENT says something about it.
+//
+// The data and the printing are the ones above: KeyDeprecation carries a
+// Deprecation, so the registry, the once-per-Old rule and the wording are shared
+// rather than reimplemented for documents.
+
+// KeyKind is what a retired key does now.
+type KeyKind int
+
+const (
+	// KeyAlias has a real target. The walker REWRITES the node so exactly one
+	// spelling reaches every downstream reader — which is what makes the old name
+	// a thin alias rather than a second implementation. No reader learns that two
+	// spellings ever existed.
+	KeyAlias KeyKind = iota
+	// KeyIgnored has no target. Every capacity key is one of these: the value
+	// moved to a different owner entirely, so there is nothing to rewrite it to.
+	// The walker warns and leaves the value alone; nothing downstream reads it and
+	// the schema still accepts it.
+	KeyIgnored
+)
+
+// KeyDeprecation is one retired Driftfile key.
+//
+// Path addresses the key in the document, with `[]` meaning "every element of
+// this list" — `atomic.functions[].memory`. Four of the five renames in the
+// shape split live inside lists, so addressing elements is not a nicety.
+//
+// The path is also the notice's identity: Warn keys on Deprecation.Old, so one
+// PATH yields one notice however many times it occurs. Prorata declares
+// `memory` nineteen times and hears about it once.
+type KeyDeprecation struct {
+	Path string
+	Kind KeyKind
+	Deprecation
+}
+
+// KeyDeprecationFor builds the entry, defaulting the notice's Old to the path so
+// the two cannot drift apart.
+func KeyDeprecationFor(path string, kind KeyKind, d Deprecation) KeyDeprecation {
+	if d.Old == "" {
+		d.Old = path
+	}
+	return KeyDeprecation{Path: path, Kind: kind, Deprecation: d}
+}
+
+// RedirectDeprecationWarnings sends notices somewhere a test can read, and
+// returns the function that puts them back.
+//
+// Exported because the walker that emits key-level notices lives in cmd/project,
+// which cannot reach the unexported writer. The writer exists for exactly this —
+// a notice is not output, so it must be assertable without capturing the
+// command's own stream.
+func RedirectDeprecationWarnings(w io.Writer) (restore func()) {
+	prev := deprecationWarnings
+	deprecationWarnings = w
+	return func() { deprecationWarnings = prev }
+}
+
+// ResetDeprecationState clears the once-per-name record and the registry.
+//
+// For tests only, and it exists because both are deliberately process-wide: the
+// once-rule is what stops a person seeing the same line twice in one run, and a
+// test asserting that rule has to be able to start from nothing.
+func ResetDeprecationState() {
+	warnedOnce = sync.Map{}
+	registryMu.Lock()
+	registry = nil
+	registryMu.Unlock()
+}
