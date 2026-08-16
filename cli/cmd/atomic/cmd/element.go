@@ -26,7 +26,7 @@ func elementList() *cobra.Command {
 		Example: "  drift atomic element list",
 		Args:    cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			deployed, err := fetchDeployedFunctions()
+			deployed, err := fetchSlots()
 			if err != nil {
 				fmt.Println(err)
 				return
