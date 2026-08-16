@@ -35,6 +35,15 @@ func newAuthenticatedRequestCtx(ctx context.Context, method, url string, body io
 
 	req.Header.Set("Authorization", "Bearer "+token)
 
+	// The Driftfile format this binary implements, on every authenticated
+	// request rather than only on the ones that carry a manifest.
+	//
+	// Here because this is the one place every authenticated request passes
+	// through, and because the value is a property of the BINARY, not of the
+	// call — deciding per-endpoint which requests deserve it is how a client
+	// ends up declaring itself on some paths and not others.
+	req.Header.Set(DriftfileFormatHeader, ImplementedDriftfileFormat)
+
 	if slice := GetActiveSlice(); slice != "" {
 		req.Header.Set("X-Slice", slice)
 	}

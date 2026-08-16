@@ -183,6 +183,20 @@ func driftfileVersionOf(raw []byte) string {
 // Bump it in the release that implements a format change.
 const ImplementedDriftfileFormat = "1.7.2"
 
+// DriftfileFormatHeader carries ImplementedDriftfileFormat on every
+// authenticated request.
+//
+// It is the only way the platform can tell one client from another: nothing
+// else the CLI sends names a version, and there is no User-Agent. A gate that
+// lives only in the client protects the people who have already upgraded, which
+// is the exact complement of the population at risk — a binary too old to read
+// the manifest it is applying will never run the new check. Only the server can
+// refuse that request, and this is what lets it.
+//
+// A request carrying no such header is therefore meaningful rather than merely
+// unlabelled: it is a client older than this change.
+const DriftfileFormatHeader = "X-Driftfile-Format"
+
 // DriftfileMajor returns the leading semver component, the only part that
 // decides whether a client can read a file at all.
 func DriftfileMajor(v string) int { return semverPart(v, 0) }
