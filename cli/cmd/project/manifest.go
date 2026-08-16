@@ -198,6 +198,15 @@ func ParseDriftfile(path string) (*Manifest, error) {
 		delete(m.slice, sibling)
 	}
 
+	// Retired keys, announced once each and rewritten where they have a target.
+	//
+	// Here, and not either side of here. AFTER validation, so the walker only
+	// ever sees a legal document. BEFORE checkLocalPaths, because that pass reads
+	// several of the very keys an alias rewrites and must see one spelling rather
+	// than two.
+	applyKeyDeprecations(m.doc, driftfileKeyDeprecations)
+	applyKeyDeprecations(m.slice, driftfileKeyDeprecations)
+
 	// The one class of check the schema CANNOT own: whether the paths a valid
 	// document names actually exist on THIS machine. A schema describes the
 	// document; only the laptop knows if `atomic/get-menu/` is there. This is not
