@@ -207,6 +207,15 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	applyKeyDeprecations(m.doc, driftfileKeyDeprecations)
 	applyKeyDeprecations(m.slice, driftfileKeyDeprecations)
 
+	// A function's identity, in whichever spelling it was written, resolved to
+	// the one string the platform books against.
+	//
+	// Beside the key walker rather than inside it: that pass RENAMES a key, and
+	// this is a SPLIT — `name` becomes `route` and `method`, and the composite
+	// has to be recomposed for every reader that already speaks it.
+	normaliseFunctionIdentities(m.doc)
+	normaliseFunctionIdentities(m.slice)
+
 	// The one class of check the schema CANNOT own: whether the paths a valid
 	// document names actually exist on THIS machine. A schema describes the
 	// document; only the laptop knows if `atomic/get-menu/` is there. This is not
