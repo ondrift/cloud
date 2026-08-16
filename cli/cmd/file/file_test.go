@@ -1,12 +1,15 @@
 package file
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/ondrift/cloud/cli/cmd/project"
+	"github.com/ondrift/cloud/cli/common"
 )
 
 // The scaffold tests below round-trip through the real parser, and the parser's
@@ -244,6 +247,135 @@ func TestLint_SkipsTheHandlerCheckWithNoSourceTree(t *testing.T) {
 	if err := getLintCmd().RunE(nil, []string{dir}); err != nil {
 		t.Fatalf("a Driftfile with no source beside it must still lint, got:\n%v", err)
 	}
+}
+
+// ─── lint: the format this binary implements vs the one it holds ────────────
+
+// The refusal rung, reached through the command rather than the grading
+// function, because the wiring is the half that can be absent: a gate nobody
+// calls grades nothing.
+//
+// The exit is what a CI job reads, so it is asserted as an error and not as a
+// message on a run that still succeeded.
+func TestLint_RefusesAFormatThisBinaryCannotRead(t *testing.T) {
+	dir := lintFixture(t, "GetPing")
+	withCachedFormat(t, "99.0.0")
+
+	err := getLintCmd().RunE(nil, []string{dir})
+	if err == nil {
+		t.Fatal("a served major ahead of this binary must fail lint — every field error " +
+			"it could print instead would describe the symptom")
+	}
+	for _, want := range []string{"99.0.0", common.ImplementedDriftfileFormat, "drift upgrade"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal should mention %q, got:\n%v", want, err)
+		}
+	}
+}
+
+// The warning rung: this binary is behind but can still read, so the file is
+// linted and the skew is said out loud. Exit zero, because the Driftfile is
+// valid and a CI gate must not fail on the platform having moved.
+func TestLint_WarnsButPassesWhenTheServedMinorIsAhead(t *testing.T) {
+	dir := lintFixture(t, "GetPing")
+	withCachedFormat(t, bumpMinor(common.ImplementedDriftfileFormat))
+
+	var notices bytes.Buffer
+	restore := redirectStderr(t, &notices)
+	err := getLintCmd().RunE(nil, []string{dir})
+	restore()
+
+	if err != nil {
+		t.Fatalf("a minor skew must not fail a valid Driftfile: %v", err)
+	}
+	if !strings.Contains(notices.String(), "drift upgrade") {
+		t.Errorf("the skew must be announced on stderr, got:\n%s", notices.String())
+	}
+}
+
+// The one-direction rule, at the command. A machine holding an OLDER format
+// than this binary implements is not a problem — this binary understands
+// everything that format can express — and saying anything would train people
+// to ignore the notice that matters.
+func TestLint_SaysNothingWhenThisBinaryIsAheadOfTheHeldFormat(t *testing.T) {
+	dir := lintFixture(t, "GetPing")
+	withCachedFormat(t, "1.0.0")
+
+	var notices bytes.Buffer
+	restore := redirectStderr(t, &notices)
+	err := getLintCmd().RunE(nil, []string{dir})
+	restore()
+
+	if err != nil {
+		t.Fatalf("an older held format must lint clean: %v", err)
+	}
+	if strings.Contains(notices.String(), "drift upgrade") {
+		t.Errorf("nothing should be said when this binary is ahead, got:\n%s", notices.String())
+	}
+}
+
+// withCachedFormat points this machine's schema cache at a temporary HOME whose
+// schema declares `version`.
+//
+// The document is permissive on purpose. Which schema the PARSE uses depends on
+// whether this package's compiled-schema memo is already warm, and these tests
+// are about the version comparison rather than about validation — so the
+// fixture Driftfile is one the real schema accepts too, and this copy accepts
+// anything, leaving both paths agreeing.
+func withCachedFormat(t *testing.T, version string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".drift"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := `{"$schema":"http://json-schema.org/draft-07/schema#","version":"` + version +
+		`","type":"object","additionalProperties":true}`
+	if err := os.WriteFile(filepath.Join(home, ".drift", "driftfile.schema.json"),
+		[]byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// redirectStderr captures what the command writes to os.Stderr. The notice goes
+// there rather than to the command's own writer, so reading it back means
+// replacing the file descriptor's destination for the duration of the call.
+func redirectStderr(t *testing.T, into *bytes.Buffer) (restore func()) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := os.Stderr
+	os.Stderr = w
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = into.ReadFrom(r)
+		close(done)
+	}()
+
+	return func() {
+		os.Stderr = prev
+		_ = w.Close()
+		<-done
+		_ = r.Close()
+	}
+}
+
+// bumpMinor derives a version one minor ahead, so these tests move with the
+// implemented constant instead of pinning a number that goes stale the first
+// time the format changes.
+func bumpMinor(v string) string {
+	parts := strings.SplitN(strings.TrimPrefix(v, "v"), ".", 3)
+	if len(parts) < 2 {
+		return v
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return v
+	}
+	return parts[0] + "." + strconv.Itoa(minor+1) + ".0"
 }
 
 // 16MB, not 8: the fixture's source is Go, and a compiled function books at
