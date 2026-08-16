@@ -14,11 +14,27 @@ import (
 	"github.com/ondrift/cloud/cli/common"
 )
 
+// seedSession gives the test a scratch HOME with a session in it.
+//
+// DoRequest attaches the token from ~/.drift/session.json and fails before the
+// request leaves if there is none — so without this a test borrows whatever
+// session the machine happens to have, passes on a developer's laptop, and every
+// tick fails at the transport in CI.
+func seedSession(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	if err := common.SaveSession("access-token", "refresh-token"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // pollAgainst points the CLI at a stub configurator and runs the redeem loop
 // with the wait removed, so a test measures what the loop DECIDES rather than
 // how long it sleeps.
 func pollAgainst(t *testing.T, h http.HandlerFunc) (json.RawMessage, error) {
 	t.Helper()
+	seedSession(t)
+
 	stub := httptest.NewServer(h)
 	t.Cleanup(stub.Close)
 
@@ -82,6 +98,7 @@ func TestAnExpiredSessionEndsThePollAtOnce(t *testing.T) {
 // the wall clock is gone. The server's expiry bounds the happy path; a run of
 // unanswered ticks bounds this one.
 func TestAnUnreachableConfiguratorGivesUp(t *testing.T) {
+	seedSession(t)
 	prevURL, prevInterval := common.ConfiguratorBaseURL, pollInterval
 	// A port nothing is listening on: every tick fails at the transport.
 	common.ConfiguratorBaseURL, pollInterval = "http://127.0.0.1:1", 0
