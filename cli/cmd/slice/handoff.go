@@ -1,24 +1,17 @@
-// Package lifecycle — browser handoff helpers for `drift slice resize`.
+// Package lifecycle — browser handoff helpers for `drift slice create` and
+// `drift slice resize`.
 //
-// The configurable-slices feature originally replaced the old "pick a tier"
-// CLI prompt with a browser form for both create and resize: the CLI mints a
-// session against the configurator service, opens the user's browser at a
-// single-use URL, and then polls a redeem endpoint until the session is
-// finalized. The CLI never sees the SliceConfig the user typed in — it only
-// sees the final Slice document the configurator forwarded to
-// api/ops/slice/{create,resize}.
+// Both default paths go through here: the CLI mints a session against the
+// configurator service, opens the user's browser at a single-use URL, and polls
+// a redeem endpoint until the session is finalized. The CLI never sees the
+// SliceConfig the user typed in — only the final Slice document the
+// configurator forwarded to api/ops/slice/{create,resize}.
 //
-// `drift slice create`'s default path no longer uses this — the configurator
-// service was retired in favor of the `drift` dashboard (cmd/portal), which
-// already has a full equivalent create-slice form; see cmd/slice/create.go's
-// openPortalCreate. Resize hasn't moved yet, so this file (and the
-// configurator handoff protocol it speaks) is still live for that one path.
-//
-// Resize also supports a --headless-equivalent: --from <Driftfile> (see
-// resize.go), which posts directly to the api gateway and is the only way to
-// drive a resize from a non-interactive shell (CI, tests, scripts that pipe
-// through ssh). It is intentionally less ergonomic than the browser flow —
-// the user has to hand-author the Driftfile's target shape.
+// Both also take a non-interactive route: --free on create, and --from
+// <Driftfile> on resize (see resize.go), which posts directly to the api
+// gateway and is the only way to drive a resize from a shell with no browser
+// (CI, tests, scripts piped through ssh). It is intentionally less ergonomic
+// than the browser flow — the user hand-authors the target shape.
 package slice
 
 import (
@@ -66,8 +59,11 @@ type redeemResponse struct {
 //  3. poll /ops/session/redeem until the session is non-pending
 //  4. return the final Slice document or an error
 //
-// On a non-pending session, redeem deletes the session server-side, so
-// the poll loop is exactly one round-trip past the user clicking "submit".
+// Redeem does NOT delete the session — the browser keeps polling slice status
+// after submit, and a session deleted on the CLI's read would 404 every one of
+// those. The session goes when its own expiry does, so reading a terminal status
+// twice is possible and harmless: the slice already exists and the second read
+// says the same thing.
 //
 // The op string is used for the lead-in on humane error messages
 // ("create slice", "resize slice").
@@ -110,19 +106,34 @@ func runBrowserHandoff(op, sliceName string, mode handoffMode, existing any) (js
 	return pollRedeem(op, hr.Token)
 }
 
-// pollRedeem hits /ops/session/redeem on a 2-second cadence until the
-// session moves out of "pending". The configurator's TTL is 10 minutes,
-// so we cap our own loop at 15 minutes (a comfortable margin past the
-// server-side expiry) and bail with a friendly timeout error if the user
-// walks away from the form.
+// pollInterval is the gap between redeem calls. A package-level seam so a test
+// measures what the loop decides rather than how long it sleeps.
 //
-// We poll every 2 seconds because the user has to read a form, fill it
-// in, and click submit — sub-second polling adds zero latency from the
-// user's perspective and only burns CPU cycles.
+// Two seconds because the user has to read a form, fill it in and click submit —
+// sub-second polling adds nothing they can perceive and only burns cycles.
+var pollInterval = 2 * time.Second
+
+// maxUnansweredPolls bounds the case the server cannot bound: a configurator
+// that is unreachable. Sixty consecutive failures is two minutes of no contact
+// at the normal cadence, which is far past a blip and well short of leaving a
+// terminal hanging.
+const maxUnansweredPolls = 60
+
+// pollRedeem hits /ops/session/redeem until the session stops being pending.
+//
+// THE SERVER DECIDES WHEN IT IS OVER. The loop carried its own 15-minute
+// deadline, guessed from a TTL the configurator fixed at mint — so a session
+// whose expiry moves outlives the poller, and the user loses a form they were
+// still filling in. The configurator answers 410 when a session has expired and
+// 404 when it is gone; either ends the loop through CheckResponse, and that is
+// the bound.
+//
+// The only thing left to bound here is a configurator that never answers at all,
+// which no server-side expiry can end.
 func pollRedeem(op, token string) (json.RawMessage, error) {
-	deadline := time.Now().Add(15 * time.Minute)
-	for time.Now().Before(deadline) {
-		time.Sleep(2 * time.Second)
+	unanswered := 0
+	for {
+		time.Sleep(pollInterval)
 
 		resp, err := common.DoRequest(
 			http.MethodGet,
@@ -130,11 +141,19 @@ func pollRedeem(op, token string) (json.RawMessage, error) {
 			nil,
 		)
 		if err != nil {
-			// A transient network blip while polling is not fatal.
-			// The configurator session is still alive on the server,
-			// so swallow the error and try again next tick.
+			// A transient blip is not the server ending the session, so it is
+			// retried — but a run of them means nothing is answering, and the
+			// session's own expiry can never arrive to stop us.
+			unanswered++
+			if unanswered >= maxUnansweredPolls {
+				return nil, fmt.Errorf(
+					"Couldn't %s: the configurator stopped answering (%d attempts). "+
+						"Your browser session may still complete — check with `drift slice list`.",
+					op, unanswered)
+			}
 			continue
 		}
+		unanswered = 0
 
 		body, checkErr := common.CheckResponse(resp, op)
 		resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
@@ -160,7 +179,6 @@ func pollRedeem(op, token string) (json.RawMessage, error) {
 			return nil, fmt.Errorf("Couldn't %s: unexpected session status %q", op, rr.Status)
 		}
 	}
-	return nil, fmt.Errorf("Couldn't %s: timed out waiting for the configurator (15 minutes). The browser session has been discarded.", op)
 }
 
 // sliceNameFrom reads the name out of the api's Slice document. The create
