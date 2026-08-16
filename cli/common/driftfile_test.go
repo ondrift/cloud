@@ -170,6 +170,40 @@ func TestReportSkew_WritesTheWarningAndReturnsTheRefusal(t *testing.T) {
 	})
 }
 
+// Every authenticated request declares the format this binary implements.
+//
+// The platform otherwise cannot tell an old client from a new one: nothing in
+// the CLI sends a version or a User-Agent, so a deploy from a binary too old to
+// read the manifest it is applying is indistinguishable from any other. A gate
+// shipped in the client protects only the people who already upgraded; the
+// population that needs protecting is the one running the old binary, and only
+// the server can refuse them.
+//
+// It carries ImplementedDriftfileFormat rather than the cached schema version.
+// The cache says what the PLATFORM last served — which the platform already
+// knows — while what it cannot know is which format this binary can read.
+func TestAuthenticatedRequestDeclaresTheImplementedFormat(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := SaveSession("tok", "ref"); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := NewAuthenticatedRequest("GET", "https://example.invalid/ops/whatever", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := req.Header.Get(DriftfileFormatHeader)
+	if got == "" {
+		t.Fatalf("%s is absent, so the platform cannot tell this client from one too old "+
+			"to read the manifest it is deploying", DriftfileFormatHeader)
+	}
+	if got != ImplementedDriftfileFormat {
+		t.Errorf("%s = %q, want %q — the header and the client-side gate must read one "+
+			"number, not two", DriftfileFormatHeader, got, ImplementedDriftfileFormat)
+	}
+}
+
 // withCachedSchemaVersion points this machine's schema cache at a temporary HOME
 // holding a document that declares `version`. Only the version is read on this
 // path, so the rest of the document is deliberately minimal.
