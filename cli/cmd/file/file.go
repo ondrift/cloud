@@ -133,6 +133,21 @@ func getLintCmd() *cobra.Command {
 			if !project.SchemaAvailable() {
 				return project.ErrNoSchema
 			}
+
+			// The format this binary implements against the one this machine
+			// holds, BEFORE the parse. A major skew makes every message the parse
+			// could print a description of the symptom — a list of keys the
+			// document is not allowed to carry — with nothing naming the cause.
+			//
+			// No network, which is the whole charter of this command: the
+			// comparison is against the cached copy, refreshed by whatever online
+			// command ran last. That is what a CI gate has to hand, and saying
+			// something about it beats the silence of validating against a format
+			// the platform has replaced.
+			if err := common.ReportDriftfileFormatSkew(os.Stderr); err != nil {
+				return err
+			}
+
 			m, perr := project.ParseDriftfile(path)
 			if perr != nil {
 				return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), perr)

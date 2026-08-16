@@ -77,16 +77,17 @@ func newRootCmd(shownVersion string) *cobra.Command {
 		Use:     "drift",
 		Short:   "Drift is a minimalist cloud hosting service.",
 		Version: shownVersion,
-		// Two numbers, because they move independently. The CLI version is
-		// this binary; the Driftfile version is the manifest format it
-		// implements, which the platform serves and can be ahead of. Reporting
-		// only the first makes "why won't my Driftfile deploy" unanswerable
-		// without guesswork.
+		// Three numbers, because they move independently. The CLI version is
+		// this binary. The format it IMPLEMENTS is compiled in. The format on
+		// this MACHINE is whatever the platform last served, which can be ahead
+		// of both. Printing only the binary's version makes "why won't my
+		// Driftfile deploy" unanswerable without guesswork, and printing only
+		// the machine's copy answers it with a number this code never claimed.
 		//
 		// Deliberately no network call: `--version` is what you run when
 		// something is already wrong, and it must answer instantly and offline.
-		// The comparison against what the platform serves happens where it is
-		// actionable — at deploy and lint.
+		// The comparison that acts on the difference happens where it is
+		// actionable — when a Driftfile is linted or applied.
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
@@ -101,7 +102,8 @@ func newRootCmd(shownVersion string) *cobra.Command {
 	}
 
 	rootCmd.SetVersionTemplate(fmt.Sprintf(
-		"drift %s\ndriftfile schema %s\n", shownVersion, common.DriftfileSchemaVersionOrNone()))
+		"drift %s\ndriftfile format implemented: %s\ndriftfile format on this machine: %s\n",
+		shownVersion, common.ImplementedDriftfileFormat, common.DriftfileSchemaVersionOrNone()))
 
 	rootCmd.AddGroup(&cobra.Group{
 		ID:    "services",

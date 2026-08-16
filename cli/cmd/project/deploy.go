@@ -110,6 +110,25 @@ single slice otherwise.`,
 			}
 			vars.report()
 
+			// Bring this machine's copy of the format up to date BEFORE
+			// validating against it. The refresh otherwise rides the first api
+			// call, which on this path comes after the parse — so a run validates
+			// against the previous format, succeeds, overwrites the cache on its
+			// way out, and the next identical invocation fails with nothing to
+			// explain what moved.
+			//
+			// Best-effort and silent, as everywhere else it is called: offline
+			// costs freshness and nothing more.
+			common.RefreshDriftfileSchema()
+
+			// Ahead of the hooks, not merely ahead of the parse. A format this
+			// binary cannot read makes the whole run pointless, and the hooks are
+			// the user's own build — refusing after it has run wastes the
+			// expensive part to say something that was knowable first.
+			if err := common.ReportDriftfileFormatSkew(os.Stderr); err != nil {
+				return err
+			}
+
 			// pre_deploy hooks run BEFORE the full parse so a build can produce
 			// the artifacts (e.g. a canvas dist dir) the parse then validates.
 			// Skipped in --plan (a dry run never builds).

@@ -171,12 +171,98 @@ func driftfileVersionOf(raw []byte) string {
 	return doc.Version
 }
 
+// ImplementedDriftfileFormat is the format version this binary was built to
+// understand.
+//
+// It has to be written down here, because nothing else on the machine can say
+// it. The cached schema reports the format the PLATFORM last served, never the
+// one this code was written against, so without a second number there is
+// nothing to compare — and skew is then reachable only as a validation failure
+// that names the symptom instead of the cause.
+//
+// Bump it in the release that implements a format change.
+const ImplementedDriftfileFormat = "1.7.2"
+
 // DriftfileMajor returns the leading semver component, the only part that
 // decides whether a client can read a file at all.
-func DriftfileMajor(v string) int {
-	n, err := strconv.Atoi(strings.SplitN(strings.TrimPrefix(v, "v"), ".", 2)[0])
+func DriftfileMajor(v string) int { return semverPart(v, 0) }
+
+// driftfileMinor returns the second component. Inside one major it says only
+// that this binary is BEHIND, never that it cannot read.
+func driftfileMinor(v string) int { return semverPart(v, 1) }
+
+// semverPart returns one dotted component, or 0 when it is absent or not a
+// number.
+//
+// Unparseable grading as 0 is the safe direction and is deliberate: every
+// comparison below asks whether the SERVED version is ahead, and 0 is never
+// ahead. A version string this cannot read therefore says nothing, rather than
+// becoming the reason a working deploy is refused.
+func semverPart(v string, i int) int {
+	parts := strings.Split(strings.TrimPrefix(v, "v"), ".")
+	if i >= len(parts) {
+		return 0
+	}
+	n, err := strconv.Atoi(parts[i])
 	if err != nil {
 		return 0
 	}
 	return n
+}
+
+// ReportDriftfileFormatSkew compares the format this binary implements against
+// the one this machine holds, writes the warning if there is one, and returns
+// an error when the two are too far apart for the parse below to mean anything.
+//
+// The one call a command makes before it parses a Driftfile.
+func ReportDriftfileFormatSkew(w io.Writer) error {
+	warning, err := driftfileFormatSkew(ImplementedDriftfileFormat, DriftfileSchemaVersion())
+	if err != nil {
+		return err
+	}
+	if warning != "" {
+		fmt.Fprintln(w, warning)
+	}
+	return nil
+}
+
+// driftfileFormatSkew grades one pair of versions.
+//
+// Two rungs, because there are two different situations and one rung can only
+// ever serve one of them:
+//
+//   - the served MAJOR is ahead — keys have been renamed, retyped or removed, so
+//     this binary would misread a file written for that format. It refuses, and
+//     every error the parse could have printed would have described the symptom.
+//   - the served MINOR is ahead inside the same major — this binary is behind but
+//     can still parse, so it says so and carries on.
+//
+// Both are one-directional. A client AHEAD of the platform understands
+// everything the platform can express, and grounding it would refuse a working
+// client for no reason.
+//
+// A served version that does not parse grades as 0 and therefore says nothing.
+// A machine holding no schema, or a corrupted one, has a remedy of its own, and
+// meeting either with a version complaint sends the user to fix the wrong thing.
+func driftfileFormatSkew(implemented, served string) (string, error) {
+	servedMajor, implementedMajor := DriftfileMajor(served), DriftfileMajor(implemented)
+
+	if servedMajor > implementedMajor {
+		return "", fmt.Errorf(
+			"this platform speaks Driftfile format %s and this drift implements %s.\n"+
+				"A major version differs, which means keys have been renamed, retyped or removed, "+
+				"and this binary would misread a file written for it.\n"+
+				"Upgrade with `drift upgrade`.",
+			served, implemented)
+	}
+
+	if servedMajor == implementedMajor && driftfileMinor(served) > driftfileMinor(implemented) {
+		return fmt.Sprintf(
+			"This drift implements Driftfile format %s and the platform serves %s.\n"+
+				"If a file that should be valid is refused below, that skew is the likely cause — "+
+				"run `drift upgrade` before changing the Driftfile.",
+			implemented, served), nil
+	}
+
+	return "", nil
 }
