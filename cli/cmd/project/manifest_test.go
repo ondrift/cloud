@@ -50,9 +50,10 @@ func TestParseDriftfile_RestaurantTemplate(t *testing.T) {
 		}
 	}
 
-	// backbone.nosql — flat-list of strings
-	if len(m.Slice().Entries("name", "backbone", "nosql")) != 1 || m.Slice().Entries("name", "backbone", "nosql")[0].Str("name") != "reservations" {
-		t.Errorf("backbone.nosql = %+v, want one entry named reservations", m.Slice().Entries("name", "backbone", "nosql"))
+	// backbone.nosql — flat-list of strings, expanded to an entry and then
+	// normalised onto `slot`, which is what the deploy path reads.
+	if len(m.Slice().Entries("slot", "backbone", "nosql")) != 1 || m.Slice().Entries("slot", "backbone", "nosql")[0].Str("slot") != "reservations" {
+		t.Errorf("backbone.nosql = %+v, want one entry naming the slot reservations", m.Slice().Entries("slot", "backbone", "nosql"))
 	}
 
 	// backbone.queues — flat-list of strings
