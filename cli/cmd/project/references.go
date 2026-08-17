@@ -52,11 +52,11 @@ func CheckSliceReferences(m *Manifest, live *LiveSlice) error {
 	var missing []referenceMiss
 	missing = append(missing, missesIn("function", namedFunctions(m), declaredFunctions)...)
 	missing = append(missing, missesIn("nosql collection",
-		entryNames(m, "backbone", "nosql"), keySet(live.Config.Backbone.NoSQL.Collections))...)
+		entryNames(m, "slot", "backbone", "nosql"), keySet(live.Config.Backbone.NoSQL.Collections))...)
 	missing = append(missing, missesIn("blob bucket",
-		entryNames(m, "backbone", "blobs"), keySet(live.Config.Backbone.Blobs.Buckets))...)
+		entryNames(m, "name", "backbone", "blobs"), keySet(live.Config.Backbone.Blobs.Buckets))...)
 	missing = append(missing, missesIn("sql database",
-		entryNames(m, "backbone", "sql"), keySet(live.Config.Backbone.SQL.Databases))...)
+		entryNames(m, "name", "backbone", "sql"), keySet(live.Config.Backbone.SQL.Databases))...)
 
 	if len(missing) == 0 {
 		return nil
@@ -109,11 +109,14 @@ func namedFunctions(m *Manifest) []string {
 	return out
 }
 
-func entryNames(m *Manifest, path ...string) []string {
-	entries := m.Slice().Entries("name", path...)
+// entryNames collects one class's declared identifiers. The key is a parameter
+// because the classes do not share one: a NoSQL entry names the `slot` it seeds,
+// while a bucket and a database still carry `name`.
+func entryNames(m *Manifest, key string, path ...string) []string {
+	entries := m.Slice().Entries(key, path...)
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, strings.TrimSpace(e.Str("name")))
+		out = append(out, strings.TrimSpace(e.Str(key)))
 	}
 	return out
 }

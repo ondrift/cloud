@@ -689,24 +689,25 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 		fmt.Fprintln(out, line)
 	}
 
-	for _, c := range b.Entries("name", "nosql") {
-		label := fmt.Sprintf("NoSQL: %s", c.Str("name"))
+	for _, c := range b.Entries("slot", "nosql") {
+		collection := c.Str("slot")
+		label := fmt.Sprintf("NoSQL: %s", collection)
 		var ttlSecs int64
 		if c.Str("ttl") != "" {
 			var err error
 			ttlSecs, err = parseTTLSeconds(c.Str("ttl"))
 			if err != nil {
-				return fmt.Errorf("nosql %q ttl: %w", c.Str("name"), err)
+				return fmt.Errorf("nosql %q ttl: %w", collection, err)
 			}
 		}
-		if err := nosqlInit(c.Str("name"), ttlSecs); err != nil {
-			return fmt.Errorf("nosql init %q failed: %w", c.Str("name"), err)
+		if err := nosqlInit(collection, ttlSecs); err != nil {
+			return fmt.Errorf("nosql init %q failed: %w", collection, err)
 		}
 		seeded := 0
 		if c.Str("seed") != "" {
-			n, err := nosqlSeedJSONL(c.Str("name"), m.ResolvePath(c.Str("seed")), ttlSecs)
+			n, err := nosqlSeedJSONL(collection, m.ResolvePath(c.Str("seed")), ttlSecs)
 			if err != nil {
-				return fmt.Errorf("nosql seed %q failed: %w", c.Str("name"), err)
+				return fmt.Errorf("nosql seed %q failed: %w", collection, err)
 			}
 			seeded = n
 		}
@@ -786,23 +787,23 @@ type canvasSite struct {
 // because a mount path nobody can read is how every site on a project ends up
 // sharing one slug.
 func siteMount(s Node) (route, slug string, err error) {
-	key := ""
-	switch {
-	case s.Has("path"):
-		key = "path"
-	case s.Has("route"):
-		key = "route"
-	default:
+	// One spelling, because the key walker has already rewritten the retired
+	// `route` onto `path`. Reading both here would be a second implementation of
+	// that alias, and the two could disagree about which wins.
+	//
+	// An entry with NO mount key at all is the root, and that is the common case:
+	// `canvas: ["./site"]` is a bare string, which carries no keys to read.
+	if !s.Has("path") {
 		return "/", "default", nil
 	}
 
-	route, err = common.CanonicalRoute(s.Str(key))
+	route, err = common.CanonicalRoute(s.Str("path"))
 	if err != nil {
-		return "", "", fmt.Errorf("canvas site %q: %s: %w", s.Str("dir"), key, err)
+		return "", "", fmt.Errorf("canvas site %q: path: %w", s.Str("dir"), err)
 	}
 	slug, err = common.SlugifyRoute(route)
 	if err != nil {
-		return "", "", fmt.Errorf("canvas site %q: %s: %w", s.Str("dir"), key, err)
+		return "", "", fmt.Errorf("canvas site %q: path: %w", s.Str("dir"), err)
 	}
 	return route, slug, nil
 }
