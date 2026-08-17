@@ -107,21 +107,12 @@ func TestDeclaredSchedules_KeyedByFunctionName(t *testing.T) {
 	}
 }
 
-// The envelope the slice is actually sized with.
-func TestManifestToSliceConfig_SizesTheScheduledJobEnvelope(t *testing.T) {
-	m := projectWith(t, []Node{
-		{"name": "get:a", "handler": "GetA", "memory": "32MB"},
-		{"name": "post:nightly", "handler": "Nightly", "memory": "128MB", "cron": "0 2 * * *"},
-	})
-
-	cfg, err := ManifestToSliceConfig(m)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cfg.Atomic.MaxNumberOfScheduledJobs != 1 {
-		t.Errorf("the declared schedule must reach the envelope — at 0 the operator enforces nothing, got %d", cfg.Atomic.MaxNumberOfScheduledJobs)
-	}
-	if cfg.Atomic.MaxNumberOfFunctions != 2 {
-		t.Errorf("both declared functions must be in the envelope, got %d", cfg.Atomic.MaxNumberOfFunctions)
-	}
-}
+// The envelope a schedule is sized against belongs to the CONFIGURATOR now.
+//
+// This used to assert that a declared `cron` reached
+// `MaxNumberOfScheduledJobs`, via a translation from the manifest into a slice
+// shape. That translation is gone: the Driftfile no longer declares how many
+// scheduled jobs a slice may run, so there is nothing here to size and nothing
+// on this side to assert. What the Driftfile still owns — that a declared cron
+// reaches the slice keyed by the function it belongs to — is covered by the
+// tests above.

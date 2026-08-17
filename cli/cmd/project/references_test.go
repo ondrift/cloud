@@ -36,6 +36,16 @@ func liveWith(functions []string, collections, buckets, databases []string) *Liv
 	return l
 }
 
+// manifestFrom builds a Manifest directly from a document, for tests that want a
+// shape without writing a Driftfile to disk. There is no struct to populate —
+// the document IS the manifest.
+//
+// A document built this way never passes through the key walker, so it has to be
+// written in the spelling its READER reads.
+func manifestFrom(slice Node) *Manifest {
+	return &Manifest{doc: slice, slice: slice}
+}
+
 func manifestNaming(functions []string, collections, buckets, databases []string) *Manifest {
 	fns := make([]any, 0, len(functions))
 	for _, f := range functions {

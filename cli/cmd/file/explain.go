@@ -73,7 +73,6 @@ func printResolved(m *project.Manifest, env string) {
 	rows := [][2]string{
 		{"log retention", s.Str("log_retention")},
 		{"backup retention", s.Str("backup_retention")},
-		{"function memory", s.Str("atomic", "function_memory")},
 		{"function timeout", s.Str("atomic", "function_timeout")},
 		{"rate limit", s.Str("atomic", "rate_limit")},
 	}

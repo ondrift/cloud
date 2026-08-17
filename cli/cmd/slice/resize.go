@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
 
-	project "github.com/ondrift/cloud/cli/cmd/project"
 	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
@@ -143,134 +141,6 @@ func getShrinkCmd() *cobra.Command {
 		RemoveAfter: removeAfterShapeIsConfiguratorOwned,
 		Because:     "A reduction is chosen and confirmed in the configurator, which owns a slice's shape — so there is no longer a destructive spelling of resize for this to be.",
 	})
-}
-
-// resizeFromDriftfile has NO CALLERS. Both `--from` and `shrink` hand off to
-// the configurator, which owns the shape this reads out of a manifest. It
-// survives only until the card that deletes that translation, and nothing
-// should start calling it again.
-//
-// What it did: applied a Driftfile's declared shape to a live slice, including
-// shrinks when --allow-destructive was set.
-//
-// The destructive flag is checked at the CLI level rather than the
-// manifest level on purpose: a teammate reading a Driftfile cannot
-// see "this run will shrink production." Forcing the flag at the
-// command line means destructive intent is unambiguous on the
-// terminal that ran it, and CI cannot accidentally shrink without
-// it being visible in the workflow file.
-func resizeFromDriftfile(path string, allowDestructive, autoYes bool, billingMonths int) error {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("resolve %s: %w", path, err)
-	}
-
-	m, err := project.ParseDriftfile(abs)
-	if err != nil {
-		return err
-	}
-
-	manifestCfg, err := project.ManifestToSliceConfig(m)
-	if err != nil {
-		return err
-	}
-	wantedCost, wantedItems, err := project.PriceConfig(manifestCfg)
-	if err != nil {
-		return fmt.Errorf("price target config: %w", err)
-	}
-
-	live, err := project.FetchLiveSlice(m.Name())
-	if err != nil {
-		return fmt.Errorf("fetch slice: %w", err)
-	}
-	if live == nil {
-		return fmt.Errorf("slice %q does not exist; create it first with `drift file apply`", m.Name())
-	}
-
-	d := project.Diff(m.Name(), manifestCfg, &live.Config, live.Tier, live.MonthlyCostCents, wantedCost)
-	d.WantedItems = wantedItems
-
-	switch d.Verdict {
-	case project.VerdictMatch:
-		fmt.Printf("Slice %q already matches the Driftfile. Nothing to do.\n", m.Name())
-		return nil
-
-	case project.VerdictGrow:
-		// Pure grow — same as `project deploy` would do.
-		fmt.Println()
-		fmt.Println(project.RenderDiff(d))
-		if !confirmYesNo(autoYes, "Apply?") {
-			return fmt.Errorf("aborted by user")
-		}
-		return project.ResizeSlice(m.Name(), manifestCfg, billingMonths)
-
-	case project.VerdictAbort:
-		// VerdictAbort here means the manifest is *smaller* in some
-		// dimension. That's exactly what `slice resize` exists to
-		// handle — but ONLY with --allow-destructive.
-		if !allowDestructive {
-			fmt.Println()
-			fmt.Printf("✘ Refusing to shrink slice %q without --allow-destructive.\n\n", m.Name())
-			fmt.Printf("  The Driftfile declares smaller limits than the slice currently has:\n")
-			for _, s := range d.Shrinks {
-				fmt.Printf("    %s   %s → %s\n", s.Path,
-					formatDelta(s.Live, s),
-					formatDelta(s.Wanted, s))
-			}
-			fmt.Println()
-			fmt.Println("  Re-run with --allow-destructive if you intend to lower these limits.")
-			fmt.Println("  The platform-side resize endpoint will still refuse to shrink below")
-			fmt.Println("  current usage — your data isn't at risk, but quotas can drop.")
-			return fmt.Errorf("destructive shrink refused")
-		}
-
-		fmt.Println()
-		fmt.Printf("⚠ Shrinking slice %q (--allow-destructive set):\n\n", m.Name())
-		if len(d.Grows) > 0 {
-			fmt.Println("  Grows:")
-			for _, g := range d.Grows {
-				fmt.Printf("    %s   %s → %s\n", g.Path,
-					formatDelta(g.Live, g),
-					formatDelta(g.Wanted, g))
-			}
-			fmt.Println()
-		}
-		fmt.Println("  Shrinks:")
-		for _, s := range d.Shrinks {
-			fmt.Printf("    %s   %s → %s\n", s.Path,
-				formatDelta(s.Live, s),
-				formatDelta(s.Wanted, s))
-		}
-		fmt.Println()
-		fmt.Printf("  Cost: €%s/month (was €%s/month).\n",
-			centsToEuros(wantedCost), centsToEuros(live.MonthlyCostCents))
-
-		if !confirmYesNo(autoYes, "Apply destructive resize?") {
-			return fmt.Errorf("aborted by user")
-		}
-		return project.ResizeSlice(m.Name(), manifestCfg, billingMonths)
-	}
-
-	return fmt.Errorf("unexpected verdict: %s", d.Verdict)
-}
-
-// formatDelta renders a single FieldDelta value with the right unit.
-// Mirror of project.formatValue, exposed here for resize's UX.
-func formatDelta(n int, f project.FieldDelta) string {
-	if n == 0 {
-		return "0"
-	}
-	switch {
-	case f.IsBytes:
-		return fmt.Sprintf("%d bytes", n)
-	case f.IsTime:
-		return fmt.Sprintf("%ds", n)
-	case f.IsHours:
-		return fmt.Sprintf("%dh", n)
-	case f.IsDays:
-		return fmt.Sprintf("%dd", n)
-	}
-	return fmt.Sprintf("%d", n)
 }
 
 func centsToEuros(cents int) string {

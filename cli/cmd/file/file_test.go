@@ -54,10 +54,11 @@ func TestNew_ScaffoldPassesTheRealParser(t *testing.T) {
 	}
 }
 
-// function_memory is REQUIRED in practice — a Driftfile declaring a function
-// without it is rejected on create and resize, though the spec calls it optional.
-// The scaffold exists to close that gap, so its presence is asserted rather than
-// left to whoever next edits the template.
+// A function's `memory` is mandatory: it is that function's own admission pool
+// and what it is billed at, so there is no default to fall back to and a
+// Driftfile declaring a function without one is refused. The scaffold has to
+// carry it, so its presence is asserted rather than left to whoever next edits
+// the template.
 // Asserted through the PARSER, on the BASE slice, not by searching the text.
 // A string match for "memory: 32MB" passes on the staging override alone —
 // the scaffold writes it twice — so it would still be green with the base knob
@@ -110,7 +111,7 @@ func TestFmt_PreservesComments(t *testing.T) {
 name: demo
 # about atomic
 atomic:
-  function_memory: 128MB # inline note
+  function_timeout: 30s # inline note
 `)
 	out, err := formatDriftfile(src)
 	if err != nil {
@@ -129,7 +130,7 @@ func TestFmt_OrdersKeysCanonically(t *testing.T) {
 canvas: ./site
 atomic:
   functions: []
-  function_memory: 128MB
+  function_timeout: 30s
 name: demo
 `)
 	out, err := formatDriftfile(src)
@@ -140,7 +141,7 @@ name: demo
 	// Top level: name first, then the sections, then the deployment siblings.
 	assertOrder(t, got, "name:", "atomic:", "canvas:", "environments:")
 	// And one level down, so a section's diff is stable too.
-	assertOrder(t, got, "function_memory:", "functions:")
+	assertOrder(t, got, "function_timeout:", "functions:")
 }
 
 // A key this CLI has never heard of must survive formatting. Dropping it would
@@ -160,7 +161,7 @@ func TestFmt_KeepsUnknownKeys(t *testing.T) {
 // Formatting twice must equal formatting once, or `--write` in a pre-commit hook
 // produces a diff on every run.
 func TestFmt_IsIdempotent(t *testing.T) {
-	src := []byte("environments:\n  prod: {}\nname: demo\natomic:\n  functions: []\n  function_memory: 128MB\n")
+	src := []byte("environments:\n  prod: {}\nname: demo\natomic:\n  functions: []\n  function_timeout: 30s\n")
 	once, err := formatDriftfile(src)
 	if err != nil {
 		t.Fatal(err)

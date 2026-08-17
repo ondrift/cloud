@@ -40,11 +40,11 @@ func TestDeepMergeFixesTheStructMergerBugs(t *testing.T) {
 
 func TestDeepMergeSemantics(t *testing.T) {
 	t.Run("nested objects merge rather than replace", func(t *testing.T) {
-		base := Node{"atomic": Node{"function_memory": "64MB", "rate_limit": "100/min"}}
-		overlay := Node{"atomic": Node{"function_memory": "256MB"}}
+		base := Node{"atomic": Node{"function_timeout": "64MB", "rate_limit": "100/min"}}
+		overlay := Node{"atomic": Node{"function_timeout": "256MB"}}
 
 		got := DeepMerge(base, overlay)
-		if v := got.Str("atomic", "function_memory"); v != "256MB" {
+		if v := got.Str("atomic", "function_timeout"); v != "256MB" {
 			t.Errorf("overlay should win: %q", v)
 		}
 		if v := got.Str("atomic", "rate_limit"); v != "100/min" {
@@ -63,10 +63,10 @@ func TestDeepMergeSemantics(t *testing.T) {
 	})
 
 	t.Run("the base is not mutated", func(t *testing.T) {
-		base := Node{"atomic": Node{"function_memory": "64MB"}}
-		DeepMerge(base, Node{"atomic": Node{"function_memory": "256MB"}})
+		base := Node{"atomic": Node{"function_timeout": "64MB"}}
+		DeepMerge(base, Node{"atomic": Node{"function_timeout": "256MB"}})
 
-		if v := base.Str("atomic", "function_memory"); v != "64MB" {
+		if v := base.Str("atomic", "function_timeout"); v != "64MB" {
 			t.Errorf("merging must not write through to the base, got %q", v)
 		}
 	})
@@ -123,12 +123,12 @@ func TestNodeHas(t *testing.T) {
 func TestNodeSet(t *testing.T) {
 	n := Node{}
 	n.Set("prod-app", "name")
-	n.Set("256MB", "atomic", "function_memory")
+	n.Set("256MB", "atomic", "function_timeout")
 
 	if n.Str("name") != "prod-app" {
 		t.Error("Set at the root")
 	}
-	if n.Str("atomic", "function_memory") != "256MB" {
+	if n.Str("atomic", "function_timeout") != "256MB" {
 		t.Error("Set should create intermediate objects")
 	}
 }
