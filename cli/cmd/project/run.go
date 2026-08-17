@@ -165,24 +165,11 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 	if port == 0 {
 		port = pickPort(8002)
 	}
-	runArgs := []string{
-		"run", "-d", "--name", container,
-		"-p", fmt.Sprintf("127.0.0.1:%d:8002", port), // canvas only; :8000/:8001 stay internal
-		"-e", "DRIFT_STANDALONE_SAT=drift-run",
-	}
-	// Declared secrets ride in as DRIFT_SECRET_<NAME>; the slice seeds them
-	// into its AES-encrypted store at boot (standalone only) and the runner
-	// then injects each declared secret into its function. Values are already
-	// $ENVREF-resolved. Docker-native `-e SECRET=…` — no admin port exposed.
-	// (Visible to `docker inspect` on this host, the user's own machine; the
-	// SAT itself is never passed this way.)
-	for name, val := range m.Slice().Sub("backbone", "secrets") {
-		runArgs = append(runArgs, "-e", fmt.Sprintf("DRIFT_SECRET_%s=%s", name, val))
-	}
-	if persist {
-		runArgs = append(runArgs, "-v", container+"-data:/data")
-	}
-	runArgs = append(runArgs, image)
+	// The limits the real slice enforces, so what is refused there is refused
+	// here. Read before the container starts and forwarded unparsed; see
+	// quota.go for why the CLI does not build this document itself.
+	quotaJSON := localQuotaConfig(app, os.Stdout)
+	runArgs := localRunArgs(m, container, image, port, persist, quotaJSON)
 	if out, err := exec.Command("docker", runArgs...).CombinedOutput(); err != nil {
 		return "", "", "", fmt.Errorf("docker run failed: %s", string(out))
 	}
@@ -195,6 +182,43 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 			app, url, string(logs))
 	}
 	return app, container, url, nil
+}
+
+// localRunArgs builds the `docker run` argv for one local instance.
+//
+// Split out of startLocal so what the container is handed can be asserted
+// without a Docker daemon. An environment variable either reaches the container
+// or silently does not, and this list is the only place that difference is
+// visible before the process exists.
+func localRunArgs(m *Manifest, container, image string, port int, persist bool, quotaJSON string) []string {
+	args := []string{
+		"run", "-d", "--name", container,
+		"-p", fmt.Sprintf("127.0.0.1:%d:8002", port), // canvas only; :8000/:8001 stay internal
+		"-e", "DRIFT_STANDALONE_SAT=drift-run",
+	}
+
+	// Omitted rather than passed empty when there are no limits to hand over.
+	// The slice reads an empty value and a missing key identically, so this is
+	// for the reader of `docker inspect`: no variable says "nothing was known",
+	// where an empty one looks like a slice that declared nothing.
+	if quotaJSON != "" {
+		args = append(args, "-e", "DRIFT_QUOTA_CONFIG="+quotaJSON)
+	}
+
+	// Declared secrets ride in as DRIFT_SECRET_<NAME>; the slice seeds them
+	// into its AES-encrypted store at boot (standalone only) and the runner
+	// then injects each declared secret into its function. Values are already
+	// $ENVREF-resolved. Docker-native `-e SECRET=…` — no admin port exposed.
+	// (Visible to `docker inspect` on this host, the user's own machine; the
+	// SAT itself is never passed this way.)
+	for name, val := range m.Slice().Sub("backbone", "secrets") {
+		args = append(args, "-e", fmt.Sprintf("DRIFT_SECRET_%s=%s", name, val))
+	}
+
+	if persist {
+		args = append(args, "-v", container+"-data:/data")
+	}
+	return append(args, image)
 }
 
 func getStopCmd() *cobra.Command {
