@@ -68,9 +68,15 @@ func getCreateCmd() *cobra.Command {
 					return fmt.Errorf("cannot pass <name> when --from is set; the slice name comes from the Driftfile")
 				}
 				if free {
-					return fmt.Errorf("cannot combine --from with --free; the Driftfile's declared shape decides whether the slice is free")
+					return fmt.Errorf("cannot combine --from with --free; use --free alone, or --from to configure the slice in the browser")
 				}
-				return createFromDriftfile(fromPath, autoYes, billingMonths)
+				common.DeprecateFlag(cmd, "from", common.Deprecation{
+					Old:         "drift slice create --from",
+					New:         "drift slice create",
+					RemoveAfter: removeAfterShapeIsConfiguratorOwned,
+					Because:     "A Driftfile no longer declares a slice's shape, so there is nothing here to create one from. This opens the configurator on the slice the file names.",
+				})()
+				return handoffFromDriftfile("create slice", fromPath, modeCreate)
 			}
 
 			// Free tier: create directly, no configurator.
@@ -108,19 +114,13 @@ func getCreateCmd() *cobra.Command {
 	return cmd
 }
 
-// createFromDriftfile provisions a slice at the shape its Driftfile
-// declares. It is the create-time twin of `slice resize --from Driftfile`
-// and shares that command's whole pipeline — parse, translate, price,
-// classify — so the cost the user confirms here is computed by the same
-// server-side pricing call that `project deploy` would have used.
+// createFromDriftfile has NO CALLERS. `--from` hands off to the configurator.
 //
-// There is deliberately no shape decision of its own: the tier follows the
-// price — free when the manifest costs nothing, configured otherwise.
-//
-// This is the ONLY path that still builds a slice's shape from a manifest.
-// `drift file apply` no longer does: it refuses against a slice that does not
-// exist and names the configurator, because the configurator owns what a slice
-// IS and this file owns what runs on it.
+// It reads a slice's shape out of a manifest — parse, translate, price,
+// classify — which is the thing the configurator now owns and the Driftfile no
+// longer carries. It survives only until the card that deletes the shape
+// translation it depends on, and nothing should start calling it again: a
+// second writer of a slice's shape is exactly what that change removes.
 func createFromDriftfile(path string, autoYes bool, billingMonths int) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
