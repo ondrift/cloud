@@ -84,10 +84,10 @@ The numbers come from the deployed slice's own measurements of real traffic: it
 weighs every invocation and keeps the high-water mark per function. A function
 nobody has called yet says so, rather than reporting a confidently small number.
 
-With --write, each function's memory in the Driftfile is set to the
-recommendation. Comments, ordering and everything else in the file are left
-alone.`),
-		Example: "  drift file benchmark\n  drift file benchmark --write",
+A booking is chosen in the configurator, which owns a slice's shape — so the
+report tells you what to set there. --write still edits the Driftfile's memory
+keys, but the platform no longer reads them.`),
+		Example: "  drift file benchmark",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))
 			if err != nil {
@@ -106,6 +106,19 @@ alone.`),
 			}
 			renderSizing(cmd.OutOrStdout(), rows)
 			if write {
+				// Say what the write does NOW, before doing it. The key it edits
+				// is deprecated-and-ignored: the file ends up carrying the
+				// recommendation and the slice keeps whatever the configurator
+				// sold it. Reporting "wrote 19 bookings" without this reads as
+				// "the slice is now sized correctly", which is the one thing it
+				// does not mean.
+				common.DeprecateFlag(cmd, "write", common.Deprecation{
+					Old:         "drift file benchmark --write",
+					RemoveAfter: "every live slice's shape is configurator-owned",
+					Because: "A function's memory booking is a slice setting, chosen in the configurator — " +
+						"this writes the Driftfile's retired `memory` key, which the platform ignores, " +
+						"so the slice is NOT resized by it.",
+				})()
 				return writeBookings(cmd.OutOrStdout(), manifestPath, rows)
 			}
 			return nil
@@ -193,7 +206,8 @@ func renderSizing(w io.Writer, rows []sizingRow) {
 	fmt.Fprintln(w, "  exactly to what was observed is refused by the first heavier invocation.")
 	fmt.Fprintln(w, "  `calls` is how many invocations back the peak: a figure from three calls of")
 	fmt.Fprintln(w, "  one code path is not the claim one from thousands is.")
-	fmt.Fprintln(w, "  Apply these with --write.")
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  Set these where the booking lives: %s\n", common.ConfiguratorBaseURL)
 	fmt.Fprintln(w)
 }
 
