@@ -36,7 +36,7 @@ import (
 // `atomic.functions[].name` becomes a route and a method, so it is normalised in
 // functionidentity.go instead, and emits its notice through the same Deprecation
 // type so it still lists with these.
-var driftfileKeyDeprecations = []common.KeyDeprecation{
+var driftfileKeyDeprecations = append([]common.KeyDeprecation{
 	// The identity is a REFERENCE to a slice the configurator created, not a name
 	// this file mints. A straight rename, so the walker rewrites it and every
 	// reader downstream sees one spelling.
@@ -55,6 +55,62 @@ var driftfileKeyDeprecations = []common.KeyDeprecation{
 		Old: "canvas.sites[].route",
 		New: "canvas.sites[].path",
 	}),
+}, shapeKeys...)
+
+// shapeKeys are the capacity keys the configurator owns.
+//
+// Every one is IGNORED rather than aliased, because none has a target here: the
+// value did not move to another key in this file, it moved to a different owner
+// entirely. The walker warns and leaves the value where it is — nothing reads
+// it, the schema still accepts it, and removing it would change what
+// `drift file lint` is looking at.
+//
+// One notice per PATH, not per occurrence: `Warn` keys on `Old`, so prorata's
+// nineteen `memory` declarations produce one line.
+//
+// They stay in the schema. This is the TOLERATE step; removing them is a later
+// change, gated on no reachable Driftfile still writing the old shape — a
+// countable fact while the fleet is eight slices, not a judgement.
+var shapeKeys = []common.KeyDeprecation{
+	ignoredShapeKey("log_retention", "Log retention is a slice setting"),
+	ignoredShapeKey("backup_retention", "Backup retention is a slice setting"),
+
+	ignoredShapeKey("atomic.atomic_size", "Atomic storage is a slice setting"),
+	ignoredShapeKey("atomic.function_timeout", "The function timeout is a slice setting"),
+	ignoredShapeKey("atomic.rate_limit", "The rate limit is a slice setting"),
+	ignoredShapeKey("atomic.deploy_history", "Deploy history depth is a slice setting"),
+	// A function's booking is the sharpest of these: it is that function's own
+	// admission pool AND what it is billed at, so it is chosen where the slice is
+	// sized rather than where the function is declared.
+	ignoredShapeKey("atomic.functions[].memory", "A function's memory booking is a slice setting"),
+
+	ignoredShapeKey("backbone.blob_max_size", "Blob size limits are a slice setting"),
+	ignoredShapeKey("backbone.blob_max_count", "Blob count limits are a slice setting"),
+	ignoredShapeKey("backbone.queue_max_depth", "Queue depth is a slice setting"),
+	ignoredShapeKey("backbone.secret_max_size", "Secret size limits are a slice setting"),
+	ignoredShapeKey("backbone.locks", "The lock budget is a slice setting"),
+	ignoredShapeKey("backbone.realtime_connections", "The realtime budget is a slice setting"),
+
+	// The per-item sizes. Each entry still NAMES the slot it seeds; what it no
+	// longer does is say how big that slot is.
+	ignoredShapeKey("backbone.nosql[].size", "A collection's size is a slice setting"),
+	ignoredShapeKey("backbone.sql[].size", "A database's size is a slice setting"),
+	ignoredShapeKey("backbone.blobs[].size", "A bucket's size is a slice setting"),
+
+	ignoredShapeKey("canvas.canvas_size", "Canvas storage is a slice setting"),
+}
+
+// ignoredShapeKey builds one capacity-key deprecation, so seventeen entries
+// cannot drift into seventeen slightly different sentences.
+//
+// RemoveAfter is a condition rather than a version, matching the house style: a
+// version named in a notice promises a release nobody has planned.
+func ignoredShapeKey(path, because string) common.KeyDeprecation {
+	return common.KeyDeprecationFor(path, common.KeyIgnored, common.Deprecation{
+		Old:         path,
+		RemoveAfter: "every live slice's shape is configurator-owned",
+		Because:     because + ", chosen in the configurator — this file no longer sets it, and the value here is ignored.",
+	})
 }
 
 // applyKeyDeprecations walks each declared path, warns once per path, and
