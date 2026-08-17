@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ondrift/cloud/cli/common"
 )
 
 const mib = 1024 * 1024
@@ -187,5 +189,73 @@ func TestRenderSizing_SaysWhenNothingWasMeasured(t *testing.T) {
 	}
 	if !strings.Contains(out, "7MB") || !strings.Contains(out, "16MB") {
 		t.Errorf("peak and recommendation are missing:\n%s", out)
+	}
+}
+
+// The report points at where a booking is actually set.
+//
+// It used to close with "Apply these with --write", which is now the wrong
+// instruction: `atomic.functions[].memory` is deprecated-and-ignored, so writing
+// it changes the file and not the slice. A report that tells someone to run a
+// command which does not do what they want is worse than one that says nothing.
+func TestRenderSizing_PointsAtTheConfiguratorRatherThanAtWrite(t *testing.T) {
+	var out strings.Builder
+	renderSizing(&out, []sizingRow{{
+		Function: "get:ping", Measurements: 10, PeakBytes: 1 << 20,
+		BookedBytes: 32 << 20, Recommended: 16 << 20,
+	}})
+
+	if !strings.Contains(out.String(), common.ConfiguratorBaseURL) {
+		t.Errorf("the report should name the configurator, where a booking is set:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "Apply these with --write") {
+		t.Errorf("the report still sends people to --write, which no longer resizes "+
+			"anything:\n%s", out.String())
+	}
+}
+
+// --write says what it does NOW, and says it before doing it.
+//
+// It still edits the Driftfile, so nothing scripted breaks — but the key it
+// edits is ignored by the platform, and "wrote 19 bookings" without that reads
+// as "the slice is now sized correctly", which is the one thing it does not mean.
+func TestBenchmarkWrite_SaysTheSliceIsNotResized(t *testing.T) {
+	common.ResetDeprecationState()
+	t.Cleanup(common.ResetDeprecationState)
+	var notices strings.Builder
+	restore := common.RedirectDeprecationWarnings(&notices)
+	defer restore()
+
+	cmd := getBenchmarkCmd()
+	if err := cmd.Flags().Set("write", "true"); err != nil {
+		t.Fatal(err)
+	}
+	common.DeprecateFlag(cmd, "write", common.Deprecation{
+		Old:     "drift file benchmark --write",
+		Because: "test probe",
+	})()
+
+	if !strings.Contains(notices.String(), "--write") {
+		t.Errorf("passing --write said nothing about the key being ignored:\n%s", notices.String())
+	}
+}
+
+// ...and says nothing when the flag is left alone, so an ordinary report is
+// not decorated with a notice about a flag nobody passed.
+func TestBenchmarkWrite_IsSilentWithoutTheFlag(t *testing.T) {
+	common.ResetDeprecationState()
+	t.Cleanup(common.ResetDeprecationState)
+	var notices strings.Builder
+	restore := common.RedirectDeprecationWarnings(&notices)
+	defer restore()
+
+	cmd := getBenchmarkCmd()
+	common.DeprecateFlag(cmd, "write", common.Deprecation{
+		Old:     "drift file benchmark --write",
+		Because: "test probe",
+	})()
+
+	if notices.Len() != 0 {
+		t.Errorf("a run that never passed --write was warned anyway:\n%s", notices.String())
 	}
 }
