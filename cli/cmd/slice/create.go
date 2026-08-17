@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
 
 	project "github.com/ondrift/cloud/cli/cmd/project"
 	"github.com/ondrift/cloud/cli/common"
@@ -112,77 +111,6 @@ func getCreateCmd() *cobra.Command {
 	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period in months, for a configured (non-free) slice")
 	_ = cmd.Flags().MarkHidden("headless")
 	return cmd
-}
-
-// createFromDriftfile has NO CALLERS. `--from` hands off to the configurator.
-//
-// It reads a slice's shape out of a manifest — parse, translate, price,
-// classify — which is the thing the configurator now owns and the Driftfile no
-// longer carries. It survives only until the card that deletes the shape
-// translation it depends on, and nothing should start calling it again: a
-// second writer of a slice's shape is exactly what that change removes.
-func createFromDriftfile(path string, autoYes bool, billingMonths int) error {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("resolve %s: %w", path, err)
-	}
-
-	m, err := project.ParseDriftfile(abs)
-	if err != nil {
-		return err
-	}
-
-	manifestCfg, err := project.ManifestToSliceConfig(m)
-	if err != nil {
-		return err
-	}
-	wantedCost, wantedItems, err := project.PriceConfig(manifestCfg)
-	if err != nil {
-		return fmt.Errorf("price target config: %w", err)
-	}
-
-	// Refuse rather than silently no-op or resize: this command creates.
-	live, err := project.FetchLiveSlice(m.Name())
-	if err != nil {
-		return fmt.Errorf("fetch slice: %w", err)
-	}
-	if live != nil {
-		return fmt.Errorf("slice %q already exists — use `drift file apply` to deploy into it, or `drift slice resize --from %s` to change its shape", m.Name(), path)
-	}
-
-	d := project.Diff(m.Name(), manifestCfg, nil, "", 0, wantedCost)
-	d.WantedItems = wantedItems
-
-	fmt.Println()
-	fmt.Println(project.RenderDiff(d))
-	if !confirmYesNo(autoYes, "Apply?") {
-		return fmt.Errorf("aborted by user")
-	}
-
-	// Tier follows price — identical rule to cmd/project's create path.
-	tier := "custom"
-	if wantedCost == 0 {
-		tier = project.TierHacker
-	}
-
-	fmt.Printf("\n  Creating slice %q...\n", m.Name())
-	if err := project.CreateSlice(m.Name(), tier, manifestCfg, billingMonths); err != nil {
-		return err
-	}
-	// Wait for provisioning, exactly as `project deploy`'s own create path
-	// does. The whole point of this command is that a `project deploy` follows
-	// it, and without the wait that deploy races the slice coming up and fails
-	// with "runner unreachable" — a platform-fault message for what is really
-	// just impatience. Observed on alpha before this was added.
-	if err := project.WaitForSliceReady(m.Name()); err != nil {
-		return fmt.Errorf("slice %q was created but did not become ready: %w", m.Name(), err)
-	}
-
-	if err := common.SaveActiveSlice(m.Name()); err != nil {
-		fmt.Println("Warning: couldn't mark the new slice as active —", err)
-	}
-	fmt.Printf("Slice '%s' created and set as active.\n", m.Name())
-	return nil
 }
 
 // createHeadless posts directly to api/ops/slice/create with the free

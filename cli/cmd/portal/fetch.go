@@ -418,9 +418,12 @@ func fetchPrice(config map[string]any, months int) (*priceResult, error) {
 // fetchDocPrice prices a slice doc's CURRENT config for the itemized bill on
 // the Slice tab. doc.Config is the typed sliceCfg fetchSliceDoc already
 // decoded, round-tripped through JSON into the map[string]any shape fetchPrice
-// and /ops/slice/price expect. Always prices at 1 month, matching
-// project.PriceConfig's convention — this is the itemized unit breakdown, not
-// the slice's actual prepaid total.
+// and /ops/slice/price expect. Always prices at 1 month: this is the itemized
+// unit breakdown, not the slice's actual prepaid total.
+//
+// It prices what the slice IS, read back from the platform — never a shape
+// assembled on this side. That is the whole distinction the configurator split
+// rests on, and it is why this reads doc.Config rather than any manifest.
 func fetchDocPrice(doc *sliceDoc) (*priceResult, error) {
 	raw, err := json.Marshal(doc.Config)
 	if err != nil {

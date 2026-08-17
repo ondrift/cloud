@@ -1,22 +1,16 @@
 // Package file is `drift file` — working on a Driftfile directly, without a
 // slice, a session, or a network round trip.
 //
-// The Driftfile used to be validated only as a side effect of
-// `drift file apply` / `--plan`. So "is line 9 a typo?" required an account,
-// a login and a call to the platform, and the answer arrived as a failed deploy.
-// Every question the golden-path run actually hit — `nosql_storage` not being a
-// field, `queues:` taking a shape the spec did not, an element being per-language,
-// `function_memory` being required in practice — is answerable on the laptop, in
-// milliseconds (#CLI-STANDARDUSAGE-RKN51F).
+// "Is line 9 a typo?" is answerable on the laptop, in milliseconds, with no
+// account and no login — rather than as a failed deploy.
 //
 // # What it validates against
 //
 // `ParseDriftfile` — the same parse a deploy runs, so `lint` gives exactly the
-// answer a deploy would, minus the deploy. And that parse now has exactly one
-// authority: the JSON Schema the platform serves and this machine has cached
-// (#CLI-STANDARDUSAGE-ERF1CV). The CLI holds no rules of its own to disagree
-// with it, so a field the platform has added is accepted here the moment the
-// cached schema is refreshed, without a CLI release.
+// answer a deploy would, minus the deploy. That parse has exactly one authority:
+// the JSON Schema the platform serves and this machine has cached. The CLI holds
+// no rules of its own to disagree with it, so a field the platform has added is
+// accepted here the moment the cached schema is refreshed, without a CLI release.
 //
 // The cost of that is a dependency: with no schema ever fetched there is nothing
 // to validate against, and `lint` refuses rather than printing a ✓ it cannot
