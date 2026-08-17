@@ -1,20 +1,24 @@
 package project
 
-// run.go is the deploy driver. Reads a Driftfile, optionally fetches
-// the live slice + diffs, prompts for cost-confirm, grows the slice
-// envelope when needed, then walks atomic → backbone → canvas
-// applying every declared resource via the api gateway.
+// deploy.go is the apply driver. It reads a Driftfile, refuses if the slice it
+// names does not exist, checks the slice is ready, then walks atomic → backbone
+// → canvas applying every declared resource via the api gateway.
+//
+// It does NOT create, grow or price a slice. The configurator declares what a
+// slice IS; this file declares what runs on it. A slice that does not exist is a
+// refusal naming the configurator, because there is no shape here to build one
+// from.
 //
 // Flags:
-//   --plan                Print the diff (resources + envelope + cost),
-//                         exit non-zero if oversized, never apply.
-//                         Skips file-existence checks for canvas dirs
-//                         so it works in CI where canvas isn't mounted.
-//   --no-slice-reconcile  Skip the slice diff entirely; deploy code
-//                         only. Used as the escape hatch when the
-//                         abort path fires and the user wants to
-//                         leave the slice alone.
-//   --yes                 Auto-confirm the cost prompt. For CI use.
+//   --plan                 Print what this file would deploy, and exit. Prices
+//                          nothing — there is no shape here to quote. Shared
+//                          with `drift file simulate`.
+//   --force                Redeploy every function even if its source is
+//                          unchanged.
+//   --yes                  Auto-confirm prompts. For CI use.
+//   --no-slice-reconcile   Deprecated, does nothing. Kept parsing so a script
+//   --billing-period-months  passing either is told what changed rather than
+//                          dying on an unknown flag.
 
 import (
 	"bytes"
