@@ -48,6 +48,46 @@ func FetchLiveSlice(name string) (*LiveSlice, error) {
 	return &s, nil
 }
 
+// FetchSliceConfigRaw pulls a slice's live config as a generic value, for
+// pre-filling the configurator's form.
+//
+// It stays `any` deliberately. The caller forwards it to the handoff as opaque
+// JSON, so decoding it into a struct would add a second mirror of SliceConfig
+// beside config_wire.go — and one of them would be the shape the CLI can write
+// through, which is the thing Stage 7 removed. Nothing here inspects the config;
+// a caller that changes part of it does so on the decoded map, without this
+// package learning the whole shape.
+//
+// `op` is the caller's lead-in for error messages, because the same fetch serves
+// a resize, a create-from-file and a benchmark handoff, and each names itself.
+func FetchSliceConfigRaw(name, op string) (any, error) {
+	resp, err := common.DoRequest(http.MethodGet,
+		common.APIBaseURL+"/ops/slice/get?name="+url.QueryEscape(name), nil)
+	if err != nil {
+		return nil, common.TransportError(op, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := common.CheckResponse(resp, op)
+	if err != nil {
+		return nil, err
+	}
+
+	// /ops/slice/get returns the whole Slice document; the configurator wants
+	// the embedded "config" subobject, which is what its handoffRequest.Existing
+	// field expects.
+	var slice struct {
+		Config any `json:"config"`
+	}
+	if err := json.Unmarshal(body, &slice); err != nil {
+		return nil, fmt.Errorf("Couldn't %s: get response wasn't valid JSON (%w)", op, err)
+	}
+	if slice.Config == nil {
+		return nil, fmt.Errorf("Couldn't %s: server returned no config for slice %q", op, name)
+	}
+	return slice.Config, nil
+}
+
 // LineItem mirrors the platform's core/common/plan.LineItem wire shape —
 // one priced (or informational, UnitCents==0) row in a price breakdown.
 // Everything in this file READS. Nothing here prices a slice, creates one or

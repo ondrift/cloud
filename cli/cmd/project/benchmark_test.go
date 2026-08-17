@@ -2,56 +2,37 @@ package project
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/ondrift/cloud/cli/common"
 )
 
 const mib = 1024 * 1024
 
-func parseDoc(t *testing.T, src string) *yaml.Node {
+// liveConfig decodes a slice config the way FetchSliceConfigRaw hands one over:
+// generic JSON, not a struct. The overlay has to work on that, because the CLI
+// forwards the document whole and never learns its shape.
+func liveConfig(t *testing.T, src string) any {
 	t.Helper()
-	var doc yaml.Node
-	if err := yaml.Unmarshal([]byte(src), &doc); err != nil {
-		t.Fatalf("fixture is not YAML: %v", err)
+	var cfg any
+	if err := json.Unmarshal([]byte(src), &cfg); err != nil {
+		t.Fatalf("fixture is not JSON: %v", err)
 	}
-	return &doc
+	return cfg
 }
 
-func render(t *testing.T, doc *yaml.Node) string {
-	t.Helper()
-	out, err := yaml.Marshal(doc)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	return string(out)
-}
-
-// --write edits the value and leaves the document alone.
+// --apply sets each measured function's booking on the live config.
 //
-// The file is a document people write in, not a serialisation format. A round
-// trip through a struct would drop every comment in it, which is why this walks
-// the node tree — and why the test asserts the comments are still there rather
-// than only that the number changed.
-func TestWriteBookings_RewritesMemoryAndKeepsTheDocument(t *testing.T) {
-	src := `# my project
-name: shop
-atomic:
-  rate_limit: 500/min   # slice-wide
-  functions:
-    # the cheap one
-    - { name: "get:ping", memory: 32MB }
-    - name: "post:report"
-      memory: 32MB       # sized by guesswork
-backbone:
-  nosql:
-    - { name: orders, size: 50MB }
-`
-	doc := parseDoc(t, src)
-	n := writeBookingsInto(doc, map[string]int64{
+// Matching is on the booking key — `method:route` — which is what the sizing
+// endpoint reports and what the runtime looks a pool up by.
+func TestOverlayBookings_SetsTheMeasuredRecommendation(t *testing.T) {
+	cfg := liveConfig(t, `{"atomic":{"functions":[
+		{"name":"get:ping","memory_bytes":33554432},
+		{"name":"post:report","memory_bytes":33554432}]}}`)
+
+	n := overlayBookings(cfg, map[string]int64{
 		"get:ping":    8 * mib,
 		"post:report": 128 * mib,
 	})
@@ -59,36 +40,68 @@ backbone:
 		t.Fatalf("changed %d bookings, want 2", n)
 	}
 
-	got := render(t, doc)
-	for _, want := range []string{`memory: 8MB`, `memory: 128MB`} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the rewritten Driftfile has no %q:\n%s", want, got)
-		}
-	}
-	for _, keep := range []string{"# my project", "# slice-wide", "# the cheap one", "# sized by guesswork"} {
-		if !strings.Contains(got, keep) {
-			t.Errorf("comment %q was dropped — a Driftfile is written by a person:\n%s", keep, got)
-		}
-	}
-	// The rest of the document is untouched.
-	for _, keep := range []string{"rate_limit: 500/min", "name: orders", "size: 50MB", "name: shop"} {
-		if !strings.Contains(got, keep) {
-			t.Errorf("%q did not survive the rewrite:\n%s", keep, got)
+	fns := cfg.(map[string]any)["atomic"].(map[string]any)["functions"].([]any)
+	for i, want := range []int64{8 * mib, 128 * mib} {
+		got := fns[i].(map[string]any)["memory_bytes"]
+		if toBytes(got) != want {
+			t.Errorf("function %d books %v, want %d", i, got, want)
 		}
 	}
 }
 
-// A function the slice has never run is skipped, because its "recommendation" is
-// the floor — the absence of a measurement, not advice. Writing it would look
+// The config is forwarded whole, so everything the CLI has no name for has to
+// survive the substitution untouched. This is the analogue of the comments a
+// Driftfile rewrite had to preserve: the parts this code does not understand are
+// exactly the parts it must not damage.
+func TestOverlayBookings_LeavesEveryOtherFieldAlone(t *testing.T) {
+	const src = `{"atomic":{"max_number_of_functions":9,"functions":[
+		{"name":"get:ping","memory_bytes":33554432,"some_future_key":"keep me"}]},
+		"backbone":{"nosql":{"collections":{"orders":52428800}}},
+		"a_field_this_cli_has_never_heard_of":{"nested":true}}`
+	cfg := liveConfig(t, src)
+
+	if n := overlayBookings(cfg, map[string]int64{"get:ping": 16 * mib}); n != 1 {
+		t.Fatalf("changed %d bookings, want 1", n)
+	}
+
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, keep := range []string{
+		`"max_number_of_functions":9`,
+		`"some_future_key":"keep me"`,
+		`"orders":52428800`,
+		`"a_field_this_cli_has_never_heard_of"`,
+	} {
+		if !strings.Contains(string(out), keep) {
+			t.Errorf("%s did not survive the overlay:\n%s", keep, out)
+		}
+	}
+}
+
+// A booking already at its recommendation is not a change, so a second --apply
+// on an unchanged slice opens nothing rather than buying a no-op resize.
+//
+// JSON numbers decode as float64, so this also pins the comparison: an int64
+// compared against the decoded value directly is never equal, and every run
+// would report a change and open the browser.
+func TestOverlayBookings_AnAlreadyCorrectBookingIsNotAChange(t *testing.T) {
+	cfg := liveConfig(t, `{"atomic":{"functions":[{"name":"get:ping","memory_bytes":16777216}]}}`)
+
+	if n := overlayBookings(cfg, map[string]int64{"get:ping": 16 * mib}); n != 0 {
+		t.Errorf("changed %d bookings, want 0 — the value already matched", n)
+	}
+}
+
+// A function the slice has never run is left alone. Its "recommendation" is the
+// floor — the absence of a measurement, not advice — so pre-filling it would look
 // like the platform had sized the function when nothing had.
-func TestWriteBookings_SkipsFunctionsWithNoMeasurement(t *testing.T) {
+func TestOverlayBookings_SkipsFunctionsWithNoMeasurement(t *testing.T) {
 	rows := []sizingRow{
 		{Function: "get:ping", Measurements: 40, PeakBytes: 7 * mib, Recommended: 16 * mib},
 		{Function: "get:cold", Measurements: 0, Recommended: 8 * mib},
 	}
-	var buf bytes.Buffer
-	// The file path is never reached: with one measured row it writes, so this
-	// asserts through writeBookingsInto instead, which is where the choice lives.
 	rec := map[string]int64{}
 	for _, r := range rows {
 		if r.Measurements > 0 && r.Recommended > 0 {
@@ -96,72 +109,46 @@ func TestWriteBookings_SkipsFunctionsWithNoMeasurement(t *testing.T) {
 		}
 	}
 	if _, ok := rec["get:cold"]; ok {
-		t.Error("an unmeasured function was queued for writing")
+		t.Error("an unmeasured function was queued for applying")
 	}
 
-	doc := parseDoc(t, `
-name: shop
-atomic:
-  functions:
-    - { name: "get:ping", memory: 32MB }
-    - { name: "get:cold", memory: 32MB }
-`)
-	if n := writeBookingsInto(doc, rec); n != 1 {
+	cfg := liveConfig(t, `{"atomic":{"functions":[
+		{"name":"get:ping","memory_bytes":33554432},
+		{"name":"get:cold","memory_bytes":33554432}]}}`)
+	if n := overlayBookings(cfg, rec); n != 1 {
 		t.Fatalf("changed %d bookings, want 1", n)
 	}
-	got := render(t, doc)
-	if !strings.Contains(got, "memory: 16MB") {
-		t.Errorf("the measured function was not rewritten:\n%s", got)
-	}
-	if strings.Count(got, "32MB") != 1 {
-		t.Errorf("the unmeasured function's booking was touched:\n%s", got)
-	}
-	_ = buf
-}
 
-// A booking already at its recommendation is not a change, so a second --write
-// on an unchanged slice reports nothing rather than rewriting the file.
-func TestWriteBookings_AnAlreadyCorrectBookingIsNotAChange(t *testing.T) {
-	doc := parseDoc(t, `
-name: shop
-atomic:
-  functions:
-    - { name: "get:ping", memory: 16MB }
-`)
-	if n := writeBookingsInto(doc, map[string]int64{"get:ping": 16 * mib}); n != 0 {
-		t.Errorf("changed %d bookings, want 0 — the value already matched", n)
+	fns := cfg.(map[string]any)["atomic"].(map[string]any)["functions"].([]any)
+	if got := toBytes(fns[1].(map[string]any)["memory_bytes"]); got != 32*mib {
+		t.Errorf("the unmeasured function's booking was changed to %d", got)
 	}
 }
 
-// A function whose entry has no `memory` at all gets one. The point of --write is
-// that the file is complete afterwards, and a manifest edited since the deploy is
-// exactly when someone reaches for it.
-func TestWriteBookings_AddsAMissingMemoryKey(t *testing.T) {
-	doc := parseDoc(t, `
-name: shop
-atomic:
-  functions:
-    - { name: "get:ping" }
-`)
-	if n := writeBookingsInto(doc, map[string]int64{"get:ping": 24 * mib}); n != 1 {
-		t.Fatalf("changed %d bookings, want 1", n)
-	}
-	if got := render(t, doc); !strings.Contains(got, "memory: 24MB") {
-		t.Errorf("no memory key was added:\n%s", got)
-	}
-}
-
-// A Driftfile with no atomic section must not panic or invent one.
-func TestWriteBookings_ToleratesADriftfileWithNoFunctions(t *testing.T) {
+// A config with no function list must not panic or invent one.
+func TestOverlayBookings_ToleratesAConfigWithNoFunctions(t *testing.T) {
 	for _, src := range []string{
-		"name: site\ncanvas: ./site\n",
-		"name: site\natomic:\n  rate_limit: 10/s\n",
-		"name: site\natomic:\n  functions: {}\n",
+		`{"canvas":{"total_max_size_in_bytes":1}}`,
+		`{"atomic":{"max_number_of_functions":5}}`,
+		`{"atomic":{"functions":{}}}`,
+		`{"atomic":{"functions":[]}}`,
+		`"not an object at all"`,
 	} {
-		doc := parseDoc(t, src)
-		if n := writeBookingsInto(doc, map[string]int64{"get:ping": 8 * mib}); n != 0 {
-			t.Errorf("changed %d bookings in a manifest with no function list:\n%s", n, src)
+		cfg := liveConfig(t, src)
+		if n := overlayBookings(cfg, map[string]int64{"get:ping": 8 * mib}); n != 0 {
+			t.Errorf("changed %d bookings in a config with no function list: %s", n, src)
 		}
+	}
+}
+
+func toBytes(v any) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int64:
+		return n
+	default:
+		return -1
 	}
 }
 
@@ -194,7 +181,7 @@ func TestRenderSizing_SaysWhenNothingWasMeasured(t *testing.T) {
 
 // The report points at where a booking is actually set.
 //
-// It used to close with "Apply these with --write", which is now the wrong
+// It used to close with "Apply these with --write", which is the wrong
 // instruction: `atomic.functions[].memory` is deprecated-and-ignored, so writing
 // it changes the file and not the slice. A report that tells someone to run a
 // command which does not do what they want is worse than one that says nothing.
@@ -214,12 +201,14 @@ func TestRenderSizing_PointsAtTheConfiguratorRatherThanAtWrite(t *testing.T) {
 	}
 }
 
-// --write says what it does NOW, and says it before doing it.
+// --write is a thin alias onto --apply and says so once.
 //
-// It still edits the Driftfile, so nothing scripted breaks — but the key it
-// edits is ignored by the platform, and "wrote 19 bookings" without that reads
-// as "the slice is now sized correctly", which is the one thing it does not mean.
-func TestBenchmarkWrite_SaysTheSliceIsNotResized(t *testing.T) {
+// The thing it used to write to ceased to exist, so there is no behaviour left
+// to keep working — only a name people have in their fingers. It forwards rather
+// than refusing because the handoff discloses the price and the restart before
+// anything is bought, which is what made the original "an alias must not spend
+// money on muscle memory" objection moot.
+func TestBenchmarkWrite_IsAnAliasOntoApply(t *testing.T) {
 	common.ResetDeprecationState()
 	t.Cleanup(common.ResetDeprecationState)
 	var notices strings.Builder
@@ -232,11 +221,16 @@ func TestBenchmarkWrite_SaysTheSliceIsNotResized(t *testing.T) {
 	}
 	common.DeprecateFlag(cmd, "write", common.Deprecation{
 		Old:     "drift file benchmark --write",
+		New:     "drift file benchmark --apply",
 		Because: "test probe",
 	})()
 
-	if !strings.Contains(notices.String(), "--write") {
-		t.Errorf("passing --write said nothing about the key being ignored:\n%s", notices.String())
+	said := notices.String()
+	if !strings.Contains(said, "--write") {
+		t.Errorf("passing --write said nothing about the rename:\n%s", said)
+	}
+	if !strings.Contains(said, "--apply") {
+		t.Errorf("the notice must name what to type instead:\n%s", said)
 	}
 }
 
@@ -257,5 +251,20 @@ func TestBenchmarkWrite_IsSilentWithoutTheFlag(t *testing.T) {
 
 	if notices.Len() != 0 {
 		t.Errorf("a run that never passed --write was warned anyway:\n%s", notices.String())
+	}
+}
+
+// Both flags exist, and --apply is the one the help describes as the action.
+func TestBenchmark_HasApplyAndKeepsWriteWorking(t *testing.T) {
+	cmd := getBenchmarkCmd()
+	if cmd.Flags().Lookup("apply") == nil {
+		t.Fatal("--apply is missing")
+	}
+	w := cmd.Flags().Lookup("write")
+	if w == nil {
+		t.Fatal("--write was removed rather than deprecated — a name people have in their fingers")
+	}
+	if !strings.Contains(strings.ToLower(w.Usage), "deprecated") {
+		t.Errorf("--write's help does not say it is deprecated, got %q", w.Usage)
 	}
 }

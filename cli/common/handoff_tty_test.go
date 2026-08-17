@@ -1,4 +1,4 @@
-package slice
+package common
 
 import (
 	"net/http"
@@ -6,11 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/ondrift/cloud/cli/common"
+	// Aliased: this package declares a const `atomic` (the brand orange in
+	// style.go), which shadows the stdlib name.
+	syncatomic "sync/atomic"
 )
 
 // A shell with no browser is refused before anything is minted.
@@ -22,7 +23,7 @@ import (
 // could make the next run — from a real terminal — meet a conflict it did not
 // cause.
 func TestBrowserHandoff_RefusesWithNoTerminalAndMintsNothing(t *testing.T) {
-	var hits atomic.Int64
+	var hits syncatomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		w.WriteHeader(http.StatusOK)
@@ -30,22 +31,22 @@ func TestBrowserHandoff_RefusesWithNoTerminalAndMintsNothing(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	previous := common.ConfiguratorBaseURL
-	common.ConfiguratorBaseURL = srv.URL
-	t.Cleanup(func() { common.ConfiguratorBaseURL = previous })
+	previous := ConfiguratorBaseURL
+	ConfiguratorBaseURL = srv.URL
+	t.Cleanup(func() { ConfiguratorBaseURL = previous })
 
 	// A real session, in a scratch HOME. Without one the mint fails at auth
 	// before it leaves the machine, so "zero configurator requests" would hold
 	// with the guard removed and assert nothing at all.
 	t.Setenv("HOME", t.TempDir())
-	if err := common.SaveSession("access-token", "refresh-token"); err != nil {
+	if err := SaveSession("access-token", "refresh-token"); err != nil {
 		t.Fatal(err)
 	}
 
 	withNonTerminalStdin(t)
 
 	start := time.Now()
-	_, err := runBrowserHandoff("resize slice", "demo", modeResize, nil)
+	_, err := RunBrowserHandoff("resize slice", "demo", ModeResize, nil)
 	elapsed := time.Since(start)
 
 	if err == nil {

@@ -1,4 +1,4 @@
-package slice
+package common
 
 import (
 	"encoding/json"
@@ -7,23 +7,24 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/ondrift/cloud/cli/common"
+	// Aliased: this package declares a const `atomic` (the brand orange in
+	// style.go), which shadows the stdlib name.
+	syncatomic "sync/atomic"
 )
 
-// seedSession gives the test a scratch HOME with a session in it.
+// seedHandoffSession gives the test a scratch HOME with a session in it.
 //
 // DoRequest attaches the token from ~/.drift/session.json and fails before the
 // request leaves if there is none — so without this a test borrows whatever
 // session the machine happens to have, passes on a developer's laptop, and every
 // tick fails at the transport in CI.
-func seedSession(t *testing.T) {
+func seedHandoffSession(t *testing.T) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	if err := common.SaveSession("access-token", "refresh-token"); err != nil {
+	if err := SaveSession("access-token", "refresh-token"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -33,14 +34,14 @@ func seedSession(t *testing.T) {
 // how long it sleeps.
 func pollAgainst(t *testing.T, h http.HandlerFunc) (json.RawMessage, error) {
 	t.Helper()
-	seedSession(t)
+	seedHandoffSession(t)
 
 	stub := httptest.NewServer(h)
 	t.Cleanup(stub.Close)
 
-	prevURL, prevInterval := common.ConfiguratorBaseURL, pollInterval
-	common.ConfiguratorBaseURL, pollInterval = stub.URL, 0
-	t.Cleanup(func() { common.ConfiguratorBaseURL, pollInterval = prevURL, prevInterval })
+	prevURL, prevInterval := ConfiguratorBaseURL, pollInterval
+	ConfiguratorBaseURL, pollInterval = stub.URL, 0
+	t.Cleanup(func() { ConfiguratorBaseURL, pollInterval = prevURL, prevInterval })
 
 	return pollRedeem("resize slice", "a-token")
 }
@@ -54,7 +55,7 @@ func pollAgainst(t *testing.T, h http.HandlerFunc) (json.RawMessage, error) {
 // TestNoWallClockDeadlineIsReintroduced is for, and saying so here keeps this
 // test from being read as more than it is.
 func TestThePollIsNotBoundedByAttempts(t *testing.T) {
-	var ticks atomic.Int32
+	var ticks syncatomic.Int32
 	result, err := pollAgainst(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if ticks.Add(1) < 2000 {
@@ -79,7 +80,7 @@ func TestThePollIsNotBoundedByAttempts(t *testing.T) {
 // saying the session expired, and the CLI has to report that rather than keep
 // asking — this is the bound that replaces the wall clock.
 func TestAnExpiredSessionEndsThePollAtOnce(t *testing.T) {
-	var ticks atomic.Int32
+	var ticks syncatomic.Int32
 	_, err := pollAgainst(t, func(w http.ResponseWriter, r *http.Request) {
 		ticks.Add(1)
 		w.WriteHeader(http.StatusGone)
@@ -98,11 +99,11 @@ func TestAnExpiredSessionEndsThePollAtOnce(t *testing.T) {
 // the wall clock is gone. The server's expiry bounds the happy path; a run of
 // unanswered ticks bounds this one.
 func TestAnUnreachableConfiguratorGivesUp(t *testing.T) {
-	seedSession(t)
-	prevURL, prevInterval := common.ConfiguratorBaseURL, pollInterval
+	seedHandoffSession(t)
+	prevURL, prevInterval := ConfiguratorBaseURL, pollInterval
 	// A port nothing is listening on: every tick fails at the transport.
-	common.ConfiguratorBaseURL, pollInterval = "http://127.0.0.1:1", 0
-	t.Cleanup(func() { common.ConfiguratorBaseURL, pollInterval = prevURL, prevInterval })
+	ConfiguratorBaseURL, pollInterval = "http://127.0.0.1:1", 0
+	t.Cleanup(func() { ConfiguratorBaseURL, pollInterval = prevURL, prevInterval })
 
 	done := make(chan error, 1)
 	go func() {
@@ -123,7 +124,7 @@ func TestAnUnreachableConfiguratorGivesUp(t *testing.T) {
 // A transient blip is not the server ending the session, so the loop recovers
 // from one rather than treating it as an answer.
 func TestOneBlipDoesNotEndThePoll(t *testing.T) {
-	var ticks atomic.Int32
+	var ticks syncatomic.Int32
 	result, err := pollAgainst(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch ticks.Add(1) {

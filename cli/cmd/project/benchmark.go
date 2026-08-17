@@ -3,12 +3,15 @@ package project
 // benchmark.go — `drift file benchmark`. What each function actually costs,
 // and what it should therefore book.
 //
-// `atomic.functions[].memory` is mandatory and has no default, which is correct
-// — a reservation that appears by itself is one nobody chose, and it is both the
-// function's pool and its price. But it leaves a real question the first time
-// someone writes a Driftfile: what number? Guessing high wastes money on memory
-// nobody uses; guessing low means the pool fills and invocations are refused
-// under load. Neither is discoverable by reading your own source.
+// A booking has no default, which is correct — a reservation that appears by
+// itself is one nobody chose, and it is both the function's pool and its price.
+// But it leaves a real question: what number? Guessing high wastes money on
+// memory nobody uses; guessing low means the pool fills and invocations are
+// refused under load. Neither is discoverable by reading your own source.
+//
+// The booking lives on the slice, which the configurator owns. This command
+// reports what to set and, with --apply, opens the form with the figures already
+// in it — so the number that gets bought is the one that was measured.
 //
 // The platform has been measuring the answer all along. Every invocation's child
 // is reaped with wait4, which carries its peak RSS; the slice keeps the
@@ -27,7 +30,6 @@ package project
 // one number and be billed another.
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,7 +41,6 @@ import (
 
 	"github.com/ondrift/cloud/cli/common"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 // sizingRow is one function's answer.
@@ -72,22 +73,22 @@ type sliceSizing struct {
 }
 
 func getBenchmarkCmd() *cobra.Command {
-	var write bool
+	var apply, write bool
 	cmd := &cobra.Command{
 		Use:   "benchmark",
 		Short: "Measure what each Atomic function costs, and what it should book",
 		Long: strings.TrimSpace(`
 Report what each Atomic function has actually cost in memory, and the size it
-should declare in its Driftfile.
+should book.
 
 The numbers come from the deployed slice's own measurements of real traffic: it
 weighs every invocation and keeps the high-water mark per function. A function
 nobody has called yet says so, rather than reporting a confidently small number.
 
-A booking is chosen in the configurator, which owns a slice's shape — so the
-report tells you what to set there. --write still edits the Driftfile's memory
-keys, but the platform no longer reads them.`),
-		Example: "  drift file benchmark",
+A booking is part of a slice's shape, which the configurator owns. --apply opens
+it with the measured recommendations already filled in, so the price and the
+restart are shown before anything is bought.`),
+		Example: "  drift file benchmark\n  drift file benchmark --apply",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))
 			if err != nil {
@@ -105,28 +106,124 @@ keys, but the platform no longer reads them.`),
 				return err
 			}
 			renderSizing(cmd.OutOrStdout(), rows)
+
+			// A thin alias onto --apply, not a second path. It used to edit the
+			// Driftfile's `memory` key, which the platform stopped reading — so
+			// the file carried the recommendation and the slice kept whatever the
+			// configurator sold it. There is no behaviour left to keep working,
+			// only a name people have in their fingers.
 			if write {
-				// Say what the write does NOW, before doing it. The key it edits
-				// is deprecated-and-ignored: the file ends up carrying the
-				// recommendation and the slice keeps whatever the configurator
-				// sold it. Reporting "wrote 19 bookings" without this reads as
-				// "the slice is now sized correctly", which is the one thing it
-				// does not mean.
 				common.DeprecateFlag(cmd, "write", common.Deprecation{
-					Old:         "drift file benchmark --write",
-					RemoveAfter: "every live slice's shape is configurator-owned",
-					Because: "A function's memory booking is a slice setting, chosen in the configurator — " +
-						"this writes the Driftfile's retired `memory` key, which the platform ignores, " +
-						"so the slice is NOT resized by it.",
+					Old: "drift file benchmark --write",
+					New: "drift file benchmark --apply",
+					Because: "A booking is a slice setting rather than a Driftfile one. " +
+						"This used to edit the manifest's retired `memory` key, which the platform ignores; " +
+						"--apply opens the configurator with the measured figures filled in.",
 				})()
-				return writeBookings(cmd.OutOrStdout(), manifestPath, rows)
+				apply = true
+			}
+			if apply {
+				return applyBookings(cmd.OutOrStdout(), m.Name(), rows)
 			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&apply, "apply", false,
+		"open the configurator with each function's booking set to the recommendation")
 	cmd.Flags().BoolVar(&write, "write", false,
-		"set each function's `memory` in the Driftfile to the recommendation")
+		"Deprecated: use --apply")
 	return cmd
+}
+
+// applyBookings hands the measured recommendations to the configurator.
+//
+// It does NOT write them anywhere itself. A booking is priced, billed, and
+// travels in the pod spec, so applying one buys a resize and replaces the pod —
+// and the CLI has no path to a slice's shape at all any more, by design. The
+// configurator is the one writer, and opening it pre-filled means the price and
+// the restart are disclosed to the person paying before they agree to either.
+//
+// A function the slice has never run is left alone. Its "recommendation" is the
+// floor rather than a measurement, and pre-filling that would look like advice
+// while being the absence of any.
+func applyBookings(w io.Writer, sliceName string, rows []sizingRow) error {
+	rec := map[string]int64{}
+	for _, r := range rows {
+		if r.Measurements > 0 && r.Recommended > 0 {
+			rec[r.Function] = r.Recommended
+		}
+	}
+	if len(rec) == 0 {
+		fmt.Fprintln(w, "  Nothing to apply: no function has been invoked yet, so there is no")
+		fmt.Fprintln(w, "  measurement to size from. Send some traffic and run this again.")
+		return nil
+	}
+
+	const op = "apply the measured bookings"
+	cfg, err := FetchSliceConfigRaw(sliceName, op)
+	if err != nil {
+		return err
+	}
+
+	changed := overlayBookings(cfg, rec)
+	if changed == 0 {
+		fmt.Fprintln(w, "  Every booking already matches its recommendation.")
+		return nil
+	}
+
+	fmt.Fprintf(w, "  Opening the configurator with %d booking(s) set to the recommendation.\n", changed)
+	fmt.Fprintln(w, "  Nothing is bought until you submit the form.")
+	if _, err := common.RunBrowserHandoff(op, sliceName, common.ModeResize, cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+// overlayBookings sets each recommended function's booking on the live config,
+// in place, and reports how many it changed.
+//
+// The config is the decoded JSON rather than a typed struct: the CLI forwards it
+// whole and never learns its shape, so a field it has no name for survives the
+// round trip. Separated from the fetch and the handoff so the substitution is
+// testable without either.
+//
+// Matching is on the booking key — `method:route` — which is what the sizing
+// endpoint reports and what the runtime looks a pool up by. The two agreeing is
+// what makes a row matchable at all, and they have not always agreed.
+func overlayBookings(cfg any, rec map[string]int64) int {
+	root, ok := cfg.(map[string]any)
+	if !ok {
+		return 0
+	}
+	atomicNode, ok := root["atomic"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	functions, ok := atomicNode["functions"].([]any)
+	if !ok {
+		return 0
+	}
+
+	changed := 0
+	for _, entry := range functions {
+		fn, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := fn["name"].(string)
+		want, found := rec[name]
+		if !found {
+			continue
+		}
+		// JSON numbers decode as float64, so an unchanged booking has to be
+		// compared as one rather than by ==-ing two different types.
+		if current, ok := fn["memory_bytes"].(float64); ok && int64(current) == want {
+			continue
+		}
+		fn["memory_bytes"] = want
+		changed++
+	}
+	return changed
 }
 
 // benchmarkFromSlice asks the deployed slice what its functions have cost.
@@ -223,124 +320,4 @@ func megabytesOrDash(b int64) string {
 		return "—"
 	}
 	return fmt.Sprintf("%.0fMB", float64(b)/(1024*1024))
-}
-
-// writeBookings sets each function's `memory` to the recommendation, in place.
-//
-// The file is edited as a yaml.Node tree rather than re-marshalled from a struct,
-// because a round trip through a struct silently drops every comment in the file
-// — and a Driftfile is a document people write in, not a serialisation format.
-// Only the scalar values change; key order, spacing and comments survive.
-//
-// A function the slice has never run is skipped. Its "recommendation" is the
-// floor, and writing that would look like advice while being the absence of any.
-func writeBookings(w io.Writer, path string, rows []sizingRow) error {
-	rec := map[string]int64{}
-	for _, r := range rows {
-		if r.Measurements > 0 && r.Recommended > 0 {
-			rec[r.Function] = r.Recommended
-		}
-	}
-	if len(rec) == 0 {
-		fmt.Fprintln(w, "  Nothing to write: no function has been invoked yet, so there is no")
-		fmt.Fprintln(w, "  measurement to size from. Send some traffic and run this again.")
-		return nil
-	}
-
-	data, err := os.ReadFile(path) // #nosec G304 — the user's own manifest
-	if err != nil {
-		return err
-	}
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("Driftfile: invalid YAML: %w", err)
-	}
-
-	changed := writeBookingsInto(&doc, rec)
-	if changed == 0 {
-		fmt.Fprintln(w, "  Every booking already matches its recommendation.")
-		return nil
-	}
-
-	// Two-space indent, matching `drift file fmt`. yaml.Marshal defaults to four
-	// and would reindent every line of the file, turning "set two numbers" into a
-	// whole-file diff — the same reason the formatter sets it explicitly.
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(&doc); err != nil {
-		return fmt.Errorf("Driftfile: %w", err)
-	}
-	if err := enc.Close(); err != nil {
-		return fmt.Errorf("Driftfile: %w", err)
-	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil { // #nosec G306
-		return err
-	}
-	fmt.Fprintf(w, "  Updated %d booking(s) in %s.\n\n", changed, filepath.Base(path))
-	return nil
-}
-
-// writeBookingsInto rewrites the `memory` scalar of every function named in rec,
-// and reports how many it changed. Separated from the file handling so the tree
-// walk is testable without a filesystem.
-func writeBookingsInto(doc *yaml.Node, rec map[string]int64) int {
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		return 0
-	}
-	atomic := childOf(doc.Content[0], "atomic")
-	if atomic == nil {
-		return 0
-	}
-	functions := childOf(atomic, "functions")
-	if functions == nil || functions.Kind != yaml.SequenceNode {
-		return 0
-	}
-
-	changed := 0
-	for _, entry := range functions.Content {
-		if entry.Kind != yaml.MappingNode {
-			continue
-		}
-		nameNode := childOf(entry, "name")
-		if nameNode == nil {
-			continue
-		}
-		want, ok := rec[nameNode.Value]
-		if !ok {
-			continue
-		}
-		value := fmt.Sprintf("%dMB", want/(1024*1024))
-		memNode := childOf(entry, "memory")
-		if memNode == nil {
-			// A function declared without memory cannot have deployed, so this is
-			// a manifest edited since. Add the key rather than skipping it: the
-			// point of --write is that the file is complete afterwards.
-			entry.Content = append(entry.Content,
-				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "memory"},
-				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
-			changed++
-			continue
-		}
-		if memNode.Value == value {
-			continue
-		}
-		memNode.Value = value
-		memNode.Tag = "!!str"
-		changed++
-	}
-	return changed
-}
-
-// childOf returns the value node for a key in a mapping node, or nil.
-func childOf(m *yaml.Node, key string) *yaml.Node {
-	if m == nil || m.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == key {
-			return m.Content[i+1]
-		}
-	}
-	return nil
 }
