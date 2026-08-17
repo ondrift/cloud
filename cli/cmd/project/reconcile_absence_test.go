@@ -90,7 +90,7 @@ func TestApplySQL_DoesNotDropAnUnmentionedDatabase(t *testing.T) {
 		"sql": []any{map[string]any{"name": "orders", "schema": "orders.sql"}},
 	}}, root)
 
-	if err := applySQL(m); err != nil {
+	if _, err := applySQL(m); err != nil {
 		t.Fatalf("applySQL: %v", err)
 	}
 
@@ -154,7 +154,7 @@ func TestApplyAlerts_DoesNotRemoveAnUndeclaredAlert(t *testing.T) {
 		"functions": []any{map[string]any{"name": "get:ping", "handler": "GetPing"}},
 	}}, t.TempDir())
 
-	if err := applyAlerts(m); err != nil {
+	if _, err := applyAlerts(m); err != nil {
 		t.Fatalf("applyAlerts: %v", err)
 	}
 
@@ -185,7 +185,7 @@ func TestApplyDomains_DoesNotRemoveAnUndeclaredHost(t *testing.T) {
 		map[string]any{"host": "shop.example.com"},
 	}}, t.TempDir())
 
-	if err := applyDomains(m); err != nil {
+	if _, err := applyDomains(m); err != nil {
 		t.Fatalf("applyDomains: %v", err)
 	}
 
@@ -241,13 +241,13 @@ func TestApply_StillCreatesWhatTheManifestNames(t *testing.T) {
 	}
 	m := manifestRooted(slice, root)
 
-	if err := applyDomains(m); err != nil {
+	if _, err := applyDomains(m); err != nil {
 		t.Fatalf("applyDomains: %v", err)
 	}
-	if err := applyAlerts(m); err != nil {
+	if _, err := applyAlerts(m); err != nil {
 		t.Fatalf("applyAlerts: %v", err)
 	}
-	if err := applySQL(m); err != nil {
+	if _, err := applySQL(m); err != nil {
 		t.Fatalf("applySQL: %v", err)
 	}
 

@@ -8,7 +8,8 @@
 // it, not because it is the slice's whole inventory. A database the
 // document does not mention is left alone — dropping one closes its
 // connection and removes the .db, -wal and -shm files, so it has to
-// be a deliberate act and never the consequence of an omission.
+// be a deliberate act and never the consequence of an omission. It is
+// reported instead: see unnamed.go.
 package project
 
 import (
@@ -22,7 +23,7 @@ import (
 	"github.com/ondrift/cloud/cli/common"
 )
 
-func applySQL(m *Manifest) error {
+func applySQL(m *Manifest) ([]string, error) {
 	declared := map[string]Node{}
 	for _, e := range m.Slice().Entries("name", "backbone", "sql") {
 		name := strings.ToLower(strings.TrimSpace(e.Str("name")))
@@ -51,7 +52,50 @@ func applySQL(m *Manifest) error {
 				common.Check(), name, entry.Str("seed"))
 		}
 	}
-	return nil
+
+	// The live inventory is read only to report it, and only after the uploads,
+	// so a slice that cannot answer this still gets its schemas and seeds. A
+	// failure is STATED rather than swallowed: silence here would read as "every
+	// database is named", which is the one thing this must never say wrongly.
+	live, err := fetchLiveSQL()
+	if err != nil {
+		fmt.Printf("  %s couldn't check for databases the Driftfile no longer names: %v\n",
+			common.Hint("·"), err)
+		return nil, nil
+	}
+	liveNames := make([]string, 0, len(live))
+	for _, d := range live {
+		liveNames = append(liveNames, strings.ToLower(strings.TrimSpace(d.Name)))
+	}
+	declaredNames := make(map[string]bool, len(declared))
+	for name := range declared {
+		declaredNames[name] = true
+	}
+	return unnamedIn(liveNames, declaredNames), nil
+}
+
+// liveSQLDatabase is one row of the slice's `/ops/backbone/sql/admin/list`. Only
+// the name is read here; the size belongs to `drift backbone sql list`.
+type liveSQLDatabase struct {
+	Name string `json:"name"`
+}
+
+func fetchLiveSQL() ([]liveSQLDatabase, error) {
+	resp, err := common.DoRequest(http.MethodGet,
+		common.APIBaseURL+"/ops/backbone/sql/admin/list", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := common.CheckResponse(resp, "list sql databases")
+	if err != nil {
+		return nil, err
+	}
+	var out []liveSQLDatabase
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func uploadSchema(baseDir, name, schemaPath string) error {
