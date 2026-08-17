@@ -48,8 +48,10 @@ func manifestNaming(functions []string, collections, buckets, databases []string
 		}
 		return out
 	}
+	// Built as a resolved node, so the key walker never runs over it — the
+	// identity has to be written in the spelling the readers read.
 	slice := Node{
-		"name":   "demo",
+		"slice":  "demo",
 		"atomic": map[string]any{"functions": fns},
 		"backbone": map[string]any{
 			"nosql": named(collections),

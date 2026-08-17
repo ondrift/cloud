@@ -27,12 +27,24 @@ import (
 
 // driftfileKeyDeprecations is every retired Driftfile key this CLI knows about.
 //
-// Empty until the cards that retire keys populate it — the shape keys the
-// configurator now owns, and the route/method rename. It is a variable rather
-// than a constant so a test can drive the walker through ParseDriftfile with a
-// set of its own, which is the only way to check the hook point itself rather
-// than the walker in isolation.
-var driftfileKeyDeprecations []common.KeyDeprecation
+// It is a variable rather than a constant so a test can drive the walker through
+// ParseDriftfile with a set of its own, which is the only way to check the hook
+// point itself rather than the walker in isolation.
+//
+// A key belongs here when it is a RENAME or an IGNORE — one key becoming one
+// other key, or none. A key that SPLITS is not expressible by this walker:
+// `atomic.functions[].name` becomes a route and a method, so it is normalised in
+// functionidentity.go instead, and emits its notice through the same Deprecation
+// type so it still lists with these.
+var driftfileKeyDeprecations = []common.KeyDeprecation{
+	// The identity is a REFERENCE to a slice the configurator created, not a name
+	// this file mints. A straight rename, so the walker rewrites it and every
+	// reader downstream sees one spelling.
+	common.KeyDeprecationFor("name", common.KeyAlias, common.Deprecation{
+		Old: "name",
+		New: "slice",
+	}),
+}
 
 // applyKeyDeprecations walks each declared path, warns once per path, and
 // rewrites the aliases in place.
