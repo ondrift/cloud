@@ -12,8 +12,10 @@
 package project
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -51,6 +53,7 @@ func CheckSliceReferences(m *Manifest, live *LiveSlice) error {
 
 	var missing []referenceMiss
 	missing = append(missing, missesIn("function", namedFunctions(m), declaredFunctions)...)
+	missing = append(missing, missingSecrets(m)...)
 	missing = append(missing, missesIn("nosql collection",
 		entryNames(m, "slot", "backbone", "nosql"), keySet(live.Config.Backbone.NoSQL.Collections))...)
 	missing = append(missing, missesIn("blob bucket",
@@ -64,6 +67,100 @@ func CheckSliceReferences(m *Manifest, live *LiveSlice) error {
 	return referenceError(m.Name(), missing)
 }
 
+// missingSecrets reports every secret a function declares that will not exist
+// when it runs.
+//
+// The runner fetches exactly the names a function declares and SILENTLY SKIPS
+// any the slice does not hold, so a typo is an absent environment variable at
+// the first invocation and no error anywhere.
+//
+// The referee is the UNION of two sets, and it has to be:
+//
+//   - the slice's live secrets, because one set once with `drift backbone secret
+//     set` and never named in a manifest is an ordinary pattern, not a fault;
+//   - this manifest's own `backbone.secrets`, because those are not on the slice
+//     yet at check time — applyBackbone and applyAtomic run concurrently, so the
+//     live list alone would refuse a project that sets its secrets in the very
+//     deploy being checked.
+//
+// Only names are read. `list` is called, never `get`, and no value is fetched,
+// printed or compared.
+func missingSecrets(m *Manifest) []referenceMiss {
+	allowed := map[string]bool{}
+	for name := range m.Slice().StrMap("backbone", "secrets") {
+		allowed[name] = true
+	}
+	live, err := fetchLiveSecretNames()
+	if err != nil {
+		// Unreadable is not absent. Refusing here would fail a deploy over a
+		// transient list call, and the runtime behaviour this check exists to
+		// pre-empt is unchanged by skipping it.
+		fmt.Printf("  %s couldn't check the secrets your functions declare: %v\n",
+			common.Hint("·"), err)
+		return nil
+	}
+	for _, name := range live {
+		allowed[name] = true
+	}
+
+	var out []referenceMiss
+	seen := map[string]bool{}
+	for _, s := range FunctionSpecs(m) {
+		for _, name := range s.Secrets {
+			key := s.Name + "\x00" + name
+			if name == "" || allowed[name] || seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, referenceMiss{
+				Class: "secret",
+				Name:  name,
+				// Secrets are the one class the configurator does not own, so the
+				// shared closing line would send the reader to the wrong place.
+				Remedy: fmt.Sprintf("declared by %s — set it with `drift backbone secret set %s=…`, "+
+					"or add it to this file's `backbone.secrets`", s.Name, name),
+			})
+		}
+	}
+	return out
+}
+
+// fetchLiveSecretNames lists the secret NAMES the slice holds. Names only —
+// this path must never reach for a value.
+func fetchLiveSecretNames() ([]string, error) {
+	resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/backbone/secret/list", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := common.CheckResponse(resp, "list secrets")
+	if err != nil {
+		return nil, err
+	}
+	// The route has answered both a bare array of names and a list of objects
+	// carrying one; accept either rather than pinning to the shape of the day.
+	var names []string
+	if err := json.Unmarshal(body, &names); err == nil {
+		return names, nil
+	}
+	var objs []struct {
+		Name string `json:"name"`
+		Key  string `json:"key"`
+	}
+	if err := json.Unmarshal(body, &objs); err != nil {
+		return nil, fmt.Errorf("read the slice's secret list: %w", err)
+	}
+	out := make([]string, 0, len(objs))
+	for _, o := range objs {
+		if o.Name != "" {
+			out = append(out, o.Name)
+		} else if o.Key != "" {
+			out = append(out, o.Key)
+		}
+	}
+	return out, nil
+}
+
 // referenceMiss is one name the manifest uses and the slice does not have.
 // NearMiss carries a declared name differing only in case, which is the failure
 // most worth naming outright: it looks declared and reaches nothing.
@@ -71,6 +168,9 @@ type referenceMiss struct {
 	Class    string
 	Name     string
 	NearMiss string
+	// Remedy overrides the block's shared closing advice for a class the
+	// configurator does not own.
+	Remedy string
 }
 
 // missesIn reports the referenced names absent from declared, preserving the
@@ -149,6 +249,9 @@ func referenceError(sliceName string, missing []referenceMiss) error {
 		sort.SliceStable(items, func(i, j int) bool { return items[i].Name < items[j].Name })
 		for _, miss := range items {
 			fmt.Fprintf(&b, "\n  - %s %q", miss.Class, miss.Name)
+			if miss.Remedy != "" {
+				fmt.Fprintf(&b, " — %s", miss.Remedy)
+			}
 			if miss.NearMiss != "" {
 				fmt.Fprintf(&b, " — the slice declares %q, which differs only in case; "+
 					"the runtime matches this name exactly, so %q reaches nothing",
@@ -157,7 +260,7 @@ func referenceError(sliceName string, missing []referenceMiss) error {
 		}
 	}
 	fmt.Fprintf(&b, "\n\nAdd them to the slice at %s, then deploy again. "+
-		"Checked: functions, nosql collections, blob buckets and sql databases.", common.ConfiguratorBaseURL)
+		"Checked: functions, nosql collections, blob buckets, sql databases and secrets.", common.ConfiguratorBaseURL)
 	return fmt.Errorf("%s", b.String())
 }
 

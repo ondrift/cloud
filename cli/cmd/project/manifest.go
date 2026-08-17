@@ -44,6 +44,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ondrift/cloud/cli/common"
 	"gopkg.in/yaml.v3"
 )
 
@@ -227,6 +228,18 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	// a second opinion on the format — it never inspects a value's shape.
 	if errs := checkLocalPaths(&m); len(errs) > 0 {
 		return nil, errs
+	}
+
+	// The other class the schema cannot own: a reference from one part of the
+	// document to another. A queue-triggered function names a queue, and only
+	// `backbone.queues` declares one — the live slice carries a depth and no
+	// names, so the document is the only thing that can answer this.
+	//
+	// A warning, not a refusal: the slice creates an undeclared queue on its
+	// first push, so the function does fire and stopping the deploy would be
+	// wrong. See queuerefs.go.
+	for _, w := range checkQueueReferences(&m) {
+		fmt.Fprintf(os.Stderr, "  %s %s\n", common.Hint("·"), w)
 	}
 
 	// $ENVREF resolution is not validation — it substitutes a value from the
