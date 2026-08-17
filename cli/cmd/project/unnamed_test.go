@@ -218,3 +218,82 @@ func TestReportUnnamedResources_NothingUnnamedPrintsNothing(t *testing.T) {
 		t.Errorf("nothing is unnamed, so nothing must be printed, got %q", out.String())
 	}
 }
+
+// A site live on the slice that the manifest does not declare keeps being
+// served at its route. Nothing on the apply path prunes it, and until the
+// registry could be read there was no way to learn it was there.
+func TestUnnamedCanvasSites_NamesTheSlugTheManifestDropped(t *testing.T) {
+	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ops/canvas" && r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"deployed":true,"sites":[{"slug":"blog","route":"/blog"},{"slug":"docs","route":"/"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+
+	root := t.TempDir()
+	siteDir := filepath.Join(root, "docs")
+	if err := os.MkdirAll(siteDir, 0o750); err != nil {
+		t.Fatalf("making the site dir: %v", err)
+	}
+	// The slug comes from the mount path, not the directory: an entry at "/"
+	// slugifies to "default" whatever it is called on disk.
+	m := manifestRooted(Node{"name": "demo", "canvas": map[string]any{
+		"sites": []any{map[string]any{"dir": "./docs", "path": "/docs"}},
+	}}, root)
+
+	unnamed, err := unnamedCanvasSites(m)
+	if err != nil {
+		t.Fatalf("unnamedCanvasSites: %v", err)
+	}
+	if got := strings.Join(unnamed, ","); got != "blog" {
+		t.Errorf("the undeclared slug must be reported and the declared one must not, got %q", got)
+	}
+	if n := rec.count("POST /ops/canvas/prune"); n != 0 {
+		t.Errorf("reporting must not prune: got %d prune request(s)", n)
+	}
+}
+
+// The registry arrives wrapped in {"deployed":…, "sites":[…]}. Decoding it as a
+// bare array yields an empty list and NO error, which reads as "this slice
+// serves nothing" — the exact shape that kept the list looking absent.
+func TestUnnamedCanvasSites_ReadsTheWrappedRegistryRatherThanABareArray(t *testing.T) {
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ops/canvas" && r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"deployed":true,"sites":[{"slug":"orphan","route":"/old"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+
+	m := manifestRooted(Node{"name": "demo"}, t.TempDir())
+
+	unnamed, err := unnamedCanvasSites(m)
+	if err != nil {
+		t.Fatalf("unnamedCanvasSites: %v", err)
+	}
+	if len(unnamed) != 1 || unnamed[0] != "orphan" {
+		t.Errorf("a manifest declaring no sites leaves every live site unnamed, got %q", unnamed)
+	}
+}
+
+// The canvas class names no removal command, because no drift verb removes a
+// site — the slice takes a keep list and nothing sends it. Printing an invented
+// command would be worse than printing none.
+func TestReportUnnamedResources_SaysNoCommandRemovesACanvasSite(t *testing.T) {
+	var out bytes.Buffer
+	reportUnnamedResources(unnamedResources{CanvasSites: []string{"blog"}}, &out)
+
+	got := out.String()
+	if !strings.Contains(got, "canvas site blog") {
+		t.Errorf("the unnamed site must be reported, got %q", got)
+	}
+	if !strings.Contains(got, "no drift command removes a site") {
+		t.Errorf("the report must say no verb removes one rather than invent one, got %q", got)
+	}
+	if strings.Contains(got, "remove it with") {
+		t.Errorf("no removal command exists for a site, so none must be offered, got %q", got)
+	}
+}
