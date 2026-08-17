@@ -229,23 +229,32 @@ single slice otherwise.`,
 				return err
 			}
 
-			// The mirror of that check: what the slice serves and the manifest
-			// no longer names. A rename leaves the old route deployed, serving,
-			// re-registering on every restart and holding a slot the slice was
-			// sold. A fetch failure is STATED rather than swallowed — the
-			// best-effort silence that suits skip-unchanged would be a false
+			// The slice exists and holds what the manifest names, so it becomes
+			// the active one — BEFORE anything that resolves a slice from the
+			// session rather than from the manifest.
+			//
+			// The orphan check below is the first such reader: it sends the
+			// active slice as `X-Slice`, so running it first asks the platform
+			// about whatever slice this machine last used — `default` on a
+			// session that has never set one. That answers "slice not found:
+			// default", which degrades to a warning and reads as a platform
+			// problem, and it means the check never ran on a first apply from
+			// any machine not already pointed at this slice.
+			if err := common.SaveActiveSlice(m.Name()); err != nil {
+				return fmt.Errorf("set active slice: %w", err)
+			}
+
+			// The mirror of the reference check: what the slice serves and the
+			// manifest no longer names. A rename leaves the old route deployed,
+			// serving, re-registering on every restart and holding a slot the
+			// slice was sold. A fetch failure is STATED rather than swallowed —
+			// the best-effort silence that suits skip-unchanged would be a false
 			// all-clear here.
 			if deployedFns, derr := atomic_cmd.DeployedFunctions(); derr != nil {
 				fmt.Printf("  %s couldn't check for functions the Driftfile no longer names: %v\n",
 					common.Hint("·"), derr)
 			} else {
 				ReportOrphanedFunctions(m, deployedFns, os.Stdout)
-			}
-
-			// At this point the slice exists and holds what the manifest names.
-			// Set it as the active slice for subsequent api calls.
-			if err := common.SaveActiveSlice(m.Name()); err != nil {
-				return fmt.Errorf("set active slice: %w", err)
 			}
 
 			// The readiness poll OUTLIVES the create and grow branches that used
