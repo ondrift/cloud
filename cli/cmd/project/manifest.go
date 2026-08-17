@@ -100,13 +100,18 @@ func (m *Manifest) Slice() Node { return m.slice }
 // document do not have to care which of the two they wanted.
 func (m *Manifest) Raw() Node { return m.doc }
 
-// Name is the project/slice name. SelectEnvironment rewrites it to the derived
-// per-environment name.
-func (m *Manifest) Name() string { return m.slice.Str("name") }
+// sliceKey is the root key naming the slice this file is applied to. The key
+// walker rewrites the retired `name` onto it before anything reads the document,
+// so every reader below sees exactly this one.
+const sliceKey = "slice"
 
-// SetName exists for SelectEnvironment, which derives `<project>-<env>`. Nothing
+// Name is the slice this file is applied to. SelectEnvironment rewrites it to
+// the derived per-environment name.
+func (m *Manifest) Name() string { return m.slice.Str(sliceKey) }
+
+// SetName exists for SelectEnvironment, which derives `<slice>-<env>`. Nothing
 // else has any business renaming a slice.
-func (m *Manifest) SetName(name string) { m.slice["name"] = name }
+func (m *Manifest) SetName(name string) { m.slice[sliceKey] = name }
 
 // BaseDir is the directory the Driftfile was read from.
 func (m *Manifest) BaseDir() string { return m.baseDir }
@@ -381,25 +386,37 @@ func SchemaAvailable() bool {
 
 // ─── Hooks (cheap pre-build parse) ──────────────────────────────────
 
-// ParseProjectName cheaply decodes ONLY the top-level `name` — no validation,
-// no `${VAR}`/`$ENVREF` resolution — so commands that just need the project's
-// identity (e.g. `drift file stop`/`logs` finding the container) work without
-// the project's secrets being set in the environment.
+// ParseProjectName cheaply decodes ONLY the slice's identity — no validation,
+// no `${VAR}`/`$ENVREF` resolution — so commands that just need it (e.g.
+// `drift file stop`/`logs` finding the container) work without the project's
+// secrets being set in the environment.
+//
+// It accepts BOTH spellings itself rather than leaning on the key walker,
+// because it never runs the walker: that is the whole point of this function.
+// Reading only the current spelling here would leave every container started
+// from a `name:`-keyed file unstoppable except by hand.
 func ParseProjectName(path string) (string, error) {
 	data, err := os.ReadFile(path) // #nosec G304 — CLI reads the user's manifest by design
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 	var wrapper struct {
-		Name string `yaml:"name"`
+		Slice string `yaml:"slice"`
+		Name  string `yaml:"name"`
 	}
 	if err := yaml.Unmarshal(data, &wrapper); err != nil {
 		return "", fmt.Errorf("Driftfile: invalid YAML: %w", err)
 	}
-	if strings.TrimSpace(wrapper.Name) == "" {
-		return "", fmt.Errorf("Driftfile has no name")
+	// The current spelling wins when a document carries both, matching what the
+	// walker does with the pair.
+	identity := strings.TrimSpace(wrapper.Slice)
+	if identity == "" {
+		identity = strings.TrimSpace(wrapper.Name)
 	}
-	return wrapper.Name, nil
+	if identity == "" {
+		return "", fmt.Errorf("Driftfile names no slice — add `slice: <name>`")
+	}
+	return identity, nil
 }
 
 // ─── Environment selection + merge ──────────────────────────────────

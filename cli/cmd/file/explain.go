@@ -59,7 +59,7 @@ func getExplainCmd() *cobra.Command {
 func printResolved(m *project.Manifest, env string) {
 	s := m.Slice()
 
-	title := fmt.Sprintf("slice %s", s.Str("name"))
+	title := fmt.Sprintf("slice %s", m.Name())
 	if env != "" {
 		title += fmt.Sprintf("  (environment %s)", env)
 	}
