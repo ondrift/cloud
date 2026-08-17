@@ -105,8 +105,8 @@ func TestSiteMount_CollidingSlugsAreRefused(t *testing.T) {
 	second := siteTree(t, root, "second")
 
 	m := manifestRooted(Node{"name": "demo", "canvas": map[string]any{"sites": []any{
-		map[string]any{"dir": first, "route": "/admin"},
-		map[string]any{"dir": second, "route": "/admin/"},
+		map[string]any{"dir": first, "path": "/admin"},
+		map[string]any{"dir": second, "path": "/admin/"},
 	}}}, root)
 
 	err := applyCanvas(m, io.Discard)
@@ -146,7 +146,7 @@ func TestCanvasDerivation_ApplyAndLayoutAgree(t *testing.T) {
 	m := manifestRooted(Node{"name": "demo", "canvas": map[string]any{"sites": []any{
 		map[string]any{"dir": public, "path": "/"},
 		map[string]any{"dir": admin, "path": "/admin"},
-		map[string]any{"dir": docs, "route": "/docs"},
+		map[string]any{"dir": docs, "path": "/docs"},
 	}}}, root)
 
 	if err := applyCanvas(m, io.Discard); err != nil {
@@ -193,10 +193,14 @@ func TestCanvasDerivation_ApplyAndLayoutAgree(t *testing.T) {
 	}
 }
 
-// The control, and the shape most manifests are in: `route:` keeps working and
-// keeps deriving what it always did, including the short form that names no
-// mount path at all and means the root.
-func TestSiteMount_RouteKeyAndTheShortFormStillWork(t *testing.T) {
+// The control: the short form, which names no mount path at all and means the
+// root, alongside one site that does name a path.
+//
+// These fixtures are resolved nodes built by hand, so the key walker never runs
+// over them and they are written in the current spelling. The retired `route:`
+// spelling is covered where its alias actually lives — through the real parser,
+// in TestSlotIdentity_TheRetiredRouteKeyResolvesIdenticallyAndWarnsOnce.
+func TestSiteMount_TheShortFormAndAMountedSiteStillWork(t *testing.T) {
 	up := stubCanvasAPI(t)
 	root := t.TempDir()
 	public := siteTree(t, root, "public")
@@ -204,7 +208,7 @@ func TestSiteMount_RouteKeyAndTheShortFormStillWork(t *testing.T) {
 
 	m := manifestRooted(Node{"name": "demo", "canvas": map[string]any{"sites": []any{
 		public,
-		map[string]any{"dir": admin, "route": "/admin"},
+		map[string]any{"dir": admin, "path": "/admin"},
 	}}}, root)
 
 	if err := applyCanvas(m, io.Discard); err != nil {

@@ -41,10 +41,13 @@ func manifestNaming(functions []string, collections, buckets, databases []string
 	for _, f := range functions {
 		fns = append(fns, map[string]any{"name": f, "handler": "H", "memory": "16MB"})
 	}
-	named := func(names []string) []any {
+	// A NoSQL entry names the `slot` it seeds; a bucket and a database still
+	// carry `name`. These are resolved nodes, so each is written in the spelling
+	// its own reader reads.
+	named := func(key string, names []string) []any {
 		out := make([]any, 0, len(names))
 		for _, n := range names {
-			out = append(out, map[string]any{"name": n, "size": "5MB"})
+			out = append(out, map[string]any{key: n, "size": "5MB"})
 		}
 		return out
 	}
@@ -54,9 +57,9 @@ func manifestNaming(functions []string, collections, buckets, databases []string
 		"slice":  "demo",
 		"atomic": map[string]any{"functions": fns},
 		"backbone": map[string]any{
-			"nosql": named(collections),
-			"blobs": named(buckets),
-			"sql":   named(databases),
+			"nosql": named("slot", collections),
+			"blobs": named("name", buckets),
+			"sql":   named("name", databases),
 		},
 	}
 	return manifestFrom(slice)

@@ -44,6 +44,17 @@ var driftfileKeyDeprecations = []common.KeyDeprecation{
 		Old: "name",
 		New: "slice",
 	}),
+	// A collection the manifest seeds or expires is a REFERENCE to one the slice
+	// already holds, so the key names the slot rather than creating a collection.
+	common.KeyDeprecationFor("backbone.nosql[].name", common.KeyAlias, common.Deprecation{
+		Old: "backbone.nosql[].name",
+		New: "backbone.nosql[].slot",
+	}),
+	// Where a site mounts is a path, not a route — a route is a function's.
+	common.KeyDeprecationFor("canvas.sites[].route", common.KeyAlias, common.Deprecation{
+		Old: "canvas.sites[].route",
+		New: "canvas.sites[].path",
+	}),
 }
 
 // applyKeyDeprecations walks each declared path, warns once per path, and
@@ -78,14 +89,24 @@ func applyKeyTo(holder Node, leaf string, key common.KeyDeprecation) {
 		return
 	}
 
+	// New is a PATH, because that is what the notice has to say — "use
+	// backbone.nosql[].slot" locates the key, "use slot" does not. The holder is
+	// keyed by leaf, so take the leaf off it rather than writing the path as a
+	// key: a nested alias otherwise creates a key literally named
+	// `backbone.nosql[].slot`, which every reader misses and no error reports.
+	_, newLeaf, ok := splitKeyPath(key.New)
+	if !ok {
+		return
+	}
+
 	// A document stating BOTH spellings is contradicting itself, and the new one
 	// is what it means. Overwriting it with the retired value would make the
 	// deprecated key win, which is backwards.
-	if _, already := holder[key.New]; already {
+	if _, already := holder[newLeaf]; already {
 		delete(holder, leaf)
 		return
 	}
-	holder[key.New] = value
+	holder[newLeaf] = value
 	delete(holder, leaf)
 }
 

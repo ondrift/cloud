@@ -279,17 +279,17 @@ func checkLocalPaths(m *Manifest) ParseErrors {
 		}
 	}
 
-	for i, c := range m.slice.Entries("name", "backbone", "nosql") {
+	for i, c := range m.slice.Entries("slot", "backbone", "nosql") {
 		seed := c.Str("seed")
 		if seed == "" {
 			continue
 		}
 		seedPath := resolveBaseDir(m, seed)
 		if _, err := os.Stat(seedPath); err != nil {
-			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q seed file not found at %s", i, c.Str("name"), seedPath))
+			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q seed file not found at %s", i, c.Str("slot"), seedPath))
 			continue
 		}
-		errs = append(errs, validateJSONLSeed(c.Str("name"), seedPath)...)
+		errs = append(errs, validateJSONLSeed(c.Str("slot"), seedPath)...)
 	}
 
 	for k, e := range m.slice.EntryMap("value", "backbone", "cache") {
