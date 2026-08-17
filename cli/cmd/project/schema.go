@@ -266,7 +266,18 @@ func CompiledMemoryFloor() CompiledFloor {
 	if err != nil {
 		return CompiledFloor{}
 	}
+	// Read the ROOT block first, and fall back to the annotations' old home on
+	// `atomicEntry.properties.memory`.
+	//
+	// The fallback is not belt-and-braces: this reads whatever schema the MACHINE
+	// holds, which can predate the move, and returning zero there would silently
+	// delete the floor check rather than fail it. The two carry the same values,
+	// so either answer is the platform's rule.
 	var doc struct {
+		XDrift struct {
+			CompiledMinimum string   `json:"compiled-minimum"`
+			Interpreted     []string `json:"interpreted-languages"`
+		} `json:"x-drift"`
 		Definitions struct {
 			AtomicEntry struct {
 				Properties struct {
@@ -281,19 +292,23 @@ func CompiledMemoryFloor() CompiledFloor {
 	if jerr := json.Unmarshal(raw, &doc); jerr != nil {
 		return CompiledFloor{}
 	}
-	mem := doc.Definitions.AtomicEntry.Properties.Memory
-	if mem.CompiledMinimum == "" || len(mem.Interpreted) == 0 {
+	minimum, interpreted := doc.XDrift.CompiledMinimum, doc.XDrift.Interpreted
+	if minimum == "" || len(interpreted) == 0 {
+		legacy := doc.Definitions.AtomicEntry.Properties.Memory
+		minimum, interpreted = legacy.CompiledMinimum, legacy.Interpreted
+	}
+	if minimum == "" || len(interpreted) == 0 {
 		return CompiledFloor{}
 	}
-	bytes, perr := parseSizeBytes(mem.CompiledMinimum)
+	bytes, perr := parseSizeBytes(minimum)
 	if perr != nil || bytes <= 0 {
 		return CompiledFloor{}
 	}
-	set := make(map[string]bool, len(mem.Interpreted))
-	for _, l := range mem.Interpreted {
+	set := make(map[string]bool, len(interpreted))
+	for _, l := range interpreted {
 		set[strings.ToLower(l)] = true
 	}
-	return CompiledFloor{Bytes: bytes, Declared: mem.CompiledMinimum, interpreted: set}
+	return CompiledFloor{Bytes: bytes, Declared: minimum, interpreted: set}
 }
 
 // NamePattern is the platform's rule for a project/slice identifier, read out of
