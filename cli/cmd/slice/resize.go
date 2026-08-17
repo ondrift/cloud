@@ -51,7 +51,13 @@ func getResizeCmd() *cobra.Command {
 				if len(args) > 0 {
 					return fmt.Errorf("cannot pass <name> when --from is set; the slice name comes from the Driftfile")
 				}
-				return resizeFromDriftfile(fromPath, allowDestructive, autoYes, billingMonths)
+				common.DeprecateFlag(cmd, "from", common.Deprecation{
+					Old:         "drift slice resize --from",
+					New:         "drift slice resize",
+					RemoveAfter: removeAfterShapeIsConfiguratorOwned,
+					Because:     "A Driftfile no longer declares a slice's shape. This opens the configurator on the slice the file names, pre-filled with what the slice currently is.",
+				})()
+				return handoffFromDriftfile("resize slice", fromPath, modeResize)
 			}
 
 			// No name given → resize the currently active slice (the one
@@ -99,9 +105,9 @@ func getResizeCmd() *cobra.Command {
 // flag: "shrink" is what the user meant, and a name is harder to pass by
 // accident than an option they copied from somewhere.
 //
-// It delegates to the same resizeFromDriftfile the flags reach, so there is one
-// implementation and the confirmation, the diff and the refusal cannot differ
-// between the two spellings.
+// It now opens the configurator on the slice the file names, exactly as
+// `resize --from` does, so the two spellings cannot diverge — and the reduction
+// it was named for is chosen and confirmed where the shape lives.
 func getShrinkCmd() *cobra.Command {
 	var (
 		fromPath      string
@@ -111,35 +117,41 @@ func getShrinkCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "shrink",
-		Short: "Apply a Driftfile including its reductions — the destructive resize",
-		Long: "Apply the shape a Driftfile declares, INCLUDING limits it lowers.\n\n" +
-			"An ordinary deploy only ever creates or grows, because shrinking deletes data the\n" +
-			"manifest cannot know about. This is the deliberate version of that, and it still\n" +
-			"shows what it will remove and asks before doing it.\n\n" +
-			"Identical to `drift slice resize --from <file> --allow-destructive`, which remains\n" +
-			"for scripts that already use it.",
+		Short: "Deprecated: opens the configurator on the slice a Driftfile names",
+		Long: "Deprecated — use `drift slice resize`.\n\n" +
+			"This verb existed to apply the reductions a Driftfile declared, back when a\n" +
+			"Driftfile declared a slice's shape. It no longer does: the configurator owns\n" +
+			"the shape, and it is where a reduction is chosen and confirmed.\n\n" +
+			"It still works, and opens the configurator on the slice the file names.",
 		Example: "  drift slice shrink\n  drift slice shrink --from Driftfile",
 		Args:    cobra.NoArgs,
 		// A refused shrink is the platform answering, not the command being held
 		// wrong, so the usage block would bury the list of what it would remove.
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if fromPath == "" {
-				fromPath = "Driftfile"
-			}
-			// allowDestructive is true by construction: it is what the verb means.
-			return resizeFromDriftfile(fromPath, true, autoYes, billingMonths)
+			return handoffFromDriftfile("resize slice", fromPath, modeResize)
 		},
 	}
 
-	cmd.Flags().StringVar(&fromPath, "from", "", "Driftfile to apply (default: ./Driftfile)")
-	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm the prompt (for CI)")
-	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period in months")
-	return cmd
+	cmd.Flags().StringVar(&fromPath, "from", "", "Driftfile naming the slice to configure (default: ./Driftfile)")
+	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Deprecated: does nothing; the configurator confirms")
+	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Deprecated: does nothing; billing is chosen in the configurator")
+
+	return common.DeprecateCommand(cmd, common.Deprecation{
+		Old:         "drift slice shrink",
+		New:         "drift slice resize",
+		RemoveAfter: removeAfterShapeIsConfiguratorOwned,
+		Because:     "A reduction is chosen and confirmed in the configurator, which owns a slice's shape — so there is no longer a destructive spelling of resize for this to be.",
+	})
 }
 
-// resizeFromDriftfile applies a Driftfile's declared shape to a live
-// slice, including shrinks when --allow-destructive is set.
+// resizeFromDriftfile has NO CALLERS. Both `--from` and `shrink` hand off to
+// the configurator, which owns the shape this reads out of a manifest. It
+// survives only until the card that deletes that translation, and nothing
+// should start calling it again.
+//
+// What it did: applied a Driftfile's declared shape to a live slice, including
+// shrinks when --allow-destructive was set.
 //
 // The destructive flag is checked at the CLI level rather than the
 // manifest level on purpose: a teammate reading a Driftfile cannot

@@ -143,6 +143,27 @@ func DeprecateCommand(cmd *cobra.Command, d Deprecation) *cobra.Command {
 	return cmd
 }
 
+// DeprecateFlag marks one FLAG deprecated: it keeps working, and says once what
+// to do instead the first time a run actually passes it.
+//
+// Keyed on `Changed` rather than on the value, because a flag left at its
+// default was not passed and its owner has nothing to be told. That is also what
+// keeps the notice off every run of a command that merely DECLARES the flag.
+//
+// Returns a function to call from RunE rather than wrapping PersistentPreRunE:
+// a command commonly retires one flag while keeping the rest, so the notice has
+// to be able to fire per flag rather than per command.
+func DeprecateFlag(cmd *cobra.Command, flag string, d Deprecation) func() {
+	if d.Old == "" {
+		d.Old = flag
+	}
+	return func() {
+		if cmd.Flags().Changed(flag) {
+			d.Warn()
+		}
+	}
+}
+
 // AliasCommand returns a hidden command under the OLD name that re-runs the CLI
 // under the new one.
 //
