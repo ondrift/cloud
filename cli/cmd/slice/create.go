@@ -75,7 +75,7 @@ func getCreateCmd() *cobra.Command {
 					RemoveAfter: removeAfterShapeIsConfiguratorOwned,
 					Because:     "A Driftfile no longer declares a slice's shape, so there is nothing here to create one from. This opens the configurator on the slice the file names.",
 				})()
-				return handoffFromDriftfile("create slice", fromPath, modeCreate)
+				return handoffFromDriftfile("create slice", fromPath, common.ModeCreate)
 			}
 
 			// Free tier: create directly, no configurator.
@@ -88,7 +88,7 @@ func getCreateCmd() *cobra.Command {
 
 			// Default: the browser configurator, the same handoff `resize`
 			// uses — one session flow, one place it can break.
-			result, err := runBrowserHandoff("create slice", name, modeCreate, nil)
+			result, err := common.RunBrowserHandoff("create slice", name, common.ModeCreate, nil)
 			if err != nil {
 				return err
 			}

@@ -1,10 +1,9 @@
 package slice
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 
+	project "github.com/ondrift/cloud/cli/cmd/project"
 	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
@@ -55,7 +54,7 @@ func getResizeCmd() *cobra.Command {
 					RemoveAfter: removeAfterShapeIsConfiguratorOwned,
 					Because:     "A Driftfile no longer declares a slice's shape. This opens the configurator on the slice the file names, pre-filled with what the slice currently is.",
 				})()
-				return handoffFromDriftfile("resize slice", fromPath, modeResize)
+				return handoffFromDriftfile("resize slice", fromPath, common.ModeResize)
 			}
 
 			// No name given → resize the currently active slice (the one
@@ -70,11 +69,11 @@ func getResizeCmd() *cobra.Command {
 				}
 				name = active
 			}
-			existing, err := fetchSliceConfig(name)
+			existing, err := project.FetchSliceConfigRaw(name, "resize slice")
 			if err != nil {
 				return err
 			}
-			result, err := runBrowserHandoff("resize slice", name, modeResize, existing)
+			result, err := common.RunBrowserHandoff("resize slice", name, common.ModeResize, existing)
 			if err != nil {
 				return err
 			}
@@ -127,7 +126,7 @@ func getShrinkCmd() *cobra.Command {
 		// wrong, so the usage block would bury the list of what it would remove.
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return handoffFromDriftfile("resize slice", fromPath, modeResize)
+			return handoffFromDriftfile("resize slice", fromPath, common.ModeResize)
 		},
 	}
 
@@ -159,41 +158,4 @@ func confirmYesNo(autoYes bool, prompt string) bool {
 	var ans string
 	_, _ = fmt.Scanln(&ans)
 	return ans == "y" || ans == "Y" || ans == "yes" || ans == "YES"
-}
-
-// fetchSliceConfig pulls the user's current SliceConfig from api so the
-// configurator form can pre-populate. We return the JSON-decoded value as
-// a generic any so the handoff helper can re-encode it without the CLI
-// having to import drift-common/models. The shape is intentionally
-// passthrough — the CLI never inspects the config, it only forwards it.
-func fetchSliceConfig(name string) (any, error) {
-	resp, err := common.DoRequest(
-		http.MethodGet,
-		common.APIBaseURL+"/ops/slice/get?name="+name,
-		nil,
-	)
-	if err != nil {
-		return nil, common.TransportError("resize slice", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := common.CheckResponse(resp, "resize slice")
-	if err != nil {
-		return nil, err
-	}
-
-	// /ops/slice/get returns the full Slice document; the configurator
-	// only needs the embedded "config" subobject. Pull it out so the
-	// handoff payload matches the configurator's handoffRequest.Existing
-	// field shape.
-	var slice struct {
-		Config any `json:"config"`
-	}
-	if err := json.Unmarshal(body, &slice); err != nil {
-		return nil, fmt.Errorf("Couldn't resize slice: get response wasn't valid JSON (%w)", err)
-	}
-	if slice.Config == nil {
-		return nil, fmt.Errorf("Couldn't resize slice: server returned no config for slice %q", name)
-	}
-	return slice.Config, nil
 }

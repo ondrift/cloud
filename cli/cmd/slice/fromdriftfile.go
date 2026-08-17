@@ -38,7 +38,7 @@ const removeAfterShapeIsConfiguratorOwned = "every live slice's shape is configu
 // `existing` is the live config when there is one, forwarded verbatim so the
 // form opens on what the slice actually is. Nil for a create, which has nothing
 // to pre-fill.
-func handoffFromDriftfile(op, path string, mode handoffMode) error {
+func handoffFromDriftfile(op, path string, mode common.HandoffMode) error {
 	if path == "" {
 		path = "Driftfile"
 	}
@@ -48,22 +48,22 @@ func handoffFromDriftfile(op, path string, mode handoffMode) error {
 	}
 
 	var existing any
-	if mode == modeResize {
+	if mode == common.ModeResize {
 		// Best-effort: the form is more useful pre-filled, and a slice that
 		// cannot be read is a problem the configurator will state better than a
 		// pre-flight here would.
-		if cfg, ferr := fetchSliceConfig(name); ferr == nil {
+		if cfg, ferr := project.FetchSliceConfigRaw(name, op); ferr == nil {
 			existing = cfg
 		}
 	}
 
-	result, err := runBrowserHandoff(op, name, mode, existing)
+	result, err := common.RunBrowserHandoff(op, name, mode, existing)
 	if err != nil {
 		return err
 	}
 	printSliceSummary(pastTense(mode), result)
 
-	if mode == modeCreate {
+	if mode == common.ModeCreate {
 		if created := sliceNameFrom(result); created != "" {
 			if serr := common.SaveActiveSlice(created); serr != nil {
 				fmt.Println("Warning: couldn't mark the new slice as active —", serr)
@@ -73,8 +73,8 @@ func handoffFromDriftfile(op, path string, mode handoffMode) error {
 	return nil
 }
 
-func pastTense(mode handoffMode) string {
-	if mode == modeCreate {
+func pastTense(mode common.HandoffMode) string {
+	if mode == common.ModeCreate {
 		return "created"
 	}
 	return "resized"
