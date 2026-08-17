@@ -1,6 +1,7 @@
 package project
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 
@@ -191,5 +192,79 @@ func TestCheckSliceReferences_AMissingSliceIsNamed(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "demo") {
 		t.Errorf("the refusal must name the slice, got %q", err)
+	}
+}
+
+// A function declaring a secret the slice will not hold fails on the terminal
+// rather than at its first invocation. The runner fetches exactly the names a
+// function declares and SILENTLY SKIPS the ones that are absent, so today a typo
+// is a missing environment variable and no error anywhere.
+func TestCheckSliceReferences_RefusesASecretThatWillNotExist(t *testing.T) {
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ops/backbone/secret/list" {
+			_, _ = w.Write([]byte(`["STRIPE_KEY"]`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+
+	m := manifestFrom(Node{"slice": "demo", "atomic": map[string]any{"functions": []any{
+		map[string]any{"name": "post:charge", "handler": "H", "secrets": []any{"MISSING"}},
+	}}})
+	err := CheckSliceReferences(m, &LiveSlice{Name: "demo"})
+
+	if err == nil {
+		t.Fatal("a secret the slice does not hold must be refused before the deploy")
+	}
+	for _, want := range []string{"MISSING", "post:charge"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must name %q, got %v", want, err)
+		}
+	}
+}
+
+// The referee is the UNION of the live list and this manifest's own secrets.
+// A secret present only on the slice passes, because setting one once with
+// `drift backbone secret set` and never naming it in a manifest is ordinary.
+func TestCheckSliceReferences_ASecretOnlyOnTheSlicePasses(t *testing.T) {
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ops/backbone/secret/list" {
+			_, _ = w.Write([]byte(`[{"name":"STRIPE_KEY"}]`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+
+	m := manifestFrom(Node{"slice": "demo", "atomic": map[string]any{"functions": []any{
+		map[string]any{"name": "post:charge", "handler": "H", "secrets": []any{"STRIPE_KEY"}},
+	}}})
+	if err := CheckSliceReferences(m, &LiveSlice{Name: "demo"}); err != nil {
+		t.Errorf("a secret the slice already holds must pass, got %v", err)
+	}
+}
+
+// ...and the other half of the union: a secret this very deploy will set is not
+// on the slice yet, because applyBackbone and applyAtomic run concurrently. The
+// live list alone would refuse a project that sets its own secrets.
+func TestCheckSliceReferences_ASecretThisManifestSetsPasses(t *testing.T) {
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ops/backbone/secret/list" {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+
+	m := manifestFrom(Node{"slice": "demo",
+		"atomic": map[string]any{"functions": []any{
+			map[string]any{"name": "post:ops", "handler": "H", "secrets": []any{"SIGNER"}},
+		}},
+		"backbone": map[string]any{"secrets": map[string]any{"SIGNER": "$SIGNER"}},
+	})
+	if err := CheckSliceReferences(m, &LiveSlice{Name: "demo"}); err != nil {
+		t.Errorf("a secret this deploy sets must pass — it is not on the slice yet, got %v", err)
 	}
 }
