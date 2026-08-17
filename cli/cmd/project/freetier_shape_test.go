@@ -15,9 +15,8 @@ package project
 //  1. `drift slice create <name> --free` followed by `drift file apply`.
 //     Independent of price — the slice is already sitting at the preset.
 //
-//  2. `drift file apply` twice, no `slice create` at all, when the
-//     manifest prices at €0. reconcileSlice picks tier "hacker" for a
-//     zero-cost manifest, CreateSlice then omits the config entirely for
+//  2. `drift slice create --from` on a manifest that prices at €0. The create
+//     path picks tier "hacker" for a zero-cost manifest, CreateSlice then omits the config entirely for
 //     that tier (api.go), and the operator's priceAndValidate discards any
 //     config it is sent and writes plan.HackerConfig instead
 //     (platform src/core/operator/routes/slice_create.go). So the slice
@@ -123,8 +122,8 @@ func TestFreeTier_DeployAfterFreeCreateIsNotAShrink(t *testing.T) {
 func TestFreeTier_SecondDeployOfUnchangedCanvasProject(t *testing.T) {
 	manifest := canvasOnlyProject()
 
-	// Deploy #1: no live slice → Create. Manifest prices at €0, so
-	// reconcileSlice picks tier "hacker" and the config is discarded.
+	// Create #1: no live slice → Create. Manifest prices at €0, so the create
+	// path picks tier "hacker" and the config is discarded.
 	first := Diff("site", manifest, nil, "", 0, 0)
 	if first.Verdict != VerdictCreate {
 		t.Fatalf("first deploy verdict = %s, want create", first.Verdict)

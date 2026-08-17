@@ -115,10 +115,12 @@ func getCreateCmd() *cobra.Command {
 // server-side pricing call that `project deploy` would have used.
 //
 // There is deliberately no shape decision of its own: the tier follows the
-// price exactly as reconcileSlice's create path does (free when the
-// manifest costs nothing, configured otherwise), so `slice create --from X`
-// and a first `project deploy` against the same manifest produce the same
-// slice.
+// price — free when the manifest costs nothing, configured otherwise.
+//
+// This is the ONLY path that still builds a slice's shape from a manifest.
+// `drift file apply` no longer does: it refuses against a slice that does not
+// exist and names the configurator, because the configurator owns what a slice
+// IS and this file owns what runs on it.
 func createFromDriftfile(path string, autoYes bool, billingMonths int) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {

@@ -183,18 +183,41 @@ single slice otherwise.`,
 				}
 			}
 
-			// In --plan mode, the slice diff drives output and we
-			// never call code-deploy paths. Fetch live + classify
-			// + render, and exit with the appropriate status.
-			if planOnly {
-				return runPlan(m)
+			// Say once that a flag the caller passed does nothing, before the
+			// run behaves in a way they did not ask for.
+			if cmd.Flags().Changed("no-slice-reconcile") {
+				common.Deprecation{
+					Old:     "drift file apply --no-slice-reconcile",
+					Because: "Whether the slice exists is not something a flag can skip: this file is applied INTO a slice the configurator created, so there is no shape here to reconcile.",
+				}.Warn()
+			}
+			if cmd.Flags().Changed("billing-period-months") {
+				common.Deprecation{
+					Old:     "drift file apply --billing-period-months",
+					Because: "Applying a file never buys a slice. Choose the billing period in the configurator, where the slice is created.",
+				}.Warn()
 			}
 
-			// Reconcile the slice's shape unless explicitly skipped.
-			if !noReconcile {
-				if err := reconcileSlice(m, autoYes, billingMonths); err != nil {
-					return err
-				}
+			// ONE read of the live slice, and it is the gate for everything
+			// below. The configurator declares what a slice IS; this file
+			// declares what runs on it, so a slice that does not exist is a
+			// refusal naming the configurator rather than something to create
+			// from a manifest that no longer describes a shape.
+			//
+			// CheckSliceReferences carries that refusal for a nil slice, and it
+			// runs BEFORE the reference checks it also owns — the missing-slice
+			// message is the specific one, and reporting "collection X is not
+			// declared" about a slice that does not exist sends the reader to
+			// fix the wrong thing.
+			liveSlice, err := FetchLiveSlice(m.Name())
+			if err != nil {
+				return err
+			}
+
+			// In --plan mode nothing is deployed: say what exists and what this
+			// would apply into it, and stop.
+			if planOnly {
+				return runPlan(m, liveSlice)
 			}
 
 			// Does the slice actually hold what the manifest names? A write to
@@ -202,16 +225,6 @@ single slice otherwise.`,
 			// 400 — at runtime, on a live slice, after the upload — and a
 			// function the config does not name silently draws on the shared
 			// pool. Both become a refusal here instead.
-			//
-			// The referent is the config that will be LIVE when the deploy runs,
-			// so this reads after the reconcile rather than before it. With
-			// reconcile on, anything the manifest declares has just been created
-			// and the check passes by construction; it bites where nothing
-			// created them.
-			liveSlice, err := FetchLiveSlice(m.Name())
-			if err != nil {
-				return err
-			}
 			if err := CheckSliceReferences(m, liveSlice); err != nil {
 				return err
 			}
@@ -229,10 +242,29 @@ single slice otherwise.`,
 				ReportOrphanedFunctions(m, deployedFns, os.Stdout)
 			}
 
-			// At this point the slice exists at >= the declared shape.
+			// At this point the slice exists and holds what the manifest names.
 			// Set it as the active slice for subsequent api calls.
 			if err := common.SaveActiveSlice(m.Name()); err != nil {
 				return fmt.Errorf("set active slice: %w", err)
+			}
+
+			// The readiness poll OUTLIVES the create and grow branches that used
+			// to own it, and that is the whole point of keeping it here.
+			//
+			// A slice can be mid-provision or mid-Recreate for reasons this
+			// command did not cause — a resize someone made in the configurator,
+			// a restart, a converge replacing the pod. Without this, the triad
+			// below fires Atomic, Backbone and Canvas concurrently at a runner
+			// that is still coming up and every one of them fails with "runner
+			// unreachable", which reads as a platform fault and is really an
+			// ordering problem.
+			//
+			// Phrased as a check rather than a wait: on a healthy slice it
+			// returns on the first poll, and announcing a wait that did not
+			// happen is its own small lie.
+			fmt.Println("  Checking the slice is ready...")
+			if err := waitForSliceReady(m.Name()); err != nil {
+				return fmt.Errorf("slice %q is not ready to deploy into: %w", m.Name(), err)
 			}
 
 			start := time.Now()
@@ -275,11 +307,16 @@ single slice otherwise.`,
 		},
 	}
 
-	cmd.Flags().BoolVar(&planOnly, "plan", false, "Print the slice diff and exit; do not deploy")
-	cmd.Flags().BoolVar(&noReconcile, "no-slice-reconcile", false, "Skip the slice diff; deploy code into the active slice as-is")
+	cmd.Flags().BoolVar(&planOnly, "plan", false, "Print what this file would deploy, and exit")
 	cmd.Flags().BoolVar(&atomicForce, "force", false, "Redeploy every function even if its source is unchanged")
-	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm the cost prompt (for CI)")
-	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period for new slices and grow operations")
+	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm prompts (for CI)")
+
+	// Two flags that no longer have anything to act on: apply neither creates a
+	// slice nor buys one. They keep PARSING so a script that passes them does
+	// not die on "unknown flag", and each says once that it does nothing —
+	// deprecate, then remove, the same as any other user-facing name.
+	cmd.Flags().BoolVar(&noReconcile, "no-slice-reconcile", false, "Deprecated: does nothing")
+	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Deprecated: does nothing")
 	cmd.Flags().StringVar(&envName, "env", "", "Environment to deploy (same as the positional argument); also sets ${ENV}")
 	cmd.Flags().StringArrayVar(&secretOverrides, "secret", nil, "Override a variable for ${VAR}/$ENVREF resolution: KEY=value (repeatable). Yields to a variable already set in the environment; beats the .env file.")
 	cmd.Flags().BoolVar(&noEnvFile, "no-env-file", false, "Do not read the .env / .env.<env> file sitting next to the Driftfile")
@@ -313,135 +350,78 @@ func runHooks(phase string, cmds []string, dir string) error {
 
 // ─── Plan mode ──────────────────────────────────────────────────────
 
-func runPlan(m *Manifest) error {
-	d, err := computeDiff(m)
-	if err != nil {
-		return err
-	}
+// runPlan answers the two questions an apply can be planned against: does the
+// referenced slice exist, and what would this file deploy into it.
+//
+// It PRICES NOTHING, deliberately. A Driftfile no longer declares a slice's
+// shape, so there is no shape here to quote — the configurator owns that and
+// already shows the price of the shape that exists. A cost printed from this
+// file would be a second pricing model computed from a document that does not
+// describe what is being billed.
+//
+// Shared with `drift file simulate`, so both verbs answer the same question.
+func runPlan(m *Manifest, live *LiveSlice) error {
 	fmt.Println()
-	fmt.Println(RenderDiff(d))
-	if d.Verdict == VerdictAbort {
-		return fmt.Errorf("deploy would abort (slice oversized vs manifest)")
+	if live == nil {
+		return fmt.Errorf(
+			"slice %q does not exist — create it at %s, then apply this file to it",
+			m.Name(), common.ConfiguratorBaseURL)
 	}
-	return nil
-}
 
-// ─── Reconcile (used by run, not plan) ──────────────────────────────
+	fmt.Printf("  %s → slice %s\n\n", common.Hint("apply"), common.Highlight(m.Name()))
 
-func reconcileSlice(m *Manifest, autoYes bool, billingMonths int) error {
-	d, err := computeDiff(m)
+	specs := FunctionSpecs(m)
+	fmt.Printf("  functions (%d)\n", len(specs))
+	for _, s := range specs {
+		fmt.Printf("    %s %s\n", common.Hint("·"), s.Name)
+	}
+
+	sites, err := canvasSites(m)
 	if err != nil {
 		return err
 	}
-
-	switch d.Verdict {
-	case VerdictMatch:
-		// Nothing to do. Continue silently.
-		return nil
-
-	case VerdictAbort:
-		fmt.Println()
-		fmt.Println(RenderDiff(d))
-		return fmt.Errorf("deploy aborted (slice oversized vs manifest)")
-
-	case VerdictCreate:
-		fmt.Println()
-		fmt.Println(RenderDiff(d))
-		if !confirm(autoYes, "Apply?") {
-			return fmt.Errorf("aborted by user")
+	if len(sites) > 0 {
+		fmt.Printf("\n  sites (%d)\n", len(sites))
+		for _, s := range sites {
+			fmt.Printf("    %s %s → %s\n", common.Hint("·"), s.Dir, s.Route)
 		}
-		// Pick the cheapest tier that fits: hacker if zero cost, custom otherwise.
-		tier := "custom"
-		if d.WantedCostCents == 0 {
-			tier = "hacker"
-		}
-		manifestCfg, err := ManifestToSliceConfig(m)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("\n  Creating slice %q...\n", m.Name())
-		if err := CreateSlice(m.Name(), tier, manifestCfg, billingMonths); err != nil {
-			return err
-		}
-		// Wait for the slice to provision before we deploy code into it.
-		if err := waitForSliceReady(m.Name()); err != nil {
-			return fmt.Errorf("slice did not become ready: %w", err)
-		}
-		return nil
-
-	case VerdictGrow:
-		fmt.Println()
-		fmt.Println(RenderDiff(d))
-		if !confirm(autoYes, "Apply?") {
-			return fmt.Errorf("aborted by user")
-		}
-		manifestCfg, err := ManifestToSliceConfig(m)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("\n  Growing slice %q...\n", m.Name())
-		if err := ResizeSlice(m.Name(), manifestCfg, billingMonths); err != nil {
-			return err
-		}
-		// Wait before deploying functions into it (#PLATFORM-CORE-OPERATOR-KG3TKF).
-		//
-		// A resize no longer recreates the pod for its own sake — the platform
-		// stopped stamping a fresh pod-template annotation on every apply, and
-		// pushes new tier limits into the running slice instead. So the common
-		// grows (rate limit, function COUNT, backbone.secrets) leave the runner
-		// alone entirely and this returns on its first poll.
-		//
-		// One grow still replaces the pod: a change to function_memory, which is
-		// a term of the container's memory limit and therefore genuinely changes
-		// the rendered spec. Without this wait, that case does what it always did
-		// — deploys functions into a runner that is still coming up and fails with
-		// "the platform is having trouble — runner unreachable", which reads as a
-		// platform fault and is really our own ordering.
-		// Phrased as a check, not a wait: on the common grow it returns on the
-		// first poll and announcing a wait that did not happen is its own small
-		// lie.
-		fmt.Println("  Checking the slice is ready...")
-		if err := waitForSliceReady(m.Name()); err != nil {
-			return fmt.Errorf("slice did not become ready after the grow: %w", err)
-		}
-		return nil
 	}
 
-	return fmt.Errorf("unexpected verdict: %s", d.Verdict)
-}
-
-// computeDiff is shared by plan and reconcile. It builds the
-// manifest's SliceConfig, fetches the live slice (if any), prices
-// both, and classifies via Diff().
-func computeDiff(m *Manifest) (DiffResult, error) {
-	manifestCfg, err := ManifestToSliceConfig(m)
-	if err != nil {
-		return DiffResult{}, err
-	}
-	wantedCost, wantedItems, err := PriceConfig(manifestCfg)
-	if err != nil {
-		return DiffResult{}, fmt.Errorf("price manifest config: %w", err)
-	}
-
-	live, err := FetchLiveSlice(m.Name())
-	if err != nil {
-		return DiffResult{}, fmt.Errorf("fetch live slice: %w", err)
+	b := m.Slice().Sub("backbone")
+	for _, class := range []struct {
+		label, key, entryKey string
+	}{
+		{"collections", "nosql", "slot"},
+		{"buckets", "blobs", "name"},
+		{"databases", "sql", "name"},
+		{"queues", "queues", "name"},
+	} {
+		entries := b.Entries(class.entryKey, class.key)
+		if len(entries) == 0 {
+			continue
+		}
+		fmt.Printf("\n  %s (%d)\n", class.label, len(entries))
+		for _, e := range entries {
+			fmt.Printf("    %s %s\n", common.Hint("·"), e.Str(class.entryKey))
+		}
 	}
 
-	var (
-		liveCfg  *SliceConfig
-		liveTier string
-		liveCost int
-	)
-	if live != nil {
-		liveCfg = &live.Config
-		liveTier = live.Tier
-		liveCost = live.MonthlyCostCents
+	if domains := m.Slice().Entries("host", "domains"); len(domains) > 0 {
+		fmt.Printf("\n  domains (%d)\n", len(domains))
+		for _, d := range domains {
+			fmt.Printf("    %s %s\n", common.Hint("·"), d.Str("host"))
+		}
 	}
 
-	d := Diff(m.Name(), manifestCfg, liveCfg, liveTier, liveCost, wantedCost)
-	d.WantedItems = wantedItems
-	return d, nil
+	// The reference check, reported rather than enforced: a plan that refused
+	// would stop someone finding out what is missing, which is what they ran it
+	// to learn.
+	if rerr := CheckSliceReferences(m, live); rerr != nil {
+		fmt.Printf("\n  %s %v\n", common.Hint("!"), rerr)
+	}
+
+	fmt.Printf("\n  %s\n", common.Hint("nothing was deployed — drop --plan to apply"))
+	return nil
 }
 
 // confirm prompts the user with [y/N]. autoYes short-circuits the
