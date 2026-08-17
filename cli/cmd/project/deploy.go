@@ -305,6 +305,15 @@ single slice otherwise.`,
 			if err != nil {
 				return err
 			}
+			// Canvas is asked separately: the triad runs its three phases behind
+			// one uniform signature, and applyCanvas returns early when the
+			// manifest declares no sites — the case where every live site is
+			// unnamed. A failure is stated, never swallowed into an all-clear.
+			unnamedSites, cerr := unnamedCanvasSites(m)
+			if cerr != nil {
+				fmt.Printf("  %s couldn't check for canvas sites the Driftfile no longer names: %v\n",
+					common.Hint("·"), cerr)
+			}
 			if err := applyEgress(m); err != nil {
 				return err
 			}
@@ -313,9 +322,10 @@ single slice otherwise.`,
 			fmt.Printf("  %s\n", common.Hint(fmt.Sprintf("Done in %.1fs!", elapsed)))
 
 			reportUnnamedResources(unnamedResources{
-				Databases: unnamedDatabases,
-				Alerts:    unnamedAlerts,
-				Domains:   unnamedDomains,
+				Databases:   unnamedDatabases,
+				Alerts:      unnamedAlerts,
+				Domains:     unnamedDomains,
+				CanvasSites: unnamedSites,
 			}, os.Stdout)
 
 			// post_deploy hooks run against the now-live slice (typically a
