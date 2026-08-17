@@ -288,13 +288,21 @@ single slice otherwise.`,
 			if err := applySliceTriad(m); err != nil {
 				return err
 			}
-			if err := applyDomains(m); err != nil {
+			// The mirror of the reference check, for the three classes whose
+			// live set only arrives with the reconcile. Each reconciler does
+			// its own join, because the rule that matches a declaration to a
+			// live name differs per class — a host and a database match
+			// lowercased, an alert on the derived `<function>-<index>`.
+			unnamedDomains, err := applyDomains(m)
+			if err != nil {
 				return err
 			}
-			if err := applyAlerts(m); err != nil {
+			unnamedAlerts, err := applyAlerts(m)
+			if err != nil {
 				return err
 			}
-			if err := applySQL(m); err != nil {
+			unnamedDatabases, err := applySQL(m)
+			if err != nil {
 				return err
 			}
 			if err := applyEgress(m); err != nil {
@@ -303,6 +311,12 @@ single slice otherwise.`,
 
 			elapsed := time.Since(start).Seconds()
 			fmt.Printf("  %s\n", common.Hint(fmt.Sprintf("Done in %.1fs!", elapsed)))
+
+			reportUnnamedResources(unnamedResources{
+				Databases: unnamedDatabases,
+				Alerts:    unnamedAlerts,
+				Domains:   unnamedDomains,
+			}, os.Stdout)
 
 			// post_deploy hooks run against the now-live slice (typically a
 			// smoke test). A failure leaves the slice deployed — it's already

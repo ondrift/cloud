@@ -2,9 +2,9 @@
 // alert-spec name on the slice is `<function>-<index>` so multiple
 // alerts on the same function get stable names; applying is
 // idempotent, existing names being replaced wholesale. An alert the
-// manifest does not declare is left alone: a project declares the
-// alerts it wants, not the registry's whole contents, and several
-// projects can share one slice. v1: errors trigger only, webhook
+// manifest does not declare is left alone and reported instead (see
+// unnamed.go): a project declares the alerts it wants, not the
+// registry's whole contents, and several projects can share one slice. v1: errors trigger only, webhook
 // notify only — matches the slice's per-user-alerting primitive.
 package project
 
@@ -33,10 +33,11 @@ type alertSpec struct {
 }
 
 // applyAlerts writes every alert `slice.atomic.functions[].alerts[]`
-// declares, and reads the live registry only to report which of them
-// are new. Best-effort: per-alert failures are surfaced but don't
-// abort the deploy.
-func applyAlerts(m *Manifest) error {
+// declares, and reads the live registry to report which of them are
+// new — and which live alerts this manifest does not declare, which it
+// returns rather than prints. Best-effort: per-alert failures are
+// surfaced but don't abort the deploy.
+func applyAlerts(m *Manifest) ([]string, error) {
 	declared := map[string]alertSpec{}
 	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
 		name := fn.Str("name")
@@ -53,7 +54,7 @@ func applyAlerts(m *Manifest) error {
 	live, err := fetchLiveAlerts()
 	if err != nil {
 		fmt.Printf("  %s alert reconcile skipped: %v\n", common.Hint("·"), err)
-		return nil
+		return nil, nil
 	}
 	liveByName := map[string]liveAlert{}
 	for _, a := range live {
@@ -81,7 +82,19 @@ func applyAlerts(m *Manifest) error {
 	if added == 0 && len(declared) > 0 {
 		fmt.Printf("  %s alerts in sync (%d declared)\n", common.Hint("·"), len(declared))
 	}
-	return nil
+
+	// The registry is keyed on the derived `<function>-<index>`, so that is the
+	// spelling both sides of this join carry — matching on the function instead
+	// would report every alert of a renamed function and none of a dropped one.
+	liveNames := make([]string, 0, len(live))
+	for _, a := range live {
+		liveNames = append(liveNames, a.Name)
+	}
+	declaredNames := make(map[string]bool, len(declared))
+	for name := range declared {
+		declaredNames[name] = true
+	}
+	return unnamedIn(liveNames, declaredNames), nil
 }
 
 func alertEntryToSpec(function string, idx int, a Node) (alertSpec, error) {

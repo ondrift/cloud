@@ -1,7 +1,8 @@
 // domains.go — Driftfile reconcile of `slice.domains[]`. Adds any
 // host that's declared in the manifest but missing on the slice. A
-// host the manifest does not name is left attached: a project
-// declares the hosts it wants, and two projects can share a slice.
+// host the manifest does not name is left attached and reported
+// instead (see unnamed.go): a project declares the hosts it wants,
+// and two projects can share a slice.
 // After add, the user still has to flip DNS and run
 // `drift slice domain verify <host>` — that step requires the
 // CNAME / TXT to be live and is not something we can do
@@ -23,11 +24,12 @@ type liveDomain struct {
 }
 
 // applyDomains attaches every host the Driftfile declares, reading
-// the live set to skip the ones already there. The function is
+// the live set to skip the ones already there and to return the ones
+// this manifest does not name. The function is
 // best-effort: failures are surfaced but don't abort the deploy —
 // the rest of the slice (atomic, backbone, canvas) is more important
 // than the cosmetic step of attaching a hostname.
-func applyDomains(m *Manifest) error {
+func applyDomains(m *Manifest) ([]string, error) {
 	declared := map[string]Manifest{}
 	for _, d := range m.Slice().Entries("host", "domains") {
 		host := strings.ToLower(strings.TrimSpace(d.Str("host")))
@@ -40,7 +42,7 @@ func applyDomains(m *Manifest) error {
 	live, err := fetchLiveDomains()
 	if err != nil {
 		fmt.Printf("  %s domain reconcile skipped: %v\n", common.Hint("·"), err)
-		return nil
+		return nil, nil
 	}
 
 	liveByHost := map[string]liveDomain{}
@@ -66,7 +68,19 @@ func applyDomains(m *Manifest) error {
 	if added == 0 && len(declared) > 0 {
 		fmt.Printf("  %s domains in sync (%d declared)\n", common.Hint("·"), len(declared))
 	}
-	return nil
+
+	// Both sides are lowercased, because that is how a host is declared here and
+	// how the slice stores one: a manifest naming SHOP.example.com declares the
+	// live shop.example.com, and reporting it as unnamed would be a lie.
+	liveHosts := make([]string, 0, len(live))
+	for _, d := range live {
+		liveHosts = append(liveHosts, strings.ToLower(strings.TrimSpace(d.Host)))
+	}
+	declaredHosts := make(map[string]bool, len(declared))
+	for host := range declared {
+		declaredHosts[host] = true
+	}
+	return unnamedIn(liveHosts, declaredHosts), nil
 }
 
 func fetchLiveDomains() ([]liveDomain, error) {
