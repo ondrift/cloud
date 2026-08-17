@@ -75,7 +75,13 @@ would abort the deploy (slice oversized vs declared shape).`,
 			if _, err := m.SelectEnvironment(selectedEnv, positionalEnv != ""); err != nil {
 				return err
 			}
-			return runPlan(m)
+			// The same read the apply path makes, so both verbs answer the same
+			// question about the same slice.
+			live, err := FetchLiveSlice(m.Name())
+			if err != nil {
+				return err
+			}
+			return runPlan(m, live)
 		},
 	}
 	cmd.Flags().StringVar(&envName, "env", "", "Environment to diff (same as the positional argument); also sets ${ENV}")
