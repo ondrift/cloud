@@ -19,7 +19,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/ondrift/cloud/cli/common"
 )
@@ -68,6 +71,28 @@ type redeemResponse struct {
 // The op string is used for the lead-in on humane error messages
 // ("create slice", "resize slice").
 func runBrowserHandoff(op, sliceName string, mode handoffMode, existing any) (json.RawMessage, error) {
+	// Refuse a shell that has no browser, BEFORE minting anything.
+	//
+	// Without this the flow is worst-case in every direction: it mints a
+	// single-use session, prints a URL nobody can open, and then polls until the
+	// configurator expires it — so CI spends minutes on a form no human was ever
+	// going to fill in, and ends with a timeout that describes the symptom.
+	//
+	// Before the mint rather than after, because a session nobody can redeem is
+	// still a session: it occupies the slice's handoff slot until it expires, so
+	// the next run — from a real terminal — can meet a conflict caused by a run
+	// that never had a browser.
+	//
+	// stdin, not stdout: the browser flow needs a person at the keyboard, and
+	// `drift slice create | tee log` is still interactive. The root command tests
+	// the same descriptor to decide between the dashboard and help.
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return nil, fmt.Errorf(
+			"Couldn't %s: this needs a browser, and no terminal is attached.\n"+
+				"  Configure %q at %s, from a machine you can open a browser on.",
+			op, sliceName, common.ConfiguratorBaseURL)
+	}
+
 	body, _ := json.Marshal(map[string]any{
 		"slice_name": sliceName,
 		"mode":       mode,
