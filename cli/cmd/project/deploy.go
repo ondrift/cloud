@@ -400,9 +400,11 @@ func runHooks(phase string, cmds []string, dir string) error {
 func runPlan(m *Manifest, live *LiveSlice) error {
 	fmt.Println()
 	if live == nil {
+		// The create form, not the grid: the slice does not exist, so there is no
+		// page for it to link to, and the next action is making one.
 		return fmt.Errorf(
 			"slice %q does not exist — create it at %s, then apply this file to it",
-			m.Name(), common.ConfiguratorBaseURL)
+			m.Name(), common.ConfiguratorBaseURL+"/slices/new")
 	}
 
 	fmt.Printf("  %s → slice %s\n\n", common.Hint("apply"), common.Highlight(m.Name()))

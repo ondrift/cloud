@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +33,19 @@ var APIBaseURL = "https://api.ondrift.eu"
 //
 // At runtime, the DRIFT_CONFIGURATOR_URL environment variable takes
 // precedence over the compiled-in default.
-var ConfiguratorBaseURL = "https://configurator.ondrift.eu"
+var ConfiguratorBaseURL = "https://slices.ondrift.eu"
+
+// SliceURL is the page for one slice's shape — the grid's deep link.
+//
+// A refusal that names a resource the slice does not have can send the reader
+// to the slice itself rather than to a site to navigate. The empty name falls
+// back to the grid, because a link to no slice in particular is the list.
+func SliceURL(sliceName string) string {
+	if sliceName == "" {
+		return ConfiguratorBaseURL
+	}
+	return ConfiguratorBaseURL + "/slices/" + url.PathEscape(sliceName)
+}
 
 func init() {
 	if u := os.Getenv("DRIFT_API_URL"); u != "" {

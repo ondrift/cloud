@@ -156,7 +156,7 @@ func toBytes(v any) int64 {
 // render small, and only one is advice.
 func TestRenderSizing_SaysWhenNothingWasMeasured(t *testing.T) {
 	var buf bytes.Buffer
-	renderSizing(&buf, []sizingRow{
+	renderSizing(&buf, "lab", []sizingRow{
 		{Function: "get:ping", Measurements: 40, PeakBytes: 7 * mib, BookedBytes: 32 * mib, Recommended: 16 * mib},
 		{Function: "get:cold", Measurements: 0, BookedBytes: 32 * mib, Recommended: 8 * mib,
 			Note: "never invoked — nothing measured"},
@@ -187,13 +187,16 @@ func TestRenderSizing_SaysWhenNothingWasMeasured(t *testing.T) {
 // command which does not do what they want is worse than one that says nothing.
 func TestRenderSizing_PointsAtTheConfiguratorRatherThanAtWrite(t *testing.T) {
 	var out strings.Builder
-	renderSizing(&out, []sizingRow{{
+	renderSizing(&out, "lab", []sizingRow{{
 		Function: "get:ping", Measurements: 10, PeakBytes: 1 << 20,
 		BookedBytes: 32 << 20, Recommended: 16 << 20,
 	}})
 
-	if !strings.Contains(out.String(), common.ConfiguratorBaseURL) {
-		t.Errorf("the report should name the configurator, where a booking is set:\n%s", out.String())
+	// The SLICE's page, not the site's front door. A measurement is only useful
+	// where it can be applied, and the reader should be one click from applying
+	// it rather than one search.
+	if !strings.Contains(out.String(), common.SliceURL("lab")) {
+		t.Errorf("the report should link to the slice whose bookings these are:\n%s", out.String())
 	}
 	if strings.Contains(out.String(), "Apply these with --write") {
 		t.Errorf("the report still sends people to --write, which no longer resizes "+

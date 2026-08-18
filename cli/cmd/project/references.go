@@ -43,7 +43,7 @@ import (
 func CheckSliceReferences(m *Manifest, live *LiveSlice) error {
 	if live == nil {
 		return fmt.Errorf("slice %q does not exist — create it first at %s, then deploy into it",
-			m.Name(), common.ConfiguratorBaseURL)
+			m.Name(), common.ConfiguratorBaseURL+"/slices/new")
 	}
 
 	declaredFunctions := make(map[string]bool, len(live.Config.Atomic.Functions))
@@ -259,8 +259,13 @@ func referenceError(sliceName string, missing []referenceMiss) error {
 			}
 		}
 	}
+	// The slice's OWN page, not the site it lives on. This message is read by
+	// someone who already knows what they meant to declare and needs the one
+	// place to declare it; a link to the front door asks them to find that place
+	// again on every refusal.
 	fmt.Fprintf(&b, "\n\nAdd them to the slice at %s, then deploy again. "+
-		"Checked: functions, nosql collections, blob buckets, sql databases and secrets.", common.ConfiguratorBaseURL)
+		"Checked: functions, nosql collections, blob buckets, sql databases and secrets.",
+		common.SliceURL(sliceName))
 	return fmt.Errorf("%s", b.String())
 }
 
