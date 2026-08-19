@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -55,9 +56,9 @@ type node struct {
 	// what makes "Functions: 3" grow three subtrees, and it is held here rather
 	// than on the parent because the count that drives it lives here.
 	spawn func(n int) []*node
-	// spawnInto names the section the spawned groups are appended to. Empty
-	// means the node's own parent.
-	spawnKey string
+	// The range ← and → step this number through. maxV of 0 means no ceiling
+	// this form knows of — the platform still has one, and still enforces it.
+	minV, maxV int
 }
 
 // shapeForm is the whole screen.
@@ -76,6 +77,18 @@ type shapeForm struct {
 	fresh  bool
 	status string
 	width  int
+
+	// The live price, and what is known about it.
+	//
+	// priceGen rises on every edit. A reply carrying a stale generation is
+	// dropped, so a slow request that started three keystrokes ago cannot
+	// overwrite the answer to the current shape — the figure on screen is always
+	// the figure for what is on screen, or nothing.
+	priceCents int
+	priceKnown bool
+	priceBusy  bool
+	priceErr   string
+	priceGen   int
 }
 
 type row struct {
@@ -106,10 +119,10 @@ func newShapeForm(name string) *shapeForm {
 		{label: "Atomic", kind: kindSection,
 			hint: "Functions, and the volume their code lives on.",
 			children: []*node{
-				{label: "Code & dependencies", kind: kindInt, unit: "MB", value: "0",
+				{label: "Code & dependencies", kind: kindInt, unit: "MB", value: "0", minV: 0,
 					hint: "The runner volume: your deployed code plus everything it " +
 						"vendors. Billed per GiB. Whole MB, 0 if you deploy no code."},
-				{label: "Functions", kind: kindInt, value: "0", spawn: functionGroups,
+				{label: "Functions", kind: kindInt, value: "0", spawn: functionGroups, minV: 0, maxV: maxFunctionSlots,
 					hint: "How many function slots to buy. Each books its own memory and " +
 						"is billed from the moment it exists, deployed or not. 0-" +
 						strconv.Itoa(maxFunctionSlots) + "."},
@@ -119,19 +132,19 @@ func newShapeForm(name string) *shapeForm {
 			hint: "Storage. Each item is declared BY NAME — a write to a name the " +
 				"slice does not carry is refused, not created.",
 			children: []*node{
-				{label: "NoSQL collections", kind: kindInt, value: "0",
+				{label: "NoSQL collections", kind: kindInt, value: "0", minV: 0, maxV: 64,
 					spawn: namedGroups("Collection", "size", "MB"),
 					hint: "Document collections, the store most apps reach for first. " +
 						"Each is named and sized separately. Whole number."},
-				{label: "SQL databases", kind: kindInt, value: "0",
+				{label: "SQL databases", kind: kindInt, value: "0", minV: 0, maxV: 64,
 					spawn: namedGroups("Database", "size", "MB"),
 					hint: "Per-slice SQLite files, encrypted at rest, one file each. " +
 						"Whole number."},
-				{label: "Blob buckets", kind: kindInt, value: "0",
+				{label: "Blob buckets", kind: kindInt, value: "0", minV: 0, maxV: 64,
 					spawn: namedGroups("Bucket", "size", "MB"),
 					hint: "Object storage for files. Each bucket is named and sized " +
 						"separately. Whole number."},
-				{label: "Queues", kind: kindInt, value: "0",
+				{label: "Queues", kind: kindInt, value: "0", minV: 0, maxV: 64,
 					spawn: namedGroups("Queue", "depth", "messages"),
 					hint: "Message queues a QUEUE-method function drains. Sized in " +
 						"messages held, not bytes. Whole number."},
@@ -172,12 +185,13 @@ func functionGroups(n int) []*node {
 			hint: "One function slot: how it is addressed, and what it books.",
 			children: []*node{
 				{label: "Method", kind: kindChoice, value: "post", choices: httpMethods,
-					hint: "Part of the function's identity, not a detail — get:items and " +
-						"post:items are two different functions. Press ⏎ to cycle."},
+					hint: "← → to choose. Part of the function's identity, not a detail — " +
+						"get:items and post:items are two different functions. QUEUE names " +
+						"a queue to drain instead of a path."},
 				{label: "Route", kind: kindText,
 					hint: "The path under /api/, e.g. auth/challenge. No leading slash. " +
 						"A QUEUE function names the queue it drains instead."},
-				{label: "Memory", kind: kindInt, unit: "MB",
+				{label: "Memory", kind: kindInt, unit: "MB", minV: minMemoryMiB, maxV: maxMemoryMiB,
 					hint: fmt.Sprintf("The pool this function's SIMULTANEOUS calls share — it "+
 						"buys concurrency, not headroom for one call. %d-%d MB; Go and "+
 						"Rust need %d or more.", minMemoryMiB, maxMemoryMiB, compiledFloorMiB)},
@@ -211,7 +225,7 @@ func namedGroups(noun, sizeLabel, unit string) func(int) []*node {
 							"A write to any other name is refused with 400, not created — "+
 							"so this is the resource, not a label for it.",
 							strings.ToLower(noun))},
-					{label: sizeLabel, kind: kindInt, unit: unit, hint: sizeHint},
+					{label: sizeLabel, kind: kindInt, unit: unit, minV: 1, hint: sizeHint},
 				},
 			})
 		}
@@ -338,7 +352,7 @@ func (f *shapeForm) render() {
 	var b strings.Builder
 	b.WriteString("\x1b[H\x1b[2J")
 	fmt.Fprintf(&b, "  %sCreate a slice%s\r\n", fBold, fReset)
-	fmt.Fprintf(&b, "  %s↑↓ move · → expand · ← collapse · ⏎ edit · ^S create · ^C cancel%s\r\n\r\n",
+	fmt.Fprintf(&b, "  %s↑↓ move · ←→ open a section, or change a value · ⏎ type · ^S create · ^C cancel%s\r\n\r\n",
 		fDim, fReset)
 
 	for i, r := range f.flat {
@@ -388,6 +402,170 @@ func wrap(s string, width int) []string {
 	return lines
 }
 
+// priceLabel is what sits beside Create.
+//
+// It never shows a stale figure as if it were current. While a request is in
+// flight the last known price is dimmed rather than hidden — hiding it makes
+// the row jump on every keystroke — and a price that could not be fetched says
+// so instead of falling back to a number nobody computed.
+func (f *shapeForm) priceLabel() string {
+	switch {
+	case f.priceErr != "":
+		return fDim + "price unavailable" + fReset
+	case f.priceBusy && f.priceKnown:
+		return fDim + euros(f.priceCents) + "/mo" + fReset
+	case f.priceBusy:
+		return fDim + "pricing…" + fReset
+	case !f.priceKnown:
+		return ""
+	case f.priceCents == 0:
+		return fGreen + "free" + fReset
+	}
+	return fGreen + euros(f.priceCents) + "/mo" + fReset
+}
+
+// priceableConfig builds a config from whatever is on screen, without
+// validating it.
+//
+// Pricing is not submission: a half-typed form still has a cost, and refusing
+// to price it until every route is filled in would leave the figure blank for
+// most of the time somebody is deciding. Names do not enter the price — only
+// the counts and the numbers — so an unnamed collection with a size is still
+// worth what its size is worth.
+func (f *shapeForm) priceableConfig() map[string]any {
+	shape := declaredShape{Backbone: backboneShape{}}
+	var atomic, backbone, canvas *node
+	for _, n := range f.root {
+		switch n.label {
+		case "Atomic":
+			atomic = n
+		case "Backbone":
+			backbone = n
+		case "Canvas":
+			canvas = n
+		}
+	}
+
+	shape.StorageMiB = intOf(childValue(atomic, "Code & dependencies"))
+	if atomic != nil {
+		for _, g := range atomic.children {
+			if g.kind != kindGroup {
+				continue
+			}
+			if mem := intOf(childValue(g, "Memory")); mem > 0 {
+				shape.Slots = append(shape.Slots, functionSlot{
+					Method: childValue(g, "Method"),
+					Route:  strings.TrimSpace(childValue(g, "Route")),
+					Memory: mem,
+				})
+			}
+		}
+	}
+
+	gatherLoose := func(prefix, sizeLabel string) map[string]int {
+		out := map[string]int{}
+		if backbone == nil {
+			return nil
+		}
+		for i, g := range backbone.children {
+			if g.kind != kindGroup || !strings.HasPrefix(g.label, prefix) {
+				continue
+			}
+			size := intOf(childValue(g, sizeLabel))
+			if size <= 0 {
+				continue
+			}
+			name := strings.TrimSpace(childValue(g, "Name"))
+			if name == "" {
+				// A placeholder key so two unnamed items of the same size both
+				// count. The name never reaches the price; only the value does.
+				name = fmt.Sprintf("%s%d", prefix, i)
+			}
+			out[name] = size
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	shape.Backbone.Collections = gatherLoose("Collection ", "size")
+	shape.Backbone.Databases = gatherLoose("Database ", "size")
+	shape.Backbone.Buckets = gatherLoose("Bucket ", "size")
+	shape.Backbone.Queues = gatherLoose("Queue ", "depth")
+
+	shape.CanvasMiB = intOf(childValue(canvas, "Site storage"))
+	return buildConfig(shape.StorageMiB, shape.Slots, shape.Backbone, shape.CanvasMiB)
+}
+
+// choiceStrip renders every option, the chosen one bracketed.
+//
+// Brackets rather than a background colour, for the same reason the edit caret
+// is an underline: a highlight painted with the terminal's own colours is
+// unreadable on half of them, and [post] reads on every one.
+//
+// When the strip will not fit the terminal it shows a window around the
+// selection with ‹ › to say there is more either side, rather than wrapping a
+// single field across two lines and breaking the column the tree is drawn in.
+func (f *shapeForm) choiceStrip(n *node, depth int) string {
+	sel := 0
+	for i, c := range n.choices {
+		if c == n.value {
+			sel = i
+		}
+	}
+
+	room := f.width - (len(n.label) + 4*depth + 8)
+	full := 0
+	for _, c := range n.choices {
+		full += len(c) + 1
+	}
+	full += 2 // the brackets on the chosen one
+
+	lo, hi := 0, len(n.choices)
+	truncated := full > room && room > 12
+	if truncated {
+		// Keep the selection in view with as many neighbours as fit.
+		span := 0
+		lo, hi = sel, sel+1
+		span = len(n.choices[sel]) + 3
+		for lo > 0 || hi < len(n.choices) {
+			grew := false
+			if hi < len(n.choices) && span+len(n.choices[hi])+1 <= room {
+				span += len(n.choices[hi]) + 1
+				hi++
+				grew = true
+			}
+			if lo > 0 && span+len(n.choices[lo-1])+1 <= room {
+				lo--
+				span += len(n.choices[lo]) + 1
+				grew = true
+			}
+			if !grew {
+				break
+			}
+		}
+	}
+
+	var b strings.Builder
+	if truncated && lo > 0 {
+		b.WriteString(fDim + "‹ " + fReset)
+	}
+	for i := lo; i < hi; i++ {
+		if i > lo {
+			b.WriteString(" ")
+		}
+		if i == sel {
+			b.WriteString(fCyan + fBold + "[" + n.choices[i] + "]" + fReset)
+		} else {
+			b.WriteString(fDim + n.choices[i] + fReset)
+		}
+	}
+	if truncated && hi < len(n.choices) {
+		b.WriteString(fDim + " ›" + fReset)
+	}
+	return b.String()
+}
+
 func (f *shapeForm) line(i int, r *row) string {
 	indent := strings.Repeat("    ", r.depth)
 
@@ -405,13 +583,22 @@ func (f *shapeForm) line(i int, r *row) string {
 	case kindSection:
 		label = fBold + label + fReset
 	case kindAction:
-		label = fGreen + fBold + label + fReset
+		label = fGreen + fBold + label + fReset + "   " + f.priceLabel()
 		marker = "  "
 	}
 
 	value := ""
 	switch r.n.kind {
 	case kindSection, kindGroup, kindAction:
+	case kindChoice:
+		// Every option on the row, with the chosen one marked.
+		//
+		// A closed set of eight is small enough to show whole, and showing it
+		// whole answers the question the field actually raises — "what else is
+		// there?" — which cycling one-at-a-time never does: you have to press
+		// Enter eight times to learn there were eight, and you cannot see the
+		// one you passed.
+		value = ": " + f.choiceStrip(r.n, r.depth)
 	default:
 		shown := r.n.value
 		if shown == "" {
@@ -544,13 +731,26 @@ func (f *shapeForm) handle(k formKey, ch rune) (submit, quit bool) {
 	case fkDown:
 		f.cursor++
 	case fkRight:
-		if len(cur.children) > 0 {
+		// On a value, the arrows change it — a closed set steps through its
+		// options, a number counts up. Neither has children to expand, so nothing
+		// is losing a meaning it had.
+		switch {
+		case cur.kind == kindChoice:
+			f.step(cur, +1)
+		case cur.kind == kindInt:
+			f.nudge(cur, +1)
+		case len(cur.children) > 0:
 			cur.expanded = true
 		}
 	case fkLeft:
-		if cur.expanded {
+		switch {
+		case cur.kind == kindChoice:
+			f.step(cur, -1)
+		case cur.kind == kindInt:
+			f.nudge(cur, -1)
+		case cur.expanded:
 			cur.expanded = false
-		} else {
+		default:
 			f.collapseParent()
 		}
 	case fkEnter:
@@ -590,6 +790,70 @@ func (f *shapeForm) commit(n *node) {
 	if parent := f.parentOf(n); parent != nil {
 		f.respawn(parent, n)
 		parent.expanded = true
+	}
+}
+
+// nudge counts a number up or down and applies it immediately.
+//
+// commit is called on every step, so a count's children appear and disappear as
+// the arrow is held rather than waiting for an Enter that a stepping key does
+// not otherwise need. It is also what keeps the live price honest: the value on
+// screen is the value that was priced.
+//
+// An empty field starts at its floor rather than at zero, because → on a blank
+// memory box means "give me the smallest one that works", not "give me none".
+func (f *shapeForm) nudge(n *node, by int) {
+	raw := strings.TrimSpace(n.value)
+	if raw == "" {
+		if by < 0 {
+			return
+		}
+		n.value = strconv.Itoa(max(n.minV, 1))
+		f.commit(n)
+		return
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return
+	}
+	v += by
+	if v < n.minV {
+		v = n.minV
+	}
+	if n.maxV > 0 && v > n.maxV {
+		v = n.maxV
+		f.status = fmt.Sprintf("%s stops at %d", n.label, n.maxV)
+	}
+	n.value = strconv.Itoa(v)
+	f.commit(n)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// step moves a choice by one, stopping at either end rather than wrapping.
+//
+// Wrapping is right for a key that only goes one way — Enter still cycles — and
+// wrong for a pair that goes both: an arrow that jumps from the first option to
+// the last reads as a mis-key, and there is no way to tell it apart from one.
+func (f *shapeForm) step(n *node, by int) {
+	for i, c := range n.choices {
+		if c != n.value {
+			continue
+		}
+		next := i + by
+		if next < 0 || next >= len(n.choices) {
+			return
+		}
+		n.value = n.choices[next]
+		return
+	}
+	if len(n.choices) > 0 {
+		n.value = n.choices[0]
 	}
 }
 
@@ -653,26 +917,109 @@ func runShapeForm(name string) (declaredShape, string, bool, error) {
 	fmt.Print("\x1b[?25l")
 
 	f := newShapeForm(name)
-	r := bufio.NewReader(os.Stdin)
+
+	// Keys arrive on a channel so the loop can also wake for a price. Blocking
+	// on the read directly would mean a figure that arrived while nobody was
+	// typing did not appear until the next keystroke — which is exactly when
+	// somebody has stopped to look at it.
+	type keyEvent struct {
+		k   formKey
+		ch  rune
+		err error
+	}
+	keys := make(chan keyEvent)
+	go func() {
+		r := bufio.NewReader(os.Stdin)
+		for {
+			k, ch, err := readFormKey(r)
+			keys <- keyEvent{k, ch, err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	prices := make(chan priceResult, 8)
+	var debounce *time.Timer
+	// repriceSoon waits for typing to stop before asking. Every keystroke would
+	// otherwise be a round trip, and the answer to a shape three characters ago
+	// is not worth the request that fetched it.
+	repriceSoon := func() {
+		f.priceGen++
+		f.priceBusy = true
+		f.priceErr = ""
+		gen := f.priceGen
+		cfg := f.priceableConfig() // built HERE, on this goroutine, never shared
+		if debounce != nil {
+			debounce.Stop()
+		}
+		debounce = time.AfterFunc(300*time.Millisecond, func() {
+			cents, err := priceOf(cfg, 1)
+			prices <- priceResult{gen: gen, cents: cents, err: err}
+		})
+	}
+	repriceSoon()
+
 	for {
 		f.render()
-		k, ch, rerr := readFormKey(r)
-		if rerr != nil {
-			return declaredShape{}, "", false, nil
-		}
-		submit, quit := f.handle(k, ch)
-		if quit {
-			return declaredShape{}, "", false, nil
-		}
-		if submit {
-			shape, chosen, verr := f.collect()
-			if verr != nil {
-				f.status = verr.Error()
+		select {
+		case ev := <-keys:
+			if ev.err != nil {
+				return declaredShape{}, "", false, nil
+			}
+			before := f.fingerprint()
+			submit, quit := f.handle(ev.k, ev.ch)
+			if quit {
+				return declaredShape{}, "", false, nil
+			}
+			if submit {
+				shape, chosen, verr := f.collect()
+				if verr != nil {
+					f.status = verr.Error()
+					continue
+				}
+				return shape, chosen, true, nil
+			}
+			// Only a change of VALUES reprices. Moving the cursor or folding a
+			// section does not alter what the slice costs, and asking anyway
+			// would make simply reading the form generate traffic.
+			if f.fingerprint() != before {
+				repriceSoon()
+			}
+		case p := <-prices:
+			if p.gen != f.priceGen {
+				continue // an answer to a shape that has since been edited
+			}
+			f.priceBusy = false
+			if p.err != nil {
+				f.priceErr = p.err.Error()
 				continue
 			}
-			return shape, chosen, true, nil
+			f.priceCents, f.priceKnown, f.priceErr = p.cents, true, ""
 		}
 	}
+}
+
+type priceResult struct {
+	gen   int
+	cents int
+	err   error
+}
+
+// fingerprint is every value in the tree, in order. Comparing it is how the
+// loop tells an edit from a keystroke that only moved the cursor.
+func (f *shapeForm) fingerprint() string {
+	var b strings.Builder
+	var walk func(ns []*node)
+	walk = func(ns []*node) {
+		for _, n := range ns {
+			b.WriteString(n.value)
+			b.WriteByte(0x1f)
+			walk(n.children)
+		}
+	}
+	walk(f.root)
+	return b.String()
 }
 
 // collect turns the tree into the shape, refusing anything the platform would
