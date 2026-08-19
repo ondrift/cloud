@@ -119,7 +119,7 @@ func newShapeForm(name string) *shapeForm {
 			"confirmation — this row is it, which is why the figure is on it."}
 
 	f.root = []*node{
-		{label: "Slice name", kind: kindText, value: name,
+		{label: "Slice name", kind: kindText, value: name, placeholder: "e.g. my-project",
 			hint: "The slice's name, and the hostname it answers on. " +
 				"Lowercase letters, numbers and dashes, up to 32."},
 
@@ -189,7 +189,7 @@ func adder(label, prefix string, limit int, make func(int) *node, hint string) *
 
 func functionGroup(i int) *node {
 	return &node{
-		label: "route", kind: kindItem, placeholder: "type the route, e.g. auth/challenge",
+		label: "route", kind: kindItem, placeholder: "route, e.g. auth/challenge",
 		hint: "Type this function's route — the path under /api/, e.g. auth/challenge. " +
 			"No leading slash. A QUEUE function names the queue it drains instead. " +
 			"The route is what the function is called; open it for the method and memory.",
@@ -199,6 +199,7 @@ func functionGroup(i int) *node {
 					"get:items and post:items are two different functions. QUEUE names " +
 					"a queue to drain instead of a path."},
 			{label: "Memory", kind: kindInt, unit: "MB", minV: minMemoryMiB, maxV: maxMemoryMiB,
+				placeholder: fmt.Sprintf("%d-%d", minMemoryMiB, maxMemoryMiB),
 				hint: fmt.Sprintf("The pool this function's SIMULTANEOUS calls share — it "+
 					"buys concurrency, not headroom for one call. %d-%d MB; Go and "+
 					"Rust need %d or more.", minMemoryMiB, maxMemoryMiB, compiledFloorMiB)},
@@ -220,13 +221,13 @@ func namedGroup(noun, sizeLabel, unit string) func(int) *node {
 		}
 		return &node{
 			label: strings.ToLower(noun), kind: kindItem,
-			placeholder: fmt.Sprintf("type the %s name", strings.ToLower(noun)),
+			placeholder: fmt.Sprintf("%s name", strings.ToLower(noun)),
 			hint: fmt.Sprintf("Type the exact string your code addresses this %s by. "+
 				"A write to any other name is refused with 400, not created — so this "+
 				"is the resource, not a label for it. Open it to set the size.",
 				strings.ToLower(noun)),
 			children: []*node{
-				{label: sizeLabel, kind: kindInt, unit: unit, minV: 1, hint: sizeHint},
+				{label: sizeLabel, kind: kindInt, unit: unit, minV: 1, placeholder: unit, hint: sizeHint},
 			},
 		}
 	}
@@ -382,7 +383,7 @@ func queueTriggered(n *node) bool {
 // there is one field, and what changes is what it is called.
 func promptFor(n *node) string {
 	if queueTriggered(n) {
-		return "type the queue name, e.g. emails"
+		return "queue name, e.g. emails"
 	}
 	return n.placeholder
 }
@@ -561,6 +562,13 @@ func (f *shapeForm) choiceStrip(n *node, depth int) string {
 	return b.String()
 }
 
+func fallback(s, alt string) string {
+	if s == "" {
+		return alt
+	}
+	return s
+}
+
 func (f *shapeForm) line(i int, r *row) string {
 	indent := strings.Repeat("    ", r.depth)
 
@@ -585,7 +593,14 @@ func (f *shapeForm) line(i int, r *row) string {
 			label = r.n.value
 		}
 		if f.edit && i == f.cursor {
+			// The prompt stays up while the field is empty and goes the moment a
+			// character lands. A caret alone says "type", never what — and this
+			// row is reached by ADDING something, so the question it is asking is
+			// the one thing the screen has not said yet.
 			label = fUnder + r.n.value + fReset + fCyan + "▏" + fReset
+			if r.n.value == "" {
+				label += fDim + promptFor(r.n) + fReset
+			}
 		}
 	case kindSection:
 		label = fBold + label + fReset
@@ -612,10 +627,13 @@ func (f *shapeForm) line(i int, r *row) string {
 	default:
 		shown := r.n.value
 		if shown == "" {
-			shown = fDim + "…" + fReset
+			shown = fDim + fallback(r.n.placeholder, "…") + fReset
 		}
 		if f.edit && i == f.cursor {
 			shown = fUnder + r.n.value + fReset + fCyan + "▏" + fReset
+			if r.n.value == "" && r.n.placeholder != "" {
+				shown += fDim + r.n.placeholder + fReset
+			}
 		}
 		value = ": " + shown
 		if r.n.unit != "" && r.n.value != "" {
