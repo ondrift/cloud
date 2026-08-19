@@ -133,8 +133,25 @@ func newShapeForm(name string) *shapeForm {
 			hint: "Functions, and the volume their code lives on.",
 			children: []*node{
 				{label: "Code & dependencies", kind: kindInt, unit: "MB", value: "0", minV: 0,
+					scalar: "atomic.MaxStorageBytes", scale: bytesPerMiB,
 					hint: "The runner volume: your deployed code plus everything it " +
 						"vendors. Billed per GiB. Whole MB, 0 if you deploy no code."},
+				{label: "Scheduled jobs", kind: kindInt, value: "0", minV: 0,
+					scalar: "atomic.MaxNumberOfScheduledJobs", placeholder: "how many",
+					hint: "Cron-triggered runs the slice may hold. PRICED per job, because " +
+						"one fires on a timer whether or not anything calls the slice."},
+				{label: "Function timeout", kind: kindInt, unit: "seconds", value: "0", minV: 0,
+					scalar: "atomic.MaxFunctionRuntimeInSeconds", placeholder: "seconds",
+					hint: "How long one invocation may run before it is killed. Free."},
+				{label: "Requests per minute", kind: kindInt, value: "0", minV: 0,
+					scalar: "atomic.MaxNumberOfRequestsPerMinute", placeholder: "per minute",
+					hint: "The slice-wide rate ceiling. Shed requests answer 429. Free."},
+				{label: "Log retention", kind: kindInt, unit: "hours", value: "0", minV: 0,
+					scalar: "atomic.MaxNumberOfHoursForLogRetention", placeholder: "hours",
+					hint: "How long invocation logs are kept. Free."},
+				{label: "Deploy history", kind: kindInt, unit: "versions", value: "0", minV: 0,
+					scalar: "atomic.MaxNumberOfDeploymentsInHistory", placeholder: "versions",
+					hint: "Rollback slots kept per function. Free."},
 				adder("Add function", "Function ", maxFunctionSlots, functionGroup,
 					"Adds a function slot. Each books its own memory and is billed "+
 						"from the moment it exists, deployed or not."),
@@ -149,25 +166,25 @@ func newShapeForm(name string) *shapeForm {
 				// it could have: an empty slice and a full one looked the same, and
 				// four "+ Add" lines read as one list of four things to add rather
 				// than four lists.
-				{label: "NoSQL", kind: kindSection, expanded: true,
+				{label: "NoSQL", kind: kindSection,
 					hint: "Document collections — the store most apps reach for first.",
 					children: []*node{
 						adder("Add collection", "Collection ", 64,
 							namedGroup("Collection", "size", "MB"),
 							"Adds a document collection, named and sized separately."),
 					}},
-				{label: "SQL", kind: kindSection, expanded: true,
+				{label: "SQL", kind: kindSection,
 					hint: "Per-slice SQLite files, encrypted at rest, one file each.",
 					children: []*node{
 						adder("Add database", "Database ", 64,
 							namedGroup("Database", "size", "MB"),
 							"Adds a per-slice SQLite file."),
 					}},
-				{label: "Blobs", kind: kindSection, expanded: true,
+				{label: "Blobs", kind: kindSection,
 					hint: "Object storage for files.",
 					children: []*node{
 						{label: "Object size", kind: kindInt, unit: "MB", value: "0", minV: 0,
-							scalar: "blobs.MaxSizeInBytesEach", scale: bytesPerMiB,
+							scalar: "backbone.blobs.MaxSizeInBytesEach", scale: bytesPerMiB,
 							placeholder: "MB per object",
 							hint: "Ceiling on ONE object, separate from a bucket's total. " +
 								"A 5 MB bucket with a 5 MB object size holds one object."},
@@ -175,31 +192,31 @@ func newShapeForm(name string) *shapeForm {
 							namedGroup("Bucket", "size", "MB"),
 							"Adds a bucket, named and sized separately."),
 					}},
-				{label: "Queues", kind: kindSection, expanded: true,
+				{label: "Queues", kind: kindSection,
 					hint: "Message queues a QUEUE-method function drains.",
 					children: []*node{
 						{label: "Default depth", kind: kindInt, unit: "messages", value: "0", minV: 0,
-							scalar: "queues.MaxDepthEach", placeholder: "messages",
+							scalar: "backbone.queues.MaxDepthEach", placeholder: "messages",
 							hint: "Bounds a queue that names no depth of its own."},
 						adder("Add queue", "Queue ", 64,
 							namedGroup("Queue", "depth", "messages"),
 							"Adds a queue, sized in messages held rather than bytes."),
 					}},
-				{label: "Secrets", kind: kindSection, expanded: true,
+				{label: "Secrets", kind: kindSection,
 					hint: "Values a function reads at run time and nobody reads back.",
 					children: []*node{
 						{label: "Count", kind: kindInt, value: "0", minV: 0,
-							scalar: "secrets.MaxCount", placeholder: "how many",
+							scalar: "backbone.secrets.MaxCount", placeholder: "how many",
 							hint: "How many secrets the slice may hold. Free."},
 						{label: "Size each", kind: kindInt, unit: "KB", value: "0", minV: 0,
-							scalar: "secrets.MaxSizeInBytesEach", scale: 1024,
+							scalar: "backbone.secrets.MaxSizeInBytesEach", scale: 1024,
 							placeholder: "KB", hint: "Per-secret ceiling. Free."},
 					}},
-				{label: "Realtime", kind: kindSection, expanded: true,
+				{label: "Realtime", kind: kindSection,
 					hint: "Live WebSocket connections to the slice's own hub.",
 					children: []*node{
 						{label: "Concurrent connections", kind: kindInt, value: "0", minV: 0,
-							scalar: "realtime.MaxConcurrentConnections", placeholder: "how many",
+							scalar: "backbone.realtime.MaxConcurrentConnections", placeholder: "how many",
 							hint: "Live connections at once. PRICED per connection, because " +
 								"each holds memory on the in-slice hub for as long as it is open."},
 					}},
@@ -207,14 +224,14 @@ func newShapeForm(name string) *shapeForm {
 					hint: "Advisory locks held at once.",
 					children: []*node{
 						{label: "Concurrent locks", kind: kindInt, value: "0", minV: 0,
-							scalar: "locks.MaxConcurrent", placeholder: "how many",
+							scalar: "backbone.locks.MaxConcurrent", placeholder: "how many",
 							hint: "Locks held simultaneously. Cheap, and free."},
 					}},
 				{label: "Backups", kind: kindSection,
 					hint: "Automatic backups of the slice's data.",
 					children: []*node{
 						{label: "Retention", kind: kindInt, unit: "days", value: "0", minV: 0,
-							scalar: "BackupRetentionDays", placeholder: "days",
+							scalar: "backbone.BackupRetentionDays", placeholder: "days",
 							hint: "How long automatic backups are kept. Lowering it later " +
 								"prunes archives outside the new window."},
 					}},
@@ -223,7 +240,8 @@ func newShapeForm(name string) *shapeForm {
 		{label: "Canvas", kind: kindSection,
 			hint: "Static sites served at the slice's own root.",
 			children: []*node{
-				{label: "Site storage", kind: kindInt, unit: "MB", value: "0",
+				{label: "Site storage", kind: kindInt, unit: "MB", value: "0", minV: 0,
+					scalar: "canvas.TotalMaxSizeInBytes", scale: bytesPerMiB, placeholder: "MB",
 					hint: "Total across every site on the slice, not per site. Billed " +
 						"per GiB. Whole MB, 0 if you publish no site."},
 			}},
@@ -231,13 +249,16 @@ func newShapeForm(name string) *shapeForm {
 		{label: "Deed", kind: kindSection,
 			hint: "Identity: key material, and per-person app data.",
 			children: []*node{
-				{label: "Vault entry size", kind: kindInt, unit: "KB", value: "0",
+				{label: "Vault entry size", kind: kindInt, unit: "KB", value: "0", minV: 0,
+					scalar: "deed.vault.MaxSizeInBytesEach", scale: 1024, placeholder: "KB",
 					hint: "Ceiling on one wrapped keyring entry. Key material, not " +
 						"documents. Whole KB."},
-				{label: "Vault entries per identity", kind: kindInt, value: "0",
+				{label: "Vault entries per identity", kind: kindInt, value: "0", minV: 0,
+					scalar: "deed.vault.MaxEntriesPerUID", placeholder: "how many",
 					hint: "How much key history one identity accumulates. Vault is " +
 						"append-only, so past this the oldest go. Whole number."},
-				{label: "Pocket record size", kind: kindInt, unit: "KB", value: "0",
+				{label: "Pocket record size", kind: kindInt, unit: "KB", value: "0", minV: 0,
+					scalar: "deed.pocket.MaxSizeInBytesEach", scale: 1024, placeholder: "KB",
 					hint: "Ceiling on one per-identity record — an app's own data for " +
 						"one person. Whole KB."},
 			}},
@@ -597,7 +618,7 @@ func (f *shapeForm) priceableConfig() map[string]any {
 	shape.Backbone.Queues = gatherLoose("Queue ", "depth")
 
 	shape.CanvasMiB = intOf(childValue(canvas, "Site storage"))
-	shape.BackboneScalars = f.scalars(backbone)
+	shape.BackboneScalars = f.scalars(nil)
 	return buildConfig(shape.StorageMiB, shape.Slots, shape.Backbone, shape.CanvasMiB, shape.BackboneScalars)
 }
 
@@ -670,6 +691,18 @@ func (f *shapeForm) choiceStrip(n *node, depth int) string {
 	return b.String()
 }
 
+// hasItems reports whether a section holds any list item, at any depth. It is
+// what puts (*) beside NoSQL once a collection exists — a collapsed section
+// otherwise looks identical whether it holds nothing or holds everything.
+func hasItems(n *node) bool {
+	for _, c := range n.children {
+		if c.kind == kindItem || hasItems(c) {
+			return true
+		}
+	}
+	return false
+}
+
 func fallback(s, alt string) string {
 	if s == "" {
 		return alt
@@ -707,6 +740,9 @@ func (f *shapeForm) line(i int, r *row) string {
 			}
 		}
 	case kindSection:
+		if hasItems(r.n) {
+			label = "(*) " + label
+		}
 		if c, ok := pillarColour[label]; ok {
 			label = c + fBold + label + fReset
 		} else {
@@ -1367,7 +1403,7 @@ func (f *shapeForm) collect() (declaredShape, string, error) {
 	}
 
 	shape.CanvasMiB = intOf(childValue(section("Canvas"), "Site storage"))
-	shape.BackboneScalars = f.scalars(bb)
+	shape.BackboneScalars = f.scalars(nil)
 	return shape, name, nil
 }
 
@@ -1381,11 +1417,11 @@ func (f *shapeForm) collect() (declaredShape, string, error) {
 // A zero is left out rather than sent. Zero means "not declared" on this ingest
 // path, and the platform fills it from its own defaults; writing it explicitly
 // would turn every dial the tenant never touched into a declaration of nothing.
-func (f *shapeForm) scalars(root *node) map[string]int {
+func (f *shapeForm) scalars(_ *node) map[string]int {
 	out := map[string]int{}
-	var walk func(*node)
-	walk = func(n *node) {
-		for _, c := range n.children {
+	var walk func([]*node)
+	walk = func(ns []*node) {
+		for _, c := range ns {
 			if c.scalar != "" {
 				if v := intOf(c.value); v > 0 {
 					scale := c.scale
@@ -1395,10 +1431,10 @@ func (f *shapeForm) scalars(root *node) map[string]int {
 					out[c.scalar] = v * scale
 				}
 			}
-			walk(c)
+			walk(c.children)
 		}
 	}
-	walk(root)
+	walk(f.root)
 	return out
 }
 
