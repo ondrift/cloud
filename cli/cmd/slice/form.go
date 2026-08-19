@@ -352,7 +352,7 @@ func (f *shapeForm) render() {
 	var b strings.Builder
 	b.WriteString("\x1b[H\x1b[2J")
 	fmt.Fprintf(&b, "  %sCreate a slice%s\r\n", fBold, fReset)
-	fmt.Fprintf(&b, "  %s↑↓ move · ←→ open a section, or change a value · ⏎ type · ^S create · ^C cancel%s\r\n\r\n",
+	fmt.Fprintf(&b, "  %s↑↓ move · ←→ open a section, or change a value · ⏎ type%s\r\n\r\n",
 		fDim, fReset)
 
 	for i, r := range f.flat {
@@ -635,8 +635,15 @@ const (
 	fkRight
 	fkEnter
 	fkBackspace
-	fkSubmit // Ctrl-S
-	fkCancel // Ctrl-C or Esc
+	// Cancel is Ctrl-C or Esc. It is not advertised on the header line, because
+	// it is what those keys already do everywhere and a form that has to say so
+	// is spending a line on it.
+	//
+	// There is deliberately no submit KEY. Creating a slice happens in exactly
+	// one place — the green row at the foot — so there is one answer to "how do
+	// I create it", and it is on screen. A second, invisible way to spend money
+	// is worth less than the line it would take to explain.
+	fkCancel
 	fkChar
 )
 
@@ -648,8 +655,6 @@ func readFormKey(r *bufio.Reader) (formKey, rune, error) {
 	switch b {
 	case 3: // Ctrl-C
 		return fkCancel, 0, nil
-	case 19: // Ctrl-S
-		return fkSubmit, 0, nil
 	case 13, 10:
 		return fkEnter, 0, nil
 	case 127, 8:
@@ -765,8 +770,6 @@ func (f *shapeForm) handle(k formKey, ch rune) (submit, quit bool) {
 			f.edit = true
 			f.fresh = true
 		}
-	case fkSubmit:
-		return true, false
 	case fkCancel:
 		return false, true
 	}
