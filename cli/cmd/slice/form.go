@@ -252,6 +252,23 @@ const (
 	fUnder = "\x1b[4m"
 )
 
+// The pillar colours, the same truecolor values the dashboard uses
+// (cmd/portal/layout.go) and the brand's own: Atomic #f1a006, Backbone #8269eb,
+// Canvas #10b981.
+//
+// Deed has NO colour here, and that is the whole point rather than an omission.
+// Its brand colour is white on a dark ground and the ink colour on a light one,
+// which a terminal cannot be asked about — there is no way to read the
+// background, and guessing wrong makes the one section that should be the most
+// legible the least. Leaving it at the terminal's own foreground gets both
+// cases right for free: white on dark, dark on light, chosen by the thing that
+// actually knows.
+var pillarColour = map[string]string{
+	"Atomic":   "\x1b[38;2;241;160;6m",
+	"Backbone": "\x1b[38;2;130;105;235m",
+	"Canvas":   "\x1b[38;2;16;185;129m",
+}
+
 func (f *shapeForm) visible() {
 	f.flat = nil
 	var walk func(ns []*node, depth int)
@@ -603,7 +620,11 @@ func (f *shapeForm) line(i int, r *row) string {
 			}
 		}
 	case kindSection:
-		label = fBold + label + fReset
+		if c, ok := pillarColour[label]; ok {
+			label = c + fBold + label + fReset
+		} else {
+			label = fBold + label + fReset
+		}
 	case kindAdd:
 		label = fCyan + "+ " + label + fReset
 		marker = "  "
