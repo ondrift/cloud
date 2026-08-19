@@ -417,18 +417,18 @@ func (f *shapeForm) keyHints() string {
 	switch n.kind {
 	case kindSection, kindGroup:
 		if n.expanded {
-			return "↑↓ move · ← close"
+			return "↑↓/jk move · space close"
 		}
-		return "↑↓ move · → open"
+		return "↑↓/jk move · space open"
 	case kindInt:
-		return "↑↓ move · ←→ change · ⏎ type"
+		return "↑↓/jk move · ←→/hl change · ⏎ type"
 	case kindChoice:
-		return "↑↓ move · ←→ choose"
+		return "↑↓/jk move · ←→/hl choose"
 	case kindAction:
-		return "↑↓ move · ⏎ create"
+		return "↑↓/jk move · ⏎ create"
 	}
 	// Text. ← has no value to step, so it is the way back out of a group.
-	return "↑↓ move · ⏎ type · ← back"
+	return "↑↓/jk move · ⏎ type · ←/h back"
 }
 
 // priceLabel is what sits beside Create.
@@ -673,6 +673,7 @@ const (
 	// I create it", and it is on screen. A second, invisible way to spend money
 	// is worth less than the line it would take to explain.
 	fkCancel
+	fkSpace
 	fkChar
 )
 
@@ -759,11 +760,35 @@ func (f *shapeForm) handle(k formKey, ch rune) (submit, quit bool) {
 		return false, false
 	}
 
+	// Outside a field, letters are movement. hjkl only reaches here when nothing
+	// is being typed into — inside a field they are letters again, which is the
+	// whole reason the translation lives here and not in the decoder.
+	if k == fkChar {
+		switch ch {
+		case 'h':
+			k = fkLeft
+		case 'j':
+			k = fkDown
+		case 'k':
+			k = fkUp
+		case 'l':
+			k = fkRight
+		case ' ':
+			k = fkSpace
+		}
+	}
+
 	switch k {
 	case fkUp:
 		f.cursor--
 	case fkDown:
 		f.cursor++
+	case fkSpace:
+		// Space folds and unfolds, and does nothing anywhere else. It is the one
+		// key on this screen that means exactly one thing.
+		if len(cur.children) > 0 || cur.kind == kindSection || cur.kind == kindGroup {
+			cur.expanded = !cur.expanded
+		}
 	case fkRight:
 		// On a value, the arrows change it — a closed set steps through its
 		// options, a number counts up. Neither has children to expand, so nothing
