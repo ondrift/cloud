@@ -352,8 +352,7 @@ func (f *shapeForm) render() {
 	var b strings.Builder
 	b.WriteString("\x1b[H\x1b[2J")
 	fmt.Fprintf(&b, "  %sCreate a slice%s\r\n", fBold, fReset)
-	fmt.Fprintf(&b, "  %s↑↓ move · ←→ open a section, or change a value · ⏎ type%s\r\n\r\n",
-		fDim, fReset)
+	fmt.Fprintf(&b, "  %s%s%s\r\n\r\n", fDim, f.keyHints(), fReset)
 
 	for i, r := range f.flat {
 		if r.n == f.createNode {
@@ -400,6 +399,36 @@ func wrap(s string, width int) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// keyHints lists only the keys that do something to the row under the cursor.
+//
+// A fixed line has to name every key the form has, which means most of it is
+// false at any moment: ←→ does nothing on a name, ⏎ types nothing into a
+// section, and a reader working out which half applies to them is doing the
+// work the line was supposed to save. Naming two keys that both work beats
+// naming six of which two do.
+func (f *shapeForm) keyHints() string {
+	if f.edit {
+		return "⏎ done · ⌫ delete · esc discard"
+	}
+
+	n := f.flat[f.cursor].n
+	switch n.kind {
+	case kindSection, kindGroup:
+		if n.expanded {
+			return "↑↓ move · ← close"
+		}
+		return "↑↓ move · → open"
+	case kindInt:
+		return "↑↓ move · ←→ change · ⏎ type"
+	case kindChoice:
+		return "↑↓ move · ←→ choose"
+	case kindAction:
+		return "↑↓ move · ⏎ create"
+	}
+	// Text. ← has no value to step, so it is the way back out of a group.
+	return "↑↓ move · ⏎ type · ← back"
 }
 
 // priceLabel is what sits beside Create.
