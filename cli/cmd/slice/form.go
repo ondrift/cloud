@@ -289,7 +289,7 @@ func (f *shapeForm) render() {
 	b.WriteString("\r\n")
 	if f.status != "" {
 		fmt.Fprintf(&b, "  %s%s%s\r\n", fCyan, f.status, fReset)
-	} else if hint := f.flat[f.cursor].n.hint; hint != "" {
+	} else if hint := hintFor(f.flat[f.cursor].n); hint != "" {
 		// Wrapped rather than truncated: a hint cut off mid-sentence is a hint
 		// that stops exactly where it was about to say the thing.
 		for _, line := range wrap(hint, f.width-4) {
@@ -364,6 +364,34 @@ func (f *shapeForm) keyHints() string {
 	}
 	// Text. ← has no value to step, so it is the way back out of a group.
 	return "↑↓/jk move · ⏎ type · ←/h back"
+}
+
+// queueTriggered reports whether this item is a function whose method is queue.
+func queueTriggered(n *node) bool {
+	return n.kind == kindItem && n.prefix == "Function " && childValue(n, "Method") == "queue"
+}
+
+// promptFor is the row's own placeholder, and hintFor its explanation, with one
+// substitution: a queue-triggered function does not have a route.
+//
+// models.AtomicFunction carries no queue field — "a queue-triggered function has
+// method `queue` and its queue name as the route", and its comment warns that
+// spelling it any other way silently un-books every queue-driven function. So
+// there is one field, and what changes is what it is called.
+func promptFor(n *node) string {
+	if queueTriggered(n) {
+		return "type the queue name, e.g. emails"
+	}
+	return n.placeholder
+}
+
+func hintFor(n *node) string {
+	if queueTriggered(n) {
+		return "Type the name of the QUEUE this function drains — not a path. A " +
+			"queue-triggered function is addressed by its queue, which is why this " +
+			"is the same field: the platform stores the queue name as the route."
+	}
+	return n.hint
 }
 
 // priceLabel is what sits beside Create.
@@ -549,7 +577,7 @@ func (f *shapeForm) line(i int, r *row) string {
 		// stand-in like "Function 1". An unnamed one shows what to type, dim,
 		// because a blank row gives no clue what it wants.
 		if r.n.value == "" {
-			label = fDim + r.n.placeholder + fReset
+			label = fDim + promptFor(r.n) + fReset
 		} else {
 			label = r.n.value
 		}
