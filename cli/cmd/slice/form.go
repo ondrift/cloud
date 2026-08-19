@@ -740,7 +740,11 @@ func (f *shapeForm) line(i int, r *row) string {
 			}
 		}
 	case kindSection:
-		if hasItems(r.n) {
+		// (*) marks a SUB-section that holds something. The pillars do not carry
+		// it: they carry a price, which says the same thing with a figure — a
+		// pillar with items has a subtotal, and one without has nothing to show.
+		// Two marks for one fact on the same row would be one too many.
+		if r.depth > 0 && hasItems(r.n) {
 			label = "(*) " + label
 		}
 		if c, ok := pillarColour[label]; ok {
