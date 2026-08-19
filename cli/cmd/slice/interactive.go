@@ -108,73 +108,6 @@ type functionSlot struct {
 	Memory int // MiB
 }
 
-// createInteractive walks the prompts and returns the config to create, or
-// ok=false when the user backed out at the confirmation.
-//
-// name may arrive pre-filled from the positional argument; it is still shown,
-// because a value the user typed one command ago is not a value they are
-// looking at now.
-func runPrompts(name string) (map[string]any, string, declaredShape, bool, error) {
-	if !interactive() {
-		return nil, "", declaredShape{}, false, fmt.Errorf(
-			"drift slice create needs a terminal to ask what to build.\n" +
-				"  In CI or a script, pass --free for a free slice, or --browser to shape it in " +
-				"the configurator")
-	}
-
-	if err := survey.AskOne(
-		&survey.Input{Message: "Slice name:", Default: name},
-		&name,
-		survey.WithValidator(survey.Required),
-		survey.WithValidator(validSliceName),
-	); err != nil {
-		return nil, "", declaredShape{}, false, err
-	}
-	name = strings.TrimSpace(name)
-
-	fmt.Println("\nAtomic")
-	storageMiB, err := askSize("  Code & dependencies (MB):",
-		"Your deployed code plus whatever it vendors. In practice this is the dependency tree.")
-	if err != nil {
-		return nil, "", declaredShape{}, false, err
-	}
-
-	count, err := askCount()
-	if err != nil {
-		return nil, "", declaredShape{}, false, err
-	}
-
-	slots := make([]functionSlot, 0, count)
-	for i := 0; i < count; i++ {
-		slot, err := askSlot(i + 1)
-		if err != nil {
-			return nil, "", declaredShape{}, false, err
-		}
-		slots = append(slots, slot)
-	}
-
-	fmt.Println("\nBackbone")
-	backbone, err := askBackbone()
-	if err != nil {
-		return nil, "", declaredShape{}, false, err
-	}
-
-	fmt.Println("\nCanvas")
-	canvasMiB, err := askSize("  Site storage (MB):",
-		"Total across every site on the slice. Zero if you are not publishing one.")
-	if err != nil {
-		return nil, "", declaredShape{}, false, err
-	}
-
-	shape := declaredShape{
-		StorageMiB: storageMiB,
-		Slots:      slots,
-		Backbone:   backbone,
-		CanvasMiB:  canvasMiB,
-	}
-	return buildConfig(storageMiB, slots, backbone, canvasMiB), name, shape, true, nil
-}
-
 // backboneShape is what the Backbone questions collected. Each list is name to
 // size in MiB, except queues, whose number is a DEPTH in messages.
 type backboneShape struct {
@@ -182,207 +115,6 @@ type backboneShape struct {
 	Databases   map[string]int
 	Buckets     map[string]int
 	Queues      map[string]int
-}
-
-// askBackbone asks for the four declared lists.
-//
-// Every one of them is asked BY NAME, and that is not a nicety. A slice's quota
-// envelope carries declaration_model, and the slice refuses a write to any
-// collection or bucket whose name it was not given — so an unnamed allowance is
-// not a smaller allowance, it is an unusable one. The name is the resource.
-func askBackbone() (backboneShape, error) {
-	shape := backboneShape{}
-	var err error
-
-	if shape.Collections, err = askNamedSizes("NoSQL collections", "collection", "size (MB)"); err != nil {
-		return shape, err
-	}
-	if shape.Databases, err = askNamedSizes("SQL databases", "database", "size (MB)"); err != nil {
-		return shape, err
-	}
-	if shape.Buckets, err = askNamedSizes("Blob buckets", "bucket", "size (MB)"); err != nil {
-		return shape, err
-	}
-	if shape.Queues, err = askNamedSizes("Queues", "queue", "depth (messages)"); err != nil {
-		return shape, err
-	}
-	return shape, nil
-}
-
-// askNamedSizes asks how many of a thing, then each one's name and number.
-//
-// The number is refused at zero for the same reason the platform refuses it: a
-// declared item sized zero is read by the slice as declared and UNBOUNDED, and
-// clamped away by the price — storage with no ceiling, charged nothing.
-func askNamedSizes(label, noun, sizeLabel string) (map[string]int, error) {
-	var raw string
-	if err := survey.AskOne(
-		&survey.Input{Message: "  " + label + ":", Default: "0"},
-		&raw,
-		survey.WithValidator(nonNegative(noun+"s")),
-	); err != nil {
-		return nil, err
-	}
-	n, _ := strconv.Atoi(strings.TrimSpace(raw))
-	if n == 0 {
-		return nil, nil
-	}
-
-	out := make(map[string]int, n)
-	for i := 1; i <= n; i++ {
-		var itemName string
-		if err := survey.AskOne(
-			&survey.Input{Message: fmt.Sprintf("    %s %d name:", strings.Title(noun), i)},
-			&itemName,
-			survey.WithValidator(survey.Required),
-			survey.WithValidator(uniqueAmong(out, noun)),
-		); err != nil {
-			return nil, err
-		}
-		itemName = strings.TrimSpace(itemName)
-
-		var sizeRaw string
-		if err := survey.AskOne(
-			&survey.Input{Message: "    " + sizeLabel + ":"},
-			&sizeRaw,
-			survey.WithValidator(survey.Required),
-			survey.WithValidator(positive(sizeLabel)),
-		); err != nil {
-			return nil, err
-		}
-		size, _ := strconv.Atoi(strings.TrimSpace(sizeRaw))
-		out[itemName] = size
-	}
-	return out, nil
-}
-
-// askSize asks for a whole-slice figure in MB, where zero is a real answer.
-func askSize(message, help string) (int, error) {
-	var raw string
-	if err := survey.AskOne(
-		&survey.Input{Message: message, Default: "0", Help: help},
-		&raw,
-		survey.WithValidator(nonNegative("MB")),
-	); err != nil {
-		return 0, err
-	}
-	n, _ := strconv.Atoi(strings.TrimSpace(raw))
-	return n, nil
-}
-
-func nonNegative(what string) survey.Validator {
-	return func(v any) error {
-		n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(v)))
-		if err != nil {
-			return fmt.Errorf("a number, please")
-		}
-		if n < 0 {
-			return fmt.Errorf("%s cannot be negative", what)
-		}
-		return nil
-	}
-}
-
-func positive(what string) survey.Validator {
-	return func(v any) error {
-		n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(v)))
-		if err != nil {
-			return fmt.Errorf("a number, please")
-		}
-		if n <= 0 {
-			return fmt.Errorf("%s must be above zero — the slice reads zero as unbounded, "+
-				"so it would be billed for nothing and held to nothing", what)
-		}
-		return nil
-	}
-}
-
-// uniqueAmong refuses a name already taken, because a map would silently keep
-// the last one and the tenant would be billed for a resource they cannot see.
-func uniqueAmong(taken map[string]int, noun string) survey.Validator {
-	return func(v any) error {
-		if _, clash := taken[strings.TrimSpace(fmt.Sprint(v))]; clash {
-			return fmt.Errorf("there is already a %s with that name", noun)
-		}
-		return nil
-	}
-}
-
-// askCount asks how many function slots, and takes zero for an answer.
-//
-// A slice with no functions is a real and common shape — a canvas-only site, a
-// slice bought for its storage — so this is not validated upwards. It is
-// validated at the ceiling the platform enforces, because learning about that
-// after typing eight routes is learning it too late.
-func askCount() (int, error) {
-	var raw string
-	if err := survey.AskOne(
-		&survey.Input{Message: "Atomic functions:", Default: "0"},
-		&raw,
-		survey.WithValidator(func(v any) error {
-			n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(v)))
-			if err != nil {
-				return fmt.Errorf("a number, please")
-			}
-			if n < 0 {
-				return fmt.Errorf("a slice cannot have fewer than no functions")
-			}
-			if n > maxFunctionSlots {
-				return fmt.Errorf("%d is more than a slice may hold (%d)", n, maxFunctionSlots)
-			}
-			return nil
-		}),
-	); err != nil {
-		return 0, err
-	}
-	n, _ := strconv.Atoi(strings.TrimSpace(raw))
-	return n, nil
-}
-
-// askSlot asks for one function's identity and its booking.
-//
-// The method is a Select rather than an Input: it is a closed set the platform
-// composes the booking key from, and a typo in it produces a key no invocation
-// reaches rather than an error.
-func askSlot(n int) (functionSlot, error) {
-	fmt.Printf("\nFunction %d\n", n)
-
-	var slot functionSlot
-	if err := survey.AskOne(
-		&survey.Select{Message: "  method:", Options: httpMethods, Default: "post"},
-		&slot.Method,
-	); err != nil {
-		return slot, err
-	}
-
-	if err := survey.AskOne(
-		&survey.Input{Message: "  route:", Help: "The path under /api/, e.g. auth/challenge"},
-		&slot.Route,
-		survey.WithValidator(survey.Required),
-		survey.WithValidator(validRoute),
-	); err != nil {
-		return slot, err
-	}
-	slot.Route = strings.TrimSpace(slot.Route)
-
-	// No default. A booking nobody chose is a bill nobody chose, and this is the
-	// one number on the form that is billed per unit — the platform refuses to
-	// invent it in the Driftfile for the same reason.
-	var raw string
-	if err := survey.AskOne(
-		&survey.Input{
-			Message: "  memory (MB):",
-			Help: fmt.Sprintf("What this function's simultaneous invocations share. %d-%d. "+
-				"Go and Rust need at least %d.", minMemoryMiB, maxMemoryMiB, compiledFloorMiB),
-		},
-		&raw,
-		survey.WithValidator(survey.Required),
-		survey.WithValidator(validMemory),
-	); err != nil {
-		return slot, err
-	}
-	slot.Memory, _ = strconv.Atoi(strings.TrimSpace(raw))
-	return slot, nil
 }
 
 // buildConfig assembles what the API is sent.
@@ -548,10 +280,21 @@ func summarise(name string, shape declaredShape, monthlyCents int) (bool, error)
 // charged for it anyway — the difference is the tier label, and that is what
 // counts an account's one free slice.
 func createFromPrompts(name string, billingMonths int) error {
-	cfg, chosen, shape, ok, err := runPrompts(name)
+	if !interactive() {
+		return fmt.Errorf(
+			"drift slice create draws a form, which needs a terminal.\n" +
+				"  In CI or a script, pass --free for a free slice, or --browser to shape it in " +
+				"the configurator")
+	}
+
+	shape, chosen, ok, err := runShapeForm(name)
 	if err != nil || !ok {
+		if err == nil {
+			fmt.Println("Nothing was created.")
+		}
 		return err
 	}
+	cfg := buildConfig(shape.StorageMiB, shape.Slots, shape.Backbone, shape.CanvasMiB)
 
 	if billingMonths < 1 {
 		billingMonths = 1
