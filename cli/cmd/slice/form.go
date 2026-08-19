@@ -64,6 +64,11 @@ type node struct {
 	// The range ← and → step this number through. maxV of 0 means no ceiling
 	// this form knows of — the platform still has one, and still enforces it.
 	minV, maxV int
+	// scalar names the Backbone field this row writes, dotted from Backbone
+	// down, and scale converts the unit shown into the unit stored. Empty means
+	// the row is not a Backbone scalar.
+	scalar string
+	scale  int
 }
 
 // shapeForm is the whole screen.
@@ -139,20 +144,80 @@ func newShapeForm(name string) *shapeForm {
 			hint: "Storage. Each item is declared BY NAME — a write to a name the " +
 				"slice does not carry is refused, not created.",
 			children: []*node{
-				adder("Add NoSQL collection", "Collection ", 64,
-					namedGroup("Collection", "size", "MB"),
-					"Adds a document collection — the store most apps reach for first. "+
-						"Named and sized separately."),
-				adder("Add SQL database", "Database ", 64,
-					namedGroup("Database", "size", "MB"),
-					"Adds a per-slice SQLite file, encrypted at rest."),
-				adder("Add blob bucket", "Bucket ", 64,
-					namedGroup("Bucket", "size", "MB"),
-					"Adds object storage for files. Named and sized separately."),
-				adder("Add queue", "Queue ", 64,
-					namedGroup("Queue", "depth", "messages"),
-					"Adds a message queue a QUEUE-method function drains. Sized in "+
-						"messages held, not bytes."),
+				// One sub-section per primitive, rather than four adders in a row.
+				// The adders alone left no way to tell what Backbone HAS from what
+				// it could have: an empty slice and a full one looked the same, and
+				// four "+ Add" lines read as one list of four things to add rather
+				// than four lists.
+				{label: "NoSQL", kind: kindSection, expanded: true,
+					hint: "Document collections — the store most apps reach for first.",
+					children: []*node{
+						adder("Add collection", "Collection ", 64,
+							namedGroup("Collection", "size", "MB"),
+							"Adds a document collection, named and sized separately."),
+					}},
+				{label: "SQL", kind: kindSection, expanded: true,
+					hint: "Per-slice SQLite files, encrypted at rest, one file each.",
+					children: []*node{
+						adder("Add database", "Database ", 64,
+							namedGroup("Database", "size", "MB"),
+							"Adds a per-slice SQLite file."),
+					}},
+				{label: "Blobs", kind: kindSection, expanded: true,
+					hint: "Object storage for files.",
+					children: []*node{
+						{label: "Object size", kind: kindInt, unit: "MB", value: "0", minV: 0,
+							scalar: "blobs.MaxSizeInBytesEach", scale: bytesPerMiB,
+							placeholder: "MB per object",
+							hint: "Ceiling on ONE object, separate from a bucket's total. " +
+								"A 5 MB bucket with a 5 MB object size holds one object."},
+						adder("Add bucket", "Bucket ", 64,
+							namedGroup("Bucket", "size", "MB"),
+							"Adds a bucket, named and sized separately."),
+					}},
+				{label: "Queues", kind: kindSection, expanded: true,
+					hint: "Message queues a QUEUE-method function drains.",
+					children: []*node{
+						{label: "Default depth", kind: kindInt, unit: "messages", value: "0", minV: 0,
+							scalar: "queues.MaxDepthEach", placeholder: "messages",
+							hint: "Bounds a queue that names no depth of its own."},
+						adder("Add queue", "Queue ", 64,
+							namedGroup("Queue", "depth", "messages"),
+							"Adds a queue, sized in messages held rather than bytes."),
+					}},
+				{label: "Secrets", kind: kindSection, expanded: true,
+					hint: "Values a function reads at run time and nobody reads back.",
+					children: []*node{
+						{label: "Count", kind: kindInt, value: "0", minV: 0,
+							scalar: "secrets.MaxCount", placeholder: "how many",
+							hint: "How many secrets the slice may hold. Free."},
+						{label: "Size each", kind: kindInt, unit: "KB", value: "0", minV: 0,
+							scalar: "secrets.MaxSizeInBytesEach", scale: 1024,
+							placeholder: "KB", hint: "Per-secret ceiling. Free."},
+					}},
+				{label: "Realtime", kind: kindSection, expanded: true,
+					hint: "Live WebSocket connections to the slice's own hub.",
+					children: []*node{
+						{label: "Concurrent connections", kind: kindInt, value: "0", minV: 0,
+							scalar: "realtime.MaxConcurrentConnections", placeholder: "how many",
+							hint: "Live connections at once. PRICED per connection, because " +
+								"each holds memory on the in-slice hub for as long as it is open."},
+					}},
+				{label: "Locks", kind: kindSection,
+					hint: "Advisory locks held at once.",
+					children: []*node{
+						{label: "Concurrent locks", kind: kindInt, value: "0", minV: 0,
+							scalar: "locks.MaxConcurrent", placeholder: "how many",
+							hint: "Locks held simultaneously. Cheap, and free."},
+					}},
+				{label: "Backups", kind: kindSection,
+					hint: "Automatic backups of the slice's data.",
+					children: []*node{
+						{label: "Retention", kind: kindInt, unit: "days", value: "0", minV: 0,
+							scalar: "BackupRetentionDays", placeholder: "days",
+							hint: "How long automatic backups are kept. Lowering it later " +
+								"prunes archives outside the new window."},
+					}},
 			}},
 
 		{label: "Canvas", kind: kindSection,
@@ -508,10 +573,7 @@ func (f *shapeForm) priceableConfig() map[string]any {
 		if backbone == nil {
 			return nil
 		}
-		for i, g := range backbone.children {
-			if g.kind != kindItem || g.prefix != prefix {
-				continue
-			}
+		for i, g := range itemsUnder(backbone, prefix) {
 			size := intOf(childValue(g, sizeLabel))
 			if size <= 0 {
 				continue
@@ -535,7 +597,8 @@ func (f *shapeForm) priceableConfig() map[string]any {
 	shape.Backbone.Queues = gatherLoose("Queue ", "depth")
 
 	shape.CanvasMiB = intOf(childValue(canvas, "Site storage"))
-	return buildConfig(shape.StorageMiB, shape.Slots, shape.Backbone, shape.CanvasMiB)
+	shape.BackboneScalars = f.scalars(backbone)
+	return buildConfig(shape.StorageMiB, shape.Slots, shape.Backbone, shape.CanvasMiB, shape.BackboneScalars)
 }
 
 // choiceStrip renders every option, the chosen one bracketed.
@@ -1304,16 +1367,45 @@ func (f *shapeForm) collect() (declaredShape, string, error) {
 	}
 
 	shape.CanvasMiB = intOf(childValue(section("Canvas"), "Site storage"))
+	shape.BackboneScalars = f.scalars(bb)
 	return shape, name, nil
+}
+
+// scalars collects every Backbone dial that was actually set.
+//
+// Keyed by the DOTTED PATH the config uses, with the leaf spelled the way
+// encoding/json will look for it — models.SliceConfig tags its containers but
+// not its scalar limits, so `secrets.MaxCount` is the key and
+// `secrets.max_count` decodes to zero with nothing reported.
+//
+// A zero is left out rather than sent. Zero means "not declared" on this ingest
+// path, and the platform fills it from its own defaults; writing it explicitly
+// would turn every dial the tenant never touched into a declaration of nothing.
+func (f *shapeForm) scalars(root *node) map[string]int {
+	out := map[string]int{}
+	var walk func(*node)
+	walk = func(n *node) {
+		for _, c := range n.children {
+			if c.scalar != "" {
+				if v := intOf(c.value); v > 0 {
+					scale := c.scale
+					if scale == 0 {
+						scale = 1
+					}
+					out[c.scalar] = v * scale
+				}
+			}
+			walk(c)
+		}
+	}
+	walk(root)
+	return out
 }
 
 // gather reads one counted list out of a section.
 func gather(section *node, prefix, sizeLabel string) (map[string]int, error) {
 	out := map[string]int{}
-	for _, g := range section.children {
-		if g.kind != kindItem || g.prefix != prefix {
-			continue
-		}
+	for _, g := range itemsUnder(section, prefix) {
 		name := strings.TrimSpace(g.value)
 		if name == "" {
 			return nil, fmt.Errorf("a %s has no name", strings.TrimSpace(strings.ToLower(prefix)))
@@ -1332,6 +1424,23 @@ func gather(section *node, prefix, sizeLabel string) (map[string]int, error) {
 		return nil, nil
 	}
 	return out, nil
+}
+
+// itemsUnder finds every list item of one kind at any depth, so Backbone's
+// sub-sections do not each need their own reader.
+func itemsUnder(n *node, prefix string) []*node {
+	var out []*node
+	var walk func(*node)
+	walk = func(cur *node) {
+		for _, c := range cur.children {
+			if c.kind == kindItem && c.prefix == prefix {
+				out = append(out, c)
+			}
+			walk(c)
+		}
+	}
+	walk(n)
+	return out
 }
 
 func childValue(parent *node, label string) string {

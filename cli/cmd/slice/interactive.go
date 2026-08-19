@@ -145,7 +145,7 @@ type backboneShape struct {
 // Only what was asked is set. Every other limit is left absent so the platform
 // fills it from its own defaults — writing a figure here would make this a
 // second place those defaults live, and the first one to drift.
-func buildConfig(storageMiB int, slots []functionSlot, bb backboneShape, canvasMiB int) map[string]any {
+func buildConfig(storageMiB int, slots []functionSlot, bb backboneShape, canvasMiB int, scalars map[string]int) map[string]any {
 	atomic := configFromSlots(slots)["atomic"].(map[string]any)
 	if storageMiB > 0 {
 		atomic["MaxStorageBytes"] = storageMiB * bytesPerMiB
@@ -168,6 +168,23 @@ func buildConfig(storageMiB int, slots []functionSlot, bb backboneShape, canvasM
 		// a MiB would sell somebody a queue a million messages deep.
 		backbone["queues"] = map[string]any{"queues": bb.Queues}
 	}
+	// The dials, written at the dotted path each names. One level of nesting is
+	// all the config has here, so "secrets.MaxCount" is a key inside a "secrets"
+	// object and "BackupRetentionDays" is a key on backbone itself.
+	for path, v := range scalars {
+		if i := strings.IndexByte(path, '.'); i >= 0 {
+			group, leaf := path[:i], path[i+1:]
+			nested, _ := backbone[group].(map[string]any)
+			if nested == nil {
+				nested = map[string]any{}
+			}
+			nested[leaf] = v
+			backbone[group] = nested
+			continue
+		}
+		backbone[path] = v
+	}
+
 	if len(backbone) > 0 {
 		cfg["backbone"] = backbone
 	}
@@ -309,19 +326,19 @@ func summarise(name string, shape declaredShape, monthlyCents int) {
 	fmt.Printf("\n  %s\n", name)
 
 	if shape.StorageMiB > 0 {
-		fmt.Printf("    code & dependencies          %d MB\n", shape.StorageMiB)
+		line("code & dependencies", fmt.Sprintf("%d MB", shape.StorageMiB))
 	}
 	if len(slots) == 0 {
 		fmt.Println("    no functions")
 	}
 	total := 0
 	for _, s := range slots {
-		fmt.Printf("    %-6s %-28s %d MB\n", strings.ToUpper(s.Method), s.Route, s.Memory)
+		line(strings.ToUpper(s.Method)+" "+s.Route, fmt.Sprintf("%d MB", s.Memory))
 		total += s.Memory
 	}
 	if len(slots) > 0 {
-		fmt.Printf("    %d function%s, %d MB booked in total\n",
-			len(slots), plural(len(slots)), total)
+		fmt.Printf("    %s\n", fDimPlain(fmt.Sprintf("%d function%s, %d MB booked in total",
+			len(slots), plural(len(slots)), total)))
 	}
 
 	// Named, because the name is the resource: an undeclared collection is not
@@ -332,7 +349,7 @@ func summarise(name string, shape declaredShape, monthlyCents int) {
 	printNamed("queue", shape.Backbone.Queues, "deep")
 
 	if shape.CanvasMiB > 0 {
-		fmt.Printf("    site storage                 %d MB\n", shape.CanvasMiB)
+		line("site storage", fmt.Sprintf("%d MB", shape.CanvasMiB))
 	}
 
 	if monthlyCents == 0 {
@@ -366,7 +383,7 @@ func createFromPrompts(name string, billingMonths int) error {
 		}
 		return err
 	}
-	cfg := buildConfig(shape.StorageMiB, shape.Slots, shape.Backbone, shape.CanvasMiB)
+	cfg := buildConfig(shape.StorageMiB, shape.Slots, shape.Backbone, shape.CanvasMiB, shape.BackboneScalars)
 
 	if billingMonths < 1 {
 		billingMonths = 1
@@ -424,28 +441,48 @@ func createFromPrompts(name string, billingMonths int) error {
 // summary shows the same thing that was sent rather than a second assembly of
 // it.
 type declaredShape struct {
-	StorageMiB int
-	Slots      []functionSlot
-	Backbone   backboneShape
-	CanvasMiB  int
+	StorageMiB      int
+	Slots           []functionSlot
+	Backbone        backboneShape
+	BackboneScalars map[string]int
+	CanvasMiB       int
 }
 
 // printNamed lists one declared set in a stable order. Map order is randomised,
 // and a summary that reorders itself between two runs of the same answers reads
 // as the shape having changed.
 func printNamed(noun string, items map[string]int, unit string) {
-	if len(items) == 0 {
-		return
-	}
 	names := make([]string, 0, len(items))
 	for n := range items {
 		names = append(names, n)
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		fmt.Printf("    %-10s %-17s %d %s\n", noun, n, items[n], unit)
+		line(noun+" "+n, fmt.Sprintf("%d %s", items[n], unit))
 	}
 }
+
+// line is the summary's ONE column rule: a label, then its figure right-aligned
+// in a fixed column.
+//
+// Every row used its own padding before — a hardcoded run of spaces here, a
+// %-6s%-28s there — so the figures landed wherever the longest label of that
+// particular kind happened to put them, and the block read as four lists that
+// had been printed next to each other rather than one bill.
+const (
+	summaryLabelWidth = 30
+	summaryValueWidth = 9
+)
+
+func line(label, value string) {
+	if len(label) > summaryLabelWidth {
+		label = label[:summaryLabelWidth-1] + "…"
+	}
+	fmt.Printf("    %-*s %*s\n", summaryLabelWidth, label, summaryValueWidth, value)
+}
+
+// fDimPlain dims a line without importing the form's palette here.
+func fDimPlain(s string) string { return "\x1b[2m" + s + "\x1b[0m" }
 
 func plural(n int) string {
 	if n == 1 {
