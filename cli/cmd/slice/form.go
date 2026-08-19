@@ -39,6 +39,7 @@ const (
 	kindInt                     // a number
 	kindText                    // a string
 	kindChoice                  // one of a fixed set
+	kindAdd                     // + Add function — appends a group above itself
 	kindAction                  // Create — the one row that does something
 )
 
@@ -52,10 +53,12 @@ type node struct {
 	children []*node
 	expanded bool
 
-	// spawn turns this node's number into its PARENT's group children. It is
-	// what makes "Functions: 3" grow three subtrees, and it is held here rather
-	// than on the parent because the count that drives it lives here.
-	spawn func(n int) []*node
+	// A list is a run of kindGroup rows followed by the kindAdd row that makes
+	// them. Both carry the same prefix, which is how a section holding four
+	// lists tells its own children apart; only the adder carries the factory.
+	prefix string
+	make   func(n int) *node
+	limit  int
 	// The range ← and → step this number through. maxV of 0 means no ceiling
 	// this form knows of — the platform still has one, and still enforces it.
 	minV, maxV int
@@ -122,32 +125,29 @@ func newShapeForm(name string) *shapeForm {
 				{label: "Code & dependencies", kind: kindInt, unit: "MB", value: "0", minV: 0,
 					hint: "The runner volume: your deployed code plus everything it " +
 						"vendors. Billed per GiB. Whole MB, 0 if you deploy no code."},
-				{label: "Functions", kind: kindInt, value: "0", spawn: functionGroups, minV: 0, maxV: maxFunctionSlots,
-					hint: "How many function slots to buy. Each books its own memory and " +
-						"is billed from the moment it exists, deployed or not. 0-" +
-						strconv.Itoa(maxFunctionSlots) + "."},
+				adder("Add function", "Function ", maxFunctionSlots, functionGroup,
+					"Adds a function slot. Each books its own memory and is billed "+
+						"from the moment it exists, deployed or not."),
 			}},
 
 		{label: "Backbone", kind: kindSection,
 			hint: "Storage. Each item is declared BY NAME — a write to a name the " +
 				"slice does not carry is refused, not created.",
 			children: []*node{
-				{label: "NoSQL collections", kind: kindInt, value: "0", minV: 0, maxV: 64,
-					spawn: namedGroups("Collection", "size", "MB"),
-					hint: "Document collections, the store most apps reach for first. " +
-						"Each is named and sized separately. Whole number."},
-				{label: "SQL databases", kind: kindInt, value: "0", minV: 0, maxV: 64,
-					spawn: namedGroups("Database", "size", "MB"),
-					hint: "Per-slice SQLite files, encrypted at rest, one file each. " +
-						"Whole number."},
-				{label: "Blob buckets", kind: kindInt, value: "0", minV: 0, maxV: 64,
-					spawn: namedGroups("Bucket", "size", "MB"),
-					hint: "Object storage for files. Each bucket is named and sized " +
-						"separately. Whole number."},
-				{label: "Queues", kind: kindInt, value: "0", minV: 0, maxV: 64,
-					spawn: namedGroups("Queue", "depth", "messages"),
-					hint: "Message queues a QUEUE-method function drains. Sized in " +
-						"messages held, not bytes. Whole number."},
+				adder("Add NoSQL collection", "Collection ", 64,
+					namedGroup("Collection", "size", "MB"),
+					"Adds a document collection — the store most apps reach for first. "+
+						"Named and sized separately."),
+				adder("Add SQL database", "Database ", 64,
+					namedGroup("Database", "size", "MB"),
+					"Adds a per-slice SQLite file, encrypted at rest."),
+				adder("Add blob bucket", "Bucket ", 64,
+					namedGroup("Bucket", "size", "MB"),
+					"Adds object storage for files. Named and sized separately."),
+				adder("Add queue", "Queue ", 64,
+					namedGroup("Queue", "depth", "messages"),
+					"Adds a message queue a QUEUE-method function drains. Sized in "+
+						"messages held, not bytes."),
 			}},
 
 		{label: "Canvas", kind: kindSection,
@@ -177,134 +177,58 @@ func newShapeForm(name string) *shapeForm {
 	return f
 }
 
-func functionGroups(n int) []*node {
-	out := make([]*node, 0, n)
-	for i := 1; i <= n; i++ {
-		out = append(out, &node{
-			label: fmt.Sprintf("Function %d", i), kind: kindGroup,
-			hint: "One function slot: how it is addressed, and what it books.",
-			children: []*node{
-				{label: "Method", kind: kindChoice, value: "post", choices: httpMethods,
-					hint: "← → to choose. Part of the function's identity, not a detail — " +
-						"get:items and post:items are two different functions. QUEUE names " +
-						"a queue to drain instead of a path."},
-				{label: "Route", kind: kindText,
-					hint: "The path under /api/, e.g. auth/challenge. No leading slash. " +
-						"A QUEUE function names the queue it drains instead."},
-				{label: "Memory", kind: kindInt, unit: "MB", minV: minMemoryMiB, maxV: maxMemoryMiB,
-					hint: fmt.Sprintf("The pool this function's SIMULTANEOUS calls share — it "+
-						"buys concurrency, not headroom for one call. %d-%d MB; Go and "+
-						"Rust need %d or more.", minMemoryMiB, maxMemoryMiB, compiledFloorMiB)},
-			},
-		})
-	}
-	return out
+// adder builds the "+ Add …" row that ends a list.
+func adder(label, prefix string, limit int, make func(int) *node, hint string) *node {
+	return &node{label: label, kind: kindAdd, prefix: prefix, limit: limit,
+		make: make, hint: hint}
 }
 
-// namedGroups builds "Collection 1 { Name, size }" and its siblings. The second
+func functionGroup(i int) *node {
+	return &node{
+		label: fmt.Sprintf("Function %d", i), kind: kindGroup,
+		hint: "One function slot: how it is addressed, and what it books.",
+		children: []*node{
+			{label: "Method", kind: kindChoice, value: "post", choices: httpMethods,
+				hint: "← → to choose. Part of the function's identity, not a detail — " +
+					"get:items and post:items are two different functions. QUEUE names " +
+					"a queue to drain instead of a path."},
+			{label: "Route", kind: kindText,
+				hint: "The path under /api/, e.g. auth/challenge. No leading slash. " +
+					"A QUEUE function names the queue it drains instead."},
+			{label: "Memory", kind: kindInt, unit: "MB", minV: minMemoryMiB, maxV: maxMemoryMiB,
+				hint: fmt.Sprintf("The pool this function's SIMULTANEOUS calls share — it "+
+					"buys concurrency, not headroom for one call. %d-%d MB; Go and "+
+					"Rust need %d or more.", minMemoryMiB, maxMemoryMiB, compiledFloorMiB)},
+		},
+	}
+}
+
+// namedGroup builds "Collection 1 { Name, size }" and its siblings. The second
 // field is a size in MB for storage and a depth in messages for a queue, which
 // is why the label and unit are parameters rather than assumed.
-func namedGroups(noun, sizeLabel, unit string) func(int) []*node {
-	return func(n int) []*node {
-		out := make([]*node, 0, n)
-		for i := 1; i <= n; i++ {
-			sizeHint := fmt.Sprintf("How large this %s may grow, in whole %s. Must be "+
-				"above zero: the slice reads a zero cap as UNLIMITED and the bill "+
-				"clamps it to nothing.", strings.ToLower(noun), unit)
-			if unit == "messages" {
-				sizeHint = "How many messages this queue may hold at once. Whole number, " +
-					"above zero. This is a depth, not a size in bytes."
-			}
-			out = append(out, &node{
-				label: fmt.Sprintf("%s %d", noun, i), kind: kindGroup,
-				hint: fmt.Sprintf("One %s: what your code calls it, and how big it may get.",
-					strings.ToLower(noun)),
-				children: []*node{
-					{label: "Name", kind: kindText,
-						hint: fmt.Sprintf("The exact string your code addresses this %s by. "+
-							"A write to any other name is refused with 400, not created — "+
-							"so this is the resource, not a label for it.",
-							strings.ToLower(noun))},
-					{label: sizeLabel, kind: kindInt, unit: unit, minV: 1, hint: sizeHint},
-				},
-			})
+func namedGroup(noun, sizeLabel, unit string) func(int) *node {
+	return func(i int) *node {
+		sizeHint := fmt.Sprintf("How large this %s may grow, in whole %s. Must be "+
+			"above zero: the slice reads a zero cap as UNLIMITED and the bill "+
+			"clamps it to nothing.", strings.ToLower(noun), unit)
+		if unit == "messages" {
+			sizeHint = "How many messages this queue may hold at once. Whole number, " +
+				"above zero. This is a depth, not a size in bytes."
 		}
-		return out
-	}
-}
-
-// respawn regrows a count node's siblings, keeping what was already typed.
-//
-// Values are carried across BY POSITION, so shrinking from three to two keeps
-// the first two exactly as they were and growing back to three restores them
-// alongside a fresh third. Rebuilding without this would silently empty a
-// function somebody had already filled in, on a keystroke they made to add
-// another one.
-func (f *shapeForm) respawn(parent, counter *node) {
-	n, err := strconv.Atoi(strings.TrimSpace(counter.value))
-	if err != nil || n < 0 {
-		return
-	}
-	if n > maxFunctionSlots {
-		n = maxFunctionSlots
-		counter.value = strconv.Itoa(n)
-		f.status = fmt.Sprintf("a slice may hold %d at most", maxFunctionSlots)
-	}
-
-	old := map[string]*node{}
-	for _, c := range parent.children {
-		if c.kind == kindGroup && strings.HasPrefix(c.label, groupPrefix(counter)) {
-			old[c.label] = c
+		return &node{
+			label: fmt.Sprintf("%s %d", noun, i), kind: kindGroup,
+			hint: fmt.Sprintf("One %s: what your code calls it, and how big it may get.",
+				strings.ToLower(noun)),
+			children: []*node{
+				{label: "Name", kind: kindText,
+					hint: fmt.Sprintf("The exact string your code addresses this %s by. "+
+						"A write to any other name is refused with 400, not created — "+
+						"so this is the resource, not a label for it.",
+						strings.ToLower(noun))},
+				{label: sizeLabel, kind: kindInt, unit: unit, minV: 1, hint: sizeHint},
+			},
 		}
 	}
-
-	fresh := counter.spawn(n)
-	for _, g := range fresh {
-		if prev, ok := old[g.label]; ok {
-			for i := range g.children {
-				if i < len(prev.children) {
-					g.children[i].value = prev.children[i].value
-				}
-			}
-			g.expanded = prev.expanded
-		}
-	}
-
-	kept := make([]*node, 0, len(parent.children))
-	for _, c := range parent.children {
-		if c.kind == kindGroup && strings.HasPrefix(c.label, groupPrefix(counter)) {
-			continue
-		}
-		kept = append(kept, c)
-	}
-	// The groups sit directly under the counter that produced them, so a section
-	// with two counted lists does not interleave.
-	at := len(kept)
-	for i, c := range kept {
-		if c == counter {
-			at = i + 1
-			break
-		}
-	}
-	parent.children = append(kept[:at:at], append(fresh, kept[at:]...)...)
-}
-
-// groupPrefix is the label stem the counter's groups carry, so a section holding
-// several counted lists can tell its own children apart.
-func groupPrefix(counter *node) string {
-	switch counter.label {
-	case "Functions":
-		return "Function "
-	case "NoSQL collections":
-		return "Collection "
-	case "SQL databases":
-		return "Database "
-	case "Blob buckets":
-		return "Bucket "
-	case "Queues":
-		return "Queue "
-	}
-	return "\x00never"
 }
 
 // ─── rendering ──────────────────────────────────────────────────────────────
@@ -415,7 +339,12 @@ func (f *shapeForm) keyHints() string {
 
 	n := f.flat[f.cursor].n
 	switch n.kind {
-	case kindSection, kindGroup:
+	case kindGroup:
+		if n.expanded {
+			return "↑↓/jk move · space close · d remove"
+		}
+		return "↑↓/jk move · space open · d remove"
+	case kindSection:
 		if n.expanded {
 			return "↑↓/jk move · space close"
 		}
@@ -424,6 +353,8 @@ func (f *shapeForm) keyHints() string {
 		return "↑↓/jk move · ←→/hl change · ⏎ type"
 	case kindChoice:
 		return "↑↓/jk move · ←→/hl choose"
+	case kindAdd:
+		return "↑↓/jk move · space add"
 	case kindAction:
 		return "↑↓/jk move · ⏎ create"
 	}
@@ -611,6 +542,9 @@ func (f *shapeForm) line(i int, r *row) string {
 	switch r.n.kind {
 	case kindSection:
 		label = fBold + label + fReset
+	case kindAdd:
+		label = fCyan + "+ " + label + fReset
+		marker = "  "
 	case kindAction:
 		label = fGreen + fBold + label + fReset + "   " + f.priceLabel()
 		marker = "  "
@@ -618,7 +552,7 @@ func (f *shapeForm) line(i int, r *row) string {
 
 	value := ""
 	switch r.n.kind {
-	case kindSection, kindGroup, kindAction:
+	case kindSection, kindGroup, kindAction, kindAdd:
 	case kindChoice:
 		// Every option on the row, with the chosen one marked.
 		//
@@ -674,6 +608,7 @@ const (
 	// is worth less than the line it would take to explain.
 	fkCancel
 	fkSpace
+	fkRemove
 	fkChar
 )
 
@@ -775,6 +710,8 @@ func (f *shapeForm) handle(k formKey, ch rune) (submit, quit bool) {
 			k = fkRight
 		case ' ':
 			k = fkSpace
+		case 'd':
+			k = fkRemove
 		}
 	}
 
@@ -784,10 +721,15 @@ func (f *shapeForm) handle(k formKey, ch rune) (submit, quit bool) {
 	case fkDown:
 		f.cursor++
 	case fkSpace:
-		// Space folds and unfolds, and does nothing anywhere else. It is the one
-		// key on this screen that means exactly one thing.
-		if len(cur.children) > 0 || cur.kind == kindSection || cur.kind == kindGroup {
+		switch cur.kind {
+		case kindAdd:
+			f.addItem(cur)
+		case kindSection, kindGroup:
 			cur.expanded = !cur.expanded
+		}
+	case fkRemove:
+		if cur.kind == kindGroup {
+			f.removeItem(cur)
 		}
 	case fkRight:
 		// On a value, the arrows change it — a closed set steps through its
@@ -841,13 +783,77 @@ func (f *shapeForm) commit(n *node) {
 			n.value = strconv.Itoa(v)
 		}
 	}
-	if n.spawn == nil {
+}
+
+// addItem inserts one new group directly above the adder that made it, so a
+// list reads top to bottom and the "+ Add" row stays at its foot.
+func (f *shapeForm) addItem(add *node) {
+	parent := f.parentOf(add)
+	if parent == nil {
 		return
 	}
-	if parent := f.parentOf(n); parent != nil {
-		f.respawn(parent, n)
-		parent.expanded = true
+
+	at, count := -1, 0
+	for i, c := range parent.children {
+		if c == add {
+			at = i
+		}
+		if c.kind == kindGroup && strings.HasPrefix(c.label, add.prefix) {
+			count++
+		}
 	}
+	if at < 0 {
+		return
+	}
+	if add.limit > 0 && count >= add.limit {
+		f.status = fmt.Sprintf("a slice holds %d at most", add.limit)
+		return
+	}
+
+	item := add.make(count + 1)
+	item.expanded = true // opened, because nobody adds one to leave it empty
+	item.prefix = add.prefix
+
+	grown := make([]*node, 0, len(parent.children)+1)
+	grown = append(grown, parent.children[:at]...)
+	grown = append(grown, item)
+	grown = append(grown, parent.children[at:]...)
+	parent.children = grown
+
+	// Land on the thing that was just made, not on the button that made it.
+	f.visible()
+	for i, r := range f.flat {
+		if r.n == item {
+			f.cursor = i
+			break
+		}
+	}
+}
+
+// removeItem drops a group and renumbers what is left, so the labels stay
+// 1..N and never carry a gap somebody has to reason about.
+func (f *shapeForm) removeItem(item *node) {
+	parent := f.parentOf(item)
+	if parent == nil {
+		return
+	}
+	kept := make([]*node, 0, len(parent.children))
+	for _, c := range parent.children {
+		if c != item {
+			kept = append(kept, c)
+		}
+	}
+	parent.children = kept
+
+	n := 0
+	for _, c := range parent.children {
+		if c.kind != kindGroup || !strings.HasPrefix(c.label, item.prefix) {
+			continue
+		}
+		n++
+		c.label = fmt.Sprintf("%s%d", item.prefix, n)
+	}
+	f.status = "removed"
 }
 
 // nudge counts a number up or down and applies it immediately.
