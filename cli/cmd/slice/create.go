@@ -38,6 +38,7 @@ func getCreateCmd() *cobra.Command {
 	var (
 		headless      bool
 		free          bool
+		browser       bool
 		fromPath      string
 		autoYes       bool
 		billingMonths int
@@ -45,11 +46,11 @@ func getCreateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create [name]",
-		Short: "Create a new slice (opens the configurator in your browser, or --from a Driftfile)",
-		Example: "  drift slice create my-slice            # opens the configurator\n" +
-			"  drift slice create my-slice --free      # free Hacker slice, no browser\n" +
-			"  drift slice create --from Driftfile     # born at the manifest's shape\n" +
-			"  drift slice create my-slice --headless  # alias for --free (CI/scripts)",
+		Short: "Create a new slice, asking for its shape here",
+		Example: "  drift slice create                      # asks: name, functions, routes, memory\n" +
+			"  drift slice create my-slice             # same, with the name filled in\n" +
+			"  drift slice create my-slice --free      # the free slice, nothing to answer\n" +
+			"  drift slice create my-slice --browser   # shape it in the configurator instead",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var name string
@@ -86,8 +87,17 @@ func getCreateCmd() *cobra.Command {
 				return createHeadless(name)
 			}
 
-			// Default: the browser configurator, the same handoff `resize`
-			// uses — one session flow, one place it can break.
+			// Default: ask here.
+			//
+			// The browser is still reachable with --browser, and is still what a
+			// handoff from `drift file apply` opens. It is no longer what this
+			// command does on its own, because it does not need to: the platform
+			// prices a config over an endpoint, and a slice's shape is a handful
+			// of questions with answers only the person typing has.
+			if !browser {
+				return createFromPrompts(name, billingMonths)
+			}
+
 			result, err := common.RunBrowserHandoff("create slice", name, common.ModeCreate, nil)
 			if err != nil {
 				return err
@@ -104,6 +114,7 @@ func getCreateCmd() *cobra.Command {
 		},
 	}
 
+	cmd.Flags().BoolVar(&browser, "browser", false, "Shape the slice in the browser configurator instead of here")
 	cmd.Flags().BoolVar(&free, "free", false, "Create a free Hacker slice without opening the browser")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Alias for --free (CI/scripts)")
 	cmd.Flags().StringVar(&fromPath, "from", "", "Create the slice at the shape a Driftfile declares (name comes from the Driftfile)")
