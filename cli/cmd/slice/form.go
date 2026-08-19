@@ -90,11 +90,12 @@ type shapeForm struct {
 	// dropped, so a slow request that started three keystrokes ago cannot
 	// overwrite the answer to the current shape — the figure on screen is always
 	// the figure for what is on screen, or nothing.
-	priceCents int
-	priceKnown bool
-	priceBusy  bool
-	priceErr   string
-	priceGen   int
+	priceCents    int
+	priceSections map[string]int
+	priceKnown    bool
+	priceBusy     bool
+	priceErr      string
+	priceGen      int
 }
 
 type row struct {
@@ -299,9 +300,12 @@ func (f *shapeForm) render() {
 
 	for i, r := range f.flat {
 		if r.n == f.createNode {
-			// One blank line separates the action from the shape, so the eye does
-			// not read "Create" as another field of Deed.
+			// The bill closes before the button. A blank line, then the total on
+			// its own row, then Create — so the screen reads top to bottom as an
+			// itemised bill whose last line is the thing that pays it, rather than
+			// a form with a figure tucked beside a button.
 			b.WriteString("\r\n")
+			b.WriteString(f.totalLine())
 		}
 		b.WriteString(f.line(i, r))
 	}
@@ -412,7 +416,34 @@ func hintFor(n *node) string {
 	return n.hint
 }
 
-// priceLabel is what sits beside Create.
+// sectionPrice is a pillar's own subtotal, padded so the column lines up
+// however long the pillar's name is.
+//
+// A section with nothing priced in it says nothing rather than "EUR 0.00": a
+// zero reads as a line somebody is being charged nothing for, and most of these
+// sections are simply empty. Deed never prices at all — it has no billed unit —
+// so it stays blank always, which is also the honest answer.
+func (f *shapeForm) sectionPrice(name string) string {
+	if !f.priceKnown {
+		return ""
+	}
+	cents := f.priceSections[name]
+	if cents <= 0 {
+		return ""
+	}
+	pad := 24 - len(name)
+	if pad < 2 {
+		pad = 2
+	}
+	return strings.Repeat(" ", pad) + fGreen + euros(cents) + "/mo" + fReset
+}
+
+// totalLine is the bill's last figure, above the button that agrees to it.
+func (f *shapeForm) totalLine() string {
+	return fmt.Sprintf("    %-24s%s\r\n", "Total", f.priceLabel())
+}
+
+// priceLabel is the total itself.
 //
 // It never shows a stale figure as if it were current. While a request is in
 // flight the last known price is dimmed rather than hidden — hiding it makes
@@ -586,14 +617,10 @@ func fallback(s, alt string) string {
 func (f *shapeForm) line(i int, r *row) string {
 	indent := strings.Repeat("    ", r.depth)
 
+	// No chevrons. Depth already says what contains what, and a glyph that only
+	// repeats the indentation is one more thing between the reader and the
+	// numbers this screen exists to show.
 	marker := "  "
-	if len(r.n.children) > 0 || r.n.kind == kindSection || r.n.kind == kindGroup || r.n.kind == kindItem {
-		if r.n.expanded {
-			marker = "▾ "
-		} else {
-			marker = "▸ "
-		}
-	}
 
 	label := r.n.label
 	switch r.n.kind {
@@ -622,11 +649,12 @@ func (f *shapeForm) line(i int, r *row) string {
 		} else {
 			label = fBold + label + fReset
 		}
+		label += f.sectionPrice(r.n.label)
 	case kindAdd:
 		label = fCyan + "+ " + label + fReset
 		marker = "  "
 	case kindAction:
-		label = fGreen + fBold + label + fReset + "   " + f.priceLabel()
+		label = fGreen + fBold + label + fReset
 		marker = "  "
 	}
 
@@ -1145,8 +1173,8 @@ func runShapeForm(name string) (declaredShape, string, bool, error) {
 			debounce.Stop()
 		}
 		debounce = time.AfterFunc(300*time.Millisecond, func() {
-			cents, err := priceOf(cfg, 1)
-			prices <- priceResult{gen: gen, cents: cents, err: err}
+			cents, per, err := priceBySection(cfg)
+			prices <- priceResult{gen: gen, cents: cents, sections: per, err: err}
 		})
 	}
 	repriceSoon()
@@ -1186,15 +1214,16 @@ func runShapeForm(name string) (declaredShape, string, bool, error) {
 				f.priceErr = p.err.Error()
 				continue
 			}
-			f.priceCents, f.priceKnown, f.priceErr = p.cents, true, ""
+			f.priceCents, f.priceSections, f.priceKnown, f.priceErr = p.cents, p.sections, true, ""
 		}
 	}
 }
 
 type priceResult struct {
-	gen   int
-	cents int
-	err   error
+	gen      int
+	cents    int
+	sections map[string]int
+	err      error
 }
 
 // fingerprint is every value in the tree, in order. Comparing it is how the

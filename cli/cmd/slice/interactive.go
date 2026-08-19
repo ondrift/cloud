@@ -228,11 +228,67 @@ func priceOf(cfg map[string]any, months int) (int, error) {
 	}
 	var priced struct {
 		MonthlyCents int `json:"monthly_cents"`
+		Items        []struct {
+			Key          string `json:"key"`
+			SubtotalCent int    `json:"subtotal_cents"`
+		} `json:"items"`
 	}
 	if uerr := json.Unmarshal(data, &priced); uerr != nil {
 		return 0, fmt.Errorf("the price endpoint answered something this version cannot read: %w", uerr)
 	}
 	return priced.MonthlyCents, nil
+}
+
+// sectionOf maps a priced line to the pillar that owns it, so the bill adds up
+// the same way the form is laid out.
+//
+// The keys are the server's (tier.PriceConfig): atomic_scheduled,
+// atomic_memory, atomic_storage, bb_storage, realtime_connections,
+// canvas_storage. Anything unrecognised is attributed to nothing rather than
+// guessed at — a line in the wrong section is worse than a line in no section,
+// because the totals would still add up and only the attribution would lie.
+func sectionOf(key string) string {
+	switch {
+	case strings.HasPrefix(key, "atomic"):
+		return "Atomic"
+	case strings.HasPrefix(key, "bb_"), strings.HasPrefix(key, "realtime"),
+		strings.HasPrefix(key, "sql"):
+		return "Backbone"
+	case strings.HasPrefix(key, "canvas"):
+		return "Canvas"
+	}
+	return ""
+}
+
+// priceBySection asks the same endpoint and splits the answer per pillar.
+func priceBySection(cfg map[string]any) (int, map[string]int, error) {
+	body, _ := json.Marshal(map[string]any{"config": cfg, "billing_period_months": 1})
+	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/slice/price", bytes.NewBuffer(body))
+	if err != nil {
+		return 0, nil, common.TransportError("price slice", err)
+	}
+	defer resp.Body.Close()
+	data, err := common.CheckResponse(resp, "price slice")
+	if err != nil {
+		return 0, nil, err
+	}
+	var priced struct {
+		MonthlyCents int `json:"monthly_cents"`
+		Items        []struct {
+			Key          string `json:"key"`
+			SubtotalCent int    `json:"subtotal_cents"`
+		} `json:"items"`
+	}
+	if uerr := json.Unmarshal(data, &priced); uerr != nil {
+		return 0, nil, fmt.Errorf("the price endpoint answered something this version cannot read: %w", uerr)
+	}
+	per := map[string]int{}
+	for _, it := range priced.Items {
+		if sec := sectionOf(it.Key); sec != "" {
+			per[sec] += it.SubtotalCent
+		}
+	}
+	return priced.MonthlyCents, per, nil
 }
 
 // summarise prints the shape and its price, and asks to go ahead.
