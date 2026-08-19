@@ -38,6 +38,7 @@ const (
 	kindInt                     // a number
 	kindText                    // a string
 	kindChoice                  // one of a fixed set
+	kindAction                  // Create — the one row that does something
 )
 
 type node struct {
@@ -61,10 +62,13 @@ type node struct {
 
 // shapeForm is the whole screen.
 type shapeForm struct {
-	root   []*node
-	flat   []*row // what is currently visible, rebuilt on every render
-	cursor int
-	edit   bool // the focused row is being typed into
+	root []*node
+	flat []*row // what is currently visible, rebuilt on every render
+	// createNode is the green row at the bottom. Held by pointer so the renderer
+	// can find it without matching on its label.
+	createNode *node
+	cursor     int
+	edit       bool // the focused row is being typed into
 	// fresh means nothing has been typed since editing began, so the first
 	// character REPLACES what is there rather than appending to it. Without it,
 	// a field showing the default 0 answers a typed 2 with "02" — which parses,
@@ -87,35 +91,75 @@ func newShapeForm(name string) *shapeForm {
 		f.width = w
 	}
 
+	// Every field carries a hint, and every hint says the same three things in
+	// the same order: what it is, what it is for, and what it will take. A form
+	// that explains only its surprising fields teaches that a silent field is
+	// obvious, and the field somebody is stuck on is never the one predicted.
+	f.createNode = &node{label: "Create", kind: kindAction,
+		hint: "price this shape and create the slice — you will be shown the cost first"}
+
 	f.root = []*node{
 		{label: "Slice name", kind: kindText, value: name,
-			hint: "lowercase letters, numbers and dashes"},
-		{label: "Atomic", kind: kindSection, children: []*node{
-			{label: "Code & dependencies", kind: kindInt, unit: "MB", value: "0",
-				hint: "your deployed code plus whatever it vendors"},
-			{label: "Functions", kind: kindInt, value: "0", spawn: functionGroups,
-				hint: "each books its own memory; the slice is billed the sum"},
-		}},
-		{label: "Backbone", kind: kindSection, children: []*node{
-			{label: "NoSQL collections", kind: kindInt, value: "0",
-				spawn: namedGroups("Collection", "size", "MB"),
-				hint:  "declared by name — the slice refuses a write to any other"},
-			{label: "SQL databases", kind: kindInt, value: "0",
-				spawn: namedGroups("Database", "size", "MB")},
-			{label: "Blob buckets", kind: kindInt, value: "0",
-				spawn: namedGroups("Bucket", "size", "MB")},
-			{label: "Queues", kind: kindInt, value: "0",
-				spawn: namedGroups("Queue", "depth", "messages")},
-		}},
-		{label: "Canvas", kind: kindSection, children: []*node{
-			{label: "Site storage", kind: kindInt, unit: "MB", value: "0",
-				hint: "total across every site on the slice"},
-		}},
-		{label: "Deed", kind: kindSection, children: []*node{
-			{label: "Vault entry size", kind: kindInt, unit: "KB", value: "0"},
-			{label: "Vault entries per identity", kind: kindInt, value: "0"},
-			{label: "Pocket record size", kind: kindInt, unit: "KB", value: "0"},
-		}},
+			hint: "The slice's name, and the hostname it answers on. " +
+				"Lowercase letters, numbers and dashes, up to 32."},
+
+		{label: "Atomic", kind: kindSection,
+			hint: "Functions, and the volume their code lives on.",
+			children: []*node{
+				{label: "Code & dependencies", kind: kindInt, unit: "MB", value: "0",
+					hint: "The runner volume: your deployed code plus everything it " +
+						"vendors. Billed per GiB. Whole MB, 0 if you deploy no code."},
+				{label: "Functions", kind: kindInt, value: "0", spawn: functionGroups,
+					hint: "How many function slots to buy. Each books its own memory and " +
+						"is billed from the moment it exists, deployed or not. 0-" +
+						strconv.Itoa(maxFunctionSlots) + "."},
+			}},
+
+		{label: "Backbone", kind: kindSection,
+			hint: "Storage. Each item is declared BY NAME — a write to a name the " +
+				"slice does not carry is refused, not created.",
+			children: []*node{
+				{label: "NoSQL collections", kind: kindInt, value: "0",
+					spawn: namedGroups("Collection", "size", "MB"),
+					hint: "Document collections, the store most apps reach for first. " +
+						"Each is named and sized separately. Whole number."},
+				{label: "SQL databases", kind: kindInt, value: "0",
+					spawn: namedGroups("Database", "size", "MB"),
+					hint: "Per-slice SQLite files, encrypted at rest, one file each. " +
+						"Whole number."},
+				{label: "Blob buckets", kind: kindInt, value: "0",
+					spawn: namedGroups("Bucket", "size", "MB"),
+					hint: "Object storage for files. Each bucket is named and sized " +
+						"separately. Whole number."},
+				{label: "Queues", kind: kindInt, value: "0",
+					spawn: namedGroups("Queue", "depth", "messages"),
+					hint: "Message queues a QUEUE-method function drains. Sized in " +
+						"messages held, not bytes. Whole number."},
+			}},
+
+		{label: "Canvas", kind: kindSection,
+			hint: "Static sites served at the slice's own root.",
+			children: []*node{
+				{label: "Site storage", kind: kindInt, unit: "MB", value: "0",
+					hint: "Total across every site on the slice, not per site. Billed " +
+						"per GiB. Whole MB, 0 if you publish no site."},
+			}},
+
+		{label: "Deed", kind: kindSection,
+			hint: "Identity: key material, and per-person app data.",
+			children: []*node{
+				{label: "Vault entry size", kind: kindInt, unit: "KB", value: "0",
+					hint: "Ceiling on one wrapped keyring entry. Key material, not " +
+						"documents. Whole KB."},
+				{label: "Vault entries per identity", kind: kindInt, value: "0",
+					hint: "How much key history one identity accumulates. Vault is " +
+						"append-only, so past this the oldest go. Whole number."},
+				{label: "Pocket record size", kind: kindInt, unit: "KB", value: "0",
+					hint: "Ceiling on one per-identity record — an app's own data for " +
+						"one person. Whole KB."},
+			}},
+
+		f.createNode,
 	}
 	return f
 }
@@ -124,12 +168,19 @@ func functionGroups(n int) []*node {
 	out := make([]*node, 0, n)
 	for i := 1; i <= n; i++ {
 		out = append(out, &node{
-			label: fmt.Sprintf("Function %d", i), kind: kindGroup, children: []*node{
-				{label: "Method", kind: kindChoice, value: "post", choices: httpMethods},
-				{label: "Route", kind: kindText, hint: "the path under /api/, e.g. auth/challenge"},
+			label: fmt.Sprintf("Function %d", i), kind: kindGroup,
+			hint: "One function slot: how it is addressed, and what it books.",
+			children: []*node{
+				{label: "Method", kind: kindChoice, value: "post", choices: httpMethods,
+					hint: "Part of the function's identity, not a detail — get:items and " +
+						"post:items are two different functions. Press ⏎ to cycle."},
+				{label: "Route", kind: kindText,
+					hint: "The path under /api/, e.g. auth/challenge. No leading slash. " +
+						"A QUEUE function names the queue it drains instead."},
 				{label: "Memory", kind: kindInt, unit: "MB",
-					hint: fmt.Sprintf("%d-%d; Go and Rust need %d or more",
-						minMemoryMiB, maxMemoryMiB, compiledFloorMiB)},
+					hint: fmt.Sprintf("The pool this function's SIMULTANEOUS calls share — it "+
+						"buys concurrency, not headroom for one call. %d-%d MB; Go and "+
+						"Rust need %d or more.", minMemoryMiB, maxMemoryMiB, compiledFloorMiB)},
 			},
 		})
 	}
@@ -143,10 +194,24 @@ func namedGroups(noun, sizeLabel, unit string) func(int) []*node {
 	return func(n int) []*node {
 		out := make([]*node, 0, n)
 		for i := 1; i <= n; i++ {
+			sizeHint := fmt.Sprintf("How large this %s may grow, in whole %s. Must be "+
+				"above zero: the slice reads a zero cap as UNLIMITED and the bill "+
+				"clamps it to nothing.", strings.ToLower(noun), unit)
+			if unit == "messages" {
+				sizeHint = "How many messages this queue may hold at once. Whole number, " +
+					"above zero. This is a depth, not a size in bytes."
+			}
 			out = append(out, &node{
-				label: fmt.Sprintf("%s %d", noun, i), kind: kindGroup, children: []*node{
-					{label: "Name", kind: kindText},
-					{label: sizeLabel, kind: kindInt, unit: unit},
+				label: fmt.Sprintf("%s %d", noun, i), kind: kindGroup,
+				hint: fmt.Sprintf("One %s: what your code calls it, and how big it may get.",
+					strings.ToLower(noun)),
+				children: []*node{
+					{label: "Name", kind: kindText,
+						hint: fmt.Sprintf("The exact string your code addresses this %s by. "+
+							"A write to any other name is refused with 400, not created — "+
+							"so this is the resource, not a label for it.",
+							strings.ToLower(noun))},
+					{label: sizeLabel, kind: kindInt, unit: unit, hint: sizeHint},
 				},
 			})
 		}
@@ -230,12 +295,21 @@ func groupPrefix(counter *node) string {
 
 // ─── rendering ──────────────────────────────────────────────────────────────
 
+// Deliberately no background colours anywhere.
+//
+// The field being typed into used to be drawn in reverse video, which paints
+// the terminal's foreground colour behind the text and its background in front
+// — unreadable on any scheme the author did not happen to share. An underline
+// and a caret mark the same thing while leaving both colours alone, so this
+// reads on a light terminal, a dark one, and one with a palette nobody
+// anticipated.
 const (
 	fReset = "\x1b[0m"
 	fDim   = "\x1b[2m"
 	fBold  = "\x1b[1m"
 	fCyan  = "\x1b[36m"
-	fInv   = "\x1b[7m"
+	fGreen = "\x1b[32m"
+	fUnder = "\x1b[4m"
 )
 
 func (f *shapeForm) visible() {
@@ -268,6 +342,11 @@ func (f *shapeForm) render() {
 		fDim, fReset)
 
 	for i, r := range f.flat {
+		if r.n == f.createNode {
+			// One blank line separates the action from the shape, so the eye does
+			// not read "Create" as another field of Deed.
+			b.WriteString("\r\n")
+		}
 		b.WriteString(f.line(i, r))
 	}
 
@@ -275,9 +354,38 @@ func (f *shapeForm) render() {
 	if f.status != "" {
 		fmt.Fprintf(&b, "  %s%s%s\r\n", fCyan, f.status, fReset)
 	} else if hint := f.flat[f.cursor].n.hint; hint != "" {
-		fmt.Fprintf(&b, "  %s%s%s\r\n", fDim, hint, fReset)
+		// Wrapped rather than truncated: a hint cut off mid-sentence is a hint
+		// that stops exactly where it was about to say the thing.
+		for _, line := range wrap(hint, f.width-4) {
+			fmt.Fprintf(&b, "  %s%s%s\r\n", fDim, line, fReset)
+		}
 	}
 	fmt.Fprint(os.Stdout, b.String())
+}
+
+// wrap breaks text on word boundaries at width columns.
+func wrap(s string, width int) []string {
+	if width < 20 {
+		width = 20
+	}
+	var lines []string
+	line := ""
+	for _, word := range strings.Fields(s) {
+		if line == "" {
+			line = word
+			continue
+		}
+		if len(line)+1+len(word) > width {
+			lines = append(lines, line)
+			line = word
+			continue
+		}
+		line += " " + word
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func (f *shapeForm) line(i int, r *row) string {
@@ -293,20 +401,24 @@ func (f *shapeForm) line(i int, r *row) string {
 	}
 
 	label := r.n.label
-	if r.n.kind == kindSection {
+	switch r.n.kind {
+	case kindSection:
 		label = fBold + label + fReset
+	case kindAction:
+		label = fGreen + fBold + label + fReset
+		marker = "  "
 	}
 
 	value := ""
 	switch r.n.kind {
-	case kindSection, kindGroup:
+	case kindSection, kindGroup, kindAction:
 	default:
 		shown := r.n.value
 		if shown == "" {
 			shown = fDim + "…" + fReset
 		}
 		if f.edit && i == f.cursor {
-			shown = fInv + r.n.value + " " + fReset
+			shown = fUnder + r.n.value + fReset + fCyan + "▏" + fReset
 		}
 		value = ": " + shown
 		if r.n.unit != "" && r.n.value != "" {
@@ -409,6 +521,16 @@ func (f *shapeForm) handle(k formKey, ch rune) (submit, quit bool) {
 				f.fresh = false
 			}
 			cur.value += string(ch)
+			// Belt and braces on top of `fresh`: a number never carries a leading
+			// zero, whatever route the keystrokes took to get here. "03" parses as
+			// 3, which is exactly why it survives every check and still reads as a
+			// mistake to the person who typed it.
+			if cur.kind == kindInt {
+				cur.value = strings.TrimLeft(cur.value, "0")
+				if cur.value == "" {
+					cur.value = "0"
+				}
+			}
 		}
 		if k == fkBackspace {
 			f.fresh = false
@@ -433,6 +555,8 @@ func (f *shapeForm) handle(k formKey, ch rune) (submit, quit bool) {
 		}
 	case fkEnter:
 		switch cur.kind {
+		case kindAction:
+			return true, false
 		case kindSection, kindGroup:
 			cur.expanded = !cur.expanded
 		case kindChoice:
