@@ -114,7 +114,8 @@ func newShapeForm(name string) *shapeForm {
 	// that explains only its surprising fields teaches that a silent field is
 	// obvious, and the field somebody is stuck on is never the one predicted.
 	f.createNode = &node{label: "Create", kind: kindAction,
-		hint: "price this shape and create the slice — you will be shown the cost first"}
+		hint: "Creates the slice at the price shown here. There is no second " +
+			"confirmation — this row is it, which is why the figure is on it."}
 
 	f.root = []*node{
 		{label: "Slice name", kind: kindText, value: name,

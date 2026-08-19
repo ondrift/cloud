@@ -14,7 +14,6 @@ import (
 	project "github.com/ondrift/cloud/cli/cmd/project"
 	"github.com/ondrift/cloud/cli/common"
 
-	"github.com/AlecAivazis/survey/v2"
 	"golang.org/x/term"
 )
 
@@ -226,7 +225,15 @@ func priceOf(cfg map[string]any, months int) (int, error) {
 // The price is stated before the question and the question names it, because a
 // confirmation that does not repeat what is being agreed to is a keystroke, not
 // a decision.
-func summarise(name string, shape declaredShape, monthlyCents int) (bool, error) {
+// summarise prints what is about to be created. It does NOT ask.
+//
+// The asking already happened: the form's Create row carries the price beside
+// it, so Enter on "Create   EUR 1.53/mo" is a decision made with the figure
+// under the cursor. A second y/N was belt and braces until it became the reason
+// the command hung — the form's key reader is still on stdin when it runs, and
+// two readers on one terminal means the keystroke goes to whichever asks first,
+// which was never the one waiting for it.
+func summarise(name string, shape declaredShape, monthlyCents int) {
 	slots := shape.Slots
 	fmt.Printf("\n  %s\n", name)
 
@@ -263,12 +270,6 @@ func summarise(name string, shape declaredShape, monthlyCents int) (bool, error)
 		fmt.Printf("\n  %s/month.\n", euros(monthlyCents))
 	}
 
-	question := fmt.Sprintf("Create %q at %s/month?", name, euros(monthlyCents))
-	var ok bool
-	if err := survey.AskOne(&survey.Confirm{Message: question, Default: false}, &ok); err != nil {
-		return false, err
-	}
-	return ok, nil
 }
 
 // createFromPrompts is the whole command when nobody asked for a browser: ask,
@@ -304,14 +305,7 @@ func createFromPrompts(name string, billingMonths int) error {
 		return err
 	}
 
-	proceed, err := summarise(chosen, shape, monthlyCents)
-	if err != nil {
-		return err
-	}
-	if !proceed {
-		fmt.Println("Nothing was created.")
-		return nil
-	}
+	summarise(chosen, shape, monthlyCents)
 
 	payload := map[string]any{"name": chosen, "config": cfg}
 	if monthlyCents == 0 {
