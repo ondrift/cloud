@@ -359,31 +359,28 @@ func (f *shapeForm) keyHints() string {
 	n := f.flat[f.cursor].n
 	switch n.kind {
 	case kindItem:
-		if n.expanded {
-			return "type the name · ⏎ done · space close · d remove"
-		}
-		return "type the name · ⏎ done · space open · d remove"
+		return "just type · ⏎ done · ↑↓ move · ^D remove"
 	case kindGroup:
 		if n.expanded {
-			return "↑↓/jk move · space close"
+			return "↑↓ move · space close"
 		}
-		return "↑↓/jk move · space open"
+		return "↑↓ move · space open"
 	case kindSection:
 		if n.expanded {
-			return "↑↓/jk move · space close"
+			return "↑↓ move · space close"
 		}
-		return "↑↓/jk move · space open"
+		return "↑↓ move · space open"
 	case kindInt:
-		return "↑↓/jk move · ←→/hl change · ⏎ type"
+		return "↑↓ move · ←→ change · or type a number"
 	case kindChoice:
-		return "↑↓/jk move · ←→/hl choose"
+		return "↑↓ move · ←→ choose"
 	case kindAdd:
-		return "↑↓/jk move · space add"
+		return "↑↓ move · space add"
 	case kindAction:
-		return "↑↓/jk move · ⏎ create"
+		return "↑↓ move · ⏎ create"
 	}
 	// Text. ← has no value to step, so it is the way back out of a group.
-	return "↑↓/jk move · ⏎ type · ←/h back"
+	return "just type · ⏎ done · ↑↓ move"
 }
 
 // queueTriggered reports whether this item is a function whose method is queue.
@@ -706,6 +703,8 @@ func readFormKey(r *bufio.Reader) (formKey, rune, error) {
 	switch b {
 	case 3: // Ctrl-C
 		return fkCancel, 0, nil
+	case 4: // Ctrl-D — remove the item under the cursor
+		return fkRemove, 0, nil
 	case 13, 10:
 		return fkEnter, 0, nil
 	case 127, 8:
@@ -802,21 +801,34 @@ func (f *shapeForm) handle(k formKey, ch rune) (submit, quit bool) {
 	// Outside a field, letters are movement. hjkl only reaches here when nothing
 	// is being typed into — inside a field they are letters again, which is the
 	// whole reason the translation lives here and not in the decoder.
-	if k == fkChar {
-		switch ch {
-		case 'h':
-			k = fkLeft
-		case 'j':
-			k = fkDown
-		case 'k':
-			k = fkUp
-		case 'l':
-			k = fkRight
-		case ' ':
-			k = fkSpace
-		case 'd':
-			k = fkRemove
+	// A row you can type into is typed into. Highlight a route and start
+	// spelling it; Enter was asking permission to do the only thing that row is
+	// for.
+	//
+	// This is why there is no hjkl. A key cannot be both a letter and a command
+	// on a field whose value is letters, and keeping the pair would have meant
+	// four keys that move on some rows and type on others — the reader having to
+	// know which kind of row they are on before they know what a key does. The
+	// arrows move, always; everything printable types, wherever typing is
+	// possible.
+	if k == fkChar && typesInto(cur, ch) {
+		f.edit, f.editPrev, f.fresh = true, cur.value, false
+		cur.value = string(ch)
+		if cur.kind == kindInt {
+			cur.value = strings.TrimLeft(cur.value, "0")
+			if cur.value == "" {
+				cur.value = "0"
+			}
 		}
+		return false, false
+	}
+
+	// Space is the only letter-shaped key left that is not a letter. It folds,
+	// and typesInto refuses it above, so no name can contain one — which is true
+	// of every name this form collects anyway: routes, queues, collections and
+	// slices all forbid spaces.
+	if k == fkChar && ch == ' ' {
+		k = fkSpace
 	}
 
 	switch k {
@@ -1004,6 +1016,21 @@ func max(a, b int) int {
 // Wrapping is right for a key that only goes one way — Enter still cycles — and
 // wrong for a pair that goes both: an arrow that jumps from the first option to
 // the last reads as a mis-key, and there is no way to tell it apart from one.
+// typesInto reports whether this keystroke should start editing the row.
+//
+// Text takes any printable character. A NUMBER takes only digits, which is what
+// lets hjkl keep moving on a memory box: a letter there could never have been
+// the value, so reading it as movement costs nothing.
+func typesInto(n *node, ch rune) bool {
+	switch n.kind {
+	case kindText, kindItem:
+		return ch != ' '
+	case kindInt:
+		return ch >= '0' && ch <= '9'
+	}
+	return false
+}
+
 func (f *shapeForm) step(n *node, by int) {
 	for i, c := range n.choices {
 		if c != n.value {
