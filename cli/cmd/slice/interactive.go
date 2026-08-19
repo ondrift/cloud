@@ -77,6 +77,21 @@ func validRoute(v any) error {
 	return nil
 }
 
+// A queue name is NOT a path, and the platform says so in as many words. Its
+// own rule is tier.bookingQueuePattern; this is the same expression, so the
+// refusal happens on the row being typed rather than after the slice is priced,
+// summarised and posted.
+var queueNameRe = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$`)
+
+func validQueueName(v any) error {
+	s := strings.TrimSpace(fmt.Sprint(v))
+	if !queueNameRe.MatchString(s) {
+		return fmt.Errorf("lowercase letters, digits and interior hyphens only, up to 32 — " +
+			"a queue name is not a path, so no slashes and no underscores")
+	}
+	return nil
+}
+
 func validMemory(v any) error {
 	n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(v)))
 	if err != nil {

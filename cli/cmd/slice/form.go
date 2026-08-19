@@ -79,9 +79,10 @@ type shapeForm struct {
 	// character REPLACES what is there rather than appending to it. Without it,
 	// a field showing the default 0 answers a typed 2 with "02" — which parses,
 	// which is why it would survive review, and which is not what anybody meant.
-	fresh  bool
-	status string
-	width  int
+	fresh    bool
+	editPrev string
+	status   string
+	width    int
 
 	// The live price, and what is known about it.
 	//
@@ -388,9 +389,10 @@ func promptFor(n *node) string {
 
 func hintFor(n *node) string {
 	if queueTriggered(n) {
-		return "Type the name of the QUEUE this function drains — not a path. A " +
-			"queue-triggered function is addressed by its queue, which is why this " +
-			"is the same field: the platform stores the queue name as the route."
+		return "Type the name of the QUEUE this function drains — not a path. " +
+			"Lowercase letters, digits and interior hyphens, up to 32: no slashes " +
+			"and no underscores. It is the same field because the platform stores " +
+			"a queue function's queue name as its route."
 	}
 	return n.hint
 }
@@ -670,13 +672,19 @@ func readFormKey(r *bufio.Reader) (formKey, rune, error) {
 	case 127, 8:
 		return fkBackspace, 0, nil
 	case 27:
-		// Esc alone cancels; Esc [ A..D is an arrow. Everything else is
-		// swallowed, because a half-read sequence typed as text is worse than a
-		// keystroke that did nothing.
-		if r.Buffered() == 0 {
+		// Esc alone cancels; Esc [ A..D is an arrow.
+		//
+		// Decided by PEEKING, not by whether anything is buffered. Buffering is a
+		// property of how fast the bytes arrived, not of what was pressed: a lone
+		// Esc inside a burst — a paste, or simply typing quickly — arrives with
+		// the NEXT keystroke already in the buffer, and reading that byte as part
+		// of a sequence swallowed both. Esc appeared to do nothing at all,
+		// intermittently, which is the worst way for a key to fail.
+		next, perr := r.Peek(1)
+		if perr != nil || (next[0] != '[' && next[0] != 'O') {
 			return fkCancel, 0, nil
 		}
-		if nb, _ := r.ReadByte(); nb == '[' {
+		if nb, _ := r.ReadByte(); nb == '[' || nb == 'O' {
 			ab, _ := r.ReadByte()
 			switch ab {
 			case 'A':
@@ -708,7 +716,19 @@ func (f *shapeForm) handle(k formKey, ch rune) (submit, quit bool) {
 			f.edit = false
 			f.commit(cur)
 		case fkCancel:
+			// Esc DISCARDS, which is what the hint has always said and what it
+			// did not do: it used to keep whatever had been typed, so the only
+			// way out of a half-typed field was to finish it or delete it by
+			// hand.
 			f.edit = false
+			cur.value = f.editPrev
+			// An item that ends this with no name was never named at all —
+			// almost always one added a keystroke ago and thought better of.
+			// Leaving it behind means a blank row that refuses the whole form at
+			// submit, for a decision already made.
+			if cur.kind == kindItem && strings.TrimSpace(cur.value) == "" {
+				f.removeItem(cur)
+			}
 		case fkBackspace:
 			if cur.value != "" {
 				cur.value = cur.value[:len(cur.value)-1]
@@ -804,15 +824,13 @@ func (f *shapeForm) handle(k formKey, ch rune) (submit, quit bool) {
 		case kindAction:
 			return true, false
 		case kindItem:
-			f.edit = true
-			f.fresh = true
+			f.edit, f.fresh, f.editPrev = true, true, cur.value
 		case kindSection, kindGroup:
 			cur.expanded = !cur.expanded
 		case kindChoice:
 			f.cycle(cur)
 		default:
-			f.edit = true
-			f.fresh = true
+			f.edit, f.fresh, f.editPrev = true, true, cur.value
 		}
 	case fkCancel:
 		return false, true
@@ -876,8 +894,7 @@ func (f *shapeForm) addItem(add *node) {
 	for i, r := range f.flat {
 		if r.n == item {
 			f.cursor = i
-			f.edit = true
-			f.fresh = true
+			f.edit, f.fresh, f.editPrev = true, true, ""
 			break
 		}
 	}
@@ -1156,8 +1173,16 @@ func (f *shapeForm) collect() (declaredShape, string, error) {
 			continue
 		}
 		route := strings.TrimSpace(g.value)
-		if err := validRoute(route); err != nil {
-			return declaredShape{}, "", fmt.Errorf("function %d: %s", len(shape.Slots)+1, err)
+		// A queue-triggered function is addressed by its queue, and a queue name
+		// obeys a different, tighter rule than a path. Checking it as a route
+		// accepted queue_test here and had it refused after the create was
+		// priced, summarised and sent.
+		check, what := validRoute, "route"
+		if childValue(g, "Method") == "queue" {
+			check, what = validQueueName, "queue name"
+		}
+		if err := check(route); err != nil {
+			return declaredShape{}, "", fmt.Errorf("function %d %s: %s", len(shape.Slots)+1, what, err)
 		}
 		mem := intOf(childValue(g, "Memory"))
 		if err := validMemory(strconv.Itoa(mem)); err != nil {
