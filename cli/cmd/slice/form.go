@@ -691,16 +691,21 @@ func (f *shapeForm) choiceStrip(n *node, depth int) string {
 	return b.String()
 }
 
-// hasItems reports whether a section holds any list item, at any depth. It is
-// what puts (*) beside NoSQL once a collection exists — a collapsed section
-// otherwise looks identical whether it holds nothing or holds everything.
-func hasItems(n *node) bool {
+// countItems is how many list items a section holds, at any depth.
+//
+// It is what puts [2] beside NoSQL. A folded section otherwise looks identical
+// whether it holds nothing or holds everything, and the count answers the
+// question a mark only raised: not "is there something in here" but "how much",
+// which is the thing you fold a section to stop looking at.
+func countItems(n *node) int {
+	total := 0
 	for _, c := range n.children {
-		if c.kind == kindItem || hasItems(c) {
-			return true
+		if c.kind == kindItem {
+			total++
 		}
+		total += countItems(c)
 	}
-	return false
+	return total
 }
 
 func fallback(s, alt string) string {
@@ -744,8 +749,8 @@ func (f *shapeForm) line(i int, r *row) string {
 		// it: they carry a price, which says the same thing with a figure — a
 		// pillar with items has a subtotal, and one without has nothing to show.
 		// Two marks for one fact on the same row would be one too many.
-		if r.depth > 0 && hasItems(r.n) {
-			label = "(*) " + label
+		if n := countItems(r.n); r.depth > 0 && n > 0 {
+			label = fmt.Sprintf("[%d] %s", n, label)
 		}
 		if c, ok := pillarColour[label]; ok {
 			label = c + fBold + label + fReset
