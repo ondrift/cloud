@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ondrift/cloud/cli/common"
 )
 
-// A plan against a slice that does not exist is a REFUSAL naming the
-// configurator, not a description of what would be created.
+// A plan against a slice that does not exist is a REFUSAL pointing at where a
+// slice is made, not a description of what would be created.
 //
 // This is the whole shape of the change: a Driftfile no longer declares a
 // slice, so "it does not exist yet" stopped being a thing this file can fix.
@@ -20,10 +22,13 @@ func TestRunPlan_RefusesWhenTheSliceDoesNotExist(t *testing.T) {
 		t.Fatal("a plan against a slice that does not exist must refuse — apply can no " +
 			"longer create one, so describing a creation would describe nothing")
 	}
-	for _, want := range []string{"ghost", "configurator"} {
-		if !strings.Contains(strings.ToLower(err.Error()), want) {
-			t.Errorf("the refusal should mention %q, got: %v", want, err)
-		}
+	// The link, not a brand word: the service that owns a slice's shape has been
+	// called more than one thing, and the reader needs somewhere to go.
+	if !strings.Contains(strings.ToLower(err.Error()), "ghost") {
+		t.Errorf("the refusal should name the slice, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), common.ConfiguratorBaseURL+"/slices/new") {
+		t.Errorf("the refusal should link to where a slice is created, got: %v", err)
 	}
 }
 

@@ -105,7 +105,7 @@ restart are shown before anything is bought.`),
 			if err != nil {
 				return err
 			}
-			renderSizing(cmd.OutOrStdout(), rows)
+			renderSizing(cmd.OutOrStdout(), m.Name(), rows)
 
 			// A thin alias onto --apply, not a second path. It used to edit the
 			// Driftfile's `memory` key, which the platform stopped reading — so
@@ -285,7 +285,11 @@ func declaredMemory(m *Manifest) map[string]string {
 }
 
 // renderSizing prints the table.
-func renderSizing(w io.Writer, rows []sizingRow) {
+//
+// sliceName is carried purely so the closing line can name the page these
+// figures are set on. A measurement is only useful where it can be applied, and
+// the reader is one click from applying it rather than one search.
+func renderSizing(w io.Writer, sliceName string, rows []sizingRow) {
 	fmt.Fprintf(w, "\n  measured by the slice, on real traffic\n\n")
 	fmt.Fprintf(w, "  %-26s %8s %10s %9s %11s  %s\n",
 		"function", "calls", "peak", "booked", "recommend", "")
@@ -304,7 +308,7 @@ func renderSizing(w io.Writer, rows []sizingRow) {
 	fmt.Fprintln(w, "  `calls` is how many invocations back the peak: a figure from three calls of")
 	fmt.Fprintln(w, "  one code path is not the claim one from thousands is.")
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  Set these where the booking lives: %s\n", common.ConfiguratorBaseURL)
+	fmt.Fprintf(w, "  Set these where the booking lives: %s\n", common.SliceURL(sliceName))
 	fmt.Fprintln(w)
 }
 

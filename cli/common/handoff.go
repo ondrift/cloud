@@ -91,7 +91,7 @@ func RunBrowserHandoff(op, sliceName string, mode HandoffMode, existing any) (js
 		return nil, fmt.Errorf(
 			"Couldn't %s: this needs a browser, and no terminal is attached.\n"+
 				"  Configure %q at %s, from a machine you can open a browser on.",
-			op, sliceName, ConfiguratorBaseURL)
+			op, sliceName, SliceURL(sliceName))
 	}
 
 	body, _ := json.Marshal(map[string]any{
