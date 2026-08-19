@@ -39,19 +39,21 @@ const (
 	kindInt                     // a number
 	kindText                    // a string
 	kindChoice                  // one of a fixed set
+	kindItem                    // a list item: expandable, and its VALUE is its name
 	kindAdd                     // + Add function — appends a group above itself
 	kindAction                  // Create — the one row that does something
 )
 
 type node struct {
-	label    string
-	kind     nodeKind
-	value    string
-	choices  []string
-	unit     string
-	hint     string
-	children []*node
-	expanded bool
+	label       string
+	kind        nodeKind
+	value       string
+	choices     []string
+	unit        string
+	hint        string
+	placeholder string
+	children    []*node
+	expanded    bool
 
 	// A list is a run of kindGroup rows followed by the kindAdd row that makes
 	// them. Both carry the same prefix, which is how a section holding four
@@ -185,16 +187,15 @@ func adder(label, prefix string, limit int, make func(int) *node, hint string) *
 
 func functionGroup(i int) *node {
 	return &node{
-		label: fmt.Sprintf("Function %d", i), kind: kindGroup,
-		hint: "One function slot: how it is addressed, and what it books.",
+		label: "route", kind: kindItem, placeholder: "type the route, e.g. auth/challenge",
+		hint: "Type this function's route — the path under /api/, e.g. auth/challenge. " +
+			"No leading slash. A QUEUE function names the queue it drains instead. " +
+			"The route is what the function is called; open it for the method and memory.",
 		children: []*node{
 			{label: "Method", kind: kindChoice, value: "post", choices: httpMethods,
 				hint: "← → to choose. Part of the function's identity, not a detail — " +
 					"get:items and post:items are two different functions. QUEUE names " +
 					"a queue to drain instead of a path."},
-			{label: "Route", kind: kindText,
-				hint: "The path under /api/, e.g. auth/challenge. No leading slash. " +
-					"A QUEUE function names the queue it drains instead."},
 			{label: "Memory", kind: kindInt, unit: "MB", minV: minMemoryMiB, maxV: maxMemoryMiB,
 				hint: fmt.Sprintf("The pool this function's SIMULTANEOUS calls share — it "+
 					"buys concurrency, not headroom for one call. %d-%d MB; Go and "+
@@ -216,15 +217,13 @@ func namedGroup(noun, sizeLabel, unit string) func(int) *node {
 				"above zero. This is a depth, not a size in bytes."
 		}
 		return &node{
-			label: fmt.Sprintf("%s %d", noun, i), kind: kindGroup,
-			hint: fmt.Sprintf("One %s: what your code calls it, and how big it may get.",
+			label: strings.ToLower(noun), kind: kindItem,
+			placeholder: fmt.Sprintf("type the %s name", strings.ToLower(noun)),
+			hint: fmt.Sprintf("Type the exact string your code addresses this %s by. "+
+				"A write to any other name is refused with 400, not created — so this "+
+				"is the resource, not a label for it. Open it to set the size.",
 				strings.ToLower(noun)),
 			children: []*node{
-				{label: "Name", kind: kindText,
-					hint: fmt.Sprintf("The exact string your code addresses this %s by. "+
-						"A write to any other name is refused with 400, not created — "+
-						"so this is the resource, not a label for it.",
-						strings.ToLower(noun))},
 				{label: sizeLabel, kind: kindInt, unit: unit, minV: 1, hint: sizeHint},
 			},
 		}
@@ -339,11 +338,16 @@ func (f *shapeForm) keyHints() string {
 
 	n := f.flat[f.cursor].n
 	switch n.kind {
+	case kindItem:
+		if n.expanded {
+			return "type the name · ⏎ done · space close · d remove"
+		}
+		return "type the name · ⏎ done · space open · d remove"
 	case kindGroup:
 		if n.expanded {
-			return "↑↓/jk move · space close · d remove"
+			return "↑↓/jk move · space close"
 		}
-		return "↑↓/jk move · space open · d remove"
+		return "↑↓/jk move · space open"
 	case kindSection:
 		if n.expanded {
 			return "↑↓/jk move · space close"
@@ -409,13 +413,13 @@ func (f *shapeForm) priceableConfig() map[string]any {
 	shape.StorageMiB = intOf(childValue(atomic, "Code & dependencies"))
 	if atomic != nil {
 		for _, g := range atomic.children {
-			if g.kind != kindGroup {
+			if g.kind != kindItem {
 				continue
 			}
 			if mem := intOf(childValue(g, "Memory")); mem > 0 {
 				shape.Slots = append(shape.Slots, functionSlot{
 					Method: childValue(g, "Method"),
-					Route:  strings.TrimSpace(childValue(g, "Route")),
+					Route:  strings.TrimSpace(g.value),
 					Memory: mem,
 				})
 			}
@@ -428,14 +432,14 @@ func (f *shapeForm) priceableConfig() map[string]any {
 			return nil
 		}
 		for i, g := range backbone.children {
-			if g.kind != kindGroup || !strings.HasPrefix(g.label, prefix) {
+			if g.kind != kindItem || g.prefix != prefix {
 				continue
 			}
 			size := intOf(childValue(g, sizeLabel))
 			if size <= 0 {
 				continue
 			}
-			name := strings.TrimSpace(childValue(g, "Name"))
+			name := strings.TrimSpace(g.value)
 			if name == "" {
 				// A placeholder key so two unnamed items of the same size both
 				// count. The name never reaches the price; only the value does.
@@ -530,7 +534,7 @@ func (f *shapeForm) line(i int, r *row) string {
 	indent := strings.Repeat("    ", r.depth)
 
 	marker := "  "
-	if len(r.n.children) > 0 || r.n.kind == kindSection || r.n.kind == kindGroup {
+	if len(r.n.children) > 0 || r.n.kind == kindSection || r.n.kind == kindGroup || r.n.kind == kindItem {
 		if r.n.expanded {
 			marker = "▾ "
 		} else {
@@ -540,6 +544,18 @@ func (f *shapeForm) line(i int, r *row) string {
 
 	label := r.n.label
 	switch r.n.kind {
+	case kindItem:
+		// The item IS its name, so the row shows the value rather than a
+		// stand-in like "Function 1". An unnamed one shows what to type, dim,
+		// because a blank row gives no clue what it wants.
+		if r.n.value == "" {
+			label = fDim + r.n.placeholder + fReset
+		} else {
+			label = r.n.value
+		}
+		if f.edit && i == f.cursor {
+			label = fUnder + r.n.value + fReset + fCyan + "▏" + fReset
+		}
 	case kindSection:
 		label = fBold + label + fReset
 	case kindAdd:
@@ -552,7 +568,7 @@ func (f *shapeForm) line(i int, r *row) string {
 
 	value := ""
 	switch r.n.kind {
-	case kindSection, kindGroup, kindAction, kindAdd:
+	case kindSection, kindGroup, kindAction, kindAdd, kindItem:
 	case kindChoice:
 		// Every option on the row, with the chosen one marked.
 		//
@@ -724,11 +740,11 @@ func (f *shapeForm) handle(k formKey, ch rune) (submit, quit bool) {
 		switch cur.kind {
 		case kindAdd:
 			f.addItem(cur)
-		case kindSection, kindGroup:
+		case kindSection, kindGroup, kindItem:
 			cur.expanded = !cur.expanded
 		}
 	case fkRemove:
-		if cur.kind == kindGroup {
+		if cur.kind == kindItem {
 			f.removeItem(cur)
 		}
 	case fkRight:
@@ -758,6 +774,9 @@ func (f *shapeForm) handle(k formKey, ch rune) (submit, quit bool) {
 		switch cur.kind {
 		case kindAction:
 			return true, false
+		case kindItem:
+			f.edit = true
+			f.fresh = true
 		case kindSection, kindGroup:
 			cur.expanded = !cur.expanded
 		case kindChoice:
@@ -798,7 +817,7 @@ func (f *shapeForm) addItem(add *node) {
 		if c == add {
 			at = i
 		}
-		if c.kind == kindGroup && strings.HasPrefix(c.label, add.prefix) {
+		if c.kind == kindItem && c.prefix == add.prefix {
 			count++
 		}
 	}
@@ -820,11 +839,16 @@ func (f *shapeForm) addItem(add *node) {
 	grown = append(grown, parent.children[at:]...)
 	parent.children = grown
 
-	// Land on the thing that was just made, not on the button that made it.
+	// Land on the new item WITH THE CARET UP. Adding a function is a step
+	// towards naming one, and the name is the next thing anybody types; making
+	// them press Enter first is a keystroke that asks "did you mean it?" about
+	// something they just chose to do.
 	f.visible()
 	for i, r := range f.flat {
 		if r.n == item {
 			f.cursor = i
+			f.edit = true
+			f.fresh = true
 			break
 		}
 	}
@@ -845,14 +869,6 @@ func (f *shapeForm) removeItem(item *node) {
 	}
 	parent.children = kept
 
-	n := 0
-	for _, c := range parent.children {
-		if c.kind != kindGroup || !strings.HasPrefix(c.label, item.prefix) {
-			continue
-		}
-		n++
-		c.label = fmt.Sprintf("%s%d", item.prefix, n)
-	}
 	f.status = "removed"
 }
 
@@ -1107,16 +1123,16 @@ func (f *shapeForm) collect() (declaredShape, string, error) {
 	shape.StorageMiB = intOf(childValue(atomic, "Code & dependencies"))
 
 	for _, g := range atomic.children {
-		if g.kind != kindGroup || !strings.HasPrefix(g.label, "Function ") {
+		if g.kind != kindItem || g.prefix != "Function " {
 			continue
 		}
-		route := strings.TrimSpace(childValue(g, "Route"))
+		route := strings.TrimSpace(g.value)
 		if err := validRoute(route); err != nil {
-			return declaredShape{}, "", fmt.Errorf("%s route: %s", g.label, err)
+			return declaredShape{}, "", fmt.Errorf("function %d: %s", len(shape.Slots)+1, err)
 		}
 		mem := intOf(childValue(g, "Memory"))
 		if err := validMemory(strconv.Itoa(mem)); err != nil {
-			return declaredShape{}, "", fmt.Errorf("%s memory: %s", g.label, err)
+			return declaredShape{}, "", fmt.Errorf("%s memory: %s", route, err)
 		}
 		shape.Slots = append(shape.Slots, functionSlot{
 			Method: childValue(g, "Method"), Route: route, Memory: mem,
@@ -1146,20 +1162,20 @@ func (f *shapeForm) collect() (declaredShape, string, error) {
 func gather(section *node, prefix, sizeLabel string) (map[string]int, error) {
 	out := map[string]int{}
 	for _, g := range section.children {
-		if g.kind != kindGroup || !strings.HasPrefix(g.label, prefix) {
+		if g.kind != kindItem || g.prefix != prefix {
 			continue
 		}
-		name := strings.TrimSpace(childValue(g, "Name"))
+		name := strings.TrimSpace(g.value)
 		if name == "" {
-			return nil, fmt.Errorf("%s needs a name", g.label)
+			return nil, fmt.Errorf("a %s has no name", strings.TrimSpace(strings.ToLower(prefix)))
 		}
 		if _, clash := out[name]; clash {
 			return nil, fmt.Errorf("two of them are called %q", name)
 		}
 		size := intOf(childValue(g, sizeLabel))
 		if size <= 0 {
-			return nil, fmt.Errorf("%s %s must be above zero — the slice reads zero as unbounded",
-				g.label, sizeLabel)
+			return nil, fmt.Errorf("%s: %s must be above zero — the slice reads zero as unbounded",
+				name, sizeLabel)
 		}
 		out[name] = size
 	}
