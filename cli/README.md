@@ -14,9 +14,6 @@ A **slice** is your isolated environment. It bundles three primitives:
 go install github.com/ondrift/cloud/cli/cmd/drift@latest
 ```
 
-The `/v2` is required — Go puts a module's major version in its import path from
-v2 onwards, so the path without it resolves to nothing.
-
 This installs the `drift` binary into your `$GOBIN`. Or build from source:
 
 ```bash
