@@ -455,6 +455,10 @@ func operatorSink(a FuncArtifact) error {
 		"source_module": a.SourceModule,
 		"entry_func":    a.EntryFunc,
 		"protocol":      invocationProtocol(language),
+		// The declared reply shape. Sent even when empty so the field is present
+		// on the wire: the operator and the slice both read it, and this is the
+		// first of the three parsers it has to survive.
+		"response": a.Response,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
@@ -562,6 +566,7 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	method, name := spec.Wire()
 	element := spec.Element
 	auth, stream, secrets := spec.Auth, spec.Stream, spec.Secrets
+	response := spec.Response
 
 	callable, err := atomic_common.FindCallable(absFolder, spec.Handler)
 	if err != nil {
@@ -670,7 +675,7 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 
 	if err := sendSourceToOperator(FuncArtifact{
 		Name: name, Method: method, Language: language, Auth: auth,
-		Element: element, Stream: stream, Secrets: secrets,
+		Element: element, Stream: stream, Response: response, Secrets: secrets,
 		Triggers: triggers, Digest: digest,
 		SourcePath: sourcePath, UserSourcePath: userSourcePath,
 		SourceModule: wrapSourceModule, EntryFunc: wrapEntryFunc,

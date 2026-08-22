@@ -40,13 +40,14 @@ func FunctionSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
 			dir = abs
 		}
 		specs = append(specs, atomic_cmd.FunctionSpec{
-			Name:    fn.Str("name"),
-			Handler: fn.Str("handler"),
-			Element: fn.Str("element"),
-			Dir:     dir,
-			Auth:    fn.Str("auth"),
-			Stream:  fn.Str("stream"),
-			Secrets: fn.Strings("secrets"),
+			Name:     fn.Str("name"),
+			Handler:  fn.Str("handler"),
+			Element:  fn.Str("element"),
+			Dir:      dir,
+			Auth:     fn.Str("auth"),
+			Stream:   fn.Str("stream"),
+			Response: fn.Str("response"),
+			Secrets:  fn.Strings("secrets"),
 		})
 	}
 	return specs

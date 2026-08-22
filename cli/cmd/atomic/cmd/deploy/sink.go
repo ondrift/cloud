@@ -30,11 +30,13 @@ import (
 // the slot contents) and the optional user-source archive.
 type FuncArtifact struct {
 	Name, Method, Language, Auth, Element, Stream string
-	Secrets                                       []string
-	Triggers                                      []TriggerSpec
-	Digest                                        string
-	SourcePath                                    string
-	UserSourcePath                                string
+	// Response is the declared reply shape: "", "envelope", "json" or "raw".
+	Response       string
+	Secrets        []string
+	Triggers       []TriggerSpec
+	Digest         string
+	SourcePath     string
+	UserSourcePath string
 	// SourceModule and EntryFunc are what the SLICE needs to generate this
 	// function's entry-point wrapper itself (#PLATFORM-CORE-OPERATOR-5JPT4H):
 	// the user's module as their language imports it, and the annotated callable
@@ -148,6 +150,7 @@ func localSlotSink(runnerDir string) SlotSink {
 			"name": a.Name, "method": a.Method, "auth": a.Auth,
 			"element": a.Element, "language": lang, "stream": a.Stream,
 			"secrets": secrets, "protocol": invocationProtocol(lang),
+			"response": a.Response,
 		})
 		return os.WriteFile(filepath.Join(slotDir, "metadata.json"), meta, 0o644)
 	}
