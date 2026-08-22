@@ -3,8 +3,15 @@ const handler = require('./{{SOURCE}}');
 
 async function handle(req) {
     const body = req.body || {};
-    const [status, message, payload] = await handler.{{FUNC}}(body, req);
-    return { status, message, payload };
+    const [status, message, payload, headers] = await handler.{{FUNC}}(body, req);
+    const out = { status, message, payload };
+    // A fourth element is optional. It carries response headers, and setting a
+    // Content-Type that is not JSON is what makes the slice write the payload
+    // raw instead of wrapping it in {status, message, payload} — the escape
+    // hatch a spec-compliant body needs. A handler returning three elements
+    // destructures `headers` to undefined and is unaffected.
+    if (headers) out.headers = headers;
+    return out;
 }
 
 if (require.main === module) {

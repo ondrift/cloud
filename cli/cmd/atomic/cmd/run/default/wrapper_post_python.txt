@@ -11,8 +11,16 @@ def handle(req):
     body = req.get("body", {})
     if isinstance(body, str) and body:
         body = json.loads(body)
-    status, message, payload = {{FUNC}}(body, req)
-    return {"status": status, "message": message, "payload": payload}
+    result = {{FUNC}}(body, req)
+    out = {"status": result[0], "message": result[1], "payload": result[2]}
+    # A fourth element is optional. It carries response headers, and setting a
+    # Content-Type that is not JSON is what makes the payload be written raw
+    # instead of wrapped in {status, message, payload}. Indexed rather than
+    # unpacked, because unpacking is strict on arity and a three-element return
+    # must keep working.
+    if len(result) > 3 and result[3]:
+        out["headers"] = result[3]
+    return out
 
 if __name__ == "__main__":
     drift.run(handle)

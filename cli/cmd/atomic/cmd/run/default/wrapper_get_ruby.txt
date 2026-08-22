@@ -29,8 +29,13 @@ require 'drift'
 require '{{SOURCE}}'
 
 def handle(req)
-  status, message, payload = {{FUNC}}(req)
-  { 'status' => status, 'message' => message, 'payload' => payload }
+  result = {{FUNC}}(req)
+  out = { 'status' => result[0], 'message' => result[1], 'payload' => result[2] }
+  # A fourth element is optional. It carries response headers, and a
+  # Content-Type that is not JSON makes the payload be written raw instead of
+  # wrapped. A three-element return leaves result[3] nil.
+  out['headers'] = result[3] if result[3]
+  out
 end
 
 Drift.run(method(:handle))

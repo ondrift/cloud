@@ -50,6 +50,7 @@ And a POST, which receives the decoded body first:
 from memory.
 """
 
+import base64
 import http.client
 import json
 import os
@@ -98,6 +99,37 @@ def _run_deployed(handler):
     sys.stdout.flush()
 
 
+def _render_response(resp):
+    """Turn a wrapper's response dict into the bytes and headers to write.
+
+    Applies the same rule the slice applies to a deployed function
+    (``Atomic::build_func_response``): a Content-Type that is not JSON means
+    ``payload`` is a base64 string to be written raw, and anything else gets the
+    {status, message, payload} envelope.
+
+    It exists so ``drift atomic run`` and a deployed function disagree about
+    nothing. A local server that always enveloped would let someone build a
+    webhook or an OAuth endpoint locally, watch it work, and find the envelope
+    back the first time it ran on a slice.
+    """
+    headers = dict(resp.get("headers") or {})
+    ct = headers.get("Content-Type") or headers.get("content-type") or ""
+    is_json = ct == "" or ct == "application/json" or ct.startswith("application/json;")
+
+    if not is_json:
+        # The payload travels as base64 for the same reason it does on the
+        # wire: it may be bytes that are not text at all.
+        return base64.b64decode(str(resp.get("payload", ""))), headers
+
+    headers["Content-Type"] = "application/json"
+    body = {
+        "status": resp.get("status"),
+        "message": resp.get("message"),
+        "payload": resp.get("payload"),
+    }
+    return json.dumps(body).encode("utf-8"), headers
+
+
 def _run_local(handler):
     port = int(os.environ.get("PORT", "8080"))
 
@@ -136,10 +168,11 @@ def _run_local(handler):
 
             resp = handler(req)
             status = resp.get("status", 200)
-            out = json.dumps(resp).encode("utf-8")
+            out, out_headers = _render_response(resp)
 
             self.send_response(status)
-            self.send_header("Content-Type", "application/json")
+            for k, v in out_headers.items():
+                self.send_header(k, v)
             self.end_headers()
             self.wfile.write(out)
 

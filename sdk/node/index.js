@@ -96,6 +96,38 @@ function _runDeployed(handler) {
   });
 }
 
+// _renderResponse turns a wrapper's response object into the bytes and headers
+// the local server writes, using the same rule the slice applies to a deployed
+// function (`Atomic::build_func_response`): a Content-Type that is not JSON
+// means `payload` is a base64 string to be written raw, and anything else gets
+// the {status, message, payload} envelope.
+//
+// It exists so `drift atomic run` and a deployed function disagree about
+// nothing. A local server that always enveloped would let someone build a
+// webhook or an OAuth endpoint locally, watch it work, and find the envelope
+// back the first time it ran on a slice.
+function _renderResponse(resp) {
+  const headers = Object.assign({}, resp.headers || {});
+  const ct = headers["Content-Type"] || headers["content-type"] || "";
+  const isJSON =
+    ct === "" || ct === "application/json" || ct.startsWith("application/json;");
+
+  if (!isJSON) {
+    // The payload travels as base64 for the same reason it does on the wire:
+    // it may be bytes that are not text at all.
+    return [Buffer.from(String(resp.payload), "base64"), headers];
+  }
+  headers["Content-Type"] = "application/json";
+  return [
+    JSON.stringify({
+      status: resp.status,
+      message: resp.message,
+      payload: resp.payload,
+    }),
+    headers,
+  ];
+}
+
 function _runLocal(handler) {
   const http = require("http");
   const port = parseInt(process.env.PORT || "8080", 10);
@@ -128,9 +160,9 @@ function _runLocal(handler) {
 
     try {
       const resp = await handler(funcReq);
-      const out = JSON.stringify(resp);
-      res.writeHead(resp.status || 200, { "Content-Type": "application/json" });
-      res.end(out);
+      const [body, headers] = _renderResponse(resp);
+      res.writeHead(resp.status || 200, headers);
+      res.end(body);
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: 500, message: String(err) }));

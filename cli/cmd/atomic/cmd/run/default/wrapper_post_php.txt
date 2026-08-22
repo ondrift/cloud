@@ -9,8 +9,14 @@ function handle($req) {
     if (is_string($body) && $body !== '') {
         $body = json_decode($body, true) ?? $body;
     }
-    [$status, $message, $payload] = {{FUNC}}($body, $req);
-    return ['status' => $status, 'message' => $message, 'payload' => $payload];
+    $result = {{FUNC}}($body, $req);
+    $out = ['status' => $result[0], 'message' => $result[1], 'payload' => $result[2]];
+    // A fourth element is optional. It carries response headers, and a
+    // Content-Type that is not JSON makes the payload be written raw instead of
+    // wrapped. A three-element return has no [3], and isset() keeps that from
+    // being a notice.
+    if (isset($result[3]) && $result[3]) { $out['headers'] = $result[3]; }
+    return $out;
 }
 
 \Drift\run('handle');

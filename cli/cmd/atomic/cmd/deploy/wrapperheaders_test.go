@@ -1,0 +1,181 @@
+package atomic_cmd
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// A handler must be able to set response headers, because that is the whole of
+// the raw-response escape hatch.
+//
+// The slice decides the shape of what it writes from the function's own
+// Content-Type: one that is not JSON means `payload` is base64 bytes to write
+// directly, and anything else gets the {status, message, payload} envelope
+// (`Atomic::build_func_response`). That branch is shared by the native and
+// langserver paths alike, so nothing in the slice is Go-specific — a handler
+// that cannot name a header simply cannot reach it. That is what stopped a Node
+// function serving an OpenID4VP request object a wallet could parse.
+//
+// The wrapper was the only thing in the way: it destructured three elements and
+// rebuilt three keys, so the header never left the function.
+//
+// Asserted on the generated source rather than by running it, because no
+// interpreter is assumed present here — a test that skips when node is missing
+// reports the same `ok` as one that ran. The behaviour is proven by deploying
+// against a real slice.
+func TestNodeWrapperForwardsHandlerHeaders(t *testing.T) {
+	for _, method := range []string{"get", "post"} {
+		dir := t.TempDir()
+		if err := generateNodeWrapper(dir, "fn", "Handle", method); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		src := readFile(t, filepath.Join(dir, "app.js"))
+
+		// The fourth element exists and reaches the response.
+		for _, want := range []string{
+			", headers]", // destructured off the handler's return
+			"out.headers = headers",
+		} {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s: the generated wrapper is missing %q, so a handler cannot set "+
+					"a header and the raw-response hatch is unreachable:\n%s", method, want, src)
+			}
+		}
+
+		// And it is OPTIONAL, which is what keeps this additive: every handler
+		// already written returns three elements, and an unconditional
+		// assignment would put an empty headers key on every one of them.
+		if !strings.Contains(src, "if (headers)") {
+			t.Errorf("%s: headers are set unconditionally — a three-element return would "+
+				"then carry an undefined headers key, changing every existing handler:\n%s",
+				method, src)
+		}
+
+		if strings.Contains(src, "{{") {
+			t.Errorf("%s: an unreplaced placeholder survived:\n%s", method, src)
+		}
+	}
+}
+
+// Python unpacking is STRICT on arity, which is why its wrapper indexes instead.
+//
+// `status, message, payload = f(req)` against a four-element return raises
+// ValueError, so widening the contract by unpacking a fourth name would break
+// every handler that returns three — the opposite of additive. Indexing with a
+// length check is what makes the element optional.
+func TestPythonWrapperForwardsHandlerHeaders(t *testing.T) {
+	for _, method := range []string{"get", "post"} {
+		dir := t.TempDir()
+		if err := generatePythonWrapper(dir, "fn", "Handle", method); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		src := readFile(t, filepath.Join(dir, "app.py"))
+
+		for _, want := range []string{
+			`len(result) > 3`, // optional, and checked before it is read
+			`out["headers"]`,  // and it reaches the response
+		} {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s: the generated wrapper is missing %q, so a handler cannot set "+
+					"a header and the raw-response hatch is unreachable:\n%s", method, want, src)
+			}
+		}
+
+		// The strict-unpack form is what this replaces. If it comes back, a
+		// four-element return raises ValueError inside the user's function and
+		// reads as their bug.
+		if strings.Contains(src, "status, message, payload = ") {
+			t.Errorf("%s: the wrapper unpacks a fixed three, so a fourth element raises "+
+				"ValueError rather than being ignored:\n%s", method, src)
+		}
+
+		if strings.Contains(src, "{{") {
+			t.Errorf("%s: an unreplaced placeholder survived:\n%s", method, src)
+		}
+	}
+}
+
+// Ruby tolerates a fourth element in a multiple assignment silently, which is
+// worse than Python's ValueError: a handler that returned headers would have
+// them discarded with no error anywhere. Indexing makes the discard impossible.
+func TestRubyWrapperForwardsHandlerHeaders(t *testing.T) {
+	assertWrapperCarriesHeaders(t, "app.rb", generateRubyWrapper, []string{
+		"result[3]",
+		"out['headers']",
+	})
+}
+
+// PHP list()-destructures, which emits a notice when the array is shorter than
+// the pattern rather than failing. isset() is what keeps a three-element return
+// silent as well as working.
+func TestPHPWrapperForwardsHandlerHeaders(t *testing.T) {
+	assertWrapperCarriesHeaders(t, "app.php", generatePHPWrapper, []string{
+		"isset($result[3])",
+		"$out['headers']",
+	})
+}
+
+// Rust is the one language that could not take a fourth tuple element.
+//
+// `let (status, message, payload) = f(req)` is fixed-arity and checked at
+// compile time, so widening it would fail to build against every handler
+// already written — a hard break, not a deprecation. The headers come from a
+// sink in the SDK instead, which the wrapper drains, and that keeps the change
+// additive the way the other four are.
+func TestRustWrapperForwardsHandlerHeaders(t *testing.T) {
+	assertWrapperCarriesHeaders(t, filepath.Join("src", "main.rs"), generateRustWrapper, []string{
+		"drift_sdk::take_response_headers()",
+		`out["headers"] = headers`,
+	})
+
+	// The three-element destructure must SURVIVE. If it ever grows a fourth
+	// name, every Rust handler in existence stops compiling.
+	dir := t.TempDir()
+	if err := generateRustWrapper(dir, "fn", "Handle", "get"); err != nil {
+		t.Fatal(err)
+	}
+	src := readFile(t, filepath.Join(dir, "src", "main.rs"))
+	if !strings.Contains(src, "let (status, message, payload) =") {
+		t.Errorf("the wrapper no longer destructures exactly three elements, so every "+
+			"existing Rust handler fails to compile:\n%s", src)
+	}
+}
+
+// assertWrapperCarriesHeaders generates a language's wrapper for both method
+// shapes and checks the header path survived into the rendered source.
+func assertWrapperCarriesHeaders(
+	t *testing.T,
+	artifact string,
+	generate func(dir, sourceModule, funcName, method string) error,
+	want []string,
+) {
+	t.Helper()
+	for _, method := range []string{"get", "post"} {
+		dir := t.TempDir()
+		if err := generate(dir, "fn", "Handle", method); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		src := readFile(t, filepath.Join(dir, artifact))
+
+		for _, w := range want {
+			if !strings.Contains(src, w) {
+				t.Errorf("%s %s: missing %q, so a handler cannot set a header and the "+
+					"raw-response hatch is unreachable:\n%s", artifact, method, w, src)
+			}
+		}
+		if strings.Contains(src, "{{") {
+			t.Errorf("%s %s: an unreplaced placeholder survived:\n%s", artifact, method, src)
+		}
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}

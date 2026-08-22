@@ -70,6 +70,40 @@ function _run_deployed(callable $handler): void {
     fwrite(STDOUT, json_encode($resp));
 }
 
+/**
+ * Turn a wrapper's response array into the body and headers to write, using the
+ * same rule the slice applies to a deployed function
+ * (Atomic::build_func_response): a Content-Type that is not JSON means
+ * `payload` is a base64 string to be written raw, and anything else gets the
+ * {status, message, payload} envelope.
+ *
+ * It exists so `drift atomic run` and a deployed function disagree about
+ * nothing. A local server that always enveloped would let someone build a
+ * webhook or an OAuth endpoint locally, watch it work, and find the envelope
+ * back the first time it ran on a slice.
+ *
+ * @return array{0: string, 1: array<string,string>}
+ */
+function _render_response(array $resp): array {
+    $headers = $resp['headers'] ?? [];
+    $ct = $headers['Content-Type'] ?? $headers['content-type'] ?? '';
+    $isJson = $ct === '' || $ct === 'application/json' || str_starts_with($ct, 'application/json;');
+
+    if (!$isJson) {
+        // The payload travels as base64 for the same reason it does on the
+        // wire: it may be bytes that are not text at all.
+        return [base64_decode((string)($resp['payload'] ?? ''), true) ?: '', $headers];
+    }
+
+    $headers['Content-Type'] = 'application/json';
+    $body = [
+        'status' => $resp['status'] ?? null,
+        'message' => $resp['message'] ?? null,
+        'payload' => $resp['payload'] ?? null,
+    ];
+    return [json_encode($body), $headers];
+}
+
 function _run_local(callable $handler): void {
     $port = (int)(getenv('PORT') ?: '8080');
     $server = stream_socket_server("tcp://0.0.0.0:$port", $errno, $errstr);
@@ -113,10 +147,12 @@ function _run_local(callable $handler): void {
 
             $resp = $handler($req);
             $status = $resp['status'] ?? 200;
-            $out = json_encode($resp);
+            [$out, $outHeaders] = _render_response($resp);
 
             $response = "HTTP/1.1 $status OK\r\n";
-            $response .= "Content-Type: application/json\r\n";
+            foreach ($outHeaders as $k => $v) {
+                $response .= "$k: $v\r\n";
+            }
             $response .= "Content-Length: " . strlen($out) . "\r\n";
             $response .= "\r\n";
             $response .= $out;

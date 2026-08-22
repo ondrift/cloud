@@ -3,10 +3,19 @@ mod {{SOURCE}};
 fn main() {
     drift_sdk::run(|req| {
         let (status, message, payload) = {{SOURCE}}::{{FUNC}}(req);
-        serde_json::json!({
+        let mut out = serde_json::json!({
             "status": status,
             "message": message,
             "payload": payload
-        })
+        });
+        // Headers are optional and arrive through a sink rather than a fourth
+        // tuple element: this destructure is fixed-arity, so growing it would
+        // fail to compile against every handler already written. Setting a
+        // Content-Type that is not JSON is what makes the slice write the
+        // payload raw instead of wrapping it.
+        if let Some(headers) = drift_sdk::take_response_headers() {
+            out["headers"] = headers;
+        }
+        out
     });
 }
