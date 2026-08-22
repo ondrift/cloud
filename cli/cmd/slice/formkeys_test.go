@@ -19,19 +19,6 @@ func expandAll(ns []*node) {
 	}
 }
 
-// findNode returns the first node matching pred, depth first.
-func findNode(ns []*node, pred func(*node) bool) *node {
-	for _, n := range ns {
-		if pred(n) {
-			return n
-		}
-		if got := findNode(n.children, pred); got != nil {
-			return got
-		}
-	}
-	return nil
-}
-
 // countItems counts the items of one list, by the prefix its adder carries.
 func countListItems(ns []*node, prefix string) int {
 	total := 0

@@ -11,37 +11,29 @@ import (
 
 // getResizeCmd builds `drift slice resize`.
 //
-// Two modes:
+// It draws the slice's shape in the terminal, opened on what the slice already
+// is, exactly as `drift slice create` draws a new one. `--browser` opens the
+// configurator instead.
 //
-//  1. **Browser mode** (default, no args + no flags). Opens the
-//     configurator in the browser with the slice's current config
-//     pre-loaded. Same UX the platform has had since v0.
-//
-//  2. **Driftfile mode** (`--from <path>`). Reads a Driftfile,
-//     diffs it against the live slice, and applies the divergence
-//     directly via /ops/slice/resize. Unlike `drift file apply`
-//     (which aborts on shrink), this command is the named verb for
-//     shrinking — it requires `--allow-destructive` to actually
-//     apply any field that goes down.
-//
-// The Driftfile mode is the load-bearing answer to the spec's
-// reconcile rule #3: "deploy never shrinks." Shrinks live here, with
-// a separate flag, separate prompt, and separate code path.
+// A resize is where the platform asks two questions a create never has to: it
+// refuses one that reprices the whole slice until the new figure is sent back,
+// and one that takes something away until the slice is named. Both are answered
+// on the form — see resizeform.go.
 func getResizeCmd() *cobra.Command {
 	var (
 		fromPath         string
 		allowDestructive bool
 		autoYes          bool
+		browser          bool
 		billingMonths    int
 	)
 
 	cmd := &cobra.Command{
 		Use:   "resize [name]",
-		Short: "Resize a slice — defaults to the active slice; browser by default, or --from a Driftfile",
+		Short: "Resize a slice — defaults to the active slice",
 		Example: `  drift slice resize
   drift slice resize my-slice
-  drift slice resize --from Driftfile
-  drift slice resize --from Driftfile --allow-destructive`,
+  drift slice resize my-slice --browser   # shape it in the configurator instead`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if fromPath != "" {
@@ -69,6 +61,9 @@ func getResizeCmd() *cobra.Command {
 				}
 				name = active
 			}
+			if !browser {
+				return resizeFromPrompts(name, billingMonths)
+			}
 			existing, err := project.FetchSliceConfigRaw(name, "resize slice")
 			if err != nil {
 				return err
@@ -82,7 +77,8 @@ func getResizeCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&fromPath, "from", "", "Read the target shape from a Driftfile (default: open the browser configurator)")
+	cmd.Flags().StringVar(&fromPath, "from", "", "Read the target shape from a Driftfile (deprecated)")
+	cmd.Flags().BoolVar(&browser, "browser", false, "Shape the resize in the browser configurator instead of here")
 	cmd.Flags().BoolVar(&allowDestructive, "allow-destructive", false, "Authorise shrinks that lower a resource limit. Required for any non-zero shrink.")
 	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm the cost prompt (for CI)")
 	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period in months for the resize")

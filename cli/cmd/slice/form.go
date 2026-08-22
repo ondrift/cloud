@@ -69,6 +69,9 @@ type node struct {
 	// the row is not a Backbone scalar.
 	scalar string
 	scale  int
+	// locked refuses typing into the row. A resize cannot rename the slice it is
+	// resizing, and a name that can be typed over is one that will be.
+	locked bool
 }
 
 // shapeForm is the whole screen.
@@ -101,6 +104,22 @@ type shapeForm struct {
 	priceBusy     bool
 	priceErr      string
 	priceGen      int
+
+	// onSubmit, when set, does the work the action row names and says whether
+	// the form is finished. Nil hands the shape back to the caller instead,
+	// which is what creating does.
+	//
+	// It exists because a refusal can be ANSWERABLE. The platform declines a
+	// resize that moves the bill until the figure is sent back, and declines one
+	// that destroys something until the slice is named — both of which the
+	// tenant answers by acting again on the form they are looking at. Handing
+	// the shape back and prompting afterwards cannot do that: the key decoder is
+	// a goroutine parked in a read on the same terminal, so a second reader
+	// competes with it for the keystroke and neither reliably gets it.
+	//
+	// So the round trip happens here, inside the one loop that owns the
+	// terminal. Returning false leaves the form up with whatever status it set.
+	onSubmit func(shape declaredShape, name string) (done bool, err error)
 }
 
 type row struct {
@@ -1162,6 +1181,9 @@ func max(a, b int) int {
 // lets hjkl keep moving on a memory box: a letter there could never have been
 // the value, so reading it as movement costs nothing.
 func typesInto(n *node, ch rune) bool {
+	if n.locked {
+		return false
+	}
 	switch n.kind {
 	case kindText, kindItem:
 		return ch != ' '
@@ -1234,6 +1256,12 @@ func (f *shapeForm) collapseParent() {
 // runShapeForm puts the terminal in raw mode, draws until the user submits or
 // quits, and returns what they declared.
 func runShapeForm(name string) (declaredShape, string, bool, error) {
+	return runForm(newShapeForm(name))
+}
+
+// runForm drives a form that is already built, which is how a resize opens on a
+// slice's current shape and carries its own submit.
+func runForm(f *shapeForm) (declaredShape, string, bool, error) {
 	fd := int(os.Stdin.Fd())
 	old, err := term.MakeRaw(fd)
 	if err != nil {
@@ -1246,8 +1274,6 @@ func runShapeForm(name string) (declaredShape, string, bool, error) {
 		fmt.Print("\x1b[?25h\r\n")
 	}()
 	fmt.Print("\x1b[?25l")
-
-	f := newShapeForm(name)
 
 	// Keys arrive on a channel so the loop can also wake for a price. Blocking
 	// on the read directly would mean a figure that arrived while nobody was
@@ -1309,7 +1335,25 @@ func runShapeForm(name string) (declaredShape, string, bool, error) {
 					f.status = verr.Error()
 					continue
 				}
-				return shape, chosen, true, nil
+				if f.onSubmit == nil {
+					return shape, chosen, true, nil
+				}
+				// The screen comes down for the duration, so anything the work
+				// prints — a refusal, a wait — is read on a normal terminal
+				// rather than painted over by the next frame.
+				done, serr := f.withScreenDown(fd, old, func() (bool, error) {
+					return f.onSubmit(shape, chosen)
+				})
+				if serr != nil {
+					return declaredShape{}, "", false, serr
+				}
+				if done {
+					return shape, chosen, true, nil
+				}
+				// Refused, and answerable: the status says what to do and the
+				// action row says what pressing it will now mean.
+				repriceSoon()
+				continue
 			}
 			// Only a change of VALUES reprices. Moving the cursor or folding a
 			// section does not alter what the slice costs, and asking anyway
@@ -1329,6 +1373,25 @@ func runShapeForm(name string) (declaredShape, string, bool, error) {
 			f.priceCents, f.priceSections, f.priceKnown, f.priceErr = p.cents, p.sections, true, ""
 		}
 	}
+}
+
+// withScreenDown drops out of raw mode for the length of fn and goes back in.
+//
+// Whatever fn prints is meant to be read — a refusal, a list of what a change
+// would destroy, a wait for the slice to answer — and a raw terminal with the
+// cursor hidden renders none of it legibly, then paints over it on the next
+// frame. The form is redrawn whole afterwards, so nothing of it is lost.
+func (f *shapeForm) withScreenDown(fd int, old *term.State, fn func() (bool, error)) (bool, error) {
+	_ = term.Restore(fd, old)
+	fmt.Print("\x1b[?25h\r\n")
+
+	done, err := fn()
+
+	if raw, rerr := term.MakeRaw(fd); rerr == nil {
+		*old = *raw
+	}
+	fmt.Print("\x1b[?25l")
+	return done, err
 }
 
 type priceResult struct {
@@ -1518,3 +1581,7 @@ func sortedKeys(m map[string]int) []string {
 	sort.Strings(out)
 	return out
 }
+
+// collectForTest exposes collect to tests in this package without widening its
+// visibility to the rest of the CLI.
+func (f *shapeForm) collectForTest() (declaredShape, string, error) { return f.collect() }
