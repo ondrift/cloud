@@ -59,6 +59,44 @@ func TestNodeWrapperForwardsHandlerHeaders(t *testing.T) {
 	}
 }
 
+// Python unpacking is STRICT on arity, which is why its wrapper indexes instead.
+//
+// `status, message, payload = f(req)` against a four-element return raises
+// ValueError, so widening the contract by unpacking a fourth name would break
+// every handler that returns three — the opposite of additive. Indexing with a
+// length check is what makes the element optional.
+func TestPythonWrapperForwardsHandlerHeaders(t *testing.T) {
+	for _, method := range []string{"get", "post"} {
+		dir := t.TempDir()
+		if err := generatePythonWrapper(dir, "fn", "Handle", method); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		src := readFile(t, filepath.Join(dir, "app.py"))
+
+		for _, want := range []string{
+			`len(result) > 3`, // optional, and checked before it is read
+			`out["headers"]`,  // and it reaches the response
+		} {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s: the generated wrapper is missing %q, so a handler cannot set "+
+					"a header and the raw-response hatch is unreachable:\n%s", method, want, src)
+			}
+		}
+
+		// The strict-unpack form is what this replaces. If it comes back, a
+		// four-element return raises ValueError inside the user's function and
+		// reads as their bug.
+		if strings.Contains(src, "status, message, payload = ") {
+			t.Errorf("%s: the wrapper unpacks a fixed three, so a fourth element raises "+
+				"ValueError rather than being ignored:\n%s", method, src)
+		}
+
+		if strings.Contains(src, "{{") {
+			t.Errorf("%s: an unreplaced placeholder survived:\n%s", method, src)
+		}
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
