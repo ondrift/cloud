@@ -22,7 +22,7 @@
     {
       "code": "DRIFT-1004",
       "meaning": "You have hit a quota on your plan.",
-      "remedy": "The message names which one. Free a slot by deleting something you no longer need, or resize the slice with `drift slice resize --from Driftfile`.",
+      "remedy": "The message names which one. Free a slot by deleting something you no longer need, or raise the limit on the form `drift slice resize` draws.",
       "command": "drift slice resize"
     },
     {

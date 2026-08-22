@@ -4,10 +4,10 @@ package project
 // names does not exist, checks the slice is ready, then walks atomic → backbone
 // → canvas applying every declared resource via the api gateway.
 //
-// It does NOT create, grow or price a slice. The configurator declares what a
-// slice IS; this file declares what runs on it. A slice that does not exist is a
-// refusal naming the configurator, because there is no shape here to build one
-// from.
+// It does NOT create, grow or price a slice. `drift slice create`/`resize`
+// declare what a slice IS; this file declares what runs on it. A slice that does
+// not exist is a refusal naming that command, because there is no shape here to
+// build one from.
 //
 // Flags:
 //   --plan                 Print what this file would deploy, and exit. Prices
@@ -192,21 +192,21 @@ single slice otherwise.`,
 			if cmd.Flags().Changed("no-slice-reconcile") {
 				common.Deprecation{
 					Old:     "drift file apply --no-slice-reconcile",
-					Because: "Whether the slice exists is not something a flag can skip: this file is applied INTO a slice the configurator created, so there is no shape here to reconcile.",
+					Because: "Whether the slice exists is not something a flag can skip: this file is applied INTO a slice `drift slice create` made, so there is no shape here to reconcile.",
 				}.Warn()
 			}
 			if cmd.Flags().Changed("billing-period-months") {
 				common.Deprecation{
 					Old:     "drift file apply --billing-period-months",
-					Because: "Applying a file never buys a slice. Choose the billing period in the configurator, where the slice is created.",
+					Because: "Applying a file never buys a slice. Choose the billing period on the form `drift slice create` draws, where the slice is made.",
 				}.Warn()
 			}
 
 			// ONE read of the live slice, and it is the gate for everything
-			// below. The configurator declares what a slice IS; this file
+			// below. `drift slice create` declares what a slice IS; this file
 			// declares what runs on it, so a slice that does not exist is a
-			// refusal naming the configurator rather than something to create
-			// from a manifest that no longer describes a shape.
+			// refusal naming that command rather than something to create
+			// from a manifest that does not describe a shape.
 			//
 			// CheckSliceReferences carries that refusal for a nil slice, and it
 			// runs BEFORE the reference checks it also owns — the missing-slice
@@ -265,8 +265,8 @@ single slice otherwise.`,
 			// to own it, and that is the whole point of keeping it here.
 			//
 			// A slice can be mid-provision or mid-Recreate for reasons this
-			// command did not cause — a resize someone made in the configurator,
-			// a restart, a converge replacing the pod. Without this, the triad
+			// command did not cause — a resize someone made on the form, a
+			// restart, a converge replacing the pod. Without this, the triad
 			// below fires Atomic, Backbone and Canvas concurrently at a runner
 			// that is still coming up and every one of them fails with "runner
 			// unreachable", which reads as a platform fault and is really an
@@ -390,9 +390,9 @@ func runHooks(phase string, cmds []string, dir string) error {
 // runPlan answers the two questions an apply can be planned against: does the
 // referenced slice exist, and what would this file deploy into it.
 //
-// It PRICES NOTHING, deliberately. A Driftfile no longer declares a slice's
-// shape, so there is no shape here to quote — the configurator owns that and
-// already shows the price of the shape that exists. A cost printed from this
+// It PRICES NOTHING, deliberately. A Driftfile does not declare a slice's
+// shape, so there is no shape here to quote — the slice form owns that and
+// shows the price of the shape that exists. A cost printed from this
 // file would be a second pricing model computed from a document that does not
 // describe what is being billed.
 //
@@ -476,14 +476,6 @@ func confirm(autoYes bool, prompt string) bool {
 	ans = strings.ToLower(strings.TrimSpace(ans))
 	return ans == "y" || ans == "yes"
 }
-
-// WaitForSliceReady is waitForSliceReady for callers outside this package —
-// `drift slice create --from Driftfile`, which provisions a slice the user is
-// about to deploy into. Without it the very next `project deploy` races the
-// slice's own provisioning and fails with "runner unreachable", which is
-// indistinguishable from a platform fault (see HQ PLATFORM-CORE-OPERATOR-KG3TKF
-// for the same race on the grow path). Observed on alpha 2026-07-27.
-func WaitForSliceReady(name string) error { return waitForSliceReady(name) }
 
 // waitForSliceReady polls /ops/slice/status until all components
 // report Ready, or until 60s elapses. Returns the last error if any.

@@ -156,9 +156,9 @@ func getLintCmd() *cobra.Command {
 			// at deploy, which is the one thing a CI gate exists to prevent.
 			//
 			// Skipped when the source tree is absent rather than reported: a
-			// Driftfile is legitimately linted on its own (a manifest handed over
-			// for review, `drift slice create --from Driftfile` in an empty
-			// directory), and calling that invalid would refuse a file that is fine.
+			// Driftfile is legitimately linted on its own — a manifest handed over
+			// for review, or one sitting in a directory whose source has not been
+			// checked out — and calling that invalid would refuse a file that is fine.
 			if _, serr := os.Stat(m.ResolvePath("atomic")); serr == nil {
 				els, berr := atomic_cmd.BuildElements(project.FunctionSpecs(m))
 				if berr != nil {

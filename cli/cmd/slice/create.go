@@ -13,26 +13,14 @@ import (
 
 // getCreateCmd builds `drift slice create [name]`.
 //
-// Default flow: hands off to the configurator in the browser. The CLI mints a
-// single-use session, opens the URL, and polls until the user submits — the
-// configurator forwards the create to the api under the user's own token, so
-// the slice is created by the same authenticated call the CLI would have made.
-// A positional name pre-fills the form; without one the form collects it.
+// Default flow: draws the slice's shape in the terminal and creates it from
+// what was drawn — see interactive.go. A positional name pre-fills the form;
+// without one the form collects it. It needs a terminal, and says so when there
+// is none.
 //
-// Headless flow (--free / --headless): skips the browser entirely
-// and creates a free Hacker slice directly. The name is required
-// in headless mode because there is no form to collect it from.
-// This path is the only one that works in CI, scripts, and SSH
-// sessions.
-//
-// Driftfile flow (--from <path>): the slice is born at the shape the
-// manifest declares, which is what `drift file apply` would have
-// provisioned had the slice not existed. Without this, the two-command
-// path (`slice create` then `project deploy`) starts from a shape nobody
-// declared — the fixed free preset, which is larger than any honest first
-// Driftfile — while the one-command path starts from the manifest. Same
-// project, two different slices, depending only on which command was run
-// first. See HQ CLI-STANDARDUSAGE-T17KKN.
+// Free flow (--free / --headless): skips the form and creates a free Hacker
+// slice directly. The name is required, because there is no form to collect it
+// from. This is the path CI, scripts and non-interactive SSH sessions take.
 func getCreateCmd() *cobra.Command {
 	var (
 		headless      bool
@@ -59,7 +47,7 @@ func getCreateCmd() *cobra.Command {
 				free = true
 			}
 
-			// Free tier: create directly, no configurator.
+			// Free tier: create directly, with no form to draw.
 			if free {
 				if name == "" {
 					return fmt.Errorf("--free requires a slice name argument")
@@ -82,10 +70,9 @@ func getCreateCmd() *cobra.Command {
 	return cmd
 }
 
-// createHeadless posts directly to api/ops/slice/create with the free
-// tier. Kept for non-interactive use (CI, scripts, SSH sessions). For
-// configured (paid) slices, use the browser flow (the default, no
-// --free/--headless).
+// createHeadless posts directly to api/ops/slice/create with the free tier. It
+// is the non-interactive path (CI, scripts, SSH sessions). A configured (paid)
+// slice is drawn on the form instead — the default, with no --free/--headless.
 func createHeadless(name string) error {
 	body, _ := json.Marshal(map[string]string{
 		"name": name,
@@ -106,7 +93,7 @@ func createHeadless(name string) error {
 		return err
 	}
 
-	// Wait for the slice to answer, exactly as the --from path above does.
+	// Wait for the slice to answer, exactly as the form's own create does.
 	// The record exists the moment create returns, but the components behind
 	// it do not, and this command's whole purpose is that a deploy follows it
 	// — the documented opening of every demo is create, use, deploy, run back

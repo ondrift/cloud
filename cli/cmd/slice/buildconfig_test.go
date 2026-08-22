@@ -123,15 +123,14 @@ func TestTheDoubleCollectedDialsAgreeWithTheirArgument(t *testing.T) {
 	}
 }
 
-// The count caps come off the declared lists, as they do in the browser.
+// The count caps come off the declared lists.
 //
 // `MaxNumberOfFunctions` and `SQL.MaxDatabases` are ceilings the platform
 // enforces and does not derive from the lists beside them, so a shape that
 // declares six functions and leaves the cap at zero is filled from the free
 // preset's five and refuses the sixth deploy — after it has been priced and
-// paid for. The configurator sends `functions.length` and the database count
-// for this reason; a slice made here has to mean the same thing as the same
-// slice made there.
+// paid for. The form sends `functions.length` and the database count for that
+// reason: what the tenant drew has to be what the slice is sold.
 func TestBuildConfigDerivesTheCountCapsFromWhatIsDeclared(t *testing.T) {
 	slots := []functionSlot{
 		{Method: "get", Route: "a", Memory: 32},

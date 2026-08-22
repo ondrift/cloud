@@ -10,10 +10,10 @@ import (
 
 // OpenBrowser launches the user's default web browser at the given URL.
 //
-// The URL arrives over the network (a configurator handoff response).
-// Even though that response comes back over HTTPS in production, an
-// attacker with TLS-MITM access or a compromised configurator could
-// influence the URL. The OS-level launchers (`open` on macOS,
+// The URL arrives over the network — a slice's own public address, read
+// back from the platform. Even though that response comes back over
+// HTTPS in production, an attacker with TLS-MITM access or a
+// compromised api could influence it. The OS-level launchers (`open` on macOS,
 // `xdg-open` on Linux, `cmd /c start` on Windows) all interpret a URL
 // that begins with `-` as a flag — and macOS's `open --background`
 // would silently load the URL in any zero-day-vulnerable browser
@@ -53,8 +53,8 @@ func OpenBrowser(rawURL string) error {
 }
 
 // validateOpenURL refuses anything that isn't a plain http/https URL
-// — and even http is only allowed against localhost (dev-mode
-// handoff). This is a structural defence against the launcher
+// — and even http is only allowed against localhost, for a slice served
+// by a local dev run. This is a structural defence against the launcher
 // flag-injection class of attacks: an attacker can't sneak in
 // `--background` if the input doesn't parse as a URL with the right
 // scheme.

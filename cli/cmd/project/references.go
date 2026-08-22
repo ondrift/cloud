@@ -115,7 +115,7 @@ func missingSecrets(m *Manifest) []referenceMiss {
 			out = append(out, referenceMiss{
 				Class: "secret",
 				Name:  name,
-				// Secrets are the one class the configurator does not own, so the
+				// Secrets are the one class the slice form does not own, so the
 				// shared closing line would send the reader to the wrong place.
 				Remedy: fmt.Sprintf("declared by %s — set it with `drift backbone secret set %s=…`, "+
 					"or add it to this file's `backbone.secrets`", s.Name, name),
@@ -169,7 +169,7 @@ type referenceMiss struct {
 	Name     string
 	NearMiss string
 	// Remedy overrides the block's shared closing advice for a class the
-	// configurator does not own.
+	// slice form does not own.
 	Remedy string
 }
 
@@ -230,7 +230,7 @@ func keySet(m map[string]int) map[string]bool {
 }
 
 // referenceError renders every miss in one block, grouped by class in the order
-// they were checked, so one edit in the configurator fixes the whole list.
+// they were checked, so one pass over the resize form fixes the whole list.
 func referenceError(sliceName string, missing []referenceMiss) error {
 	byClass := map[string][]referenceMiss{}
 	var order []string
@@ -282,7 +282,7 @@ func plural(n int, one, many string) string {
 // A rename produces an orphan, not a move: the slot is matched on (name,
 // method), so the old record keeps its own and nothing on the apply path
 // removes it. It keeps serving — the slice re-registers every slot directory it
-// finds at boot — it keeps consuming one of the function slots the configurator
+// finds at boot — it keeps consuming one of the function slots the slice was
 // sold, and because the new config names only the new key, it falls to the
 // shared pool with no error, no log line and no metric.
 //

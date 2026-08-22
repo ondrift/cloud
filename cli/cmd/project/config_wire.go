@@ -13,11 +13,10 @@ package project
 // reference, what `drift file explain` prints, what a plan reports. Nothing here
 // builds a config to send.
 //
-// The configurator declares what a slice IS; a Driftfile declares what runs on
-// it. There used to be a second implementation of the first half here — a
-// translation from a Manifest into this shape, posted to create and resize — and
-// two writers of one fact is the thing that change removed. A mirror the CLI
-// only ever decodes into cannot drift into being a second owner.
+// The slice form declares what a slice IS; a Driftfile declares what runs on
+// it. Nothing here translates a Manifest into this shape and posts it to create
+// or resize: two writers of one fact is what the split removed, and a mirror the
+// CLI only ever decodes into cannot drift into being a second owner.
 //
 // Field names match the platform's encoded shape exactly: parent fields live
 // under lowercase JSON keys, while leaf fields use the Go field names, because

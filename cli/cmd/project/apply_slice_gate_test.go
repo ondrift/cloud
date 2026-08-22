@@ -30,7 +30,7 @@ func TestApply_RefusesAMissingSliceAndCreatesNothing(t *testing.T) {
 	err := runApply(t)
 	if err == nil {
 		t.Fatal("applying into a slice that does not exist must be refused — the " +
-			"configurator owns what a slice is, and this file cannot create one")
+			"slice form owns what a slice is, and this file cannot create one")
 	}
 	// The slice by name, and the command that makes one. Asserted as the whole
 	// command rather than as a brand word: what owns a slice's shape has been

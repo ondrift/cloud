@@ -2,8 +2,8 @@ package portal
 
 // The "+ New slice" flow has two paths, chosen from a small modal:
 //
-//   Empty slice      → suspend and run `drift slice create`, which hands off to
-//                      the configurator in the browser.
+//   Empty slice      → suspend and run `drift slice create`, which draws the
+//                      slice's shape in the terminal.
 //   From a Driftfile → a minimal directory explorer to locate a Driftfile,
 //                      then SUSPEND the dashboard and run the real
 //                      `drift file apply` (full build/upload pipeline,
@@ -42,7 +42,7 @@ type newChooser struct {
 }
 
 var sliceChooserOpts = []chooserOption{
-	{"Empty slice", "Open the configurator in your browser and build the envelope by hand."},
+	{"Empty slice", "Draw the envelope here, on the form drift slice create opens."},
 	{"From a Driftfile", "Find a Driftfile, then provision its slice + deploy the whole project."},
 }
 
@@ -84,7 +84,7 @@ func (m *model) handleChooser(k key) bool {
 		m.chooser = nil
 		switch {
 		case kind == chooserSlice && sel == 0: // build the envelope by hand
-			m.createSliceInBrowser()
+			m.createSliceForm()
 		case kind == chooserSlice: // from a Driftfile
 			m.openExplorer(exDriftfile)
 		case sel == 0: // function: deploy an existing directory
@@ -425,18 +425,17 @@ func (m *model) suspendAndRun(banner string, cmd *exec.Cmd, okMsg, failMsg strin
 	}
 }
 
-// createSliceInBrowser suspends the dashboard and runs the real
-// `drift slice create`, which hands off to the configurator in the browser and
-// waits for the form to be submitted.
+// createSliceForm suspends the dashboard and runs the real `drift slice create`,
+// which draws the slice's shape in the terminal and waits for it to be applied.
 //
-// Suspending is what makes this work at all: the handoff prints the URL, opens
-// a browser and then polls for as long as the user takes to fill the form, all
-// of which needs the terminal back. Re-execing our own binary rather than
-// calling the handoff in-process is the same choice every other action in this
-// file makes, and it keeps one implementation of the flow.
-func (m *model) createSliceInBrowser() {
+// Suspending is what makes this work at all: the form owns the terminal — raw
+// mode, its own key decoder, its own redraws — for as long as the user takes to
+// fill it in, and two readers of one stdin hang. Re-execing our own binary
+// rather than calling the form in-process is the same choice every other action
+// in this file makes, and it keeps one implementation of the flow.
+func (m *model) createSliceForm() {
 	cmd := exec.Command(driftExe(), "slice", "create") // #nosec G204 -- our own binary, fixed args
-	m.suspendAndRun("drift slice create  (configurator opens in your browser)", cmd,
+	m.suspendAndRun("drift slice create  (the form opens here)", cmd,
 		"slice created", "✗ slice not created (see output above)",
 		func() { m.active = common.GetActiveSlice(); m.loadSlices() })
 }

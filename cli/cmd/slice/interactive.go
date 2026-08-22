@@ -18,20 +18,18 @@ import (
 
 // interactive.go — creating a slice without leaving the terminal.
 //
-// The browser handoff still exists and still works. It is no longer the only
-// way to buy a shape, and it is no longer what `drift slice create` does when
-// somebody is sitting at a prompt: a tool whose first act is to open a web page
-// has handed the job to something the user did not choose, and every failure of
-// that page becomes a failure of this command.
+// The terminal is the whole surface for buying a shape. A tool whose first act
+// is to open a web page has handed the job to something the user did not
+// choose, and every failure of that page becomes a failure of this command.
 //
 // What is asked is what the platform prices per unit and cannot guess: the
 // name, how many function slots, and each slot's route and booking. Everything
 // else has a defensible default the server already owns, so asking would be
 // theatre — `drift slice resize` changes any of it afterwards.
 //
-// The price is NOT computed here. It comes from POST /ops/slice/price, the same
-// endpoint the browser form calls, because a client shipping its own rates is a
-// second source of truth that disagrees the day a unit price moves.
+// The price is NOT computed here. It comes from POST /ops/slice/price, because
+// a client shipping its own rates is a second source of truth that disagrees
+// the day a unit price moves.
 
 // The bounds the platform enforces, restated here only to refuse a value before
 // a round trip. Every one of them is checked again server-side, which is where
@@ -138,8 +136,7 @@ type backboneShape struct {
 // encoding/json falls back to the Go field name. `MaxStorageBytes` is the key;
 // `max_storage_bytes` decodes to zero, and a zero there is not an error
 // anywhere: the slice is simply created with no runner volume and the figure
-// the tenant typed is gone. The browser form sends the same PascalCase for the
-// same reason (it reads cfg.atomic.MaxFunctionMemoryBytes).
+// the tenant typed is gone.
 //
 // Only what was asked is set. Every other limit is left absent so the platform
 // fills it from its own defaults — writing a figure here would make this a
@@ -391,8 +388,8 @@ func summarise(name string, shape declaredShape, monthlyCents int) {
 
 }
 
-// createFromPrompts is the whole command when nobody asked for a browser: ask,
-// price against the server, show what was built, confirm, create.
+// createFromPrompts is the whole command outside --free: ask, price against the
+// server, show what was built, confirm, create.
 //
 // The price is fetched BEFORE the confirmation and the confirmation repeats it,
 // so nothing is bought at a figure that was never on screen. A shape that prices
@@ -403,8 +400,8 @@ func createFromPrompts(name string, billingMonths int) error {
 	if !interactive() {
 		return fmt.Errorf(
 			"drift slice create draws a form, which needs a terminal.\n" +
-				"  In CI or a script, pass --free for a free slice, or --browser to shape it in " +
-				"the configurator")
+				"  In CI or a script, pass --free for a free slice. A configured slice is " +
+				"drawn on the form, so it needs one.")
 	}
 
 	shape, chosen, ok, err := runShapeForm(name)

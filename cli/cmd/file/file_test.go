@@ -235,9 +235,9 @@ func TestLint_PassesWhenTheHandlerResolves(t *testing.T) {
 }
 
 // A Driftfile is legitimately linted on its own — handed over for review, or
-// used by `drift slice create --from Driftfile` in an empty directory. With no
-// source tree to check against, the handler check is skipped rather than
-// reported: calling that file invalid would refuse one that is fine.
+// sitting in a directory whose source has not been checked out. With no source
+// tree to check against, the handler check is skipped rather than reported:
+// calling that file invalid would refuse one that is fine.
 func TestLint_SkipsTheHandlerCheckWithNoSourceTree(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Driftfile"),

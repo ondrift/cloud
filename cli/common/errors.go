@@ -338,10 +338,8 @@ func detailForStatus(status int, body []byte) string {
 //
 // A refused resize answers with `{"error": "...", "violations": [{resource, used,
 // new_limit}]}` — the operator computes exactly which limit would drop below
-// current usage, and the configurator uses it to highlight the offending form
-// field. The CLI printed only the summary, so a person was told the resize would
-// shrink below current usage without being told below WHAT, which leaves them
-// guessing at which number to raise.
+// current usage. Rendering it is what tells a person WHAT the resize would
+// shrink below; the summary alone leaves them guessing at which number to raise.
 //
 // Best-effort by construction: anything unparseable yields "" and the caller
 // still shows the summary. A partial answer is worse than the summary alone.

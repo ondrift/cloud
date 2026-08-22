@@ -11,8 +11,7 @@ import (
 // getResizeCmd builds `drift slice resize`.
 //
 // It draws the slice's shape in the terminal, opened on what the slice already
-// is, exactly as `drift slice create` draws a new one. `--browser` opens the
-// configurator instead.
+// is, exactly as `drift slice create` draws a new one.
 //
 // A resize is where the platform asks two questions a create never has to: it
 // refuses one that reprices the whole slice until the new figure is sent back,
@@ -29,8 +28,7 @@ func getResizeCmd() *cobra.Command {
 		Use:   "resize [name]",
 		Short: "Resize a slice — defaults to the active slice",
 		Example: `  drift slice resize
-  drift slice resize my-slice
-  drift slice resize my-slice --browser   # shape it in the configurator instead`,
+  drift slice resize my-slice`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// No name given → resize the currently active slice (the one
@@ -49,28 +47,22 @@ func getResizeCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&allowDestructive, "allow-destructive", false, "Authorise shrinks that lower a resource limit. Required for any non-zero shrink.")
-	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm the cost prompt (for CI)")
+	// Both are inert: the form asks each question where the answer belongs. A
+	// removal is authorised by typing the slice's name on the form, and the
+	// price is confirmed on the row that shows it. They keep parsing so a
+	// script that passes them is not stopped by an unknown flag.
+	cmd.Flags().BoolVar(&allowDestructive, "allow-destructive", false, "Deprecated: does nothing; the form confirms a removal by naming the slice")
+	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Deprecated: does nothing; the form confirms")
 	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period in months for the resize")
 	return cmd
 }
 
-// getShrinkCmd is `drift slice shrink` — apply a Driftfile INCLUDING the
-// reductions in it.
+// getShrinkCmd is `drift slice shrink`, a deprecated spelling of
+// `drift slice resize`.
 //
-// It exists because the remedy for a refused deploy was
-// `drift slice resize --from Driftfile --allow-destructive`: six words, for the
-// one verdict where a user is stopped and needs to act. That is the worst place
-// for the three-word rule to break, and no shorter spelling of that flag pair is
-// possible — so the verb had to exist rather than the string get shorter.
-//
-// The destructive intent lives in the VERB now, which is also better than a
-// flag: "shrink" is what the user meant, and a name is harder to pass by
-// accident than an option they copied from somewhere.
-//
-// It now opens the configurator on the slice the file names, exactly as
-// `resize --from` does, so the two spellings cannot diverge — and the reduction
-// it was named for is chosen and confirmed where the shape lives.
+// It forwards to the resize form on the active slice and adds nothing of its
+// own, which is all a deprecated spelling is allowed to be: the reduction the
+// verb was named for is chosen and confirmed on the form, where the shape lives.
 func getShrinkCmd() *cobra.Command {
 	var (
 		autoYes       bool
@@ -111,22 +103,4 @@ func getShrinkCmd() *cobra.Command {
 		RemoveAfter: "",
 		Because:     "A reduction is chosen and confirmed on the resize form like any other change, so there is no longer a destructive spelling of resize for this to be.",
 	})
-}
-
-func centsToEuros(cents int) string {
-	if cents%100 == 0 {
-		return fmt.Sprintf("%d", cents/100)
-	}
-	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
-}
-
-func confirmYesNo(autoYes bool, prompt string) bool {
-	if autoYes {
-		fmt.Printf("  %s [y/N] (auto-yes)\n", prompt)
-		return true
-	}
-	fmt.Printf("  %s [y/N] ", prompt)
-	var ans string
-	_, _ = fmt.Scanln(&ans)
-	return ans == "y" || ans == "Y" || ans == "yes" || ans == "YES"
 }

@@ -86,8 +86,7 @@ func (m *model) loadSnaps() {
 }
 
 // openConfigure suspends the dashboard and runs `drift slice resize`, which
-// hands off to the configurator in the browser with the slice's current
-// settings pre-loaded.
+// draws the slice's shape in the terminal, opened on what the slice already is.
 //
 // The name is passed explicitly rather than left to the active slice: the
 // settings tab can be showing a slice the user selected in the sidebar without
@@ -99,7 +98,7 @@ func (m *model) openConfigure() {
 		return
 	}
 	cmd := exec.Command(driftExe(), "slice", "resize", m.cfg.Name) // #nosec G204 -- our own binary, fixed args
-	m.suspendAndRun("drift slice resize "+m.cfg.Name+"  (configurator opens in your browser)", cmd,
+	m.suspendAndRun("drift slice resize "+m.cfg.Name+"  (the form opens here)", cmd,
 		"resized "+m.cfg.Name, "✗ resize failed (see output above)",
 		func() { m.invalidateAll(); m.load(m.tab) })
 }
@@ -229,8 +228,8 @@ func (m *model) renderSliceOverview(b *strings.Builder) {
 	m.renderSnapshots(b)
 }
 
-// settingsLines renders the active slice's current quota settings (the SliceConfig
-// the configurator edits) as a compact right-hand panel.
+// settingsLines renders the active slice's current quota settings (the
+// SliceConfig the resize form edits) as a compact right-hand panel.
 func (m *model) settingsLines() []string {
 	if m.cfg == nil {
 		return []string{dim("Configuration"), "", dim("loading…")}
@@ -276,11 +275,10 @@ func (m *model) settingsLines() []string {
 	return out
 }
 
-// itemizedBillLines renders the active slice's current monthly cost
-// breakdown (#CLITUI1) — same shape as `drift file apply`'s itemized
-// bill (cmd/project's LineItem/renderLineItems), fetched via the same
-// /ops/slice/price endpoint the configurator's own live-pricing already
-// uses (see fetchDocPrice).
+// itemizedBillLines renders the active slice's current monthly cost breakdown —
+// the same shape as `drift file apply`'s itemized bill (cmd/project's
+// LineItem/renderLineItems), fetched via the /ops/slice/price endpoint the
+// slice form prices against (see fetchDocPrice).
 func (m *model) itemizedBillLines() []string {
 	out := []string{dim("Itemized bill")}
 	if m.priceErr != "" {

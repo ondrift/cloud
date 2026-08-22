@@ -48,18 +48,18 @@ func FetchLiveSlice(name string) (*LiveSlice, error) {
 	return &s, nil
 }
 
-// FetchSliceConfigRaw pulls a slice's live config as a generic value, for
-// pre-filling the configurator's form.
+// FetchSliceConfigRaw pulls a slice's live config as a generic value, for the
+// resize form to open on.
 //
-// It stays `any` deliberately. The caller forwards it to the handoff as opaque
-// JSON, so decoding it into a struct would add a second mirror of SliceConfig
-// beside config_wire.go — and one of them would be the shape the CLI can write
-// through, which is the thing Stage 7 removed. Nothing here inspects the config;
-// a caller that changes part of it does so on the decoded map, without this
-// package learning the whole shape.
+// It stays `any` deliberately. The caller forwards it as opaque JSON, so
+// decoding it into a struct would add a second mirror of SliceConfig beside
+// config_wire.go — and one of them would be the shape the CLI can write
+// through, which is the thing this split removed. Nothing here inspects the
+// config; a caller that changes part of it does so on the decoded map, without
+// this package learning the whole shape.
 //
 // `op` is the caller's lead-in for error messages, because the same fetch serves
-// a resize, a create-from-file and a benchmark handoff, and each names itself.
+// a resize and a benchmark, and each names itself.
 func FetchSliceConfigRaw(name, op string) (any, error) {
 	resp, err := common.DoRequest(http.MethodGet,
 		common.APIBaseURL+"/ops/slice/get?name="+url.QueryEscape(name), nil)
@@ -73,9 +73,8 @@ func FetchSliceConfigRaw(name, op string) (any, error) {
 		return nil, err
 	}
 
-	// /ops/slice/get returns the whole Slice document; the configurator wants
-	// the embedded "config" subobject, which is what its handoffRequest.Existing
-	// field expects.
+	// /ops/slice/get returns the whole Slice document; what the form opens on is
+	// the embedded "config" subobject.
 	var slice struct {
 		Config any `json:"config"`
 	}
@@ -91,7 +90,7 @@ func FetchSliceConfigRaw(name, op string) (any, error) {
 // LineItem mirrors the platform's core/common/plan.LineItem wire shape —
 // one priced (or informational, UnitCents==0) row in a price breakdown.
 // Everything in this file READS. Nothing here prices a slice, creates one or
-// changes its shape, and nothing should be added that does: the configurator is
+// changes its shape, and nothing should be added that does: the slice form is
 // the only writer of a slice's shape, and a second one on this side is the thing
 // the split removed. What the CLI does to a slice that already exists — deploy
 // into it, read its status, apply its resources — is all this client is for.

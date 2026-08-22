@@ -30,10 +30,10 @@ func TestRunPlan_RefusesWhenTheSliceDoesNotExist(t *testing.T) {
 	}
 }
 
-// The plan prices NOTHING. A Driftfile no longer declares a shape, so a cost
+// The plan prices NOTHING. A Driftfile does not declare a shape, so a cost
 // printed here would be a second pricing model computed from a document that
-// does not describe what is billed — and the configurator already shows the
-// price of the shape that exists.
+// does not describe what is billed — and the slice form shows the price of the
+// shape that exists.
 func TestRunPlan_PricesNothing(t *testing.T) {
 	m := planManifest(t, "slice: demo\natomic:\n  functions:\n"+
 		"    - route: ping\n      method: get\n      handler: GetPing\n")
