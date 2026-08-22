@@ -2,8 +2,14 @@ const drift = require('@ondrift/sdk');
 const handler = require('./{{SOURCE}}');
 
 async function handle(req) {
-    const [status, message, payload] = await handler.{{FUNC}}(req);
-    return { status, message, payload };
+    const [status, message, payload, headers] = await handler.{{FUNC}}(req);
+    const out = { status, message, payload };
+    // A fourth element is optional. It carries response headers, and setting a
+    // Content-Type that is not JSON is what makes the payload be written raw
+    // instead of wrapped in {status, message, payload}. A handler returning
+    // three elements destructures `headers` to undefined and is unaffected.
+    if (headers) out.headers = headers;
+    return out;
 }
 
 if (require.main === module) {
