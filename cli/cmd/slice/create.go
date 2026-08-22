@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 
-	project "github.com/ondrift/cloud/cli/cmd/project"
 	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
@@ -38,8 +37,6 @@ func getCreateCmd() *cobra.Command {
 	var (
 		headless      bool
 		free          bool
-		browser       bool
-		fromPath      string
 		autoYes       bool
 		billingMonths int
 	)
@@ -49,8 +46,7 @@ func getCreateCmd() *cobra.Command {
 		Short: "Create a new slice, asking for its shape here",
 		Example: "  drift slice create                      # asks: name, functions, routes, memory\n" +
 			"  drift slice create my-slice             # same, with the name filled in\n" +
-			"  drift slice create my-slice --free      # the free slice, nothing to answer\n" +
-			"  drift slice create my-slice --browser   # shape it in the configurator instead",
+			"  drift slice create my-slice --free      # the free slice, nothing to answer",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var name string
@@ -63,22 +59,6 @@ func getCreateCmd() *cobra.Command {
 				free = true
 			}
 
-			if fromPath != "" {
-				if name != "" {
-					return fmt.Errorf("cannot pass <name> when --from is set; the slice name comes from the Driftfile")
-				}
-				if free {
-					return fmt.Errorf("cannot combine --from with --free; use --free alone, or --from to configure the slice in the browser")
-				}
-				common.DeprecateFlag(cmd, "from", common.Deprecation{
-					Old:         "drift slice create --from",
-					New:         "drift slice create",
-					RemoveAfter: removeAfterShapeIsConfiguratorOwned,
-					Because:     "A Driftfile no longer declares a slice's shape, so there is nothing here to create one from. This opens the configurator on the slice the file names.",
-				})()
-				return handoffFromDriftfile("create slice", fromPath, common.ModeCreate)
-			}
-
 			// Free tier: create directly, no configurator.
 			if free {
 				if name == "" {
@@ -87,37 +67,15 @@ func getCreateCmd() *cobra.Command {
 				return createHeadless(name)
 			}
 
-			// Default: ask here.
-			//
-			// The browser is still reachable with --browser, and is still what a
-			// handoff from `drift file apply` opens. It is no longer what this
-			// command does on its own, because it does not need to: the platform
-			// prices a config over an endpoint, and a slice's shape is a handful
-			// of questions with answers only the person typing has.
-			if !browser {
-				return createFromPrompts(name, billingMonths)
-			}
-
-			result, err := common.RunBrowserHandoff("create slice", name, common.ModeCreate, nil)
-			if err != nil {
-				return err
-			}
-			printSliceSummary("created", result)
-			// The configurator returns the api's Slice document, so the name
-			// is known even when the form collected it rather than the CLI.
-			if created := sliceNameFrom(result); created != "" {
-				if serr := common.SaveActiveSlice(created); serr != nil {
-					fmt.Println("Warning: couldn't mark the new slice as active —", serr)
-				}
-			}
-			return nil
+			// Default: ask here. The platform prices a config over an endpoint,
+			// and a slice's shape is a handful of questions with answers only the
+			// person typing has.
+			return createFromPrompts(name, billingMonths)
 		},
 	}
 
-	cmd.Flags().BoolVar(&browser, "browser", false, "Shape the slice in the browser configurator instead of here")
-	cmd.Flags().BoolVar(&free, "free", false, "Create a free Hacker slice without opening the browser")
+	cmd.Flags().BoolVar(&free, "free", false, "Create a free Hacker slice without drawing the form")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Alias for --free (CI/scripts)")
-	cmd.Flags().StringVar(&fromPath, "from", "", "Create the slice at the shape a Driftfile declares (name comes from the Driftfile)")
 	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm the cost prompt (for CI)")
 	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period in months, for a configured (non-free) slice")
 	_ = cmd.Flags().MarkHidden("headless")
@@ -161,7 +119,7 @@ func createHeadless(name string) error {
 	// yet" rather than as a failure: a create retried against an existing name
 	// gets a 409, which is a worse place to leave someone.
 	fmt.Printf("  Waiting for slice %q to come up...\n", name)
-	if err := project.WaitForSliceReady(name); err != nil {
+	if err := common.WaitForSliceReady(name); err != nil {
 		if serr := common.SaveActiveSlice(name); serr != nil {
 			fmt.Println("Warning: couldn't mark the new slice as active —", serr)
 		}

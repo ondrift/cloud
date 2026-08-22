@@ -400,11 +400,11 @@ func runHooks(phase string, cmds []string, dir string) error {
 func runPlan(m *Manifest, live *LiveSlice) error {
 	fmt.Println()
 	if live == nil {
-		// The create form, not the grid: the slice does not exist, so there is no
-		// page for it to link to, and the next action is making one.
+		// The slice does not exist, so the next action is making one, and the
+		// message states the whole command rather than the verb.
 		return fmt.Errorf(
-			"slice %q does not exist — create it at %s, then apply this file to it",
-			m.Name(), common.ConfiguratorBaseURL+"/slices/new")
+			"slice %q does not exist — create it with `drift slice create %s`, then apply this file to it",
+			m.Name(), m.Name())
 	}
 
 	fmt.Printf("  %s → slice %s\n\n", common.Hint("apply"), common.Highlight(m.Name()))
@@ -487,27 +487,7 @@ func WaitForSliceReady(name string) error { return waitForSliceReady(name) }
 
 // waitForSliceReady polls /ops/slice/status until all components
 // report Ready, or until 60s elapses. Returns the last error if any.
-func waitForSliceReady(name string) error {
-	deadline := time.Now().Add(60 * time.Second)
-	u := common.APIBaseURL + "/ops/slice/status?name=" + url.QueryEscape(name)
-	for time.Now().Before(deadline) {
-		resp, err := common.DoJSONRequest(http.MethodGet, u, nil)
-		if err == nil {
-			body, cerr := common.CheckResponse(resp, "slice status")
-			resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
-			if cerr == nil {
-				var s struct {
-					Ready bool `json:"ready"`
-				}
-				if jerr := json.Unmarshal(body, &s); jerr == nil && s.Ready {
-					return nil
-				}
-			}
-		}
-		time.Sleep(2 * time.Second)
-	}
-	return fmt.Errorf("slice %q not ready after 60s", name)
-}
+func waitForSliceReady(name string) error { return common.WaitForSliceReady(name) }
 
 // ─── Atomic ─────────────────────────────────────────────────────────
 

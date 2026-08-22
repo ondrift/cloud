@@ -4,8 +4,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/ondrift/cloud/cli/common"
 )
 
 // liveWith builds the live slice document the check reads: the four named sets
@@ -166,8 +164,8 @@ func TestCheckSliceReferences_ReportsEveryMissAtOnce(t *testing.T) {
 			t.Errorf("the refusal must list %q — one block, not one name per attempt: %q", want, err)
 		}
 	}
-	if !strings.Contains(err.Error(), common.ConfiguratorBaseURL) {
-		t.Errorf("the refusal must say where the resources are added, got %q", err)
+	if !strings.Contains(err.Error(), "drift slice resize") {
+		t.Errorf("the refusal must name the command that adds the resources, got %q", err)
 	}
 }
 

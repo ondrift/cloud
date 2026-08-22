@@ -3,7 +3,6 @@ package slice
 import (
 	"fmt"
 
-	project "github.com/ondrift/cloud/cli/cmd/project"
 	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
@@ -21,10 +20,8 @@ import (
 // on the form — see resizeform.go.
 func getResizeCmd() *cobra.Command {
 	var (
-		fromPath         string
 		allowDestructive bool
 		autoYes          bool
-		browser          bool
 		billingMonths    int
 	)
 
@@ -36,19 +33,6 @@ func getResizeCmd() *cobra.Command {
   drift slice resize my-slice --browser   # shape it in the configurator instead`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if fromPath != "" {
-				if len(args) > 0 {
-					return fmt.Errorf("cannot pass <name> when --from is set; the slice name comes from the Driftfile")
-				}
-				common.DeprecateFlag(cmd, "from", common.Deprecation{
-					Old:         "drift slice resize --from",
-					New:         "drift slice resize",
-					RemoveAfter: removeAfterShapeIsConfiguratorOwned,
-					Because:     "A Driftfile no longer declares a slice's shape. This opens the configurator on the slice the file names, pre-filled with what the slice currently is.",
-				})()
-				return handoffFromDriftfile("resize slice", fromPath, common.ModeResize)
-			}
-
 			// No name given → resize the currently active slice (the one
 			// `drift slice use` selected), matching every other slice subcommand.
 			var name string
@@ -57,28 +41,14 @@ func getResizeCmd() *cobra.Command {
 			} else {
 				active, err := common.RequireActiveSlice()
 				if err != nil {
-					return fmt.Errorf("%w, or pass a slice name / use --from <Driftfile>", err)
+					return fmt.Errorf("%w, or pass a slice name", err)
 				}
 				name = active
 			}
-			if !browser {
-				return resizeFromPrompts(name, billingMonths)
-			}
-			existing, err := project.FetchSliceConfigRaw(name, "resize slice")
-			if err != nil {
-				return err
-			}
-			result, err := common.RunBrowserHandoff("resize slice", name, common.ModeResize, existing)
-			if err != nil {
-				return err
-			}
-			printSliceSummary("resized", result)
-			return nil
+			return resizeFromPrompts(name, billingMonths)
 		},
 	}
 
-	cmd.Flags().StringVar(&fromPath, "from", "", "Read the target shape from a Driftfile (deprecated)")
-	cmd.Flags().BoolVar(&browser, "browser", false, "Shape the resize in the browser configurator instead of here")
 	cmd.Flags().BoolVar(&allowDestructive, "allow-destructive", false, "Authorise shrinks that lower a resource limit. Required for any non-zero shrink.")
 	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm the cost prompt (for CI)")
 	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period in months for the resize")
@@ -103,38 +73,43 @@ func getResizeCmd() *cobra.Command {
 // it was named for is chosen and confirmed where the shape lives.
 func getShrinkCmd() *cobra.Command {
 	var (
-		fromPath      string
 		autoYes       bool
 		billingMonths int
 	)
 
 	cmd := &cobra.Command{
 		Use:   "shrink",
-		Short: "Deprecated: opens the configurator on the slice a Driftfile names",
+		Short: "Deprecated: use drift slice resize",
 		Long: "Deprecated — use `drift slice resize`.\n\n" +
 			"This verb existed to apply the reductions a Driftfile declared, back when a\n" +
-			"Driftfile declared a slice's shape. It no longer does: the configurator owns\n" +
-			"the shape, and it is where a reduction is chosen and confirmed.\n\n" +
-			"It still works, and opens the configurator on the slice the file names.",
-		Example: "  drift slice shrink\n  drift slice shrink --from Driftfile",
+			"Driftfile declared a slice's shape. It no longer does, and a reduction is\n" +
+			"chosen and confirmed on the resize form like any other change.\n\n" +
+			"It still works, and resizes the active slice.",
+		Example: "  drift slice shrink",
 		Args:    cobra.NoArgs,
 		// A refused shrink is the platform answering, not the command being held
 		// wrong, so the usage block would bury the list of what it would remove.
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return handoffFromDriftfile("resize slice", fromPath, common.ModeResize)
+			// A thin alias onto the real verb, which is all a deprecated spelling
+			// is allowed to be — two implementations of one job is the cost the
+			// shim exists to avoid.
+			name, err := common.RequireActiveSlice()
+			if err != nil {
+				return err
+			}
+			return resizeFromPrompts(name, billingMonths)
 		},
 	}
 
-	cmd.Flags().StringVar(&fromPath, "from", "", "Driftfile naming the slice to configure (default: ./Driftfile)")
-	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Deprecated: does nothing; the configurator confirms")
-	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Deprecated: does nothing; billing is chosen in the configurator")
+	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Deprecated: does nothing; the form confirms")
+	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period in months for the resize")
 
 	return common.DeprecateCommand(cmd, common.Deprecation{
 		Old:         "drift slice shrink",
 		New:         "drift slice resize",
-		RemoveAfter: removeAfterShapeIsConfiguratorOwned,
-		Because:     "A reduction is chosen and confirmed in the configurator, which owns a slice's shape — so there is no longer a destructive spelling of resize for this to be.",
+		RemoveAfter: "",
+		Because:     "A reduction is chosen and confirmed on the resize form like any other change, so there is no longer a destructive spelling of resize for this to be.",
 	})
 }
 

@@ -341,6 +341,22 @@ func resizeFromPrompts(name string, billingMonths int) error {
 	if err != nil {
 		return err
 	}
+	return ResizeWithConfig(rec.Name, rec.Config, billingMonths)
+}
+
+// ResizeWithConfig opens the resize form on a config the caller already holds.
+//
+// `drift project benchmark --apply` uses it to open on the live shape with the
+// measured bookings already overlaid, so the recommendation is in the rows and
+// still has to be applied. Exported because that caller is another package.
+func ResizeWithConfig(name string, cfg map[string]any, billingMonths int) error {
+	if !interactive() {
+		return fmt.Errorf("drift slice resize draws a form, which needs a terminal")
+	}
+	if billingMonths < 1 {
+		billingMonths = 1
+	}
+	rec := &sliceRecord{Name: name, Config: cfg}
 
 	f := newShapeForm(rec.Name)
 	// The name is what is being resized, not a field of the shape.

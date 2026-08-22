@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/ondrift/cloud/cli/common"
 )
 
 // THE assertion for "apply stops creating slices", and it is about what the CLI
@@ -34,14 +32,14 @@ func TestApply_RefusesAMissingSliceAndCreatesNothing(t *testing.T) {
 		t.Fatal("applying into a slice that does not exist must be refused — the " +
 			"configurator owns what a slice is, and this file cannot create one")
 	}
-	// The slice by name, and the page that can make one. Asserted as the LINK
-	// rather than as a brand word: the service that owns a slice's shape has been
-	// called more than one thing, and what the reader needs is somewhere to go.
+	// The slice by name, and the command that makes one. Asserted as the whole
+	// command rather than as a brand word: what owns a slice's shape has been
+	// called more than one thing, and what the reader needs is something to run.
 	if !strings.Contains(strings.ToLower(err.Error()), "ghost") {
 		t.Errorf("the refusal should name the slice, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), common.ConfiguratorBaseURL+"/slices/new") {
-		t.Errorf("the refusal should link to where a slice is created, got: %v", err)
+	if !strings.Contains(err.Error(), "drift slice create ghost") {
+		t.Errorf("the refusal should name the command that creates a slice, got: %v", err)
 	}
 
 	// The point of the card. Any of these means apply still provisions.

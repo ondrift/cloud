@@ -42,8 +42,8 @@ import (
 // claiming to be complete.
 func CheckSliceReferences(m *Manifest, live *LiveSlice) error {
 	if live == nil {
-		return fmt.Errorf("slice %q does not exist — create it first at %s, then deploy into it",
-			m.Name(), common.ConfiguratorBaseURL+"/slices/new")
+		return fmt.Errorf("slice %q does not exist — create it first with `drift slice create %s`, then deploy into it",
+			m.Name(), m.Name())
 	}
 
 	declaredFunctions := make(map[string]bool, len(live.Config.Atomic.Functions))
@@ -259,13 +259,13 @@ func referenceError(sliceName string, missing []referenceMiss) error {
 			}
 		}
 	}
-	// The slice's OWN page, not the site it lives on. This message is read by
-	// someone who already knows what they meant to declare and needs the one
-	// place to declare it; a link to the front door asks them to find that place
-	// again on every refusal.
-	fmt.Fprintf(&b, "\n\nAdd them to the slice at %s, then deploy again. "+
+	// The command that declares them, named with the slice already in it. This
+	// message is read by someone who knows what they meant to declare and needs
+	// the one place to declare it, so it states the whole command rather than
+	// the verb.
+	fmt.Fprintf(&b, "\n\nAdd them with `drift slice resize %s`, then deploy again. "+
 		"Checked: functions, nosql collections, blob buckets, sql databases and secrets.",
-		common.SliceURL(sliceName))
+		sliceName)
 	return fmt.Errorf("%s", b.String())
 }
 

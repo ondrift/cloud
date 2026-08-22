@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	project "github.com/ondrift/cloud/cli/cmd/project"
 	"github.com/ondrift/cloud/cli/common"
 
 	"golang.org/x/term"
@@ -456,7 +455,7 @@ func createFromPrompts(name string, billingMonths int) error {
 	// the maintenance message — so the reader is told to wait for Drift when what
 	// they are waiting for is their own slice.
 	fmt.Printf("  Waiting for slice %q to come up...\n", chosen)
-	if werr := project.WaitForSliceReady(chosen); werr != nil {
+	if werr := common.WaitForSliceReady(chosen); werr != nil {
 		if serr := common.SaveActiveSlice(chosen); serr != nil {
 			fmt.Println("Warning: couldn't mark the new slice as active —", serr)
 		}
