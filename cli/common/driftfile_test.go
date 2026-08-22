@@ -108,6 +108,38 @@ func TestImplementedFormatIsAReadableVersion(t *testing.T) {
 	}
 }
 
+// The constant has to be bumped in the release that implements a format change,
+// and forgetting is invisible until a user reads the warning.
+//
+// It shipped that way once: `response` was added to the schema and implemented
+// here, the constant stayed at the previous version, and the released binary
+// told every user "the platform serves a newer format — run `drift upgrade`"
+// while they were already on the newest build and it DID understand the field.
+// A notice that fires when nothing is wrong is how people learn to ignore the
+// one that matters.
+//
+// Compared against the schema this machine holds, which CI fetches from the api
+// before running tests — so on CI this is a comparison against what the platform
+// actually serves.
+func TestImplementedFormatIsNotBehindTheServedSchema(t *testing.T) {
+	served := DriftfileSchemaVersion()
+	if served == "" {
+		t.Fatal("no cached Driftfile schema to compare against — fetch one from " +
+			"https://api.ondrift.eu/driftfile/schema, or this gate is not running at all")
+	}
+
+	impMajor, impMinor := DriftfileMajor(ImplementedDriftfileFormat), driftfileMinor(ImplementedDriftfileFormat)
+	srvMajor, srvMinor := DriftfileMajor(served), driftfileMinor(served)
+
+	if srvMajor > impMajor || (srvMajor == impMajor && srvMinor > impMinor) {
+		t.Errorf("ImplementedDriftfileFormat = %q but the platform serves %q.\n"+
+			"       Either this binary does not implement the newer format — in which case it "+
+			"is genuinely behind — or it does and the constant was not bumped with it, which "+
+			"makes every run warn the user to upgrade a CLI that is already current.",
+			ImplementedDriftfileFormat, served)
+	}
+}
+
 // semverPart is what both rungs read through, so the shapes it must survive are
 // pinned here rather than left to the callers to discover.
 func TestSemverPart(t *testing.T) {

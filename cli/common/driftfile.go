@@ -181,7 +181,7 @@ func driftfileVersionOf(raw []byte) string {
 // that names the symptom instead of the cause.
 //
 // Bump it in the release that implements a format change.
-const ImplementedDriftfileFormat = "1.12.0"
+const ImplementedDriftfileFormat = "1.13.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every
 // authenticated request.
