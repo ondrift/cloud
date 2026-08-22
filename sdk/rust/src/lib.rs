@@ -20,11 +20,64 @@
 //!   - http_request(): Outbound HTTP from within a function.
 //!   - slice(name) / caller_slice(req): slice-to-slice linking.
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 
 pub use serde_json::Value;
+
+// ---------------------------------------------------------------------------
+// Response headers
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static RESPONSE_HEADERS: RefCell<BTreeMap<String, String>> = const {
+        RefCell::new(BTreeMap::new())
+    };
+}
+
+/// Set a response header for the invocation in progress.
+///
+/// This is how a Rust handler reaches the raw-response escape hatch: the slice
+/// writes `payload` as raw bytes whenever the function's Content-Type is not
+/// JSON, and wraps it in `{status, message, payload}` otherwise. A body a third
+/// party has to parse — a webhook receiver, an OAuth or OIDC endpoint, an
+/// OpenID4VP request object — needs the former.
+///
+/// ```no_run
+/// drift_sdk::set_response_header("Content-Type", "application/oauth-authz-req+jwt");
+/// ```
+///
+/// The other five languages carry headers as an optional fourth element of the
+/// handler's return. Rust cannot: its wrapper destructures a fixed-arity tuple,
+/// so growing one would fail to compile against every handler already written.
+/// A sink keeps the change additive.
+pub fn set_response_header(name: &str, value: &str) {
+    RESPONSE_HEADERS.with(|h| {
+        h.borrow_mut().insert(name.to_string(), value.to_string());
+    });
+}
+
+/// Take the headers set during this invocation, leaving none behind.
+///
+/// Called by the generated wrapper, not by user code. Draining rather than
+/// reading matters if a process ever serves more than one call: a header left
+/// in place would leak onto the next response.
+pub fn take_response_headers() -> Option<Value> {
+    RESPONSE_HEADERS.with(|h| {
+        let taken = std::mem::take(&mut *h.borrow_mut());
+        if taken.is_empty() {
+            return None;
+        }
+        Some(Value::Object(
+            taken
+                .into_iter()
+                .map(|(k, v)| (k, Value::String(v)))
+                .collect(),
+        ))
+    })
+}
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -80,6 +133,86 @@ fn percent_decode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Turn a wrapper's response into the bytes and headers the local server writes,
+/// using the same rule the slice applies to a deployed function
+/// (`Atomic::build_func_response`): a Content-Type that is not JSON means
+/// `payload` is a base64 string to be written raw, and anything else gets the
+/// `{status, message, payload}` envelope.
+///
+/// It exists so `drift atomic run` and a deployed function disagree about
+/// nothing. A local server that always enveloped would let someone build a
+/// webhook or an OAuth endpoint locally, watch it work, and find the envelope
+/// back the first time it ran on a slice.
+fn render_response(resp: &Value) -> (Vec<u8>, Vec<(String, String)>) {
+    let mut headers: Vec<(String, String)> = resp
+        .get("headers")
+        .and_then(|h| h.as_object())
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let ct = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    let is_json =
+        ct.is_empty() || ct == "application/json" || ct.starts_with("application/json;");
+
+    if !is_json {
+        // The payload travels as base64 for the same reason it does on the
+        // wire: it may be bytes that are not text at all.
+        let raw = resp.get("payload").and_then(|p| p.as_str()).unwrap_or("");
+        return (b64_decode(raw), headers);
+    }
+
+    headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-type"));
+    headers.push(("Content-Type".to_string(), "application/json".to_string()));
+
+    let body = serde_json::json!({
+        "status": resp.get("status"),
+        "message": resp.get("message"),
+        "payload": resp.get("payload"),
+    });
+    (
+        serde_json::to_string(&body).unwrap_or_default().into_bytes(),
+        headers,
+    )
+}
+
+/// Standard base64 decode, for the raw-response path above. Anything that is not
+/// valid base64 yields empty rather than panicking in a dev server.
+fn b64_decode(s: &str) -> Vec<u8> {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut rev = [255u8; 256];
+    for (i, c) in TABLE.iter().enumerate() {
+        rev[*c as usize] = i as u8;
+    }
+
+    let mut out = Vec::new();
+    let mut acc: u32 = 0;
+    let mut bits = 0u32;
+    for &c in s.as_bytes() {
+        if c == b'=' || c.is_ascii_whitespace() {
+            continue;
+        }
+        let v = rev[c as usize];
+        if v == 255 {
+            return Vec::new();
+        }
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    out
 }
 
 fn run_local<F: Fn(Value) -> Value + 'static>(handler: F) {
@@ -162,15 +295,17 @@ fn run_local<F: Fn(Value) -> Value + 'static>(handler: F) {
 
         let resp = handler(req);
         let status = resp.get("status").and_then(|s| s.as_u64()).unwrap_or(200);
-        let out = serde_json::to_string(&resp).unwrap();
+        let (out, out_headers) = render_response(&resp);
 
-        let response = format!(
-            "HTTP/1.1 {} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-            status,
-            out.len(),
-            out
-        );
-        let _ = stream.write_all(response.as_bytes());
+        let mut response = format!("HTTP/1.1 {} OK\r\n", status);
+        for (k, v) in &out_headers {
+            response.push_str(&format!("{}: {}\r\n", k, v));
+        }
+        response.push_str(&format!("Content-Length: {}\r\n\r\n", out.len()));
+
+        let mut bytes = response.into_bytes();
+        bytes.extend_from_slice(&out);
+        let _ = stream.write_all(&bytes);
     }
 }
 

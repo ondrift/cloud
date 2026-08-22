@@ -117,6 +117,32 @@ func TestPHPWrapperForwardsHandlerHeaders(t *testing.T) {
 	})
 }
 
+// Rust is the one language that could not take a fourth tuple element.
+//
+// `let (status, message, payload) = f(req)` is fixed-arity and checked at
+// compile time, so widening it would fail to build against every handler
+// already written — a hard break, not a deprecation. The headers come from a
+// sink in the SDK instead, which the wrapper drains, and that keeps the change
+// additive the way the other four are.
+func TestRustWrapperForwardsHandlerHeaders(t *testing.T) {
+	assertWrapperCarriesHeaders(t, filepath.Join("src", "main.rs"), generateRustWrapper, []string{
+		"drift_sdk::take_response_headers()",
+		`out["headers"] = headers`,
+	})
+
+	// The three-element destructure must SURVIVE. If it ever grows a fourth
+	// name, every Rust handler in existence stops compiling.
+	dir := t.TempDir()
+	if err := generateRustWrapper(dir, "fn", "Handle", "get"); err != nil {
+		t.Fatal(err)
+	}
+	src := readFile(t, filepath.Join(dir, "src", "main.rs"))
+	if !strings.Contains(src, "let (status, message, payload) =") {
+		t.Errorf("the wrapper no longer destructures exactly three elements, so every "+
+			"existing Rust handler fails to compile:\n%s", src)
+	}
+}
+
 // assertWrapperCarriesHeaders generates a language's wrapper for both method
 // shapes and checks the header path survived into the rendered source.
 func assertWrapperCarriesHeaders(
