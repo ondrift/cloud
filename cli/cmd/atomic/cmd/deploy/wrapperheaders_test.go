@@ -97,6 +97,44 @@ func TestPythonWrapperForwardsHandlerHeaders(t *testing.T) {
 	}
 }
 
+// Ruby tolerates a fourth element in a multiple assignment silently, which is
+// worse than Python's ValueError: a handler that returned headers would have
+// them discarded with no error anywhere. Indexing makes the discard impossible.
+func TestRubyWrapperForwardsHandlerHeaders(t *testing.T) {
+	assertWrapperCarriesHeaders(t, "app.rb", generateRubyWrapper, []string{
+		"result[3]",
+		"out['headers']",
+	})
+}
+
+// assertWrapperCarriesHeaders generates a language's wrapper for both method
+// shapes and checks the header path survived into the rendered source.
+func assertWrapperCarriesHeaders(
+	t *testing.T,
+	artifact string,
+	generate func(dir, sourceModule, funcName, method string) error,
+	want []string,
+) {
+	t.Helper()
+	for _, method := range []string{"get", "post"} {
+		dir := t.TempDir()
+		if err := generate(dir, "fn", "Handle", method); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		src := readFile(t, filepath.Join(dir, artifact))
+
+		for _, w := range want {
+			if !strings.Contains(src, w) {
+				t.Errorf("%s %s: missing %q, so a handler cannot set a header and the "+
+					"raw-response hatch is unreachable:\n%s", artifact, method, w, src)
+			}
+		}
+		if strings.Contains(src, "{{") {
+			t.Errorf("%s %s: an unreplaced placeholder survived:\n%s", artifact, method, src)
+		}
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)

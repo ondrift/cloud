@@ -34,8 +34,14 @@ def handle(req)
   if body.is_a?(String) && !body.empty?
     body = JSON.parse(body) rescue body
   end
-  status, message, payload = {{FUNC}}(body, req)
-  { 'status' => status, 'message' => message, 'payload' => payload }
+  result = {{FUNC}}(body, req)
+  out = { 'status' => result[0], 'message' => result[1], 'payload' => result[2] }
+  # A fourth element is optional. It carries response headers, and setting a
+  # Content-Type that is not JSON is what makes the slice write the payload raw
+  # instead of wrapping it in {status, message, payload} — the escape hatch a
+  # spec-compliant body needs. A three-element return leaves result[3] nil.
+  out['headers'] = result[3] if result[3]
+  out
 end
 
 Drift.run(method(:handle))

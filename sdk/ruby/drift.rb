@@ -86,6 +86,37 @@ module Drift
     $stdout.flush
   end
 
+  # Turn a wrapper's response hash into the body and headers to write, using the
+  # same rule the slice applies to a deployed function
+  # (+Atomic::build_func_response+): a Content-Type that is not JSON means
+  # +payload+ is a base64 string to be written raw, and anything else gets the
+  # {status, message, payload} envelope.
+  #
+  # It exists so `drift atomic run` and a deployed function disagree about
+  # nothing. A local server that always enveloped would let someone build a
+  # webhook or an OAuth endpoint locally, watch it work, and find the envelope
+  # back the first time it ran on a slice.
+  def self._render_response(resp)
+    headers = (resp['headers'] || {}).dup
+    ct = headers['Content-Type'] || headers['content-type'] || ''
+    is_json = ct.empty? || ct == 'application/json' || ct.start_with?('application/json;')
+
+    unless is_json
+      # The payload travels as base64 for the same reason it does on the wire:
+      # it may be bytes that are not text at all.
+      require 'base64'
+      return [Base64.decode64(resp['payload'].to_s), headers]
+    end
+
+    headers['Content-Type'] = 'application/json'
+    body = {
+      'status' => resp['status'],
+      'message' => resp['message'],
+      'payload' => resp['payload'],
+    }
+    [JSON.generate(body), headers]
+  end
+
   def self._run_local(handler)
     require 'webrick'
     port = (ENV['PORT'] || '8080').to_i
@@ -115,10 +146,10 @@ module Drift
 
       resp = handler.call(req)
       status = resp['status'] || 200
-      out = JSON.generate(resp)
+      out, out_headers = _render_response(resp)
 
       http_resp.status = status
-      http_resp['Content-Type'] = 'application/json'
+      out_headers.each { |k, v| http_resp[k] = v }
       http_resp.body = out
     end
 
