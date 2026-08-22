@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/ondrift/cloud/cli/common"
 )
 
 // A plan against a slice that does not exist is a REFUSAL pointing at where a
@@ -22,13 +20,13 @@ func TestRunPlan_RefusesWhenTheSliceDoesNotExist(t *testing.T) {
 		t.Fatal("a plan against a slice that does not exist must refuse — apply can no " +
 			"longer create one, so describing a creation would describe nothing")
 	}
-	// The link, not a brand word: the service that owns a slice's shape has been
-	// called more than one thing, and the reader needs somewhere to go.
+	// The command, not a brand word: what owns a slice's shape has been called
+	// more than one thing, and the reader needs something to run.
 	if !strings.Contains(strings.ToLower(err.Error()), "ghost") {
 		t.Errorf("the refusal should name the slice, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), common.ConfiguratorBaseURL+"/slices/new") {
-		t.Errorf("the refusal should link to where a slice is created, got: %v", err)
+	if !strings.Contains(err.Error(), "drift slice create ghost") {
+		t.Errorf("the refusal should name the command that creates a slice, got: %v", err)
 	}
 }
 

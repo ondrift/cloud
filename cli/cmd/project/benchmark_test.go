@@ -192,11 +192,11 @@ func TestRenderSizing_PointsAtTheConfiguratorRatherThanAtWrite(t *testing.T) {
 		BookedBytes: 32 << 20, Recommended: 16 << 20,
 	}})
 
-	// The SLICE's page, not the site's front door. A measurement is only useful
-	// where it can be applied, and the reader should be one click from applying
-	// it rather than one search.
-	if !strings.Contains(out.String(), common.SliceURL("lab")) {
-		t.Errorf("the report should link to the slice whose bookings these are:\n%s", out.String())
+	// The command with THIS slice already in it. A measurement is only useful
+	// where it can be applied, and the reader should be one command from
+	// applying it rather than one search.
+	if !strings.Contains(out.String(), "drift slice resize lab") {
+		t.Errorf("the report should name the command that applies these bookings:\n%s", out.String())
 	}
 	if strings.Contains(out.String(), "Apply these with --write") {
 		t.Errorf("the report still sends people to --write, which no longer resizes "+

@@ -39,6 +39,7 @@ import (
 	"sort"
 	"strings"
 
+	slice "github.com/ondrift/cloud/cli/cmd/slice"
 	"github.com/ondrift/cloud/cli/common"
 	"github.com/spf13/cobra"
 )
@@ -171,12 +172,17 @@ func applyBookings(w io.Writer, sliceName string, rows []sizingRow) error {
 		return nil
 	}
 
-	fmt.Fprintf(w, "  Opening the configurator with %d booking(s) set to the recommendation.\n", changed)
-	fmt.Fprintln(w, "  Nothing is bought until you submit the form.")
-	if _, err := common.RunBrowserHandoff(op, sliceName, common.ModeResize, cfg); err != nil {
-		return err
+	fmt.Fprintf(w, "  Opening the resize form with %d booking(s) set to the recommendation.\n", changed)
+	fmt.Fprintln(w, "  Nothing is bought until you apply it.")
+
+	// The overlaid config is handed to the form as the shape to open on, so the
+	// recommendation is in the rows before anything is agreed to. A measurement
+	// is evidence for a booking, not authority to buy one.
+	shaped, ok := cfg.(map[string]any)
+	if !ok {
+		return fmt.Errorf("the slice's live config could not be read as a shape to open")
 	}
-	return nil
+	return slice.ResizeWithConfig(sliceName, shaped, 1)
 }
 
 // overlayBookings sets each recommended function's booking on the live config,
@@ -308,7 +314,7 @@ func renderSizing(w io.Writer, sliceName string, rows []sizingRow) {
 	fmt.Fprintln(w, "  `calls` is how many invocations back the peak: a figure from three calls of")
 	fmt.Fprintln(w, "  one code path is not the claim one from thousands is.")
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  Set these where the booking lives: %s\n", common.SliceURL(sliceName))
+	fmt.Fprintf(w, "  Set these with `drift slice resize %s`, or apply them with --apply.\n", sliceName)
 	fmt.Fprintln(w)
 }
 
