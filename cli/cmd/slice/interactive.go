@@ -158,7 +158,14 @@ func buildConfig(storageMiB int, slots []functionSlot, bb backboneShape, canvasM
 		backbone["nosql"] = map[string]any{"collections": bytesOf(bb.Collections)}
 	}
 	if len(bb.Databases) > 0 {
-		backbone["sql"] = map[string]any{"databases": bytesOf(bb.Databases)}
+		// MaxDatabases is a ceiling the platform enforces and does not derive
+		// from the list beside it, so it is stated from what was declared. Left
+		// at zero it is filled from the free preset and the last database is
+		// refused — after the shape has been priced and paid for.
+		backbone["sql"] = map[string]any{
+			"MaxDatabases": len(bb.Databases),
+			"databases":    bytesOf(bb.Databases),
+		}
 	}
 	if len(bb.Buckets) > 0 {
 		backbone["blobs"] = map[string]any{"buckets": bytesOf(bb.Buckets)}
@@ -168,23 +175,6 @@ func buildConfig(storageMiB int, slots []functionSlot, bb backboneShape, canvasM
 		// a MiB would sell somebody a queue a million messages deep.
 		backbone["queues"] = map[string]any{"queues": bb.Queues}
 	}
-	// The dials, written at the dotted path each names. One level of nesting is
-	// all the config has here, so "secrets.MaxCount" is a key inside a "secrets"
-	// object and "BackupRetentionDays" is a key on backbone itself.
-	for path, v := range scalars {
-		if i := strings.IndexByte(path, '.'); i >= 0 {
-			group, leaf := path[:i], path[i+1:]
-			nested, _ := backbone[group].(map[string]any)
-			if nested == nil {
-				nested = map[string]any{}
-			}
-			nested[leaf] = v
-			backbone[group] = nested
-			continue
-		}
-		backbone[path] = v
-	}
-
 	if len(backbone) > 0 {
 		cfg["backbone"] = backbone
 	}
@@ -192,7 +182,43 @@ func buildConfig(storageMiB int, slots []functionSlot, bb backboneShape, canvasM
 	if canvasMiB > 0 {
 		cfg["canvas"] = map[string]any{"TotalMaxSizeInBytes": canvasMiB * bytesPerMiB}
 	}
+
+	// The dials, each written at the whole dotted path it names.
+	//
+	// A dial's path is absolute from the top of the config and names its pillar
+	// first — `atomic.MaxNumberOfScheduledJobs`, `backbone.secrets.MaxCount`,
+	// `deed.vault.MaxEntriesPerUID` — because a dial belongs to whichever pillar
+	// the config keeps it under, and three of the four have some. Depth varies
+	// with it: `backbone.BackupRetentionDays` sits on the pillar itself while
+	// `backbone.secrets.MaxCount` sits one deeper.
+	//
+	// So the path is followed to its end rather than split once. Anchoring every
+	// dial to one pillar puts the other pillars' dials inside a struct that has
+	// no field for them, and encoding/json drops an unknown key without an
+	// error — the dial would be priced, agreed to, and silently never applied.
+	// Written last so a dial merges into a pillar the shape already built.
+	for path, v := range scalars {
+		setPath(cfg, strings.Split(path, "."), v)
+	}
 	return cfg
+}
+
+// setPath writes v at a dotted path, creating the objects along the way and
+// merging into any that are already there.
+func setPath(root map[string]any, path []string, v int) {
+	if len(path) == 0 {
+		return
+	}
+	cur := root
+	for _, key := range path[:len(path)-1] {
+		next, _ := cur[key].(map[string]any)
+		if next == nil {
+			next = map[string]any{}
+			cur[key] = next
+		}
+		cur = next
+	}
+	cur[path[len(path)-1]] = v
 }
 
 // bytesOf converts a name→MiB map to name→bytes, which is what every declared
@@ -220,11 +246,17 @@ func configFromSlots(slots []functionSlot) map[string]any {
 			"memory_bytes": s.Memory * bytesPerMiB,
 		})
 	}
-	return map[string]any{
-		"atomic": map[string]any{
-			"functions": functions,
-		},
+	atomic := map[string]any{"functions": functions}
+	if len(functions) > 0 {
+		// The slot ceiling, stated from the list rather than left to a default.
+		// It is a separate limit from the list it bounds, so a shape declaring
+		// six functions and no ceiling is capped at the free preset's five and
+		// refuses the sixth deploy. Declaring none states no ceiling at all — a
+		// canvas-only slice means it, and an explicit zero would be a limit this
+		// form invented.
+		atomic["MaxNumberOfFunctions"] = len(functions)
 	}
+	return map[string]any{"atomic": atomic}
 }
 
 // priceOf asks the platform what a config costs. The CLI ships no rates.

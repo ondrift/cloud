@@ -231,7 +231,11 @@ func newShapeForm(name string) *shapeForm {
 					hint: "Automatic backups of the slice's data.",
 					children: []*node{
 						{label: "Retention", kind: kindInt, unit: "days", value: "0", minV: 0,
-							scalar: "backbone.BackupRetentionDays", placeholder: "days",
+							// snake_case, alone among the dials: this is the one scalar in
+							// the config carrying a json tag of its own, so encoding/json
+							// looks for the tag instead of falling back to the Go field
+							// name. Every sibling dial is bson-only and spelled the other way.
+							scalar: "backbone.backup_retention_days", placeholder: "days",
 							hint: "How long automatic backups are kept. Lowering it later " +
 								"prunes archives outside the new window."},
 					}},
