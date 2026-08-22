@@ -107,6 +107,16 @@ func TestRubyWrapperForwardsHandlerHeaders(t *testing.T) {
 	})
 }
 
+// PHP list()-destructures, which emits a notice when the array is shorter than
+// the pattern rather than failing. isset() is what keeps a three-element return
+// silent as well as working.
+func TestPHPWrapperForwardsHandlerHeaders(t *testing.T) {
+	assertWrapperCarriesHeaders(t, "app.php", generatePHPWrapper, []string{
+		"isset($result[3])",
+		"$out['headers']",
+	})
+}
+
 // assertWrapperCarriesHeaders generates a language's wrapper for both method
 // shapes and checks the header path survived into the rendered source.
 func assertWrapperCarriesHeaders(

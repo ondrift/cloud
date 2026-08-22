@@ -5,8 +5,15 @@ if (file_exists($autoload)) { require_once $autoload; }
 require_once __DIR__ . '/{{SOURCE}}.php';
 
 function handle($req) {
-    [$status, $message, $payload] = {{FUNC}}($req);
-    return ['status' => $status, 'message' => $message, 'payload' => $payload];
+    $result = {{FUNC}}($req);
+    $out = ['status' => $result[0], 'message' => $result[1], 'payload' => $result[2]];
+    // A fourth element is optional. It carries response headers, and setting a
+    // Content-Type that is not JSON is what makes the slice write the payload
+    // raw instead of wrapping it in {status, message, payload} — the escape
+    // hatch a spec-compliant body needs. A three-element return has no [3], and
+    // isset() is what keeps that from being a notice.
+    if (isset($result[3]) && $result[3]) { $out['headers'] = $result[3]; }
+    return $out;
 }
 
 \Drift\run('handle');
