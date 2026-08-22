@@ -9,7 +9,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+require github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1
@@ -19,6 +19,6 @@ require (
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.46.0
 	golang.org/x/text v0.38.0 // indirect
 )
