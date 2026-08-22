@@ -51,6 +51,10 @@ type FunctionSpec struct {
 	Auth string
 	// Stream is the response shape ("", "sse", "ws").
 	Stream string
+	// Response is how the reply is written: "", "envelope", "json" or "raw".
+	// Empty means envelope, which is what every function answered before the
+	// field existed.
+	Response string
 	// Secrets is the allowlist of Backbone secrets the runner injects.
 	Secrets []string
 }
@@ -279,7 +283,8 @@ func DeployGoElement(el Element, digest string, quiet bool) error {
 		// binary, which the runtime cannot generate and this path must supply.
 		return sendSourceToOperator(FuncArtifact{
 			Name: name, Method: method, Language: "go", Auth: f.Spec.Auth,
-			Element: el.Name, Stream: f.Spec.Stream, Secrets: f.Spec.Secrets,
+			Element: el.Name, Stream: f.Spec.Stream, Response: f.Spec.Response,
+			Secrets:  f.Spec.Secrets,
 			Triggers: triggersFor(f), Digest: digest,
 			SourcePath: bin, UserSourcePath: userSrc,
 		})
