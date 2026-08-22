@@ -85,7 +85,7 @@ func TestOverlayBookings_LeavesEveryOtherFieldAlone(t *testing.T) {
 //
 // JSON numbers decode as float64, so this also pins the comparison: an int64
 // compared against the decoded value directly is never equal, and every run
-// would report a change and open the browser.
+// would report a change and open the form.
 func TestOverlayBookings_AnAlreadyCorrectBookingIsNotAChange(t *testing.T) {
 	cfg := liveConfig(t, `{"atomic":{"functions":[{"name":"get:ping","memory_bytes":16777216}]}}`)
 
@@ -181,11 +181,11 @@ func TestRenderSizing_SaysWhenNothingWasMeasured(t *testing.T) {
 
 // The report points at where a booking is actually set.
 //
-// It used to close with "Apply these with --write", which is the wrong
-// instruction: `atomic.functions[].memory` is deprecated-and-ignored, so writing
-// it changes the file and not the slice. A report that tells someone to run a
-// command which does not do what they want is worse than one that says nothing.
-func TestRenderSizing_PointsAtTheConfiguratorRatherThanAtWrite(t *testing.T) {
+// "Apply these with --write" is the wrong instruction:
+// `atomic.functions[].memory` is deprecated-and-ignored, so writing it changes
+// the file and not the slice. A report that tells someone to run a command which
+// does not do what they want is worse than one that says nothing.
+func TestRenderSizing_PointsAtTheResizeFormRatherThanAtWrite(t *testing.T) {
 	var out strings.Builder
 	renderSizing(&out, "lab", []sizingRow{{
 		Function: "get:ping", Measurements: 10, PeakBytes: 1 << 20,
@@ -206,11 +206,9 @@ func TestRenderSizing_PointsAtTheConfiguratorRatherThanAtWrite(t *testing.T) {
 
 // --write is a thin alias onto --apply and says so once.
 //
-// The thing it used to write to ceased to exist, so there is no behaviour left
-// to keep working — only a name people have in their fingers. It forwards rather
-// than refusing because the handoff discloses the price and the restart before
-// anything is bought, which is what made the original "an alias must not spend
-// money on muscle memory" objection moot.
+// It forwards rather than refusing because the form discloses the price and the
+// restart before anything is bought, so the alias cannot spend money on muscle
+// memory.
 func TestBenchmarkWrite_IsAnAliasOntoApply(t *testing.T) {
 	common.ResetDeprecationState()
 	t.Cleanup(common.ResetDeprecationState)

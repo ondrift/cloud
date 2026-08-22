@@ -37,7 +37,7 @@ import (
 // functionidentity.go instead, and emits its notice through the same Deprecation
 // type so it still lists with these.
 var driftfileKeyDeprecations = append([]common.KeyDeprecation{
-	// The identity is a REFERENCE to a slice the configurator created, not a name
+	// The identity is a REFERENCE to a slice `drift slice create` made, not a name
 	// this file mints. A straight rename, so the walker rewrites it and every
 	// reader downstream sees one spelling.
 	common.KeyDeprecationFor("name", common.KeyAlias, common.Deprecation{
@@ -57,7 +57,7 @@ var driftfileKeyDeprecations = append([]common.KeyDeprecation{
 	}),
 }, shapeKeys...)
 
-// shapeKeys are the capacity keys the configurator owns.
+// shapeKeys are the capacity keys the slice form owns.
 //
 // Every one is IGNORED rather than aliased, because none has a target here: the
 // value did not move to another key in this file, it moved to a different owner
@@ -108,8 +108,8 @@ var shapeKeys = []common.KeyDeprecation{
 func ignoredShapeKey(path, because string) common.KeyDeprecation {
 	return common.KeyDeprecationFor(path, common.KeyIgnored, common.Deprecation{
 		Old:         path,
-		RemoveAfter: "every live slice's shape is configurator-owned",
-		Because:     because + ", chosen in the configurator — this file no longer sets it, and the value here is ignored.",
+		RemoveAfter: "every live slice's shape is owned by the slice form",
+		Because:     because + ", chosen on the form `drift slice resize` draws — this file does not set it, and the value here is ignored.",
 	})
 }
 

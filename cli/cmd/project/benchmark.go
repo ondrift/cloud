@@ -9,8 +9,8 @@ package project
 // memory nobody uses; guessing low means the pool fills and invocations are
 // refused under load. Neither is discoverable by reading your own source.
 //
-// The booking lives on the slice, which the configurator owns. This command
-// reports what to set and, with --apply, opens the form with the figures already
+// The booking lives on the slice, whose shape the resize form owns. This command
+// reports what to set and, with --apply, opens that form with the figures already
 // in it — so the number that gets bought is the one that was measured.
 //
 // The platform has been measuring the answer all along. Every invocation's child
@@ -86,9 +86,9 @@ The numbers come from the deployed slice's own measurements of real traffic: it
 weighs every invocation and keeps the high-water mark per function. A function
 nobody has called yet says so, rather than reporting a confidently small number.
 
-A booking is part of a slice's shape, which the configurator owns. --apply opens
-it with the measured recommendations already filled in, so the price and the
-restart are shown before anything is bought.`),
+A booking is part of a slice's shape, which the resize form owns. --apply opens
+that form with the measured recommendations already filled in, so the price and
+the restart are shown before anything is bought.`),
 		Example: "  drift file benchmark\n  drift file benchmark --apply",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))
@@ -108,18 +108,16 @@ restart are shown before anything is bought.`),
 			}
 			renderSizing(cmd.OutOrStdout(), m.Name(), rows)
 
-			// A thin alias onto --apply, not a second path. It used to edit the
-			// Driftfile's `memory` key, which the platform stopped reading — so
-			// the file carried the recommendation and the slice kept whatever the
-			// configurator sold it. There is no behaviour left to keep working,
-			// only a name people have in their fingers.
+			// A thin alias onto --apply, not a second path: the name is all that
+			// is left of it, and a name people have in their fingers is worth
+			// forwarding.
 			if write {
 				common.DeprecateFlag(cmd, "write", common.Deprecation{
 					Old: "drift file benchmark --write",
 					New: "drift file benchmark --apply",
-					Because: "A booking is a slice setting rather than a Driftfile one. " +
-						"This used to edit the manifest's retired `memory` key, which the platform ignores; " +
-						"--apply opens the configurator with the measured figures filled in.",
+					Because: "A booking is a slice setting rather than a Driftfile one, and the " +
+						"manifest's `memory` key is not read; " +
+						"--apply opens the resize form with the measured figures filled in.",
 				})()
 				apply = true
 			}
@@ -130,19 +128,18 @@ restart are shown before anything is bought.`),
 		},
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false,
-		"open the configurator with each function's booking set to the recommendation")
+		"open the resize form with each function's booking set to the recommendation")
 	cmd.Flags().BoolVar(&write, "write", false,
 		"Deprecated: use --apply")
 	return cmd
 }
 
-// applyBookings hands the measured recommendations to the configurator.
+// applyBookings opens the resize form with the measured recommendations in it.
 //
 // It does NOT write them anywhere itself. A booking is priced, billed, and
-// travels in the pod spec, so applying one buys a resize and replaces the pod —
-// and the CLI has no path to a slice's shape at all any more, by design. The
-// configurator is the one writer, and opening it pre-filled means the price and
-// the restart are disclosed to the person paying before they agree to either.
+// travels in the pod spec, so applying one buys a resize and replaces the pod.
+// The form is the one writer, and opening it pre-filled means the price and the
+// restart are disclosed to the person paying before they agree to either.
 //
 // A function the slice has never run is left alone. Its "recommendation" is the
 // floor rather than a measurement, and pre-filling that would look like advice
@@ -190,8 +187,8 @@ func applyBookings(w io.Writer, sliceName string, rows []sizingRow) error {
 //
 // The config is the decoded JSON rather than a typed struct: the CLI forwards it
 // whole and never learns its shape, so a field it has no name for survives the
-// round trip. Separated from the fetch and the handoff so the substitution is
-// testable without either.
+// round trip. Separated from the fetch and from opening the form so the
+// substitution is testable without either.
 //
 // Matching is on the booking key — `method:route` — which is what the sizing
 // endpoint reports and what the runtime looks a pool up by. The two agreeing is

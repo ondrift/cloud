@@ -107,12 +107,10 @@ func TestDeclaredSchedules_KeyedByFunctionName(t *testing.T) {
 	}
 }
 
-// The envelope a schedule is sized against belongs to the CONFIGURATOR now.
+// The envelope a schedule is sized against belongs to the SLICE FORM.
 //
-// This used to assert that a declared `cron` reached
-// `MaxNumberOfScheduledJobs`, via a translation from the manifest into a slice
-// shape. That translation is gone: the Driftfile no longer declares how many
-// scheduled jobs a slice may run, so there is nothing here to size and nothing
-// on this side to assert. What the Driftfile still owns — that a declared cron
-// reaches the slice keyed by the function it belongs to — is covered by the
-// tests above.
+// `MaxNumberOfScheduledJobs` is not reachable from a manifest: the Driftfile
+// does not declare how many scheduled jobs a slice may run, so there is nothing
+// here to size and nothing on this side to assert. What the Driftfile does own —
+// that a declared cron reaches the slice keyed by the function it belongs to —
+// is covered by the tests above.

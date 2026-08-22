@@ -379,7 +379,7 @@ func deleteSnapshot(id string) error {
 	return err
 }
 
-// ─── Slice configurator: live pricing + configured create ────────────────────
+// ─── Slice shape: live pricing + configured create ───────────────────────────
 
 type lineItem struct {
 	Key           string `json:"key"`
@@ -396,7 +396,7 @@ type priceResult struct {
 	BillingPeriodMonths int        `json:"billing_period_months"`
 }
 
-// fetchPrice prices a config (the configurator's live-pricing call).
+// fetchPrice prices a config — the same live-pricing call the slice form makes.
 func fetchPrice(config map[string]any, months int) (*priceResult, error) {
 	body, _ := json.Marshal(map[string]any{"config": config, "billing_period_months": months})
 	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/slice/price", bytes.NewReader(body))
@@ -422,8 +422,9 @@ func fetchPrice(config map[string]any, months int) (*priceResult, error) {
 // unit breakdown, not the slice's actual prepaid total.
 //
 // It prices what the slice IS, read back from the platform — never a shape
-// assembled on this side. That is the whole distinction the configurator split
-// rests on, and it is why this reads doc.Config rather than any manifest.
+// assembled on this side. That is the whole distinction between what owns a
+// slice's shape and what runs on it, and it is why this reads doc.Config rather
+// than any manifest.
 func fetchDocPrice(doc *sliceDoc) (*priceResult, error) {
 	raw, err := json.Marshal(doc.Config)
 	if err != nil {
@@ -437,7 +438,7 @@ func fetchDocPrice(doc *sliceDoc) (*priceResult, error) {
 }
 
 // createSlice provisions a slice. tier "hacker" = free (no config); any other
-// tier sends the full config + billing period (the configurator's create).
+// tier sends the full config + billing period, as the slice form's create does.
 func createSlice(name, tier string, config map[string]any, months int) error {
 	payload := map[string]any{"name": name, "tier": tier}
 	if tier != "hacker" {
@@ -469,7 +470,7 @@ func resizeSlice(name string, config map[string]any, months int) error {
 }
 
 // sliceDoc mirrors the fields of GET /ops/slice/get we use: the current config
-// (to display + pre-fill the configurator) plus tier/billing/price.
+// (to display, and to open the resize form on) plus tier/billing/price.
 type sliceDoc struct {
 	Name                string   `json:"name"`
 	Tier                string   `json:"tier"`

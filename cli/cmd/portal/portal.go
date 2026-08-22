@@ -136,7 +136,7 @@ type model struct {
 //
 // Configuring a slice is not done here: both "+ New slice" and the settings
 // tab's configure action suspend the dashboard and run the ordinary CLI verb,
-// which hands off to the configurator in the browser. One form, in one place.
+// which draws the slice's shape in the terminal. One form, in one place.
 func Run(version string) error {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {

@@ -27,7 +27,7 @@ func walkFor(t *testing.T, doc Node, keys []common.KeyDeprecation) string {
 func ignored(path string) common.KeyDeprecation {
 	return common.KeyDeprecationFor(path, common.KeyIgnored, common.Deprecation{
 		RemoveAfter: "no reachable Driftfile still writes it",
-		Because:     "The configurator owns a slice's shape now.",
+		Because:     "A slice's shape is chosen on the form `drift slice resize` draws.",
 	})
 }
 
@@ -163,11 +163,15 @@ func TestAMissingSectionIsSilent(t *testing.T) {
 // The notice names what to do. An ignored shape key has no replacement spelling,
 // so the sentence has to carry the owner instead — otherwise it tells someone
 // their key is dead and nothing else.
+//
+// Asserted as the command to run rather than as a name for the owner: what owns
+// a slice's shape has been called more than one thing, and a test pinned to the
+// name goes green while the sentence sends the reader somewhere that is gone.
 func TestAnIgnoredKeysNoticeNamesTheNewOwner(t *testing.T) {
 	doc := Node{"log_retention": "72h"}
 	got := walkFor(t, doc, []common.KeyDeprecation{ignored("log_retention")})
 
-	if !strings.Contains(got, "configurator") {
+	if !strings.Contains(got, "drift slice resize") {
 		t.Errorf("the notice does not say where the value moved:\n%s", got)
 	}
 	if strings.Contains(got, `Use ""`) {

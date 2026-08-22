@@ -1,6 +1,6 @@
 # Drift CLI
 
-`drift` is the command-line client for [Drift](https://ondrift.eu) — a simple, European serverless cloud. Everything you do on Drift happens through this one tool: create your environment, deploy serverless functions in six languages, host static sites, store data, and ship an entire application with a single command. There is no web dashboard — running `drift` on its own opens a full-screen terminal dashboard (TUI) over your slices, functions, and data; the browser opens at most once, to configure a slice.
+`drift` is the command-line client for [Drift](https://ondrift.eu) — a simple, European serverless cloud. Everything you do on Drift happens through this one tool: create your environment, deploy serverless functions in six languages, host static sites, store data, and ship an entire application with a single command. There is no web dashboard and no browser step — running `drift` on its own opens a full-screen terminal dashboard (TUI) over your slices, functions, and data, and shaping a slice draws a form in the terminal too.
 
 A **slice** is your isolated environment. It bundles three primitives:
 
@@ -14,9 +14,6 @@ A **slice** is your isolated environment. It bundles three primitives:
 go install github.com/ondrift/cloud/cli/cmd/drift@latest
 ```
 
-The `/v2` is required — Go puts a module's major version in its import path from
-v2 onwards, so the path without it resolves to nothing.
-
 This installs the `drift` binary into your `$GOBIN`. Or build from source:
 
 ```bash
@@ -28,7 +25,7 @@ go build -o drift ./cmd/drift
 
 ```bash
 drift account create                   # sign up (email verification)
-drift slice create my-app              # create a slice (opens the configurator)
+drift slice create my-app              # draw the slice's shape in the terminal
 drift slice use my-app                 # make it the active slice
 drift atomic new hello -l go -m get    # scaffold a function
 drift atomic deploy ./hello            # deploy it
@@ -55,10 +52,10 @@ drift project deploy                   # …or deploy a whole app from a Driftfi
 
 | Command | Description |
 |---------|-------------|
-| `drift slice create [name]` | Create a slice (opens the configurator in your browser; `--headless` for a free slice). |
+| `drift slice create [name]` | Create a slice, drawing its shape in the terminal — a tree you move around in, priced live as you type. `--free` takes the fixed free shape with nothing to answer. |
 | `drift slice list` | List your slices; the active one is marked. |
 | `drift slice use <name>` | Set the active slice for subsequent commands. |
-| `drift slice resize [name]` | Reconfigure resources for a slice (defaults to the active slice; opens the configurator, or `--from <Driftfile>` for a headless resize). |
+| `drift slice resize [name]` | Reshape a slice on the same form, opened on what it already is (defaults to the active slice). Repricing and removal are confirmed on the form itself. |
 | `drift slice restart` | Restart the active slice. |
 | `drift slice delete <name>` | Delete a slice (double confirmation). |
 | `drift slice domain add\|verify\|remove\|list <host>` | Attach and verify custom domains. |

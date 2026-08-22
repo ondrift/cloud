@@ -715,8 +715,8 @@ func (m *model) handleSidebar(k key) bool {
 	return false
 }
 
-// openNewSlice opens the "+ New slice" method chooser (empty configurator or
-// from a Driftfile) and moves focus into it.
+// openNewSlice opens the "+ New slice" method chooser (an empty slice drawn on
+// the form, or one from a Driftfile) and moves focus into it.
 func (m *model) openNewSlice() {
 	m.chooser = &newChooser{}
 	m.focus = focusMain

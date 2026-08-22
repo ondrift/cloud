@@ -10,7 +10,7 @@ import (
 	"github.com/ondrift/cloud/cli/common"
 )
 
-// The identity is a reference to a slice the configurator created.
+// The identity is a reference to a slice `drift slice create` made.
 func TestSliceIdentity_SliceKeyIsTheIdentity(t *testing.T) {
 	m := parseIdentity(t, "slice: prorata\n")
 	if m.Name() != "prorata" {
