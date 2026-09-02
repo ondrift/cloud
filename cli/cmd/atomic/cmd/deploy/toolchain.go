@@ -214,7 +214,18 @@ func toolchainImage(lang string) string {
 	case "php":
 		return "composer:2" // php + composer; entrypoint is composer (see caller)
 	case "ruby":
-		return "ruby:3.1" // NOT -slim: needs git; same 3.1.x the runner bundles
+		// NOT -slim: needs git for the SDK. The minor must match the ruby the
+		// SLICE runs (src/slice/Dockerfile), for the same reason node's major
+		// must — gems with native extensions are compiled here and loaded
+		// there, and a mismatch fails at the tenant's first invocation rather
+		// than at build.
+		//
+		// This said `ruby:3.1` and claimed it was "the same 3.1.x the runner
+		// bundles". It was not: the slice has been on 3.3 and is now on 3.4, so
+		// every Ruby function was built two minors behind the runtime executing
+		// it. Nothing detected that, because the failure needs a gem with a
+		// native extension and the comment asserted the versions agreed.
+		return "ruby:3.4"
 	}
 	return ""
 }
