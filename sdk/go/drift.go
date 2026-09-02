@@ -927,6 +927,14 @@ func callBackboneRaw(method, path string, data []byte, contentType string) error
 
 type lockNS struct{}
 
+// Acquire claims a lock under a freshly minted token, returned so you can
+// Release or Renew with it. Use it for mutual exclusion around one piece of
+// work — the caller that gets the token does the work, the others are refused.
+//
+// NOT for a lease. Each call mints a NEW token, so calling Acquire again to stay
+// alive presents as a different holder and is refused while your own lock is
+// live. AcquireAs takes a stable owner and renews-or-takes in one call, which is
+// what a long-running holder wants.
 func (lockNS) Acquire(name string, ttlSeconds int) (string, error) {
 	resp, err := callBackbone("POST", "lock/acquire", map[string]any{
 		"name": name,
@@ -942,6 +950,59 @@ func (lockNS) Acquire(name string, ttlSeconds int) (string, error) {
 		return "", fmt.Errorf("drift: parse lock response: %w", err)
 	}
 	return result.Token, nil
+}
+
+// AcquireAs claims a lock under a STABLE owner you choose, and extends it if you
+// already hold it. That is a LEASE: one call that means "renew if it is mine,
+// take it if it is free or expired, refuse if someone else holds it".
+//
+// Acquire mints a fresh token per call, so calling it again to stay alive reads
+// as a DIFFERENT holder and is refused while your own lease is live. Use this
+// instead whenever a single process should keep doing something for as long as
+// it is up — publishing an anchor, running a sweep, owning a schedule — and pass
+// something that identifies the process, such as its hostname.
+//
+// The returned token is the owner you passed, so Release and Renew take it
+// unchanged.
+//
+// After a restart the owner is the same but the lease may still be held by the
+// previous incarnation until its TTL runs out; that wait is the lease working,
+// not a failure. Size the TTL so a holder that is merely slow does not lose it
+// mid-tick, and so a holder that DIED is replaced promptly.
+func (lockNS) AcquireAs(name, owner string, ttlSeconds int) (string, error) {
+	resp, err := callBackbone("POST", "lock/acquire", map[string]any{
+		"name":  name,
+		"owner": owner,
+		"ttl":   ttlSeconds,
+	})
+	if err != nil {
+		return "", err
+	}
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return "", fmt.Errorf("drift: parse lock response: %w", err)
+	}
+	return result.Token, nil
+}
+
+// Renew extends a lock you already hold, without releasing it first.
+//
+// Releasing and re-acquiring opens a window in which another holder can take it
+// — precisely the window a lease exists to close — so a long-running holder
+// renews instead.
+//
+// It fails if the lock is gone, if it has already expired, or if someone else
+// owns it. Treat that as "I am no longer the holder" and stop doing whatever the
+// lock was protecting, rather than retrying into a second active holder.
+func (lockNS) Renew(name, token string, ttlSeconds int) error {
+	_, err := callBackbone("POST", "lock/renew", map[string]any{
+		"name":  name,
+		"token": token,
+		"ttl":   ttlSeconds,
+	})
+	return err
 }
 
 func (lockNS) Release(name, token string) error {
