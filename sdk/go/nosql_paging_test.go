@@ -7,13 +7,12 @@ import (
 )
 
 // freshLocalStore empties the process-wide local backbone so one test's documents
-// cannot be counted by the next.
+// cannot be counted by the next. Delegates rather than resetting the maps it
+// happens to care about: a second reset that clears a subset is how a lock or a
+// secret left behind decides a later test.
 func freshLocalStore(t *testing.T) {
 	t.Helper()
-	localBackbone.mu.Lock()
-	defer localBackbone.mu.Unlock()
-	localBackbone.nosql = make(map[string]map[string]json.RawMessage)
-	localBackbone.nextID = 0
+	resetLocalStore(t)
 }
 
 func seedCollection(t *testing.T, name string, n int) {
