@@ -721,6 +721,81 @@ func (c collectionHandle) ListAll(filter map[string]string) ([]json.RawMessage, 
 	}
 }
 
+// ListInOrder returns ONE page of documents in the order they were WRITTEN.
+//
+// List and ListAll return rows in storage-key order, which is not the order
+// anything was appended: the key's counter is not zero-padded, so a collection
+// written 1…12 comes back 10, 11, 12, 1, 2 … 9. That is stable and complete and
+// it is not chronological, and it looks chronological for the first nine
+// documents — long enough to pass a manual test.
+//
+// This is the read for anything shaped like a LOG: an event store, a ledger, an
+// activity feed, an outbox, a chat history. The platform keeps a separate order
+// index for it, so no document key changes and a cursor you already hold keeps
+// working.
+//
+// NO FILTER. The field index carries the same unpadded key the scan does, so an
+// ordered filtered read needs a second index rather than a flag — the platform
+// refuses the combination rather than quietly ignoring it. Filter in the caller,
+// or keep the partition in its own collection.
+//
+// The same limit rules as List: pass one for any collection that grows, and the
+// platform clamps to 1000. Use ListAllInOrder for a log that outgrows a page.
+func (c collectionHandle) ListInOrder(limit ...int) ([]json.RawMessage, error) {
+	n := 0
+	if len(limit) > 0 {
+		n = limit[0]
+	}
+	return c.listPageOrdered(n, "")
+}
+
+// ListAllInOrder returns EVERY document in the order it was written, paging
+// until the collection is exhausted.
+//
+// This is what makes a hash-chained log verifiable: walking it in order is the
+// whole point, and a Merkle root over a subset is not a proof of the set. Every
+// document is held in memory at once, which is the point for a ledger and a cost
+// worth knowing for anything else — a function runs under a memory limit.
+func (c collectionHandle) ListAllInOrder() ([]json.RawMessage, error) {
+	const page = 1000
+	var all []json.RawMessage
+	after := ""
+	for {
+		rows, err := c.listPageOrdered(page, after)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, rows...)
+		if len(rows) < page {
+			return all, nil
+		}
+		next, err := lastStorageKey(rows)
+		if err != nil {
+			return nil, err
+		}
+		// A full page that does not move the cursor would loop forever. Same
+		// guard, same reason, as ListAll: a short read is the failure this
+		// method exists to prevent.
+		if next == after {
+			return nil, fmt.Errorf("drift: listing %q did not advance past _key %q", c.name, after)
+		}
+		after = next
+	}
+}
+
+// listPageOrdered issues one ordered list request. The cursor is still the
+// document's own `_key`, so the wire contract does not change with the ordering.
+func (c collectionHandle) listPageOrdered(limit int, after string) ([]json.RawMessage, error) {
+	path := "nosql/list?order=insertion&collection=" + url.QueryEscape(c.name)
+	if limit > 0 {
+		path += "&limit=" + strconv.Itoa(limit)
+	}
+	if after != "" {
+		path += "&after=" + url.QueryEscape(after)
+	}
+	return c.fetchList(path)
+}
+
 // listPage issues one list request, resuming after a storage key when given one.
 func (c collectionHandle) listPage(filter map[string]string, limit int, after string) ([]json.RawMessage, error) {
 	path := "nosql/list?collection=" + url.QueryEscape(c.name)
@@ -733,6 +808,11 @@ func (c collectionHandle) listPage(filter map[string]string, limit int, after st
 	if after != "" {
 		path += "&after=" + url.QueryEscape(after)
 	}
+	return c.fetchList(path)
+}
+
+// fetchList performs one list call and decodes the array both list paths return.
+func (c collectionHandle) fetchList(path string) ([]json.RawMessage, error) {
 	resp, err := callBackbone("GET", path, nil)
 	if err != nil {
 		return nil, err
