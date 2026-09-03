@@ -135,14 +135,28 @@ func runLocal(handler func(Request) Response) {
 //       Local backbone section          //
 
 type memBackbone struct {
-	mu     sync.Mutex
-	nosql  map[string]map[string]json.RawMessage
-	cache  map[string]json.RawMessage
-	queues map[string][]json.RawMessage
-	blobs  map[string][]byte
-	locks  map[string]string
-	nextID int
+	mu      sync.Mutex
+	nosql   map[string]map[string]json.RawMessage
+	cache   map[string]json.RawMessage
+	queues  map[string][]json.RawMessage
+	blobs   map[string][]byte
+	locks   map[string]localLock
+	secrets map[string]string
+	nextID  int
 }
+
+// localLock mirrors what a slice's lock table holds: WHO owns it and WHEN it
+// lapses. Both are load-bearing. A lease renews by owner, so a lock recorded
+// only by name cannot tell a renewal from a second holder; and a holder that
+// died must lose the lock without ever releasing it, which only an expiry
+// does.
+type localLock struct {
+	token   string
+	expires time.Time
+}
+
+// The slice's own lock TTL floor, applied when a caller passes none.
+const localLockDefaultTTL = 10 * time.Second
 
 // The page sizes the platform applies to a list read, mirrored here so a local
 // run truncates where a slice would. A local store that answered every read in
@@ -156,11 +170,12 @@ const (
 // development with `drift atomic run`. All state lives in memory and is lost
 // when the process exits.
 var localBackbone = &memBackbone{
-	nosql:  make(map[string]map[string]json.RawMessage),
-	cache:  make(map[string]json.RawMessage),
-	queues: make(map[string][]json.RawMessage),
-	blobs:  make(map[string][]byte),
-	locks:  make(map[string]string),
+	nosql:   make(map[string]map[string]json.RawMessage),
+	cache:   make(map[string]json.RawMessage),
+	queues:  make(map[string][]json.RawMessage),
+	blobs:   make(map[string][]byte),
+	locks:   make(map[string]localLock),
+	secrets: make(map[string]string),
 }
 
 // backboneRequest is the internal envelope for backbone calls (local dev only).
@@ -168,9 +183,27 @@ type BackboneRequest struct {
 	Method string          `json:"method"`
 	Path   string          `json:"path"`
 	Body   json.RawMessage `json:"body,omitempty"`
+	// Raw carries a body that is not JSON — blob bytes. Kept separate rather
+	// than overloading Body, which every other path unmarshals.
+	Raw []byte `json:"-"`
 }
 
-func (m *memBackbone) handle(req BackboneRequest) []byte {
+// handle answers a backbone call from the in-memory store.
+//
+// IT RETURNS AN ERROR FOR A PATH IT DOES NOT IMPLEMENT, and that is the whole
+// point of the second return value. A `switch` that falls off the end returns
+// nil, `callBackboneLocal` cannot tell that from a successful empty body, and
+// the caller is told its write succeeded when nothing was stored. `callDeed`
+// already refuses in local dev for exactly this reason and says so in its own
+// comment; this is the same rule applied to Backbone.
+//
+// A genuinely empty answer — an empty queue, a cache miss — returns
+// `(nil, nil)` from its own case and stays distinguishable.
+//
+// The store answers as a SLICE would wherever it reasonably can: a lease
+// renews by owner, a renew or release by a non-holder is refused, an unknown
+// `order` is a 400. Where it still diverges deliberately, the case says so.
+func (m *memBackbone) handle(req BackboneRequest) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -205,7 +238,7 @@ func (m *memBackbone) handle(req BackboneRequest) []byte {
 		doc, _ := json.Marshal(body)
 		m.nosql[col][key] = doc
 		resp, _ := json.Marshal(map[string]string{"key": key})
-		return resp
+		return resp, nil
 
 	case path == "read" && method == "GET":
 		col := query.Get("collection")
@@ -215,30 +248,63 @@ func (m *memBackbone) handle(req BackboneRequest) []byte {
 		}
 		if docs, ok := m.nosql[col]; ok {
 			if doc, ok := docs[key]; ok {
-				return doc
+				return doc, nil
 			}
 		}
-		return nil
+		return nil, nil
+
+	case path == "nosql/delete" && method == "POST":
+		col := query.Get("collection")
+		if col == "" {
+			col = "default"
+		}
+		delete(m.nosql[col], query.Get("key"))
+		return nil, nil
 
 	case path == "nosql/list" && method == "GET":
 		col := query.Get("collection")
 		if col == "" {
 			col = "default"
 		}
-		docs, ok := m.nosql[col]
-		if !ok {
-			return marshalJSON([]any{})
-		}
 		filterField := query.Get("field")
 		filterValue := query.Get("value")
-		// Iterate in key order, like the platform's ordered walk. A Go map
-		// iterates randomly, which would make a page boundary — and so a
-		// cursor — mean nothing.
+		order := query.Get("order")
+
+		// The slice refuses an order it does not recognise rather than serving
+		// an unordered read under the caller's name for one, and refuses the
+		// combination with a filter because the field index carries no order.
+		// Accepting either here would hide the failure until deployment.
+		if order != "" && order != "insertion" {
+			return nil, fmt.Errorf("drift: backbone nosql/list: HTTP 400: unknown order %q", order)
+		}
+		if order == "insertion" && filterField != "" {
+			return nil, fmt.Errorf("drift: backbone nosql/list: HTTP 400: order=insertion cannot be combined with a field filter")
+		}
+
+		docs, ok := m.nosql[col]
+		if !ok {
+			return marshalJSON([]any{}), nil
+		}
+		// Iterate in a defined order, like the platform's ordered walk. A Go
+		// map iterates randomly, which would make a page boundary — and so a
+		// cursor — mean nothing. `less` is also what the cursor compares
+		// against, so paging resumes correctly in whichever order was asked
+		// for, and a cursor pointing at a since-deleted document still works.
+		less := func(a, b string) bool { return a < b }
+		if order == "insertion" {
+			less = func(a, b string) bool {
+				ia, ib := localKeyIndex(a), localKeyIndex(b)
+				if ia != ib {
+					return ia < ib
+				}
+				return a < b
+			}
+		}
 		keys := make([]string, 0, len(docs))
 		for k := range docs {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		sort.Slice(keys, func(i, j int) bool { return less(keys[i], keys[j]) })
 		after := query.Get("after")
 		limit := localListDefault
 		if n, err := strconv.Atoi(query.Get("limit")); err == nil && n > 0 {
@@ -249,7 +315,7 @@ func (m *memBackbone) handle(req BackboneRequest) []byte {
 		}
 		results := []json.RawMessage{}
 		for _, k := range keys {
-			if after != "" && k <= after {
+			if after != "" && !less(after, k) {
 				continue
 			}
 			doc := docs[k]
@@ -266,12 +332,16 @@ func (m *memBackbone) handle(req BackboneRequest) []byte {
 				break
 			}
 		}
-		return marshalJSON(results)
+		return marshalJSON(results), nil
 
-	case strings.HasPrefix(path, "nosql/drop") && method == "POST":
-		col := query.Get("collection")
-		delete(m.nosql, col)
-		return nil
+	// DELIBERATELY DIVERGENT, and the one case that still is. On a slice
+	// /nosql/drop is SAT-guarded, so a function calling Drop() gets a 401 and
+	// the collection survives. Refusing here would leave a developer no way to
+	// reset a local store, so the divergence stays and is written down instead:
+	// `hurdles/020` in the platform repo.
+	case path == "nosql/drop" && method == "POST":
+		delete(m.nosql, query.Get("collection"))
+		return nil, nil
 
 	// --- Cache ---
 	case path == "cache/set" && method == "POST":
@@ -280,19 +350,21 @@ func (m *memBackbone) handle(req BackboneRequest) []byte {
 		key, _ := body["key"].(string)
 		val, _ := json.Marshal(body["value"])
 		m.cache[key] = val
-		return nil
+		return nil, nil
 
+	// A miss is an empty answer, not a failure — the cache is the one
+	// primitive whose whole purpose is that the value may not be there.
 	case path == "cache/get" && method == "GET":
 		key := query.Get("key")
 		if val, ok := m.cache[key]; ok {
-			return val
+			return val, nil
 		}
-		return nil
+		return nil, nil
 
 	case strings.HasPrefix(path, "cache/del"):
 		key := query.Get("key")
 		delete(m.cache, key)
-		return nil
+		return nil, nil
 
 	// --- Queue ---
 	case path == "queue/push" && method == "POST":
@@ -301,76 +373,181 @@ func (m *memBackbone) handle(req BackboneRequest) []byte {
 		name, _ := body["queue"].(string)
 		msg, _ := json.Marshal(body["body"])
 		m.queues[name] = append(m.queues[name], msg)
-		return nil
+		return nil, nil
 
+	// An empty queue is an empty answer, not a failure. Pop's contract is
+	// "nothing was waiting", which callers branch on.
 	case path == "queue/pop" && method == "POST":
 		var body map[string]any
 		json.Unmarshal(req.Body, &body) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 		name, _ := body["queue"].(string)
 		q := m.queues[name]
 		if len(q) == 0 {
-			return nil
+			return nil, nil
 		}
 		msg := q[0]
 		m.queues[name] = q[1:]
-		return msg
+		return msg, nil
 
 	// --- Blob ---
+	//
+	// Addressed by bucket AND key, which is what blobNS.Put and Get actually
+	// send. Storing under a single "name" meant the object went in under a key
+	// nothing ever looked up, so every local Get came back empty.
 	case path == "blob/put" && method == "POST":
+		bucket, key := query.Get("bucket"), query.Get("key")
+		if bucket == "" || key == "" {
+			return nil, fmt.Errorf("drift: backbone blob/put: HTTP 400: bucket and key are required")
+		}
+		m.blobs[bucket+"/"+key] = append([]byte(nil), req.Raw...)
+		return nil, nil
+
+	case path == "blob/get" && method == "GET":
+		bucket, key := query.Get("bucket"), query.Get("key")
+		if data, ok := m.blobs[bucket+"/"+key]; ok {
+			return data, nil
+		}
+		return nil, fmt.Errorf("drift: backbone blob/get: HTTP 404: no object %q in bucket %q", key, bucket)
+
+	// --- Secret ---
+	//
+	// The store first, then the environment — the CLI loads a project's .env
+	// into DRIFT_SECRET_* and the runner injects declared secrets the same
+	// way, so an env value is a DECLARED secret and outranks one set at
+	// runtime. secretNS.Get checks the env before calling here at all; this
+	// fallback covers a name reached by some other route.
+	//
+	// A secret that does not exist is an error, not "", matching the
+	// not-found-is-an-error convention Blob.Get and Vault.Get already state.
+	// Returning "" silently is how a `if token == ""` guard takes a different
+	// branch locally than in production.
+	// The value goes back as RAW BYTES, because that is what a slice returns
+	// and what secretNS.Get stringifies. JSON-marshalling it here handed the
+	// caller a value wrapped in literal quote characters — so a local secret
+	// read compared unequal to the same secret read on a slice.
+	case path == "secret/get" && method == "GET":
+		name := query.Get("name")
+		if v, ok := m.secrets[name]; ok {
+			return []byte(v), nil
+		}
+		if v := os.Getenv(name); v != "" {
+			return []byte(v), nil
+		}
+		return nil, fmt.Errorf("drift: backbone secret/get: HTTP 404: no secret named %q", name)
+
+	case path == "secret/set" && method == "POST":
 		var body map[string]any
 		json.Unmarshal(req.Body, &body) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 		name, _ := body["name"].(string)
-		data, _ := json.Marshal(body["data"])
-		m.blobs[name] = data
-		return nil
-
-	case path == "blob/get" && method == "GET":
-		name := query.Get("name")
-		if data, ok := m.blobs[name]; ok {
-			return data
+		value, _ := body["value"].(string)
+		if name == "" {
+			return nil, fmt.Errorf("drift: backbone secret/set: HTTP 400: name is required")
 		}
-		return nil
+		m.secrets[name] = value
+		return nil, nil
 
-	// --- Secret --- in local dev, read from environment variables (loaded from .env by the CLI)
-	case path == "secret/get" && method == "GET":
-		if v := os.Getenv(query.Get("name")); v != "" {
-			b, _ := json.Marshal(v)
-			return b
-		}
-		return nil
+	case path == "secret/delete" && method == "DELETE":
+		delete(m.secrets, query.Get("name"))
+		return nil, nil
 
 	// --- Lock ---
+	//
+	// Renew-or-take by owner, which is what makes AcquireAs a LEASE: the
+	// holder keeps it, a free or lapsed lock is taken, and a live lock held by
+	// someone else is refused. Without the owner, re-acquiring to stay alive
+	// reads as a different holder and the caller cannot renew at all — so the
+	// code written correctly for the platform was the code that failed here.
 	case path == "lock/acquire" && method == "POST":
 		var body map[string]any
 		json.Unmarshal(req.Body, &body) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 		name, _ := body["name"].(string)
-		if _, held := m.locks[name]; held {
-			return nil
+		owner, _ := body["owner"].(string)
+		cur, held := m.locks[name]
+		if held && time.Now().Before(cur.expires) && cur.token != owner {
+			return nil, fmt.Errorf("drift: backbone lock/acquire: HTTP 409: %q is held until %s",
+				name, cur.expires.UTC().Format(time.RFC3339))
 		}
-		m.nextID++
-		token := fmt.Sprintf("local-lock-%d", m.nextID)
-		m.locks[name] = token
-		return marshalJSON(map[string]string{"token": token})
+		token := owner
+		if token == "" {
+			m.nextID++
+			token = fmt.Sprintf("local-lock-%d", m.nextID)
+		}
+		m.locks[name] = localLock{token: token, expires: time.Now().Add(localTTL(body))}
+		return marshalJSON(map[string]string{"token": token}), nil
 
+	// Owner-guarded, and it has to be. A renew that succeeds for a caller
+	// holding nothing tells it to carry on working while the real holder does
+	// too, which is the one outcome a lease exists to prevent.
+	case path == "lock/renew" && method == "POST":
+		var body map[string]any
+		json.Unmarshal(req.Body, &body) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
+		name, _ := body["name"].(string)
+		token, _ := body["token"].(string)
+		cur, held := m.locks[name]
+		if !held || time.Now().After(cur.expires) {
+			return nil, fmt.Errorf("drift: backbone lock/renew: HTTP 404: %q is not held", name)
+		}
+		if cur.token != token {
+			return nil, fmt.Errorf("drift: backbone lock/renew: HTTP 404: %q is owned by another holder, not %q", name, token)
+		}
+		m.locks[name] = localLock{token: cur.token, expires: time.Now().Add(localTTL(body))}
+		return nil, nil
+
+	// Token-guarded for the same reason: releasing someone else's lock hands
+	// their work to a second holder. Releasing one nobody holds is idempotent.
 	case path == "lock/release" && method == "POST":
 		var body map[string]any
 		json.Unmarshal(req.Body, &body) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 		name, _ := body["name"].(string)
+		token, _ := body["token"].(string)
+		cur, held := m.locks[name]
+		if !held {
+			return nil, nil
+		}
+		if cur.token != token {
+			return nil, fmt.Errorf("drift: backbone lock/release: HTTP 403: %q is not held by %q", name, token)
+		}
 		delete(m.locks, name)
-		return nil
+		return nil, nil
 
 	// --- Realtime --- no WS hub in local dev (no slice), so publish/presence
 	// are no-ops: zero subscribers. Keeps Channel().Publish() callable under
 	// `drift atomic run` without a running slice.
 	case path == "realtime/publish" && method == "POST":
-		return marshalJSON(map[string]int{"recipients": 0})
+		return marshalJSON(map[string]int{"recipients": 0}), nil
 
 	case path == "realtime/presence" && method == "GET":
-		return marshalJSON(map[string]int{"present": 0})
+		return marshalJSON(map[string]int{"present": 0}), nil
 
 	}
 
-	return nil
+	// Not implemented here. SAY SO. The alternative — falling through to nil —
+	// reports success for a call that stored nothing, and a developer finds out
+	// when the same code reaches a slice.
+	return nil, fmt.Errorf(
+		"drift: the local backbone does not implement %s /%s — this primitive needs a running slice; set BACKBONE_URL to one",
+		method, path)
+}
+
+// localTTL reads a lock body's `ttl` in seconds, falling back to the slice's
+// own floor. JSON numbers decode as float64, which is why this is not a cast.
+func localTTL(body map[string]any) time.Duration {
+	if n, ok := body["ttl"].(float64); ok && n > 0 {
+		return time.Duration(n) * time.Second
+	}
+	return localLockDefaultTTL
+}
+
+// localKeyIndex is the position a local document key encodes. The local store
+// mints keys from its own counter, so ordering by that value IS insertion
+// order — the same guarantee a slice gets from its order index, reached
+// differently because the two stores mint keys differently.
+func localKeyIndex(key string) int {
+	n, err := strconv.Atoi(key)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func marshalJSON(v any) []byte {
@@ -448,11 +625,14 @@ func callBackboneLocal(method, path string, body any) ([]byte, error) {
 		bodyJSON = b
 	}
 
-	resp := localBackbone.handle(BackboneRequest{
+	resp, err := localBackbone.handle(BackboneRequest{
 		Method: method,
 		Path:   path,
 		Body:   bodyJSON,
 	})
+	if err != nil {
+		return nil, err
+	}
 	if len(resp) == 0 {
 		return nil, nil
 	}
@@ -904,7 +1084,12 @@ func (blobNS) Get(name string) ([]byte, error) {
 func callBackboneRaw(method, path string, data []byte, contentType string) error {
 	baseURL := os.Getenv("BACKBONE_URL")
 	if baseURL == "" {
-		return nil // local dev — silently no-op
+		// Local dev: store the bytes where blob/get reads them. This used to
+		// return here, so a local Put reported success, wrote nothing, and the
+		// matching Get came back empty — which reads as "blobs are broken"
+		// rather than "blobs are not implemented".
+		_, err := localBackbone.handle(BackboneRequest{Method: method, Path: path, Raw: data})
+		return err
 	}
 	req, err := http.NewRequest(method, baseURL+"/"+path, bytes.NewReader(data)) // #nosec G704 -- BACKBONE_URL is the slice's own backbone over UDS or loopback TCP; never a user-supplied URL.
 	if err != nil {
