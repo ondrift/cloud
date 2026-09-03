@@ -200,7 +200,13 @@ func toolchainImage(lang string) string {
 	}
 	switch lang {
 	case "go":
-		return "golang:1.26.2" // matches the platform Go toolchain (Go 1.26.2)
+		// The FLOOR, not the ceiling. `GOTOOLCHAIN=auto` (toolchainCacheEnv) lets
+		// a module whose `go` directive is newer fetch and cache what it needs, so
+		// this tag only has to be recent enough to bootstrap that. It does NOT
+		// have to track the platform's own Go version, and a comment claiming it
+		// did was wrong for every module in the platform repo, which declare
+		// 1.26.6 against this 1.26.2.
+		return "golang:1.26.2"
 	case "rust":
 		return "rust:1-bookworm" // same base as the slice's own Dockerfile
 	case "python":
@@ -229,6 +235,18 @@ func toolchainCacheEnv(lang string) map[string]string {
 			"GOMODCACHE": "/cache/go-mod",
 			"GOCACHE":    "/cache/go-build",
 			"GOPATH":     "/cache/gopath",
+			// LET THE MODULE CHOOSE ITS TOOLCHAIN. The official golang images set
+			// GOTOOLCHAIN=local, which turns the image tag into a CEILING: a
+			// go.mod saying `go 1.26.6` against a 1.26.2 image dies with
+			// `go.mod requires go >= 1.26.6 (running go 1.26.2; GOTOOLCHAIN=local)`
+			// and the only fix a user has is DRIFT_BUILD_IMAGE_GO.
+			//
+			// `auto` makes the tag a FLOOR instead: Go fetches the toolchain the
+			// module asks for and caches it in the mounted GOMODCACHE, so it is
+			// downloaded once per version per architecture. A build already needs
+			// the network to resolve the SDK, so this adds no new dependency —
+			// only a first-run cost on a module that outpaces the image.
+			"GOTOOLCHAIN": "auto",
 		}
 	case "python":
 		return map[string]string{"PIP_CACHE_DIR": "/cache/pip"}
