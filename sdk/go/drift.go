@@ -1621,17 +1621,30 @@ func (s SliceClient) resolveURL(path string) (string, error) {
 	return strings.TrimRight(base, "/") + "/" + strings.TrimPrefix(path, "/"), nil
 }
 
-// Request calls the linked slice with a raw body. The X-Drift-Slice identity
-// header is injected automatically; caller headers override it only if they set
-// the same key. A non-existent link surfaces as an error before any network I/O.
+// Request calls the linked slice with a raw body. A non-existent link surfaces
+// as an error before any network I/O.
+//
+// The X-Drift-Slice identity header is attached last, so a caller cannot
+// overwrite it by passing the same key. That is tidiness rather than a security
+// control — see CallerSlice for why the header is not evidence of anything —
+// but handing callers a documented way to relabel themselves was worse than
+// pointless.
+//
+// The header is omitted entirely when the runtime does not supply an identity,
+// which is the normal case: DRIFT_SLICE is withheld from functions on purpose,
+// because with DRIFT_USER it would let code address slices it never linked.
+// Sending an empty header would assert an identity of "" rather than none.
 func (s SliceClient) Request(method, path string, headers map[string]string, body []byte) (*HTTPResponse, error) {
 	url, err := s.resolveURL(path)
 	if err != nil {
 		return nil, err
 	}
-	h := map[string]string{"X-Drift-Slice": os.Getenv("DRIFT_SLICE")}
+	h := map[string]string{}
 	for k, v := range headers {
 		h[k] = v
+	}
+	if self := os.Getenv("DRIFT_SLICE"); self != "" {
+		h["X-Drift-Slice"] = self
 	}
 	return HTTPRequest(method, url, h, body)
 }
@@ -1651,10 +1664,24 @@ func (s SliceClient) Post(path string, body any) (*HTTPResponse, error) {
 }
 
 // CallerSlice returns the name of the linked slice that made this request, or ""
-// if the request did not arrive over a slice-to-slice link. Trustworthy within
-// the same owner (and, later, the same Team): the NetworkPolicy guarantees the
-// only slices that can reach this one are the ones you linked, so the asserted
-// identity can only be one of your own slices.
+// if the request asserted no identity.
+//
+// # DO NOT AUTHORISE ON THIS
+//
+// It reads a request header, and a header is written by whoever makes the call.
+// Any code that can reach this slice can send any value, so the name that comes
+// back is a claim and not a fact. Use it for logging, metrics and routing; never
+// as the thing that decides whether an operation is allowed.
+//
+// What the NetworkPolicy does and does not give you: it constrains WHICH slices
+// can reach this one to the ones you linked, so the caller is one of yours. It
+// says nothing about WHICH of them is calling — so with two links, either can
+// present itself as the other, and any separation of duties resting on this
+// header does not exist. An earlier version of this comment claimed the header
+// was trustworthy within one owner; it never was.
+//
+// To actually authorise a peer, give each caller its own credential — an API key
+// the callee checks, declared per function — and let this stay a label.
 func CallerSlice(req Request) string {
 	for k, v := range req.Headers {
 		if strings.EqualFold(k, "X-Drift-Slice") {
