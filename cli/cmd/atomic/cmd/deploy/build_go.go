@@ -86,7 +86,8 @@ func buildGoEntrypoint(buildDir, funcName, method, binBase string) (string, erro
 		return "", fmt.Errorf("failed to generate main.go: %w", err)
 	}
 	if out, err := runToolchain(toolchainCmd{lang: "go", dir: buildDir, name: "go", args: []string{"build", "-o", binBase}, env: map[string]string{"GOOS": "linux", "CGO_ENABLED": "0"}}); err != nil {
-		return "", fmt.Errorf("go build error (%s): %w\n%s", funcName, err, string(out))
+		return "", fmt.Errorf("go build error (%s): %w\n%s%s", funcName, err, string(out),
+			handlerShapeHint(funcName, string(out)))
 	}
 	return filepath.Join(buildDir, binBase), nil
 }
@@ -113,6 +114,58 @@ func buildGoEntrypointIsolated(stageDir, funcName, method, binBase string) (bin,
 		return "", "", err
 	}
 	return bin, fnDir, nil
+}
+
+// handlerShapeHint turns the compiler's account of a handler-signature mismatch
+// into something the author can act on, or returns "" when that is not what
+// failed.
+//
+// THE ERROR ARRIVES IN A FILE NOBODY WROTE. The entry point is generated from a
+// template and calls the handler in the shape a deployed function has —
+// `status, message, payload, headers := Name(req)` — so a handler of any other
+// shape fails as `assignment mismatch: 4 variables but Name returns 1 value`, at
+// a line in a `main.go` the author has never seen and cannot open.
+//
+// The shape it collides with most is the SDK's OWN: `func(drift.Request)
+// drift.Response` is what `drift.Run` takes, it is public documented surface,
+// and it is what every handler in Drift's platform repo is written as. Someone
+// arriving from `drift.Run` has no way to learn from that message that a second
+// convention exists, let alone which one this path wants.
+//
+// Matching on the compiler text rather than on the source, because reading the
+// user's signature is exactly what this package declines to do — `parse.go`
+// finds a callable by name and says outright that nothing here reads intent out
+// of source. This adds no parsing: it explains a failure that already happened.
+func handlerShapeHint(funcName, buildOutput string) string {
+	// The compiler's own wording for "this call returns a different number of
+	// values than the caller destructures". Anything else is a real build error
+	// in the user's code and must not be dressed up as a signature problem.
+	if !strings.Contains(buildOutput, "assignment mismatch") || !strings.Contains(buildOutput, funcName) {
+		return ""
+	}
+	return fmt.Sprintf(`
+── the handler's shape ──────────────────────────────────────────────────────
+
+%[1]s does not match what a deployed function is called with. A Go handler this
+path can bind looks like one of:
+
+    func %[1]s(req drift.Request) (int, string, any, map[string]string)
+    func %[1]s(body map[string]any, req drift.Request) (int, string, any, map[string]string)
+
+returning status, message, payload and headers.
+
+IF YOURS RETURNS A drift.Response — the shape drift.Run takes — it is not wrong,
+it is a different convention, and this path binds the one above. Wrap it and
+name the wrapper in the Driftfile's `+"`handler:`"+`:
+
+    func %[1]s(req drift.Request) (int, string, any, map[string]string) {
+        r := yourHandler(req)
+        return r.Status, r.Message, r.Payload, r.Headers
+    }
+
+The two carry the same four values, so the wrapper is the unpacking and nothing
+else.
+`, funcName)
 }
 
 // copyGoSourceFiles copies the top-level Go source files plus
