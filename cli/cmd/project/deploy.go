@@ -691,12 +691,13 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 				return fmt.Errorf("nosql %q ttl: %w", collection, err)
 			}
 		}
-		if err := nosqlInit(collection, ttlSecs); err != nil {
+		unique := c.Strings("unique")
+		if err := nosqlInit(collection, ttlSecs, unique); err != nil {
 			return fmt.Errorf("nosql init %q failed: %w", collection, err)
 		}
 		seeded := 0
 		if c.Str("seed") != "" {
-			n, err := nosqlSeedJSONL(collection, m.ResolvePath(c.Str("seed")), ttlSecs)
+			n, err := nosqlSeedJSONL(collection, m.ResolvePath(c.Str("seed")), ttlSecs, unique)
 			if err != nil {
 				return fmt.Errorf("nosql seed %q failed: %w", collection, err)
 			}
@@ -704,6 +705,11 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 		}
 		if c.Str("ttl") != "" {
 			label += fmt.Sprintf(" (ttl %s)", c.Str("ttl"))
+		}
+		// Named in the deploy output, because a constraint that is now being
+		// enforced on writes is a thing the person deploying should see land.
+		if len(unique) > 0 {
+			label += fmt.Sprintf(" (unique %s)", strings.Join(unique, ", "))
 		}
 		line := fmt.Sprintf("    %s %s", common.Check(), label)
 		if seeded > 0 {
@@ -879,11 +885,19 @@ func cacheSet(key, value string, ttl int) error {
 // matching how removing `ttl:` from the Driftfile and redeploying should
 // behave (the collection reverts to "kept forever", not "stuck at
 // whatever TTL was last set").
-func nosqlInit(collection string, ttlSecs int64) error {
+//
+// unique is the Driftfile-declared `unique:` field list, and follows exactly
+// the same authoritative rule: an empty list clears a constraint the collection
+// previously carried, because a constraint that could only ever be added is one
+// no redeploy can remove — a typo would need the collection dropped to undo.
+func nosqlInit(collection string, ttlSecs int64, unique []string) error {
 	target := fmt.Sprintf("%s/ops/backbone/nosql/ensure?collection=%s",
 		common.APIBaseURL, url.QueryEscape(collection))
 	if ttlSecs > 0 {
 		target += fmt.Sprintf("&ttl=%d", ttlSecs)
+	}
+	if len(unique) > 0 {
+		target += "&unique=" + url.QueryEscape(strings.Join(unique, ","))
 	}
 	resp, err := common.DoJSONRequest(http.MethodPost, target, nil)
 	if err != nil {
@@ -942,7 +956,13 @@ func purgeLegacySentinels(collection string) error {
 // path upserts by `_id`, so even within a single seed run repeated
 // `_id`s get the right end-state. Apps that want runtime-mutable data
 // should use a separate (non-seeded) collection.
-func nosqlSeedJSONL(collection, path string, ttlSecs int64) (int, error) {
+//
+// `unique` has to be threaded through here as well as into the caller's own
+// nosqlInit, and forgetting it is a silent bug rather than a compile error in a
+// world where it defaulted: this path DROPS the collection first, which takes
+// the marker — and therefore the constraint — with it. A seeded collection
+// would lose its uniqueness on every single deploy, and only under seeding.
+func nosqlSeedJSONL(collection, path string, ttlSecs int64, unique []string) (int, error) {
 	data, err := os.ReadFile(path) // #nosec G304 — manifest-declared path, validated at parse
 	if err != nil {
 		return 0, fmt.Errorf("read seed: %w", err)
@@ -961,7 +981,7 @@ func nosqlSeedJSONL(collection, path string, ttlSecs int64) (int, error) {
 		return 0, fmt.Errorf("drop seeded collection: HTTP %d: %s", dResp.StatusCode, string(body))
 	}
 	dResp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
-	if err := nosqlInit(collection, ttlSecs); err != nil {
+	if err := nosqlInit(collection, ttlSecs, unique); err != nil {
 		return 0, err
 	}
 	count := 0
