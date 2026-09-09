@@ -240,6 +240,56 @@ func (m *memBackbone) handle(req BackboneRequest) ([]byte, error) {
 		resp, _ := json.Marshal(map[string]string{"key": key})
 		return resp, nil
 
+	// The batch write. Implemented HERE and not left to fall through, because
+	// falling through is an error and an error is the wrong answer for a call
+	// the slice serves — `drift atomic run` would refuse the one write shape a
+	// tenant reaches for when two documents have to land together.
+	//
+	// Per document it does what `write` above does, so a batch and a loop over
+	// singles agree locally the way they do on a slice.
+	//
+	// A supplied `_key` is honoured, which `write` does not do: on a slice that
+	// is what makes replaying a captured document idempotent rather than
+	// appending a second copy of it. Mirroring it here keeps a restore-shaped
+	// caller from behaving differently in the two places.
+	//
+	// NOT ATOMIC, and it cannot be: the store is a map under a mutex with no
+	// transaction to roll back. The slice commits the whole chunk or none of it.
+	// Nothing local can show a caller the difference, so this is written down
+	// rather than approximated — `hurdles/020`.
+	case path == "write/batch" && method == "POST":
+		var body struct {
+			Collection string           `json:"collection"`
+			Documents  []map[string]any `json:"documents"`
+		}
+		json.Unmarshal(req.Body, &body) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
+		col := body.Collection
+		if col == "" {
+			col = "default"
+		}
+		if m.nosql[col] == nil {
+			m.nosql[col] = make(map[string]json.RawMessage)
+		}
+		written := 0
+		for _, doc := range body.Documents {
+			if doc == nil {
+				continue
+			}
+			key, _ := doc["_key"].(string)
+			if key == "" {
+				m.nextID++
+				key = fmt.Sprintf("%d", m.nextID)
+				doc["_key"] = key
+			}
+			raw, err := json.Marshal(doc)
+			if err != nil {
+				return nil, fmt.Errorf("drift: backbone write/batch: HTTP 400: document %d is not JSON: %w", written, err)
+			}
+			m.nosql[col][key] = raw
+			written++
+		}
+		return marshalJSON(map[string]int{"written": written}), nil
+
 	case path == "read" && method == "GET":
 		col := query.Get("collection")
 		key := query.Get("key")
@@ -813,6 +863,64 @@ func (c collectionHandle) Insert(doc any) (string, error) {
 	}
 	_ = json.Unmarshal(resp, &result)
 	return result.Key, nil
+}
+
+// InsertMany writes several documents in ONE request, all of them or none.
+//
+// This is the primitive for anything that must land together: an order and its
+// line items, a transfer's two legs, a post and the counter it increments.
+// Without it the only way to write two documents is two calls, and a crash
+// between them leaves a partial state that nothing in the model warns about and
+// no retry repairs — the second call may succeed against a first that did not.
+//
+// ALL OR NOTHING is the platform's guarantee, not this method's: the slice
+// applies the chunk in one transaction and rolls the whole thing back on any
+// failure, so retrying a batch cannot leave half of it applied. What this method
+// adds is reaching it.
+//
+// It is also how a large write stops being slow. Per document, a loop over
+// Insert costs an HTTP round trip AND a storage commit each; a batch pays one of
+// each for the chunk.
+//
+// A document carrying `_key` REPLACES the document at that key rather than
+// appending beside it, which is what makes replaying a captured set idempotent.
+// One without it is inserted, upserting on `_id` exactly as Insert does.
+//
+// Returns how many documents were written. Chunk anything large: the request is
+// one body, and a slice bounds what it will accept.
+func (c collectionHandle) InsertMany(docs []any) (int, error) {
+	if len(docs) == 0 {
+		return 0, nil
+	}
+	documents := make([]any, 0, len(docs))
+	for _, d := range docs {
+		// The same shaping Insert applies to a single document: a map is the
+		// document, anything else becomes its `data` field. Divergence here
+		// would mean a value stored under one name by Insert and another by
+		// InsertMany, which is not discoverable from either call site.
+		if m, ok := d.(map[string]any); ok {
+			documents = append(documents, m)
+		} else {
+			documents = append(documents, map[string]any{"data": d})
+		}
+	}
+	resp, err := callBackbone("POST", "write/batch", map[string]any{
+		"collection": c.name,
+		"documents":  documents,
+	})
+	if err != nil {
+		return 0, err
+	}
+	var result struct {
+		Written int `json:"written"`
+	}
+	// A reply that will not parse is not a silent zero: the write may well have
+	// happened, and reporting 0 written invites a caller to retry a batch that
+	// already landed.
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return 0, fmt.Errorf("drift: inserting into %q: the write may have succeeded, but its reply was unreadable: %w", c.name, err)
+	}
+	return result.Written, nil
 }
 
 func (c collectionHandle) Read(key string) (json.RawMessage, error) {
