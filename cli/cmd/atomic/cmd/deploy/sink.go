@@ -31,8 +31,13 @@ import (
 type FuncArtifact struct {
 	Name, Method, Language, Auth, Element, Stream string
 	// Response is the declared reply shape: "", "envelope", "json" or "raw".
-	Response       string
-	Secrets        []string
+	Response string
+	Secrets  []string
+	// Env is declared plain configuration, kept apart from Secrets so a reader
+	// of a Driftfile diff can still tell which functions gained a credential —
+	// which is the property `secrets:` is meant to advertise and the reason
+	// these are two fields rather than one. See FunctionSpec.Env, hurdles/011.
+	Env            map[string]string
 	Triggers       []TriggerSpec
 	Digest         string
 	SourcePath     string
@@ -146,13 +151,22 @@ func localSlotSink(runnerDir string) SlotSink {
 		if secrets == nil {
 			secrets = []string{}
 		}
-		meta, _ := json.Marshal(map[string]any{
+		// `env` is written only when the function declares some. It parses as an
+		// absent map either way — unlike `secrets` above, whose Vec<String> makes
+		// a `null` fatal — but a slot file that carries a key for every field the
+		// format has ever had is harder to read than one that carries what this
+		// function actually declared.
+		meta := map[string]any{
 			"name": a.Name, "method": a.Method, "auth": a.Auth,
 			"element": a.Element, "language": lang, "stream": a.Stream,
 			"secrets": secrets, "protocol": invocationProtocol(lang),
 			"response": a.Response,
-		})
-		return os.WriteFile(filepath.Join(slotDir, "metadata.json"), meta, 0o644)
+		}
+		if len(a.Env) > 0 {
+			meta["env"] = a.Env
+		}
+		metaJSON, _ := json.Marshal(meta)
+		return os.WriteFile(filepath.Join(slotDir, "metadata.json"), metaJSON, 0o644)
 	}
 }
 
