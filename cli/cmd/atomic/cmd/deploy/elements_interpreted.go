@@ -107,6 +107,7 @@ func DeployInterpretedElement(el Element, digest string, quiet bool) error {
 			Name: name, Method: method, Language: lg.label, Auth: f.Spec.Auth,
 			Element: el.Name, Stream: f.Spec.Stream, Response: f.Spec.Response,
 			Secrets:  f.Spec.Secrets,
+			Env:      f.Spec.Env,
 			Triggers: triggersFor(f), Digest: digest,
 			SourcePath: archivePath, UserSourcePath: userSrc,
 			// The same two facts the wrapper was just rendered from, so the slice

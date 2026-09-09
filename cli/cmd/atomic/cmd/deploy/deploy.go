@@ -448,6 +448,12 @@ func operatorSink(a FuncArtifact) error {
 		"element":  element,
 		"stream":   stream,
 		"secrets":  secrets,
+		// Declared plain configuration, separate from `secrets` on purpose —
+		// see the Driftfile schema's `env` and hurdles/011. Sent verbatim; the
+		// CLI neither validates the names nor reads the values, because the
+		// runtime owns which names it refuses and is the only layer a tenant
+		// cannot bypass.
+		"env":      a.Env,
 		"triggers": triggers,
 		"digest":   digest,
 		// Lets the slice regenerate the entry-point wrapper on a snapshot restore
@@ -676,6 +682,7 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	if err := sendSourceToOperator(FuncArtifact{
 		Name: name, Method: method, Language: language, Auth: auth,
 		Element: element, Stream: stream, Response: response, Secrets: secrets,
+		Env:      spec.Env,
 		Triggers: triggers, Digest: digest,
 		SourcePath: sourcePath, UserSourcePath: userSourcePath,
 		SourceModule: wrapSourceModule, EntryFunc: wrapEntryFunc,

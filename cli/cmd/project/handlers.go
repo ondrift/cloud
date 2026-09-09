@@ -48,6 +48,7 @@ func FunctionSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
 			Stream:   fn.Str("stream"),
 			Response: fn.Str("response"),
 			Secrets:  fn.Strings("secrets"),
+			Env:      fn.StrMap("env"),
 		})
 	}
 	return specs

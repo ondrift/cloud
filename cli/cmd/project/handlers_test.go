@@ -134,6 +134,104 @@ func TestFunctionSpecs_BuildIntoElements(t *testing.T) {
 	}
 }
 
+// --- declared configuration -------------------------------------------------
+
+// A schema stub that permits `env:` alongside the keys the fixture uses. It has
+// to be a stub rather than the machine's cached schema: this laptop's cache
+// predates the field, `atomicEntry` is `additionalProperties: false`, and a test
+// depending on when a cache last turned over is a test that fails on someone
+// else's machine for a reason that is not about the code.
+const envSchema = `{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "name": {"type": "string"},
+    "canvas": {},
+    "atomic": {
+      "type": "object",
+      "properties": {
+        "functions": {"type": "array", "items": {"$ref": "#/definitions/atomicEntry"}}
+      }
+    }
+  },
+  "definitions": {
+    "atomicEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "handler": {"type": "string"},
+        "memory": {"type": "string"},
+        "element": {"type": "string"},
+        "auth": {"type": "string"},
+        "secrets": {"type": "array", "items": {"type": "string"}},
+        "env": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    }
+  }
+}`
+
+const envDriftfile = `
+name: demo
+atomic:
+  functions:
+    - name: get:ping
+      handler: GetPing
+      memory: 8MB
+      env:
+        REGION: eu-central
+        LOG_LEVEL: debug
+    - name: post:users
+      handler: PostUsers
+      memory: 32MB
+      secrets: [STRIPE_KEY]
+canvas: ./canvas
+`
+
+// THE seam this exists for, and the one that was missing when the other four
+// owners were already done: a Driftfile's `env:` reaching FunctionSpec.
+//
+// It is worth a test precisely because failing it is silent. Every other owner
+// on the path drops an unknown field without complaint, so a manifest declaring
+// `env:` would lint clean, deploy clean, and leave the variable simply absent
+// inside the function with nothing anywhere naming it.
+func TestFunctionSpecs_CarryDeclaredEnv(t *testing.T) {
+	withSchema(t, envSchema)
+	root := demoProject(t, envDriftfile)
+	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
+	if err != nil {
+		t.Fatalf("ParseDriftfile: %v", err)
+	}
+
+	byName := map[string]atomic_cmd.FunctionSpec{}
+	for _, s := range FunctionSpecs(m) {
+		byName[s.Name] = s
+	}
+
+	ping := byName["get:ping"]
+	if len(ping.Env) != 2 {
+		t.Fatalf("get:ping env = %v, want both declared keys", ping.Env)
+	}
+	if ping.Env["REGION"] != "eu-central" || ping.Env["LOG_LEVEL"] != "debug" {
+		t.Errorf("get:ping env = %v, want REGION=eu-central LOG_LEVEL=debug", ping.Env)
+	}
+
+	// The control, and it is not decoration: without it an accessor that
+	// returned the same map for every function would satisfy the assertion
+	// above. `env:` and `secrets:` are separate channels, which is the whole
+	// point of the field — a function declaring one must not acquire the other.
+	users := byName["post:users"]
+	if len(users.Env) != 0 {
+		t.Errorf("post:users declares no env, got %v", users.Env)
+	}
+	if len(users.Secrets) != 1 || users.Secrets[0] != "STRIPE_KEY" {
+		t.Errorf("post:users secrets = %v, want [STRIPE_KEY] — env must not displace it", users.Secrets)
+	}
+	if len(ping.Secrets) != 0 {
+		t.Errorf("get:ping declares no secrets, got %v — a config key is not a credential", ping.Secrets)
+	}
+}
+
 // --- the compiled floor -----------------------------------------------------
 
 // A schema stub carrying only what CompiledMemoryFloor reads. Permissive
