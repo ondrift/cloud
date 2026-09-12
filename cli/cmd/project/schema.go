@@ -127,11 +127,17 @@ func schemaErrors(ve *jsonschema.ValidationError) ParseErrors {
 	seen := map[string]bool{}
 	var out []string
 
-	var walk func(e *jsonschema.ValidationError)
-	walk = func(e *jsonschema.ValidationError) {
+	// The nearest ancestor that HAD an instance location is threaded down,
+	// because some keywords reset it to empty and the leaf alone then cannot say
+	// where in the document the user should look. See relocate.
+	var walk func(e *jsonschema.ValidationError, inherited string)
+	walk = func(e *jsonschema.ValidationError, inherited string) {
+		if here := pathOf(e.InstanceLocation); here != "" {
+			inherited = here
+		}
 		if len(e.Causes) > 0 {
 			for _, c := range e.Causes {
-				walk(c)
+				walk(c, inherited)
 			}
 			return
 		}
@@ -139,7 +145,7 @@ func schemaErrors(ve *jsonschema.ValidationError) ParseErrors {
 		// location. Rendering the ErrorKind directly needs the library's own
 		// message printer and panics on a nil one, which is a poor trade for text
 		// this already produces correctly.
-		msg := strings.TrimSpace(e.Error())
+		msg := relocate(strings.TrimSpace(e.Error()), inherited, e.SchemaURL)
 		if msg == "" {
 			return
 		}
@@ -148,10 +154,86 @@ func schemaErrors(ve *jsonschema.ValidationError) ParseErrors {
 			out = append(out, msg)
 		}
 	}
-	walk(ve)
+	walk(ve, "")
 
 	sort.Strings(out)
 	return ParseErrors(dropShallowerBranches(out))
+}
+
+// pathOf renders the library's instance location as the JSON Pointer the rest
+// of this file speaks.
+func pathOf(loc []string) string {
+	if len(loc) == 0 {
+		return ""
+	}
+	return "/" + strings.Join(loc, "/")
+}
+
+// relocate repairs an error that cannot say where it happened.
+//
+// `propertyNames` validates the property NAME as its own document, so the
+// instance location resets to the root and the message comes out as
+//
+//	at '': 'not' failed
+//
+// against a whole Driftfile — which names no file position, no function and no
+// key, and is the least actionable thing this package can print. It is not a
+// corner case: `atomic.functions[].env` reserves the variable names the runtime
+// owns, so it is what a user meets the first time they try to set BACKBONE_URL.
+//
+// Two things are recoverable and neither is in the leaf. The nearest ancestor
+// with a location knows the entry (`/atomic/functions/0`), and the leaf's own
+// SCHEMA url knows which property was being checked
+// (`…/properties/env/propertyNames/allOf/2`). Together they point at the object
+// the offending key is in.
+//
+// A message that already carries a real location is returned untouched: this
+// repairs the empty case only, and must never move an error that was already
+// correct.
+func relocate(msg, inherited, schemaURL string) string {
+	if msg == "" || inherited == "" {
+		return msg
+	}
+	if instanceLocation(msg) != "" {
+		return msg
+	}
+	at := inherited
+	if prop := schemaProperty(schemaURL); prop != "" {
+		at += "/" + prop
+	}
+	// Replace the empty location in the library's own rendering rather than
+	// rebuilding the message: the text after it is the library's and is the part
+	// worth keeping.
+	if rest, ok := strings.CutPrefix(msg, "at '':"); ok {
+		return "at '" + at + "':" + rest
+	}
+	return "at '" + at + "': " + msg
+}
+
+// schemaProperty pulls the last `properties/<name>` out of a schema URL's
+// fragment, which is the document key the failing subschema belongs to.
+//
+// The LAST one, because the pointer nests: a failure under
+// `…/properties/atomic/…/properties/env/propertyNames` is about `env`, and the
+// outer names are the path taken to reach it.
+func schemaProperty(schemaURL string) string {
+	_, frag, ok := strings.Cut(schemaURL, "#")
+	if !ok {
+		return ""
+	}
+	parts := strings.Split(frag, "/")
+	for i := len(parts) - 2; i >= 0; i-- {
+		if parts[i] == "properties" {
+			name := parts[i+1]
+			// A property literally called "properties" is possible in a schema
+			// and would read as the keyword. Nothing in this document does that,
+			// and guessing wrong only costs a slightly worse location.
+			if name != "" && name != "properties" {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 // dropShallowerBranches removes an error whose instance location is a strict

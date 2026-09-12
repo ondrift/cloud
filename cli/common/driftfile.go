@@ -181,7 +181,13 @@ func driftfileVersionOf(raw []byte) string {
 // that names the symptom instead of the cause.
 //
 // Bump it in the release that implements a format change.
-const ImplementedDriftfileFormat = "1.13.0"
+//
+// 1.15.1 covers `atomic.functions[].env` (plain per-function configuration,
+// carried through the deploy by cmd/project) and `backbone.nosql[].unique`
+// (sent to the slice on ensure by the apply path). Both are keys this binary
+// now reads and forwards, which is what "implements" means for a CLI that
+// holds no typed mirror of the format.
+const ImplementedDriftfileFormat = "1.15.1"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every
 // authenticated request.
