@@ -93,8 +93,20 @@ jobs:
       - id: ver
         name: Compute next versions
         run: |
-          # While below 1.0 a "major" bump moves the MINOR: burning v1.0.0 on the
-          # first breaking change during a closed alpha is not what breaking/ means.
+          # BOTH LINES STAY ON 0.x FOR THE WHOLE ALPHA, deliberately. This is
+          # the repo where it matters most: `cli` is what people install and
+          # `sdk` is what they import, so a 1.0.0 here is a stability promise
+          # made to someone else — and Go changes module resolution at v1, which
+          # would make `go get` behave differently for every consumer.
+          #
+          # Read the arithmetic with MA=0 and notice that NO bump leaves 0.x:
+          # `major` moves the minor, `minor` moves the minor, `patch` moves the
+          # patch. There is no path from 0.x.y to 1.0.0 here. 1.0.0 is reachable
+          # only by cutting a tag by hand, when the alpha is actually over.
+          #
+          # So `breaking/` is safe to use for what it means: it records an
+          # incompatible change without spending the number that says "stable".
+          # The guard below keeps that true if this branch is ever simplified.
           next() {
             prefix="$1"; bump="$2"
             last=$(git tag -l "${prefix}/v*" | sed "s|^${prefix}/v||" \
@@ -110,10 +122,26 @@ jobs:
             esac
             echo "v${MA}.${MI}.${PA}"
           }
+          # The 0.x invariant, enforced rather than trusted to the arithmetic
+          # above. Nothing in `next` can produce a v1 today; this is here so that
+          # if someone edits that `MA -eq 0` branch out, the release FAILS
+          # instead of quietly publishing a stability claim to every consumer.
+          alpha_only() {
+            case "$2" in
+              v0.*) echo "$2" ;;
+              *)
+                echo "::error::refusing to cut ${1}/${2} — both lines stay on 0.x for the alpha."
+                echo "cli is installed and sdk is imported, so a 1.0.0 is a promise made to"
+                echo "someone else, and Go changes module resolution at v1. If leaving the alpha"
+                echo "is the intent, cut the tag by hand and remove this guard in the same change."
+                exit 1 ;;
+            esac
+          }
+
           b="${{ steps.plan.outputs.bump }}"
           if [ "$b" != "none" ]; then
-            echo "cli_version=$(next cli "$b")" >> "$GITHUB_OUTPUT"
-            echo "sdk_version=$(next sdk "$b")" >> "$GITHUB_OUTPUT"
+            echo "cli_version=$(alpha_only cli "$(next cli "$b")")" >> "$GITHUB_OUTPUT"
+            echo "sdk_version=$(alpha_only sdk "$(next sdk "$b")")" >> "$GITHUB_OUTPUT"
           fi
 
   cli:
