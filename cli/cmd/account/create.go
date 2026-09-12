@@ -31,6 +31,22 @@ import (
 
 var usernameRe = regexp.MustCompile(`^[a-z0-9]{2,32}$`)
 
+// FirstRunHints is the block printed the instant signup succeeds: the literal
+// first commands anyone is told to type, and for most people the first thing
+// the product ever asks of them. Each line names its command in single quotes,
+// and the column the `::` sits in is what keeps the block aligned.
+//
+// Exported because it is data, not decoration. A test in package main holds the
+// whole command tree and resolves every command named here against it, which is
+// the only way this text can be known to be typeable — a printed string is not
+// a call, so nothing else notices when it names a command that does not exist.
+var FirstRunHints = []string{
+	"  1. Create your first slice (project)            :: 'drift slice create <name>'",
+	"  2. Deploy your app                              :: 'drift file apply'",
+	"\nManage slices                                    :: 'drift slice list'",
+	"Switch active slice                               :: 'drift slice use <name>'",
+}
+
 func GetCreateCmd() *cobra.Command {
 	var username, password, email string
 	var passwordStdin bool
@@ -171,10 +187,9 @@ func GetCreateCmd() *cobra.Command {
 
 			fmt.Printf("\n\033[48;2;241;160;6m"+" "+"\033[0m"+" Welcome to Drift, %s!\n", username)
 			fmt.Println("\n\033[48;2;61;213;166m" + " " + "\033[0m" + " Next steps:")
-			fmt.Println("  1. Create your first slice (project)            :: 'drift slice create <name>'")
-			fmt.Println("  2. Deploy your app                              :: 'drift deploy drift.yaml'")
-			fmt.Println("\nManage slices                                    :: 'drift slice list'")
-			fmt.Println("Switch active slice                               :: 'drift slice use <name>'")
+			for _, hint := range FirstRunHints {
+				fmt.Println(hint)
+			}
 			fmt.Println("Happy building!")
 		},
 		Example: `  drift account create

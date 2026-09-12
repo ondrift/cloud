@@ -72,6 +72,32 @@ var langExt = map[string]string{
 	"go": "go", "python": "py", "node": "js", "ruby": "rb", "php": "php", "rust": "rs",
 }
 
+// AuthOptions is the set of HTTP gates a scaffolded function can declare. It is
+// what the interactive `Auth:` prompt offers and what the -a/--auth help names,
+// so the menu and the help cannot drift apart from each other.
+//
+// They can still drift from the enforcement, which is ValidateAuth, and that is
+// the failure worth guarding: a menu entry its own validation rejects is a dead
+// end reached by using the command exactly as designed. A test in package main
+// holds both and checks every offered option against the validation.
+//
+// The set is two because two is what the platform implements: the Driftfile
+// schema's auth enum and the slice runtime's gate name the same pair, and a
+// third value here would scaffold a function nothing can serve.
+var AuthOptions = []string{"none", "apikey"}
+
+// ValidateAuth reports whether an auth mode can actually be enforced. Separate
+// from AuthOptions on purpose: this also judges what arrives on -a/--auth,
+// which is any string at all.
+func ValidateAuth(auth string) error {
+	switch auth {
+	case "none", "apikey":
+		return nil
+	default:
+		return fmt.Errorf("invalid auth %q (none|apikey)", auth)
+	}
+}
+
 // New is the `drift atomic new` command.
 func New() *cobra.Command {
 	var lang, method, queue, auth, element string
@@ -95,7 +121,7 @@ func New() *cobra.Command {
 	c.Flags().StringVarP(&lang, "lang", "l", "", "language: go|python|node|ruby|php|rust")
 	c.Flags().StringVarP(&method, "method", "m", "", "HTTP method: get|post|put|delete|patch")
 	c.Flags().StringVarP(&queue, "queue", "q", "", "queue name (creates a queue-triggered function)")
-	c.Flags().StringVarP(&auth, "auth", "a", "", "auth for HTTP: none|apikey|jwt (default none)")
+	c.Flags().StringVarP(&auth, "auth", "a", "", "auth for HTTP: "+strings.Join(AuthOptions, "|")+" (default none)")
 	c.Flags().StringVarP(&element, "element", "e", "", "element to add it to (default: the flat top-level element)")
 	return c
 }
@@ -160,7 +186,7 @@ func runNew(name, lang, method, queue, auth, element string) error {
 			}
 			if auth == "" {
 				if err := survey.AskOne(&survey.Select{
-					Message: "Auth:", Options: []string{"none", "apikey", "jwt"}, VimMode: true,
+					Message: "Auth:", Options: AuthOptions, VimMode: true,
 				}, &auth); err != nil {
 					return err
 				}
@@ -188,10 +214,8 @@ func runNew(name, lang, method, queue, auth, element string) error {
 		if auth == "" {
 			auth = "none"
 		}
-		switch auth {
-		case "none", "apikey":
-		default:
-			return fmt.Errorf("invalid auth %q (none|apikey)", auth)
+		if err := ValidateAuth(auth); err != nil {
+			return err
 		}
 		declaredName = method + ":" + name
 		funcMethod = method
