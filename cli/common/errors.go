@@ -142,6 +142,32 @@ func (e *APIError) code() string {
 		return "DRIFT-1003"
 	case e.Status == http.StatusPaymentRequired || e.Status == http.StatusTooManyRequests:
 		return "DRIFT-1004"
+
+	// A CONFLICT carries a code of its own. It used to fall through to "" — so a
+	// 409 was alone among its neighbours in offering no `drift doctor explain`
+	// pointer, on a status whose whole content is "something already exists and
+	// the message says which".
+	case e.Status == http.StatusConflict:
+		return "DRIFT-1013"
+
+	// 502/503/504 ARE NOT DRIFT-1005, and the split is the point rather than a
+	// tidier taxonomy.
+	//
+	// DRIFT-1005's documented remedy says "Nothing you changed caused it" and
+	// sends the reader to status.ondrift.eu. For an unavailable platform both
+	// sentences are routinely FALSE: a resize restarts the slice's pod, so a
+	// deploy issued seconds later hits a runner that is gone — the user caused
+	// it, from the same terminal, and every component on the status page is
+	// green. Observed on alpha in exactly that order.
+	//
+	// message() already told these three apart; only the code did not, which
+	// meant the sentence the user was pointed at contradicted the sentence they
+	// had just been shown.
+	case e.Status == http.StatusBadGateway ||
+		e.Status == http.StatusServiceUnavailable ||
+		e.Status == http.StatusGatewayTimeout:
+		return "DRIFT-1012"
+
 	case e.Status >= 500:
 		return "DRIFT-1005"
 	}
