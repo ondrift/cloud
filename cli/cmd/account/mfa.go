@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/ondrift/cloud/cli/common"
@@ -128,7 +129,18 @@ func getMFAEnrolCmd() *cobra.Command {
 }
 
 func runMFAEnrol() error {
-	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+mfaBase+"/enrol", bytes.NewReader([]byte(`{}`)))
+	// THE PASSWORD, and not because the platform is being fussy. A session on its
+	// own is exactly what a stolen one is: without this, whoever holds it can
+	// enrol THEIR authenticator and lock the owner out of their own account with
+	// the control that was meant to protect them. Turning the factor on costs
+	// what turning it off costs.
+	password := common.PromptForInputHidden("Password")
+	if password == "" {
+		return fmt.Errorf("no password entered — nothing was changed")
+	}
+	reqBody, _ := json.Marshal(map[string]string{"password": password})
+
+	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+mfaBase+"/enrol", bytes.NewReader(reqBody))
 	if err != nil {
 		return err
 	}
@@ -146,12 +158,25 @@ func runMFAEnrol() error {
 		return fmt.Errorf("the platform returned a reply this version cannot read: %w", err)
 	}
 
-	fmt.Println("Add this to your authenticator app.")
+	fmt.Println("Scan this with your authenticator app.")
 	fmt.Println()
+
+	// THE QR IS THE POINT, and the secret beneath it is the fallback rather than
+	// the other way round. Typing 32 base32 characters into a phone by hand is
+	// where people abandon turning a second factor on.
+	//
+	// A failure to draw it is not a failure to enrol: the secret and the URI are
+	// printed either way, and every authenticator app accepts a typed secret. So
+	// the error is reported and the flow continues.
+	if err := common.QRCode(os.Stdout, started.URI); err != nil {
+		fmt.Println(common.Hint("could not draw the QR code here — enter the secret below by hand instead."))
+		fmt.Println()
+	}
+
 	fmt.Printf("  Secret:  %s\n", started.Secret)
 	fmt.Printf("  URI:     %s\n", started.URI)
 	fmt.Println()
-	fmt.Println(common.Hint("most apps can scan the URI as a QR code, or take the secret typed in by hand."))
+	fmt.Println(common.Hint("no camera to hand? every authenticator app also accepts the secret typed in."))
 	fmt.Println()
 
 	// The confirm step, in the same command. Two commands would leave a user
