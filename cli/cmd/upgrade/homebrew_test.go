@@ -86,6 +86,30 @@ func TestHomebrewNotice_ShowsTheUpgradeWhenBehind(t *testing.T) {
 	}
 }
 
+// THE SECOND bug on this line, and it made the first one's fix useless.
+//
+// The notice correctly said "v0.44.0 → v0.48.0" and told the user to run `brew
+// upgrade drift`. That command answered "Warning: ondrift/tap/drift 0.44.0
+// already installed" — because Homebrew compares against its LOCAL CLONE of the
+// tap, and a clone not fetched since the last release still describes the
+// version already installed. So the CLI said an upgrade was waiting and the
+// command it printed said there was none.
+//
+// `brew update` first is the whole fix. Observed both ways on one machine: the
+// refusal, then the same command installing 0.48.0 after an update.
+func TestHomebrewNotice_TellsTheUserToRefreshTheTapFirst(t *testing.T) {
+	withLatest(t, "v0.48.0")
+	out := notice(t, "/home/linuxbrew/.linuxbrew/Cellar/drift/0.44.0/bin/drift", "v0.44.0", "")
+
+	if !strings.Contains(out, "brew update && brew upgrade drift") {
+		t.Errorf("the command must refresh the tap first — without it Homebrew compares against a stale\n"+
+			"local clone and reports the installed version as the newest one.\ngot:\n%s", out)
+	}
+	if !strings.Contains(out, "local copy of the tap") {
+		t.Errorf("the reason must be stated, or the extra command reads as superstition.\ngot:\n%s", out)
+	}
+}
+
 // Offline, the honest answer is "I don't know", not "an upgrade is waiting".
 // The command is still printed because it is the one thing that remains true
 // without a network — but nothing here may imply a newer version exists.
