@@ -404,6 +404,17 @@ fn deed_call(method: &str, path: &str, body: Option<Value>) -> Option<Value> {
 
 // call_raw posts raw bytes (used by blob.put). The platform's /blob/put
 // expects ?bucket=&key= query params and a binary body, not JSON.
+//
+// LOCAL DEV IS NOT HANDLED HERE, deliberately. Every other primitive falls back
+// to call_local, which speaks JSON; a blob is bytes, and routing bytes through a
+// JSON dispatch is what produced the bug this note replaces — the local arms
+// keyed on a `name` query parameter that the bucket/key wire format stopped
+// sending, so a put stored under one string and a get looked up another. Put
+// reported success, get returned nothing, and the two were indistinguishable
+// from "that key was never written".
+//
+// blob::put and blob::get now own their local branch, against a byte store. See
+// them for the key format.
 fn call_raw(method: &str, path: &str, data_bytes: &[u8], content_type: &str) -> Option<Vec<u8>> {
     let base = get_backbone_url();
     if base.is_empty() {
@@ -440,7 +451,11 @@ struct LocalStore {
     cache: HashMap<String, Value>,
     nosql: HashMap<String, Vec<Value>>,    // collection -> docs
     queues: HashMap<String, Vec<Value>>,
-    blobs: HashMap<String, Value>,
+    // bucket/key -> the bytes themselves. BYTES, not Value: a blob is binary,
+    // and holding it as JSON meant every round trip through this store had to
+    // agree on an encoding as well as on a key. The address is the same pair the
+    // wire format uses, built by blob::local_address.
+    blobs: HashMap<String, Vec<u8>>,
     locks: HashMap<String, String>,        // name -> token
 }
 
@@ -599,18 +614,13 @@ fn call_local(_method: &str, path: &str, body: Option<Value>) -> Option<Value> {
             if q.is_empty() { return None; }
             Some(q.remove(0))
         }
-        // Blobs
-        "blob/put" => {
-            let b = body?;
-            let name = b.get("name")?.as_str()?.to_string();
-            let data = b.get("data")?.clone();
-            store.blobs.insert(name, data);
-            None
-        }
-        "blob/get" => {
-            let name = q.get("name")?;
-            store.blobs.get(name).cloned()
-        }
+        // Blobs are NOT dispatched here. They carry bytes rather than JSON and
+        // are served by blob::put / blob::get against store.blobs directly.
+        //
+        // The arms that used to sit here keyed on a `name` query parameter, which
+        // the bucket/key wire format has not sent for a long time: a put stored
+        // under one string, a get looked up another, and neither reported
+        // anything wrong.
         // Locks — check for existing owner before acquiring
         "lock/acquire" => {
             let b = body?;
@@ -908,17 +918,39 @@ pub mod backbone {
             }
         }
 
+        /// The address a blob is stored under in local dev: the same bucket and
+        /// key the wire format carries, joined.
+        ///
+        /// ONE function, called by both put and get, because the bug it replaces
+        /// was exactly two call sites deriving a key separately and drifting
+        /// apart. A put that stores under an address a get does not build is
+        /// silent in both directions.
+        fn local_address(name: &str) -> String {
+            let (bucket, key) = split_bucket_key(name);
+            format!("{}/{}", bucket, key)
+        }
+
         pub fn put(name: &str, data: &[u8], content_type: Option<&str>) {
+            if get_backbone_url().is_empty() {
+                local_store()
+                    .lock()
+                    .unwrap()
+                    .blobs
+                    .insert(local_address(name), data.to_vec());
+                return;
+            }
             let (bucket, key) = split_bucket_key(name);
             let path = format!("blob/put?bucket={}&key={}", percent_encode(bucket), percent_encode(key));
             call_raw("POST", &path, data, content_type.unwrap_or("application/octet-stream"));
         }
 
         pub fn get(name: &str) -> Option<Vec<u8>> {
+            if get_backbone_url().is_empty() {
+                return local_store().lock().unwrap().blobs.get(&local_address(name)).cloned();
+            }
             let (bucket, key) = split_bucket_key(name);
             let path = format!("blob/get?bucket={}&key={}", percent_encode(bucket), percent_encode(key));
             let base = get_backbone_url();
-            if base.is_empty() { return None; }
             let url = format!("{}/{}", base, path);
             match ureq::get(&url).call() {
                 Ok(r) => {
@@ -2041,5 +2073,68 @@ mod list_paging_tests {
         filter.insert("group_id".to_string(), "g1".to_string());
         let filtered = c.list_all(Some(filter)).expect("filtered list_all");
         assert_eq!(filtered.len(), total, "a filtered read must page too");
+    }
+}
+
+#[cfg(test)]
+mod local_blob_tests {
+    use crate::backbone::blob;
+
+    // A blob written in local dev must come back. It did not: put went through
+    // call_raw, which returned immediately with BACKBONE_URL unset and never
+    // reached a store, and get did the same — so put reported success, get
+    // returned None, and the pair was indistinguishable from "that key was never
+    // written". The worst failure shape available, because it looks like an
+    // answer.
+    //
+    // One test, like the paging one above and for the same reason: the local
+    // store is a process-wide OnceLock and parallel tests would share it.
+    #[test]
+    fn a_blob_round_trips_in_local_dev() {
+        std::env::remove_var("BACKBONE_URL");
+
+        // With an explicit bucket, and with none — "reports/q3.pdf" addresses a
+        // bucket, "notes.txt" falls back to `default`, and both have to work or
+        // the fallback is a silent hole of its own.
+        blob::put("reports/q3.pdf", b"quarterly", Some("application/pdf"));
+        blob::put("notes.txt", b"plain", None);
+
+        assert_eq!(
+            blob::get("reports/q3.pdf").as_deref(),
+            Some(&b"quarterly"[..]),
+            "a bucketed blob did not round trip"
+        );
+        assert_eq!(
+            blob::get("notes.txt").as_deref(),
+            Some(&b"plain"[..]),
+            "an unbucketed blob did not round trip"
+        );
+
+        // BYTES, not text: a blob store that survives only UTF-8 is a text store
+        // wearing another name, and the first image anyone puts in it is the
+        // failure.
+        let binary: Vec<u8> = vec![0x00, 0xff, 0x1f, 0x8b, 0x00];
+        blob::put("images/pixel.png", &binary, Some("image/png"));
+        assert_eq!(
+            blob::get("images/pixel.png"),
+            Some(binary),
+            "binary content came back changed"
+        );
+
+        // The control: a key nobody wrote is None, and that is the ONLY case
+        // where None is the right answer. Without this, every assertion above
+        // passes against a get that returns whatever it was last handed.
+        assert_eq!(
+            blob::get("reports/never-written.pdf"),
+            None,
+            "an unwritten key must be absent"
+        );
+
+        // Two buckets, one key name. Addressing on the pair rather than the key
+        // alone is the whole reason the store is keyed the way it is.
+        blob::put("a/same-name", b"from a", None);
+        blob::put("b/same-name", b"from b", None);
+        assert_eq!(blob::get("a/same-name").as_deref(), Some(&b"from a"[..]));
+        assert_eq!(blob::get("b/same-name").as_deref(), Some(&b"from b"[..]));
     }
 }
