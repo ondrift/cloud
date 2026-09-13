@@ -11,6 +11,8 @@ require (
 
 require github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 
+require rsc.io/qr v0.2.0 // indirect
+
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
