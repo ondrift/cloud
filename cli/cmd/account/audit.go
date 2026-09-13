@@ -44,6 +44,8 @@ type auditEvent struct {
 func GetAuditCmd() *cobra.Command {
 	var (
 		event  string
+		since  string
+		until  string
 		limit  int
 		cursor string
 		asJSON bool
@@ -67,6 +69,16 @@ func GetAuditCmd() *cobra.Command {
 			q := url.Values{}
 			if event != "" {
 				q.Set("event", event)
+			}
+			for _, b := range []struct{ name, raw string }{{"since", since}, {"until", until}} {
+				if b.raw == "" {
+					continue
+				}
+				ts, terr := parseWhen(b.raw)
+				if terr != nil {
+					return fmt.Errorf("--%s: %w", b.name, terr)
+				}
+				q.Set(b.name, ts.UTC().Format(time.RFC3339))
 			}
 			if limit > 0 {
 				q.Set("limit", strconv.Itoa(limit))
@@ -143,10 +155,40 @@ func GetAuditCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&event, "event", "", "only this event type (e.g. login, secret.read, atomic.deploy)")
+	cmd.Flags().StringVar(&since, "since", "", "only events at or after this point: 7d, 24h, or YYYY-MM-DD")
+	cmd.Flags().StringVar(&until, "until", "", "only events at or before this point: same forms as --since")
 	cmd.Flags().IntVar(&limit, "limit", 0, "events per page (default 50, max 200)")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "continue from a previous page")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the platform's reply verbatim")
 	return cmd
+}
+
+// parseWhen accepts the three forms a person actually types for a point in time.
+//
+// A DURATION IS AN AGO, not a length: `--since 7d` means "seven days back from
+// now", which is what someone asking about last week means. Go's own
+// ParseDuration has no day unit — `7d` is an error there — and days are the unit
+// this question is nearly always asked in, so that form is handled before the
+// rest is handed over.
+//
+// A BARE DATE MEANS THE START OF THAT DAY IN THE LOCAL ZONE, because someone
+// typing a calendar date means their own day rather than UTC's. The wire format
+// is UTC and the conversion happens at the call site.
+func parseWhen(raw string) (time.Time, error) {
+	if d, err := time.ParseDuration(raw); err == nil {
+		return time.Now().Add(-d), nil
+	}
+	if strings.HasSuffix(raw, "d") {
+		if days, err := strconv.Atoi(strings.TrimSuffix(raw, "d")); err == nil {
+			return time.Now().AddDate(0, 0, -days), nil
+		}
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02"} {
+		if ts, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
+			return ts, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("%q is not a time I can read — try 7d, 24h, a YYYY-MM-DD date, or a full RFC 3339 timestamp", raw)
 }
 
 // outcomeLabel keeps the reason attached to the outcome it explains. A bare
