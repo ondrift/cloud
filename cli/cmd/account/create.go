@@ -89,12 +89,15 @@ func GetCreateCmd() *cobra.Command {
 				}
 			}
 
-			// Client-side validation. The server validates the same
-			// rules on receipt; doing it here is a UX nicety so a
-			// typo doesn't round-trip the email-OTP step before
-			// failing.
-			if len(password) < 8 {
-				fmt.Println("Password must be at least 8 characters.")
+			// Client-side validation, from common so signup and reset
+			// cannot enforce two different rules. It is a UX nicety —
+			// a typo should not round-trip the email-OTP step before
+			// failing — and it is deliberately the SMALLER half: the
+			// server also screens against a breach corpus this binary
+			// does not carry, so a password can clear here and still
+			// be refused on receipt, with a message saying why.
+			if err := common.ValidatePassword(password); err != nil {
+				fmt.Println(err)
 				return
 			}
 
