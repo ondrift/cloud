@@ -34,8 +34,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -91,12 +89,9 @@ that form with the measured recommendations already filled in, so the price and
 the restart are shown before anything is bought.`),
 		Example: "  drift file benchmark\n  drift file benchmark --apply",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))
+			manifestPath, err := requireDriftfile()
 			if err != nil {
 				return err
-			}
-			if _, err := os.Stat(manifestPath); err != nil {
-				return fmt.Errorf("no Driftfile in the current directory (looked for %s)", manifestPath)
 			}
 			m, err := ParseDriftfile(manifestPath)
 			if err != nil {

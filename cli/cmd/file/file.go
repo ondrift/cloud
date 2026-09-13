@@ -95,7 +95,13 @@ func resolvePath(args []string) (string, error) {
 		abs = filepath.Join(abs, "Driftfile")
 	}
 	if _, serr := os.Stat(abs); serr != nil {
-		return "", fmt.Errorf("no Driftfile at %s — pass a path, or run this from a project directory", abs)
+		// NAME THE COMMAND THAT WRITES ONE. "Deploy your app :: drift file apply"
+		// is the second line a new account is told to type, and in a fresh
+		// directory it lands here — so this message is the first wall of the
+		// product, and it used to end without a next step. Someone who has never
+		// seen a Driftfile cannot act on "pass a path".
+		return "", fmt.Errorf("no Driftfile at %s\n"+
+			"  run `drift file new` to write one, or pass the path to an existing file", abs)
 	}
 	return abs, nil
 }

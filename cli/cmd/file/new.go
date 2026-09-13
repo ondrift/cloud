@@ -50,10 +50,28 @@ func getNewCmd() *cobra.Command {
 				return fmt.Errorf("%s already exists — pass --force to overwrite it", shortPath(abs))
 			}
 
+			// THE ACTIVE SLICE FIRST, and the directory name only as a fallback.
+			//
+			// A Driftfile names the slice it deploys INTO — it does not mint one.
+			// Defaulting to the directory wrote a file naming a slice that does not
+			// exist, so the two commands a new account is told to run stopped
+			// composing: `drift slice create hello` followed by `drift file new` in
+			// ~/work/myapp writes `myapp`, and `drift file apply` then answers
+			// "slice myapp does not exist — create it first". Following THAT advice
+			// hits "only one free hacker slice is allowed per account", and nothing
+			// printed anywhere names the way out.
+			//
+			// Reproduce it by reverting this block: create a slice, then scaffold in
+			// a directory named anything else.
+			chosen := "the directory name"
 			if name == "" {
-				// Default to the directory name, which is what the project is
-				// called everywhere else the user thinks about it.
-				name = filepath.Base(filepath.Dir(abs))
+				if active := common.GetActiveSlice(); active != "" && nameLooksValid(active) {
+					name, chosen = active, "your active slice"
+				} else {
+					name = filepath.Base(filepath.Dir(abs))
+				}
+			} else {
+				chosen = "--name"
 			}
 			if !nameLooksValid(name) {
 				return fmt.Errorf("project name %q must be 1–32 lowercase letters, numbers or hyphens "+
@@ -63,7 +81,14 @@ func getNewCmd() *cobra.Command {
 			if werr := os.WriteFile(abs, []byte(starterDriftfile(name, canvas)), 0o600); werr != nil {
 				return werr
 			}
-			fmt.Printf("%s wrote %s\n", common.Hint("✓"), shortPath(abs))
+			// Say WHICH slice, and WHY. The name decides where a deploy lands, and
+			// a scaffolder that picks one silently is how the mismatch above went
+			// unnoticed until apply refused it.
+			fmt.Printf("%s wrote %s — slice %q, from %s\n",
+				common.Hint("✓"), shortPath(abs), name, chosen)
+			if chosen == "the directory name" {
+				fmt.Printf("  %s\n", common.Hint("no active slice — run `drift slice use <name>` and re-run, or edit `slice:` by hand"))
+			}
 			fmt.Printf("  %s\n", common.Hint("drift file lint    # check it"))
 			fmt.Printf("  %s\n", common.Hint("drift file explain # see what it provisions"))
 			return nil
@@ -98,7 +123,7 @@ func starterDriftfile(name, canvasDir string) string {
 	b.WriteString("# " + name + " — a Drift project.\n")
 	b.WriteString("# Every knob below is optional unless noted. `drift file explain` shows\n")
 	b.WriteString("# what this resolves to; `drift file lint` checks it without deploying.\n\n")
-	b.WriteString("name: " + name + "\n\n")
+	b.WriteString("slice: " + name + "\n\n")
 
 	if canvasDir != "" {
 		b.WriteString("# Static site. The short form is a bare path.\n")
@@ -110,34 +135,27 @@ func starterDriftfile(name, canvasDir string) string {
 	b.WriteString("  # slice exposes, what serves it, and what guards it. Nothing in your\n")
 	b.WriteString("  # source declares a function; the code is just code.\n")
 	b.WriteString("  #\n")
-	b.WriteString("  #   name     the trigger it answers on: `get:ping`, `post:auth/login`,\n")
-	b.WriteString("  #            or `queue:orders` for one the slice invokes from a queue\n")
+	b.WriteString("  #   route    the path it answers on, without a leading slash: `ping`,\n")
+	b.WriteString("  #            `auth/challenge`, `groups/:id`\n")
+	b.WriteString("  #   method   get, post, put, patch, delete, head, options — or `queue`\n")
+	b.WriteString("  #            for one the slice invokes from a Backbone queue\n")
 	b.WriteString("  #   handler  the callable in your source, found in the element's folder\n")
-	b.WriteString("  #   memory   its own pool — concurrent invocations together stay inside\n")
-	b.WriteString("  #            it — and what it is billed at. No default: measure it with\n")
-	b.WriteString("  #            `drift file benchmark`, because booking more than you\n")
-	b.WriteString("  #            need is paid for and booking less refuses calls under load.\n")
-	b.WriteString("  #            8MB–256MB.\n")
 	b.WriteString("  #   auth     `none` (the default) or `apikey`\n")
 	b.WriteString("  #   secrets  the Backbone secrets this one function may read\n")
+	b.WriteString("  #\n")
+	b.WriteString("  # Memory is a SLICE setting, chosen on the form `drift slice resize`\n")
+	b.WriteString("  # draws — not a key in this file. `drift file benchmark` reports what\n")
+	b.WriteString("  # each function has actually cost.\n")
 	b.WriteString("  functions:\n")
-	b.WriteString("    - name: \"get:hello\"\n")
-	b.WriteString("      handler: GetHello\n")
-	b.WriteString("      memory: 32MB\n\n")
+	b.WriteString("    - route: hello\n")
+	b.WriteString("      method: get\n")
+	b.WriteString("      handler: GetHello\n\n")
 
 	b.WriteString("# Per-environment overrides. Anything set here replaces the base for that\n")
 	b.WriteString("# environment — including a 0 or a false, which is the point of the block.\n")
-	b.WriteString("# `prod` (or `production`) deploys under the bare project name; any other\n")
-	b.WriteString("# environment deploys as <name>-<environment>.\n")
+	b.WriteString("# `prod` (or `production`) deploys into the slice named above; any other\n")
+	b.WriteString("# environment deploys into <slice>-<environment>, which must already exist.\n")
 	b.WriteString("environments:\n")
 	b.WriteString("  prod: {}\n")
-	b.WriteString("  staging:\n")
-	b.WriteString("    atomic:\n")
-	b.WriteString("      # An override is a partial: name only what differs. Restating a\n")
-	b.WriteString("      # function here replaces its booking for this environment alone.\n")
-	b.WriteString("      functions:\n")
-	b.WriteString("        - name: \"get:hello\"\n")
-	b.WriteString("          handler: GetHello\n")
-	b.WriteString("          memory: 16MB\n")
 	return b.String()
 }
