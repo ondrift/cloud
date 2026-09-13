@@ -78,12 +78,9 @@ single slice otherwise.`,
 		Example: "  drift file apply\n  drift file apply staging\n  drift file apply prod --yes\n  drift file apply --plan",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))
+			manifestPath, err := requireDriftfile()
 			if err != nil {
-				return fmt.Errorf("resolve manifest path: %w", err)
-			}
-			if _, err := os.Stat(manifestPath); err != nil {
-				return fmt.Errorf("no Driftfile in the current directory (looked for %s)", manifestPath)
+				return err
 			}
 			projectDir := filepath.Dir(manifestPath)
 

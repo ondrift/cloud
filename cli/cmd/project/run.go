@@ -86,12 +86,9 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 	if err := requireDocker(); err != nil {
 		return "", "", "", err
 	}
-	manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))
+	manifestPath, err := requireDriftfile()
 	if err != nil {
 		return "", "", "", err
-	}
-	if _, err := os.Stat(manifestPath); err != nil {
-		return "", "", "", fmt.Errorf("no Driftfile in the current directory (looked for %s)", manifestPath)
 	}
 	projectDir := filepath.Dir(manifestPath)
 
@@ -304,12 +301,9 @@ func requireDocker() error {
 }
 
 func manifestAppName(env string) (string, error) {
-	mp, err := filepath.Abs(filepath.Join(".", driftfileName))
+	mp, err := requireDriftfile()
 	if err != nil {
 		return "", err
-	}
-	if _, err := os.Stat(mp); err != nil {
-		return "", fmt.Errorf("no Driftfile in the current directory")
 	}
 	// Cheap name-only parse — `stop`/`logs` must not require the project's
 	// secrets to be set just to find the container. The env suffix is applied

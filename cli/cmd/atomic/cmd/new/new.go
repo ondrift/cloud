@@ -194,13 +194,17 @@ func runNew(name, lang, method, queue, auth, element string) error {
 		}
 	}
 
-	// ---- resolve the trigger, the handler shape, and the declared identity ----
-	var declaredName, funcMethod, shape string
+	// ---- resolve the trigger and the handler shape ----
+	//
+	// There is no `declaredName` any more. The identity used to be assembled here
+	// as `method:route` — the retired single-key spelling — purely so it could be
+	// printed for the user to paste. The current grammar is the pair itself, so
+	// the two halves are printed as they already are.
+	var funcMethod, shape string
 	if isQueue {
 		if !nameRe.MatchString(queue) {
 			return fmt.Errorf("invalid queue name %q", queue)
 		}
-		declaredName = "queue:" + queue
 		funcMethod = "queue"
 		shape = "post" // queue messages carry a body: handler(body, req)
 		auth = "none"  // a queue handler has no URL, so there is no gate to set
@@ -217,7 +221,6 @@ func runNew(name, lang, method, queue, auth, element string) error {
 		if err := ValidateAuth(auth); err != nil {
 			return err
 		}
-		declaredName = method + ":" + name
 		funcMethod = method
 		if method == "get" {
 			shape = "get"
@@ -292,14 +295,24 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	}
 
 	// The function does not exist until the Driftfile says so: the manifest is
-	// what the slice is contracted to run, and a booking nobody wrote is one the
-	// platform cannot size, price or admit work against. Print the entry rather
-	// than guess a memory figure — that number is a decision, and
-	// `drift file benchmark` is what measures it.
+	// what the slice is contracted to run, and a function nobody declared is one
+	// the platform cannot size, price or admit work against.
+	//
+	// PRINTED IN THE CURRENT GRAMMAR, which `drift file new` also writes. It used
+	// to print `name: get:hello` plus a `memory:` figure — both retired spellings,
+	// which `drift file lint` flags the moment the user pastes them. Two
+	// scaffolders agreeing with each other and disagreeing with the linter is
+	// worse than either being wrong alone: it teaches the retired form as the
+	// house style.
 	fmt.Printf("\nDeclare it in your Driftfile, under atomic.functions:\n\n")
-	fmt.Printf("    - name: %s\n", declaredName)
+	if isQueue {
+		fmt.Printf("    - route: %s\n", queue)
+		fmt.Printf("      method: queue\n")
+	} else {
+		fmt.Printf("    - route: %s\n", name)
+		fmt.Printf("      method: %s\n", method)
+	}
 	fmt.Printf("      handler: %s\n", funcName)
-	fmt.Printf("      memory: 32MB\n")
 	if auth != "none" {
 		fmt.Printf("      auth: %s\n", auth)
 	}
@@ -307,8 +320,8 @@ func runNew(name, lang, method, queue, auth, element string) error {
 		fmt.Printf("      element: %s\n", elementID)
 	}
 	fmt.Printf("\nThen:\n")
-	fmt.Printf("\tdrift file benchmark   # measure what it actually needs\n")
 	fmt.Printf("\tdrift file apply      # ship it\n")
+	fmt.Printf("\tdrift file benchmark  # what it has actually cost, once it has served traffic\n")
 	return nil
 }
 
