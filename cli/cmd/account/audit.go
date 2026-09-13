@@ -33,12 +33,18 @@ import (
 // request id, user agent, details — and `--json` is how anyone who wants those
 // gets them, unshaped by this binary's idea of what matters.
 type auditEvent struct {
-	TS       time.Time `json:"ts"`
-	Event    string    `json:"event"`
-	Outcome  string    `json:"outcome"`
-	Target   string    `json:"target"`
-	Reason   string    `json:"reason"`
-	SourceIP string    `json:"source_ip"`
+	TS time.Time `json:"ts"`
+	// `action`, not `event`. The record has been stored under that name since it
+	// was written — `bson:"action" json:"action"` — and reading `event` here
+	// produced a table with an empty EVENT column: every row present, correctly
+	// timestamped, and silent about what had happened. A field name that does not
+	// match decodes to the zero value rather than failing, which is why this
+	// survived a passing unit test and was found by running it.
+	Event    string `json:"action"`
+	Outcome  string `json:"outcome"`
+	Target   string `json:"target"`
+	Reason   string `json:"reason"`
+	SourceIP string `json:"source_ip"`
 }
 
 func GetAuditCmd() *cobra.Command {
