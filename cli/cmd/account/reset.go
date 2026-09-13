@@ -62,8 +62,12 @@ func GetResetPasswordCmd() *cobra.Command {
 			if newPassword != repeatPassword {
 				return errors.New("those passwords don't match — nothing was changed")
 			}
-			if len(newPassword) < 8 {
-				return errors.New("password must be at least 8 characters — nothing was changed")
+			// The same rule signup applies, from the same place. "nothing was
+			// changed" matters here in a way it does not at signup: the user has
+			// already typed a code out of their mailbox, and needs to know the
+			// code is still good.
+			if err := common.ValidatePassword(newPassword); err != nil {
+				return fmt.Errorf("%v Nothing was changed", err)
 			}
 
 			verifyPayload, _ := json.Marshal(map[string]string{
