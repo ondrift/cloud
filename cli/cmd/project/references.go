@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
+	"github.com/ondrift/cloud/cli/cmd/slice"
 	"github.com/ondrift/cloud/cli/common"
 )
 
@@ -64,7 +65,61 @@ func CheckSliceReferences(m *Manifest, live *LiveSlice) error {
 	if len(missing) == 0 {
 		return nil
 	}
+
+	// THE SLOT IS OFTEN ALREADY THERE, and only the name differs.
+	//
+	// A fresh free slice holds five slots called `get:slot-1` … `get:slot-5` —
+	// placeholders for a tenant to type over — and `drift file new` scaffolds
+	// `route: hello`. So the commonest reading of this refusal was "your slice
+	// has no room", when the truth was "your slice has five rooms and none of
+	// them is called that", and the remedy was a form that needs a terminal.
+	//
+	// Renaming an idle slot is not what the form exists for: the form asks about
+	// repricing and about destruction, and a rename within the same count and
+	// sizes is neither. AdoptIdleSlots sends the resize WITHOUT the
+	// acknowledgements those two refusals demand, so the platform is what decides
+	// whether this really was a rename.
+	if renamed, rerr := adoptIdleSlots(m, live, missing); rerr == nil && len(renamed) > 0 {
+		return nil
+	}
 	return referenceError(m.Name(), missing)
+}
+
+// adoptIdleSlots renames idle slots to the function names this manifest declares,
+// when the ONLY thing the slice is missing is those names.
+//
+// It is attempted only for a function-only miss. A manifest also naming a
+// collection the slice does not have needs the form whatever happens to the
+// slots, and half-fixing it would send the user there anyway having silently
+// changed their slice on the way.
+func adoptIdleSlots(m *Manifest, live *LiveSlice, missing []referenceMiss) ([]slice.SlotAdoption, error) {
+	var want []string
+	for _, miss := range missing {
+		if miss.Class != "function" {
+			return nil, fmt.Errorf("more than functions are missing")
+		}
+		want = append(want, miss.Name)
+	}
+
+	// Every name this manifest DOES use is off limits, whatever it is called. A
+	// slot the Driftfile already names is serving something, and renaming it
+	// would take a live function off the air to make room for another.
+	keep := map[string]bool{}
+	for _, name := range namedFunctions(m) {
+		keep[name] = true
+	}
+
+	renamed, err := slice.AdoptIdleSlots(m.Name(), want, keep)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("  %s Your slice holds %s nothing was using. Renamed, at no change in price:\n",
+		common.Hint("·"), plural(len(renamed), "a slot", "slots"))
+	for _, r := range renamed {
+		fmt.Printf("      %s → %s\n", r.From, r.To)
+	}
+	return renamed, nil
 }
 
 // missingSecrets reports every secret a function declares that will not exist
