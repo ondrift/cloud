@@ -248,15 +248,79 @@ func TestDetailForStatus_PlainTextBodyIsTheReason(t *testing.T) {
 		t.Errorf("detailForStatus(409, plain text) = %q, want %q", got, reason)
 	}
 
-	// End to end, through the message the user actually reads.
+	// End to end, through the message the user actually reads. The reason must
+	// lead — it is the sentence that names the rule — and the code follows it.
 	err := &APIError{
 		Op:     "create slice",
 		Status: http.StatusConflict,
 		Detail: detailForStatus(http.StatusConflict, []byte(reason)),
 	}
-	want := "Couldn't create slice: " + reason + "."
-	if got := err.Error(); got != want {
-		t.Errorf("Error() = %q, want %q", got, want)
+	if got := err.Error(); !strings.HasPrefix(got, "Couldn't create slice: "+reason+".") {
+		t.Errorf("Error() = %q, want it to lead with the server's own reason", got)
+	}
+}
+
+// A 409 CARRIES A CODE. It used to be alone among its neighbours in offering
+// none: 401, 403, 404, 402/429 and 5xx all resolved to a DRIFT-xxxx and a
+// `drift doctor explain` pointer, and the one status whose entire content is
+// "something already exists" resolved to the empty string.
+func TestAPIError_AConflictCarriesACodeLikeEveryOtherStatus(t *testing.T) {
+	err := &APIError{
+		Op:     "create slice",
+		Status: http.StatusConflict,
+		Detail: "only one free hacker slice is allowed per account",
+	}
+	if got := err.code(); got != "DRIFT-1013" {
+		t.Errorf("code() = %q, want DRIFT-1013", got)
+	}
+	if !strings.Contains(err.Error(), "drift doctor explain DRIFT-1013") {
+		t.Errorf("a conflict must offer the explain pointer every other status offers.\ngot: %s", err.Error())
+	}
+}
+
+// AN UNAVAILABLE PLATFORM IS NOT DRIFT-1005, and this is the one that was
+// actively misleading rather than merely missing.
+//
+// DRIFT-1005 is documented as "Nothing you changed caused it", pointing at
+// status.ondrift.eu. For a 502 both sentences are routinely false: a resize
+// restarts the slice's pod, so a deploy issued seconds later hits a runner that
+// is gone — the user caused it, from the same terminal, and the status page
+// shows every component green. message() already told these apart; the code did
+// not, so the explain text contradicted the message beside it.
+func TestAPIError_UnavailableHasItsOwnCodeNotTheItsNotYouOne(t *testing.T) {
+	for _, status := range []int{
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout,
+	} {
+		err := &APIError{Op: "deploy the function", Status: status}
+		if got := err.code(); got != "DRIFT-1012" {
+			t.Errorf("status %d: code() = %q, want DRIFT-1012", status, got)
+		}
+	}
+
+	// The control. A genuine 500 keeps DRIFT-1005, or the split has simply moved
+	// every 5xx to the new code and explained nothing.
+	plain := &APIError{Op: "deploy the function", Status: http.StatusInternalServerError}
+	if got := plain.code(); got != "DRIFT-1005" {
+		t.Errorf("a plain 500 must stay DRIFT-1005, got %q", got)
+	}
+}
+
+// The two explain texts must not say the same thing, or the split is a second
+// number for one answer. DRIFT-1005 denies the user caused it; DRIFT-1012 must
+// not, because for a 502 they often did.
+func TestErrorCodes_TheUnavailableRemedyDoesNotDenyTheUserCausedIt(t *testing.T) {
+	unavailable, ok := LookupErrorCode("DRIFT-1012")
+	if !ok {
+		t.Fatal("DRIFT-1012 is not in the registry")
+	}
+	if strings.Contains(strings.ToLower(unavailable.Remedy), "nothing you changed") {
+		t.Error("DRIFT-1012 repeats DRIFT-1005's denial — the case it exists for is one the user DID cause")
+	}
+	fault, _ := LookupErrorCode("DRIFT-1005")
+	if unavailable.Remedy == fault.Remedy {
+		t.Error("the two codes carry the same remedy, so the split added a number and no information")
 	}
 }
 

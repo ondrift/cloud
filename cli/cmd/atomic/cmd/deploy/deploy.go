@@ -368,14 +368,31 @@ func parseTriggerComments(dir string) ([]TriggerSpec, error) {
 	return triggers, nil
 }
 
-// parseScheduleComments scans source files in dir for drift:schedule annotations.
+// refuseScheduleComments fails the deploy when source still carries a
+// `// drift:schedule` comment, naming the Driftfile field that replaced it.
 //
-// The value must be a standard 5-field cron expression (minute hour dom month dow).
+// # Why this REFUSES rather than working, and rather than being deleted quietly
 //
-//	// drift:schedule */5 * * * *
-//	# drift:schedule 0 15 * * *
-func parseScheduleComments(dir string) ([]TriggerSpec, error) {
-	var triggers []TriggerSpec
+// The comment used to produce a schedule TriggerSpec here — and only here. This
+// is the single-function path behind `drift atomic deploy`; `drift file apply`
+// builds through the element paths, which never read it. So the same comment on
+// the same source made a schedule under one command and vanished under the
+// other, with nothing said either way. A schedule that exists depending on which
+// deploy command you typed is worse than one that does not exist.
+//
+// It was also documented nowhere. `driftfile-spec.md` covers `drift:trigger`,
+// which IS supported on every path, and has never mentioned this.
+//
+// The Driftfile's `atomic.functions[].cron` replaced it: declared in the
+// manifest, honoured by every deploy path, and METERED — it travels on the
+// artifact through the operator, which counts it against the slice's envelope
+// and bills it (tier.CentsPerScheduledJob). A comment-declared schedule
+// registered straight with the slice is one nobody is charged for.
+//
+// Deleting it silently would turn somebody's working schedule into nothing at
+// the next deploy, with no message. Refusing costs them one line moved into the
+// Driftfile and tells them exactly which line.
+func refuseScheduleComments(dir string) error {
 	for _, f := range sourceFiles(dir) {
 		data, err := os.ReadFile(f) // #nosec G304 — CLI reads user's source file by design
 		if err != nil {
@@ -386,13 +403,18 @@ func parseScheduleComments(dir string) ([]TriggerSpec, error) {
 			if !ok || expr == "" {
 				continue
 			}
-			triggers = append(triggers, TriggerSpec{
-				Type:     "schedule",
-				Schedule: expr,
-			})
+			return fmt.Errorf(
+				"%s carries `// drift:schedule %s`, which no longer declares anything.\n"+
+					"       It only ever worked under `drift atomic deploy`, and was silently ignored by\n"+
+					"       `drift file apply` — so the schedule existed or not depending on which command\n"+
+					"       you ran. Declare it in the Driftfile instead, on this function:\n\n"+
+					"         cron: \"%s\"\n\n"+
+					"       That form is honoured by every deploy path, and is counted against the\n"+
+					"       slice's envelope rather than registered unmetered.",
+				filepath.Base(f), expr, expr)
 		}
 	}
-	return triggers, nil
+	return nil
 }
 
 // sendSourceToOperator uploads the compiled binary to the API as
@@ -609,11 +631,12 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to parse trigger comments: %w", err)
 	}
-	schedules, err := parseScheduleComments(absFolder)
-	if err != nil {
-		return fmt.Errorf("failed to parse schedule comments: %w", err)
+	// A `// drift:schedule` comment is refused rather than honoured — it worked
+	// on this path alone and was invisible to `drift file apply`. See
+	// refuseScheduleComments.
+	if err := refuseScheduleComments(absFolder); err != nil {
+		return err
 	}
-	triggers = append(triggers, schedules...)
 	triggers = append(triggers, triggersFor(ElementFunc{Spec: spec, SourceFile: sourceFile})...)
 
 	if len(triggers) > 0 && !quiet {
