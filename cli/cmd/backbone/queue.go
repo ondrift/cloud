@@ -34,7 +34,6 @@ func queuePushCmd() *cobra.Command {
 			var body map[string]any
 			if err := json.Unmarshal([]byte(rawJSON), &body); err != nil {
 				e := fmt.Errorf("Couldn't push message: that doesn't look like valid JSON — %v", err)
-				fmt.Println(e)
 				return e
 			}
 
@@ -46,14 +45,12 @@ func queuePushCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("push message", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			b, err := common.CheckResponse(resp, "push message")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -81,7 +78,6 @@ func queuePopCmd() *cobra.Command {
 			resp, err := common.DoJSONRequest(http.MethodPost, url, nil)
 			if err != nil {
 				e := common.TransportError("pop message", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
@@ -93,7 +89,6 @@ func queuePopCmd() *cobra.Command {
 
 			b, err := common.CheckResponse(resp, "pop message")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 			fmt.Println(string(b))
@@ -115,7 +110,6 @@ func queuePeekCmd() *cobra.Command {
 			resp, err := common.DoRequest(http.MethodGet, url, nil)
 			if err != nil {
 				e := common.TransportError("peek queue", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
@@ -127,7 +121,6 @@ func queuePeekCmd() *cobra.Command {
 
 			b, err := common.CheckResponse(resp, "peek queue")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 			fmt.Println(string(b))
@@ -149,13 +142,11 @@ func queueDropCmd() *cobra.Command {
 			resp, err := common.DoJSONRequest(http.MethodPost, url, nil)
 			if err != nil {
 				e := common.TransportError("drop queue", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "drop queue"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 			fmt.Printf("Queue %q dropped\n", name)
@@ -177,14 +168,12 @@ func queueLenCmd() *cobra.Command {
 			resp, err := common.DoRequest(http.MethodGet, url, nil)
 			if err != nil {
 				e := common.TransportError("get queue length", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			b, err := common.CheckResponse(resp, "get queue length")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 

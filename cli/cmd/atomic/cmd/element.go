@@ -25,11 +25,18 @@ func elementList() *cobra.Command {
 		Short:   "List all elements and the functions they contain",
 		Example: "  drift atomic element list",
 		Args:    cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
+		// RunE, not Run. A `Run` handler has no error channel, so the only way to
+		// report a failure was to print it and return — which exits 0. Every
+		// script doing `drift atomic element list && …` carried on as though the
+		// listing had succeeded, and `set -e` could not help because nothing
+		// failed as far as the shell could see.
+		//
+		// Returning is also what removes the doubled message: main() prints the
+		// error once, to stderr, where an error belongs.
+		RunE: func(cmd *cobra.Command, args []string) error {
 			deployed, err := fetchSlots()
 			if err != nil {
-				fmt.Println(err)
-				return
+				return err
 			}
 
 			byElement := make(map[string][]atomicRecord)
@@ -41,7 +48,7 @@ func elementList() *cobra.Command {
 
 			if len(byElement) == 0 {
 				fmt.Println("No elements defined. Deploy with --element <name> to create one.")
-				return
+				return nil
 			}
 
 			names := make([]string, 0, len(byElement))
@@ -70,6 +77,7 @@ func elementList() *cobra.Command {
 				}
 				fmt.Println()
 			}
+			return nil
 		},
 	}
 }

@@ -89,26 +89,27 @@ you did.`,
 				common.APIBaseURL+memberEndpoint, bytes.NewBuffer(payload))
 			if err != nil {
 				e := common.TransportError("send the invite", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			body, err := common.CheckResponse(resp, "send the invite")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
+			// ExpiresIn is flexSeconds for the reason login.go gives at length:
+			// the platform sends `expires_in` as seconds in a string, and a
+			// client that falls over on the shape of a field it only prints is
+			// a client that refuses a working reply.
 			var out struct {
-				Code      string `json:"code"`
-				Email     string `json:"email"`
-				Emailed   bool   `json:"emailed"`
-				ExpiresIn int    `json:"expires_in"`
+				Code      string      `json:"code"`
+				Email     string      `json:"email"`
+				Emailed   bool        `json:"emailed"`
+				ExpiresIn flexSeconds `json:"expires_in"`
 			}
 			if err := json.Unmarshal(body, &out); err != nil {
 				e := fmt.Errorf("couldn't read the response: %w", err)
-				fmt.Println(e)
 				return e
 			}
 
@@ -149,14 +150,12 @@ them here would mean a read-only listing hands out live credentials.`,
 			resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+memberEndpoint, nil)
 			if err != nil {
 				e := common.TransportError("list members", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			body, err := common.CheckResponse(resp, "list members")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -174,7 +173,6 @@ them here would mean a read-only listing hands out live credentials.`,
 			}
 			if err := json.Unmarshal(body, &out); err != nil {
 				e := fmt.Errorf("couldn't read the list response: %w", err)
-				fmt.Println(e)
 				return e
 			}
 
@@ -238,7 +236,6 @@ next renewal is refused.`,
 				e := fmt.Errorf("Couldn't remove: give either a username or --email, not both.\n" +
 					"Hint: `drift account member remove erica` removes a member;\n" +
 					"      `drift account member remove --email erica@example.com` withdraws an invite.")
-				fmt.Println(e)
 				return e
 			}
 
@@ -256,13 +253,11 @@ next renewal is refused.`,
 				common.APIBaseURL+memberEndpoint+"?"+q.Encode(), nil)
 			if err != nil {
 				e := common.TransportError("remove the member", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "remove the member"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 

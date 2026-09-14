@@ -22,11 +22,19 @@ func GetDeleteCmd() *cobra.Command {
 		Short:   "Delete your account and everything in it (irreversible)",
 		Args:    cobra.MaximumNArgs(1),
 		Example: "  drift account delete\n  drift account delete alice --yes",
-		Run: func(cmd *cobra.Command, args []string) {
+		// RunE, not Run. Every refusal here — not logged in, --yes without the
+		// name, a name that does not match — could only be printed and returned,
+		// which exits 0. So a script whose delete was REFUSED read as one whose
+		// delete succeeded, which on this command is the most misleading answer
+		// available: the caller concludes the account is gone.
+		//
+		// The cancellations below stay a plain `return nil`. A person answering
+		// "no" is not an error, and exiting non-zero on a deliberate cancel would
+		// make the safe answer look like a failure.
+		RunE: func(cmd *cobra.Command, args []string) error {
 			username := common.GetUsername()
 			if username == "" {
-				fmt.Println("You are not logged in — run `drift account login` first.")
-				return
+				return fmt.Errorf("you are not logged in — run `drift account login` first")
 			}
 
 			// --yes drops the PROMPTS. It must never drop the identity check,
@@ -38,13 +46,13 @@ func GetDeleteCmd() *cobra.Command {
 			// be friction with no extra proof of intent.
 			if yes {
 				if len(args) == 0 {
-					fmt.Printf("Refusing to delete account '%s': --yes skips the prompts, so the account name must be given on the command line.\n"+
-						"  drift account delete %s --yes\n", username, username)
-					return
+					//nolint:staticcheck // ST1005: user-facing copy, printed as written.
+					return fmt.Errorf("Refusing to delete account '%s': --yes skips the prompts, so the account name must be given on the command line.\n"+
+						"  drift account delete %s --yes", username, username)
 				}
 				if args[0] != username {
-					fmt.Printf("Refusing to delete account '%s': you named '%s'.\n", username, args[0])
-					return
+					//nolint:staticcheck // ST1005: user-facing copy, printed as written.
+					return fmt.Errorf("Refusing to delete account '%s': you named '%s'.", username, args[0])
 				}
 			}
 
@@ -57,7 +65,7 @@ func GetDeleteCmd() *cobra.Command {
 				))
 				if first != "y" && first != "yes" {
 					fmt.Println("Deletion cancelled.")
-					return
+					return nil
 				}
 
 				// Second confirmation: type the username verbatim.
@@ -66,26 +74,25 @@ func GetDeleteCmd() *cobra.Command {
 				)
 				if typed != username {
 					fmt.Println("Deletion cancelled — username did not match.")
-					return
+					return nil
 				}
 			}
 
 			resp, err := common.DoRequest(http.MethodDelete, common.APIBaseURL+"/ops/account", nil)
 			if err != nil {
-				fmt.Println(common.TransportError("delete account", err))
-				return
+				return common.TransportError("delete account", err)
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "delete account"); err != nil {
-				fmt.Println(err)
-				return
+				return err
 			}
 
 			// The account (and every session for it) is gone — drop local creds.
 			_ = common.ClearSession()
 
 			fmt.Printf("Account '%s' deleted. Everything tied to it is gone, and the username is free again.\n", username)
+			return nil
 		},
 	}
 

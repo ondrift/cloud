@@ -96,7 +96,6 @@ secrets to ship a function that uses them.`,
 			if len(scopes) == 0 {
 				e := fmt.Errorf("Couldn't create the token: at least one --scope is required.\n" +
 					"Hint: a deploy pipeline usually wants --scope slice:read --scope slice:write.")
-				fmt.Println(e)
 				return e
 			}
 
@@ -109,14 +108,12 @@ secrets to ship a function that uses them.`,
 				common.APIBaseURL+"/ops/account/token", bytes.NewBuffer(payload))
 			if err != nil {
 				e := common.TransportError("create the token", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			body, err := common.CheckResponse(resp, "create the token")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -128,7 +125,6 @@ secrets to ship a function that uses them.`,
 			}
 			if err := json.Unmarshal(body, &out); err != nil {
 				e := fmt.Errorf("couldn't read the response: %w", err)
-				fmt.Println(e)
 				return e
 			}
 
@@ -168,14 +164,12 @@ and a listing that hid the answer would be useless exactly when it matters.`,
 				common.APIBaseURL+"/ops/account/token", nil)
 			if err != nil {
 				e := common.TransportError("list tokens", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			body, err := common.CheckResponse(resp, "list tokens")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -190,7 +184,6 @@ and a listing that hid the answer would be useless exactly when it matters.`,
 			}
 			if err := json.Unmarshal(body, &rows); err != nil {
 				e := fmt.Errorf("couldn't read the list response: %w", err)
-				fmt.Println(e)
 				return e
 			}
 			if len(rows) == 0 {
@@ -249,13 +242,11 @@ The record is kept rather than deleted, so the token still appears in
 				common.APIBaseURL+"/ops/account/token", bytes.NewBuffer(payload))
 			if err != nil {
 				e := common.TransportError("revoke the token", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "revoke the token"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 			fmt.Printf("Token %q revoked\n", args[0])

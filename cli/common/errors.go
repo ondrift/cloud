@@ -10,17 +10,34 @@
 //
 //	resp, err := common.DoRequest(http.MethodPost, url, body)
 //	if err != nil {
-//	    fmt.Println(common.TransportError("create slice", err))
-//	    return
+//	    return common.TransportError("create slice", err)
 //	}
 //	defer resp.Body.Close()
 //
 //	respBody, err := common.CheckResponse(resp, "create slice")
 //	if err != nil {
-//	    fmt.Println(err)
-//	    return
+//	    return err
 //	}
 //	// ... use respBody
+//
+// # A HANDLER RETURNS ITS ERROR AND DOES NOT PRINT IT
+//
+// The example above used to print and then return, and so did a hundred-odd
+// call sites — while `main()` prints whatever a command returns. So every
+// failing command said the same thing twice, once on stdout from the handler
+// and once on stderr from main, which reads as a bug in the tool:
+//
+//	$ drift backbone nosql read --key definitely-not-there
+//	Couldn't read document: not found.
+//	  DRIFT-1003 · drift doctor explain DRIFT-1003
+//	Couldn't read document: not found.
+//	  DRIFT-1003 · drift doctor explain DRIFT-1003
+//
+// One convention, and it settles both halves: the handler RETURNS, main prints
+// once to stderr and exits 1. An error belongs on stderr, and returning is also
+// what makes the process exit non-zero — several commands were cobra `Run`
+// handlers with no error channel at all, so a refused delete or a failed deploy
+// exited 0 and every `&&` after it carried on.
 package common
 
 import (
@@ -35,7 +52,8 @@ import (
 )
 
 // APIError is the humane rendering of a non-2xx response from the Drift API.
-// It implements the error interface; callers should just `fmt.Println(err)`.
+// It implements the error interface; a handler should just `return err` and let
+// main print it — see the convention on the package comment above.
 type APIError struct {
 	// Op is a short, lowercase, imperative description of what the CLI
 	// was trying to do ("create slice", "deploy atomic function"). Used
@@ -327,10 +345,11 @@ func extractDetail(body []byte) string {
 //
 // The operator renders a refusal with http.Error, so it goes out as text/plain
 // and the api forwards it verbatim — a second free slice really does answer 409
-// with the body `only one free hacker slice is allowed per account`. Reading only
-// JSON discarded that and left the user with "that conflicts with existing
-// state", which names no rule, suggests nothing to do, and reads like a platform
-// fault rather than a per-account limit working exactly as designed.
+// with the body `the free tier is one slice per account, and you already have
+// one. …`. Reading only JSON discarded that and left the user with "that
+// conflicts with existing state", which names no rule, suggests nothing to do,
+// and reads like a platform fault rather than a per-account limit working
+// exactly as designed.
 //
 // Scoped to 4xx deliberately. A 4xx is the server telling the USER what they did
 // wrong, which is precisely the text worth surfacing. A 5xx is the platform being

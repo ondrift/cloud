@@ -238,12 +238,20 @@ func TestMaintenanceMessage_NeverAdvisesLoggingOut(t *testing.T) {
 
 // THE regression. The operator refuses with http.Error, so a refusal goes out as
 // text/plain and the api forwards it verbatim: a second free slice answers 409
-// with the body `only one free hacker slice is allowed per account`. Parsing only
-// JSON discarded that, and the user saw "that conflicts with existing state" —
-// which names no rule, suggests nothing to do, and reads as a platform fault
-// rather than as the one-per-account limit working exactly as designed.
+// with the body below. Parsing only JSON discarded that, and the user saw "that
+// conflicts with existing state" — which names no rule, suggests nothing to do,
+// and reads as a platform fault rather than as the free-tier limit working
+// exactly as designed.
+//
+// The fixture is the message the platform SENDS TODAY (db.ErrOneFreeSlice). It
+// used to be "only one free hacker slice is allowed per account", which a person
+// reads as "you may not have another slice" and stops — the platform now says
+// that a second slice is allowed and priced, and a fixture quoting the old
+// wording would leave this file describing a refusal nobody receives.
 func TestDetailForStatus_PlainTextBodyIsTheReason(t *testing.T) {
-	const reason = "only one free hacker slice is allowed per account"
+	const reason = "the free tier is one slice per account, and you already have one. " +
+		"A second slice is allowed and is priced on its shape — run `drift slice create <name>` " +
+		"without --free to choose that shape and see the cost before anything is charged"
 	if got := detailForStatus(http.StatusConflict, []byte(reason+"\n")); got != reason {
 		t.Errorf("detailForStatus(409, plain text) = %q, want %q", got, reason)
 	}
@@ -268,7 +276,7 @@ func TestAPIError_AConflictCarriesACodeLikeEveryOtherStatus(t *testing.T) {
 	err := &APIError{
 		Op:     "create slice",
 		Status: http.StatusConflict,
-		Detail: "only one free hacker slice is allowed per account",
+		Detail: "the free tier is one slice per account, and you already have one",
 	}
 	if got := err.code(); got != "DRIFT-1013" {
 		t.Errorf("code() = %q, want DRIFT-1013", got)

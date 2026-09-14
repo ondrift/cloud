@@ -37,7 +37,6 @@ func blobPutCmd() *cobra.Command {
 			f, err := os.Open(file)
 			if err != nil {
 				e := fmt.Errorf("Couldn't put blob: failed to open %s (%v)", file, err)
-				fmt.Println(e)
 				return e
 			}
 			defer f.Close()
@@ -46,13 +45,11 @@ func blobPutCmd() *cobra.Command {
 			resp, err := common.DoRequestWithContentType(http.MethodPost, url, "application/octet-stream", f)
 			if err != nil {
 				e := common.TransportError("put blob", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "put blob"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -68,28 +65,34 @@ func blobGetCmd() *cobra.Command {
 		Short:   "Download a blob and write it to stdout",
 		Example: "  drift backbone blob get assets logo.png > logo.png\n  drift backbone blob get uploads report.pdf > report.pdf",
 		Args:    cobra.ExactArgs(2),
-		Run: func(cmd *cobra.Command, args []string) {
+		// THE ONE COMMAND WHOSE STDOUT IS NOT FOR READING: it streams the blob
+		// itself, so an error mixed into that stream would corrupt the file a
+		// caller is redirecting. This handler was alone in getting that right,
+		// writing to stderr by hand and exiting 1.
+		//
+		// RunE gives it the same outcome through the shared path — main prints to
+		// stderr and exits 1 — and adds what os.Exit skipped: the deferred
+		// `resp.Body.Close()` below now actually runs.
+		RunE: func(cmd *cobra.Command, args []string) error {
 			bucket, key := args[0], args[1]
 
 			url := fmt.Sprintf("%s/ops/backbone/blob/get?bucket=%s&key=%s", common.APIBaseURL, url.QueryEscape(bucket), url.QueryEscape(key))
 			resp, err := common.DoRequest(http.MethodGet, url, nil)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, common.TransportError("get blob", err))
-				os.Exit(1)
+				return common.TransportError("get blob", err)
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				if _, err := common.CheckResponse(resp, "get blob"); err != nil {
-					fmt.Fprintln(os.Stderr, err)
-					os.Exit(1)
+					return err
 				}
 			}
 
 			if _, err := io.Copy(os.Stdout, resp.Body); err != nil {
-				fmt.Fprintf(os.Stderr, "Couldn't get blob: error while streaming the body (%v)\n", err)
-				os.Exit(1)
+				return fmt.Errorf("Couldn't get blob: error while streaming the body (%v)", err) //nolint:staticcheck // ST1005: user-facing copy.
 			}
+			return nil
 		},
 	}
 }
@@ -107,14 +110,12 @@ func blobListCmd() *cobra.Command {
 			resp, err := common.DoRequest(http.MethodGet, url, nil)
 			if err != nil {
 				e := common.TransportError("list blobs", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			b, err := common.CheckResponse(resp, "list blobs")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -144,13 +145,11 @@ func blobDeleteCmd() *cobra.Command {
 			resp, err := common.DoJSONRequest(http.MethodPost, url, nil)
 			if err != nil {
 				e := common.TransportError("delete blob", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "delete blob"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 

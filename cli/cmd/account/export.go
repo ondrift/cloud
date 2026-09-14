@@ -136,7 +136,6 @@ store.`,
 			username := common.GetUsername()
 			if username == "" {
 				e := fmt.Errorf("Couldn't export: you're not logged in. Run `drift account login` first.")
-				fmt.Println(e)
 				return e
 			}
 
@@ -162,7 +161,6 @@ store.`,
 			f, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 			if err != nil {
 				e := fmt.Errorf("Couldn't export: could not create %s (%v)", out, err)
-				fmt.Println(e)
 				return e
 			}
 			defer f.Close()
@@ -177,7 +175,6 @@ store.`,
 			slices, err := sliceCmd.FetchSlices()
 			if err != nil {
 				_ = zw.Close()
-				fmt.Println(err)
 				return err
 			}
 

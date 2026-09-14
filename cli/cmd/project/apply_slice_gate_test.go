@@ -115,6 +115,72 @@ func TestApply_ChecksReadinessBeforeDeploying(t *testing.T) {
 	}
 }
 
+// A PLAN WRITES NOTHING. It said "nothing was deployed" and had just resized the
+// live slice.
+//
+// `--plan` and `drift file simulate` ran the reference check, and the check
+// renamed idle slots to make room — a repair that belongs to apply. The rename
+// is small, cheap and reversible, which is exactly why it went unnoticed: the
+// plan even printed what it had done, one line above the line claiming it had
+// done nothing.
+//
+// The slice here holds one slot under a name the manifest does not use, and the
+// manifest names one the slice does not have — the precise shape that triggers
+// the rename. Asserting on the RECORDER rather than on the output, because the
+// question is what the command did to the slice, not what it said.
+func TestPlan_ReportsWhatIsMissingAndChangesNothing(t *testing.T) {
+	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ops/slice/get" {
+			_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{"atomic":{"functions":[` +
+				`{"name":"get:slot-1","route":"slot-1","method":"get","memory_bytes":33554432}]}}}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	applyIn(t, "slice: demo\natomic:\n  functions:\n"+
+		"    - route: hello\n      method: get\n      handler: GetHello\n      memory: 32MB\n      dir: atomic\n",
+		"atomic")
+	if err := os.WriteFile(filepath.Join(".", "atomic", "hello.js"),
+		[]byte("function GetHello(req) { return [200, 'OK', {}]; }\nmodule.exports = { GetHello };\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runPlanCmd(t); err != nil {
+		t.Fatalf("a plan must not fail: %v", err)
+	}
+
+	// It read the slice — otherwise it had nothing to compare and this proves
+	// nothing.
+	if rec.count("GET /ops/slice/get") == 0 {
+		t.Fatal("the plan never read the live slice, so it compared nothing")
+	}
+	// And it wrote nothing at all. Every mutating endpoint, not just resize:
+	// whatever a future plan reaches for, a plan may not change a slice.
+	for _, forbidden := range []string{
+		"POST /ops/slice/resize",
+		"POST /ops/slice/create",
+		"POST /ops/atomic",
+		"POST /ops/canvas",
+	} {
+		if n := rec.count(forbidden); n != 0 {
+			t.Errorf("A PLAN ISSUED %d × %q. It reports what would change and changes "+
+				"nothing — `drift file simulate` is the same code path.", n, forbidden)
+		}
+	}
+}
+
+// runPlanCmd drives the real command with --plan, so the flag wiring is under
+// test alongside the body.
+func runPlanCmd(t *testing.T) error {
+	t.Helper()
+	cmd := getApplyCmd()
+	cmd.SetArgs([]string{"--plan"})
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	return cmd.Execute()
+}
+
 // applyIn writes a Driftfile and its named directories into a temp dir and makes
 // that the working directory, because `drift file apply` reads ./Driftfile.
 func applyIn(t *testing.T, body string, dirs ...string) {

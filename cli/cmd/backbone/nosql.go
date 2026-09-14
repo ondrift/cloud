@@ -32,14 +32,12 @@ func nosqlWriteCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if data == "" {
 				e := fmt.Errorf("Couldn't write document: --data is required.")
-				fmt.Println(e)
 				return e
 			}
 
 			var body map[string]any
 			if err := json.Unmarshal([]byte(data), &body); err != nil {
 				e := fmt.Errorf("Couldn't write document: that doesn't look like valid JSON — %v", err)
-				fmt.Println(e)
 				return e
 			}
 			if collection != "" {
@@ -54,13 +52,11 @@ func nosqlWriteCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("write document", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "write document"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -91,13 +87,11 @@ func nosqlDropCmd() *cobra.Command {
 			resp, err := common.DoJSONRequest(http.MethodPost, url, nil)
 			if err != nil {
 				e := common.TransportError("drop collection", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "drop collection"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 			fmt.Printf("Collection %q dropped\n", name)
@@ -177,7 +171,6 @@ rather than merely the oldest.`,
 			for {
 				got, err := fetchNoSQLPage(collection, field, value, cursor, page)
 				if err != nil {
-					fmt.Println(err)
 					return err
 				}
 				docs = append(docs, got...)
@@ -187,14 +180,12 @@ rather than merely the oldest.`,
 				next := storageKeyOf(got[len(got)-1])
 				if next == "" {
 					e := fmt.Errorf("couldn't page %q: a document came back with no _key", collection)
-					fmt.Println(e)
 					return e
 				}
 				// A full page that does not move the cursor would loop forever. Say so
 				// rather than printing a short list as if it were the whole collection.
 				if next == cursor {
 					e := fmt.Errorf("couldn't page %q: the collection did not advance past _key %s", collection, cursor)
-					fmt.Println(e)
 					return e
 				}
 				cursor = next
@@ -241,7 +232,6 @@ func nosqlReadCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if key == "" {
 				e := fmt.Errorf("Couldn't read document: --key is required.\nHint: to browse every document in a collection instead, use 'drift backbone nosql list --collection <name>'.")
-				fmt.Println(e)
 				return e
 			}
 
@@ -253,14 +243,12 @@ func nosqlReadCmd() *cobra.Command {
 			resp, err := common.DoRequest(http.MethodGet, reqURL, nil)
 			if err != nil {
 				e := common.TransportError("read document", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			b, err := common.CheckResponse(resp, "read document")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 

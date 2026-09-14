@@ -32,7 +32,6 @@ func secretSetCmd() *cobra.Command {
 			parts := strings.SplitN(args[0], "=", 2)
 			if len(parts) != 2 || parts[0] == "" {
 				e := fmt.Errorf("Couldn't store secret: argument must be in KEY=VALUE format.")
-				fmt.Println(e)
 				return e
 			}
 			name, value := parts[0], parts[1]
@@ -45,13 +44,11 @@ func secretSetCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("store secret", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "store secret"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -75,14 +72,12 @@ func secretGetCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("get secret", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			b, err := common.CheckResponse(resp, "get secret")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -106,14 +101,12 @@ func secretListCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("list secrets", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			b, err := common.CheckResponse(resp, "list secrets")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -145,13 +138,11 @@ func secretDeleteCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("delete secret", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "delete secret"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 

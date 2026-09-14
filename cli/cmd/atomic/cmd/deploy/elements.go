@@ -312,7 +312,7 @@ func DeployGoElement(el Element, digest string, quiet bool) error {
 			Element: el.Name, Stream: f.Spec.Stream, Response: f.Spec.Response,
 			Secrets:  f.Spec.Secrets,
 			Env:      f.Spec.Env,
-			Triggers: triggersFor(f), Digest: digest,
+			Triggers: triggersFor(f), Digest: DeployDigest(digest, f.Spec),
 			SourcePath: bin, UserSourcePath: userSrc,
 		})
 	}

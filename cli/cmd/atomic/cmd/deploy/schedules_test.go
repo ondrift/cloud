@@ -50,13 +50,18 @@ func TestScheduleTriggerFor_UndeclaredFunctionGetsNothing(t *testing.T) {
 	}
 }
 
-// With nothing published at all — which is every `drift atomic deploy`, since
-// that command never reads a Driftfile — no function is scheduled.
-func TestScheduleTriggerFor_NoDriftfileMeansNoSchedules(t *testing.T) {
+// With nothing published at all, no function is scheduled.
+//
+// This used to say "which is every `drift atomic deploy`, since that command
+// never reads a Driftfile" — and that was wrong twice over. It does read one
+// (`FunctionSpecsInDir` walks up to the project manifest), and it had simply
+// never published what it read, so every `cron:` was dropped on that path. The
+// case below is now what it always described: a caller that published nothing.
+func TestScheduleTriggerFor_NothingPublishedMeansNoSchedules(t *testing.T) {
 	SetDeclaredSchedules(nil)
 
 	if got := scheduleTriggerFor("anything", "get"); got != nil {
-		t.Errorf("a deploy with no Driftfile must schedule nothing, got %+v", got)
+		t.Errorf("a deploy that published no schedules must schedule nothing, got %+v", got)
 	}
 }
 

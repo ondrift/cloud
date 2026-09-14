@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/ondrift/cloud/cli/common"
@@ -74,10 +73,17 @@ func getAuthSetCmd() *cobra.Command {
 			"  drift slice auth set --user alice --user bob --realm \"Staging\"\n" +
 			"  printf 'hunter2\\n' | drift slice auth set --user visitor --password-stdin",
 		Args: cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
+		// RunE, not Run with os.Exit. The exit CODE was right here — unlike the
+		// `Run` handlers elsewhere that printed and returned 0 — but two other
+		// things were not: the message went to stdout rather than stderr, and
+		// `os.Exit` inside the handler skips every deferred call, including the
+		// `resp.Body.Close()` below it.
+		//
+		// Returning gives one convention across the whole CLI: the handler
+		// returns, main() prints once to stderr and exits 1.
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(users) == 0 {
-				fmt.Println("Name at least one user with --user; the gate needs someone who can get in.")
-				os.Exit(1)
+				return fmt.Errorf("name at least one user with --user; the gate needs someone who can get in")
 			}
 
 			cfg := siteAuthConfig{Enabled: true, Realm: realm}
@@ -89,34 +95,29 @@ func getAuthSetCmd() *cobra.Command {
 					pw = common.PromptForInputHidden(fmt.Sprintf("Password for %s", name))
 				}
 				if pw == "" {
-					fmt.Printf("No password given for %s.\n", name)
-					os.Exit(1)
+					return fmt.Errorf("no password given for %s", name)
 				}
 				cfg.Users = append(cfg.Users, siteAuthUser{Name: name, Password: pw})
 			}
 
 			body, err := json.Marshal(cfg)
 			if err != nil {
-				fmt.Println("Failed to prepare the request:", err)
-				os.Exit(1)
+				return fmt.Errorf("failed to prepare the request: %w", err)
 			}
 			resp, err := common.DoRequestWithContentType(http.MethodPost,
 				common.APIBaseURL+"/ops/slice/auth", "application/json", bytes.NewReader(body))
 			if err != nil {
-				fmt.Printf("Couldn't enable the site gate: %v\n", err)
-				os.Exit(1)
+				return fmt.Errorf("Couldn't enable the site gate: %w", err) //nolint:staticcheck // ST1005: user-facing copy.
 			}
 			defer resp.Body.Close()
 
 			raw, err := common.CheckResponse(resp, "enable the site gate")
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				return err
 			}
 			var out siteAuthConfig
 			if err := json.Unmarshal(raw, &out); err != nil {
-				fmt.Println("Couldn't enable the site gate: the platform sent a reply we couldn't read.")
-				os.Exit(1)
+				return fmt.Errorf("Couldn't enable the site gate: the platform sent a reply we couldn't read") //nolint:staticcheck // ST1005: user-facing copy.
 			}
 
 			names := make([]string, 0, len(out.Users))
@@ -128,6 +129,7 @@ func getAuthSetCmd() *cobra.Command {
 				fmt.Printf("  Realm: %s\n", out.Realm)
 			}
 			fmt.Println("  Visitors without the password now get a 401 instead of the site.")
+			return nil
 		},
 	}
 	cmd.Flags().StringArrayVarP(&users, "user", "u", nil,
@@ -145,29 +147,28 @@ func getAuthListCmd() *cobra.Command {
 		Short:   "Show whether the gate is on, and who can sign in",
 		Example: "  drift slice auth list",
 		Args:    cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
+		// RunE — see the note on `set` above for why os.Exit is the wrong tool
+		// inside a handler that has deferred work.
+		RunE: func(cmd *cobra.Command, args []string) error {
 			resp, err := common.DoRequest(http.MethodGet,
 				common.APIBaseURL+"/ops/slice/auth", nil)
 			if err != nil {
-				fmt.Printf("Couldn't read the site gate: %v\n", err)
-				os.Exit(1)
+				return fmt.Errorf("Couldn't read the site gate: %w", err) //nolint:staticcheck // ST1005: user-facing copy.
 			}
 			defer resp.Body.Close()
 
 			raw, err := common.CheckResponse(resp, "read the site gate")
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				return err
 			}
 			var out siteAuthConfig
 			if err := json.Unmarshal(raw, &out); err != nil {
-				fmt.Println("Couldn't read the site gate: the platform sent a reply we couldn't read.")
-				os.Exit(1)
+				return fmt.Errorf("Couldn't read the site gate: the platform sent a reply we couldn't read") //nolint:staticcheck // ST1005: user-facing copy.
 			}
 
 			if !out.Enabled {
 				fmt.Println("No site gate. The site is public.")
-				return
+				return nil
 			}
 			fmt.Println("Site gate is ON.")
 			if out.Realm != "" {
@@ -176,6 +177,7 @@ func getAuthListCmd() *cobra.Command {
 			for _, u := range out.Users {
 				fmt.Printf("  %s\n", u.Name)
 			}
+			return nil
 		},
 	}
 }
@@ -189,29 +191,31 @@ func getAuthDisableCmd() *cobra.Command {
 			"whole point of the gate is that the site is not ready to be seen.",
 		Example: "  drift slice auth disable",
 		Args:    cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
+		// RunE — see the note on `set` above. The cancellation stays `nil`: a
+		// person answering "no" chose the safe outcome, and exiting non-zero on it
+		// would make that read as a failure.
+		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("This makes the site publicly reachable by anyone with the URL.")
 			answer := strings.ToLower(strings.TrimSpace(
 				common.PromptForInput("Remove the site gate? [y/N]"),
 			))
 			if answer != "y" && answer != "yes" {
 				fmt.Println("Left as it was.")
-				return
+				return nil
 			}
 
 			resp, err := common.DoRequest(http.MethodDelete,
 				common.APIBaseURL+"/ops/slice/auth", nil)
 			if err != nil {
-				fmt.Printf("Couldn't remove the site gate: %v\n", err)
-				os.Exit(1)
+				return fmt.Errorf("Couldn't remove the site gate: %w", err) //nolint:staticcheck // ST1005: user-facing copy.
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "remove the site gate"); err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				return err
 			}
 			fmt.Println("Site gate removed. The site is public again.")
+			return nil
 		},
 	}
 }

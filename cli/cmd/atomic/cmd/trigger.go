@@ -44,14 +44,12 @@ func triggerListCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("list triggers", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			b, err := common.CheckResponse(resp, "list triggers")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -108,13 +106,11 @@ func triggerRegisterQueueCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("register the queue trigger", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "register the queue trigger"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -154,13 +150,11 @@ func triggerRegisterScheduleCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("register the schedule trigger", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "register the schedule trigger"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -192,13 +186,11 @@ func triggerUnregisterCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("unregister the trigger", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "unregister the trigger"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 

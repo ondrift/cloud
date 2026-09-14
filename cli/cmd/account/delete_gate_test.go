@@ -55,11 +55,29 @@ func loggedInAs(t *testing.T, who string) {
 // runDelete executes the command with args and returns everything it printed.
 func runDelete(t *testing.T, args ...string) string {
 	t.Helper()
+	out, _ := runDeleteE(t, args...)
+	return out
+}
+
+// runDeleteE is runDelete plus the ERROR the command returned, which is what
+// decides the process's exit code.
+//
+// The text and the exit code are two different claims and only one of them was
+// ever asserted here. The handler was a cobra `Run`, which has no error channel:
+// it printed a refusal and returned, so the process exited 0 and a script read a
+// REFUSED delete as a completed one. On this command that is the worst available
+// answer — the caller concludes the account is gone.
+func runDeleteE(t *testing.T, args ...string) (string, error) {
+	t.Helper()
 	cmd := GetDeleteCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetArgs(args)
+	// The root sets both in the real binary; set them here so the captured text
+	// is the command's own message rather than cobra's usage dump.
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
 
 	stdout := os.Stdout
 	r, w, err := os.Pipe()
@@ -73,7 +91,7 @@ func runDelete(t *testing.T, args ...string) string {
 
 	var printed bytes.Buffer
 	_, _ = printed.ReadFrom(r)
-	return printed.String() + out.String() + errString(execErr)
+	return printed.String() + out.String() + errString(execErr), execErr
 }
 
 func errString(err error) string {
@@ -87,12 +105,18 @@ func errString(err error) string {
 func TestYesWithoutTheAccountNameRefuses(t *testing.T) {
 	loggedInAs(t, "alice")
 
-	got := runDelete(t, "--yes")
+	got, err := runDeleteE(t, "--yes")
 	if !strings.Contains(got, "Refusing to delete account") {
 		t.Errorf("--yes with no name did not refuse; it said: %s", got)
 	}
 	if !strings.Contains(got, "drift account delete alice --yes") {
 		t.Errorf("the refusal does not show what to run instead: %s", got)
+	}
+	// AND IT EXITS NON-ZERO. A refusal that exits 0 is read by every script as
+	// a completed delete.
+	if err == nil {
+		t.Error("the refusal returned no error, so the process exits 0 and " +
+			"`drift account delete --yes && …` carries on as though the account were gone")
 	}
 }
 
@@ -101,12 +125,28 @@ func TestYesWithoutTheAccountNameRefuses(t *testing.T) {
 func TestYesWithTheWrongAccountNameRefuses(t *testing.T) {
 	loggedInAs(t, "alice")
 
-	got := runDelete(t, "bob", "--yes")
+	got, err := runDeleteE(t, "bob", "--yes")
 	if !strings.Contains(got, "Refusing to delete account") {
 		t.Errorf("--yes with the wrong name did not refuse; it said: %s", got)
 	}
 	if !strings.Contains(got, "bob") || !strings.Contains(got, "alice") {
 		t.Errorf("the refusal names neither what was asked for nor what is logged in: %s", got)
+	}
+	if err == nil {
+		t.Error("the refusal returned no error, so the process exits 0")
+	}
+}
+
+// Not being logged in is a refusal too, and it has the same exit-code claim.
+func TestDeleteWithNoSessionRefusesAndExitsNonZero(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	got, err := runDeleteE(t, "--yes")
+	if err == nil {
+		t.Fatalf("deleting with no session returned no error; it said: %s", got)
+	}
+	if !strings.Contains(got, "drift account login") {
+		t.Errorf("the refusal does not name the way forward: %s", got)
 	}
 }
 

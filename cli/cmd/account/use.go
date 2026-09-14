@@ -67,7 +67,6 @@ nothing on disk, which is what makes it safe in a script:
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := common.UseAccount(args[0]); err != nil {
-				fmt.Println(err)
 				return err
 			}
 			slice := common.ActiveSliceFor(args[0])

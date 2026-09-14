@@ -56,7 +56,17 @@ func GetCreateCmd() *cobra.Command {
 		Use:   "create",
 		Short: "Create a new account",
 		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
+		// RunE, not Run. A `Run` handler has no error channel, so every refusal
+		// below could only be printed and returned — and that exits 0. A signup
+		// that failed reported success to the shell, so `drift account create …
+		// && drift slice create app` went on to run against no session at all,
+		// and `set -e` could not help because nothing failed as far as the shell
+		// could see. `drift account login` had exactly this defect and was fixed;
+		// the command beside it kept it.
+		//
+		// Returning is also what removes the doubled message: main() prints the
+		// error once, to stderr, where an error belongs.
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if username == "" {
 				username = common.PromptForInput("Username")
 			}
@@ -84,8 +94,7 @@ func GetCreateCmd() *cobra.Command {
 			if interactivePassword {
 				repeatPassword := common.PromptForInputHidden("Repeat password")
 				if password != repeatPassword {
-					fmt.Println("Those passwords don't match. Try again.")
-					return
+					return fmt.Errorf("those passwords don't match — try again")
 				}
 			}
 
@@ -97,13 +106,11 @@ func GetCreateCmd() *cobra.Command {
 			// does not carry, so a password can clear here and still
 			// be refused on receipt, with a message saying why.
 			if err := common.ValidatePassword(password); err != nil {
-				fmt.Println(err)
-				return
+				return err
 			}
 
 			if !usernameRe.MatchString(username) {
-				fmt.Println("Username must be 2-32 lowercase letters and numbers (no hyphens or special characters).")
-				return
+				return fmt.Errorf("username must be 2-32 lowercase letters and numbers (no hyphens or special characters)")
 			}
 
 			// Step 1: initiate signup — sends OTP to the user's email.
@@ -121,14 +128,12 @@ func GetCreateCmd() *cobra.Command {
 			client := &http.Client{Timeout: 30 * time.Second}
 			resp, err := client.Post(common.APIBaseURL+"/signup/initiate", "application/json", bytes.NewBuffer(initiatePayload))
 			if err != nil {
-				fmt.Println(common.TransportError("sign up", err))
-				return
+				return common.TransportError("sign up", err)
 			}
 			body, err := common.CheckResponse(resp, "sign up")
 			resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 			if err != nil {
-				fmt.Println(err)
-				return
+				return err
 			}
 
 			// Step 2: prompt for OTP and verify.
@@ -164,14 +169,12 @@ func GetCreateCmd() *cobra.Command {
 
 			resp, err = client.Post(common.APIBaseURL+"/signup/verify", "application/json", bytes.NewBuffer(verifyPayload))
 			if err != nil {
-				fmt.Println(common.TransportError("verify your signup", err))
-				return
+				return common.TransportError("verify your signup", err)
 			}
 			body, err = common.CheckResponse(resp, "verify your signup")
 			resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 			if err != nil {
-				fmt.Println(err)
-				return
+				return err
 			}
 
 			// Parse tokens and save session.
@@ -180,12 +183,10 @@ func GetCreateCmd() *cobra.Command {
 				RefreshToken string `json:"refresh_token"`
 			}
 			if err := json.Unmarshal(body, &tokenResp); err != nil || tokenResp.AccessToken == "" {
-				fmt.Println("Couldn't finish signing up: the API didn't return valid tokens. That's on us; please try again.")
-				return
+				return fmt.Errorf("Couldn't finish signing up: the API didn't return valid tokens. That's on us; please try again")
 			}
 			if err := common.SaveSession(tokenResp.AccessToken, tokenResp.RefreshToken); err != nil {
-				fmt.Println("Signed up, but couldn't save your session to disk:", err)
-				return
+				return fmt.Errorf("signed up, but couldn't save your session to disk: %w", err)
 			}
 
 			fmt.Printf("\n\033[48;2;241;160;6m"+" "+"\033[0m"+" Welcome to Drift, %s!\n", username)
@@ -194,6 +195,7 @@ func GetCreateCmd() *cobra.Command {
 				fmt.Println(hint)
 			}
 			fmt.Println("Happy building!")
+			return nil
 		},
 		Example: `  drift account create
   drift account create --username alice --email alice@example.com
