@@ -155,7 +155,17 @@ func SaveActiveSlice(name string) error {
 }
 
 // GetActiveSlice returns the active slice name, or empty string if none set.
+//
+// DRIFT_SLICE WINS, and it has to. A token carries an account rather than a
+// slice, so a scripted caller has no `drift slice use` to have run and no session
+// file to have recorded it in. Reading the environment first also makes the
+// override work the way every other environment override in this CLI does: an
+// explicit value beats a stored one, so a pipeline on a developer's own machine
+// targets the slice it names rather than whichever one that developer last used.
 func GetActiveSlice() string {
+	if s := strings.TrimSpace(os.Getenv(SliceEnv)); s != "" {
+		return s
+	}
 	data, err := readSessionMap()
 	if err != nil {
 		return ""
@@ -184,10 +194,15 @@ func decodeTokenClaims(token string, v any) error {
 	return json.Unmarshal(decoded, v)
 }
 
-// GetUsername extracts the username from the stored JWT access token.
-// Returns an empty string if the session or token is missing/unparseable.
+// GetUsername extracts the username from the JWT access token this invocation is
+// acting with.
+//
+// Returns an empty string if there is no session and no exchanged token, or if
+// the token cannot be parsed. A PAT caller has no session file, so the name comes
+// out of the token the exchange produced — which carries the same `username`
+// claim a login's does, because it is the same kind of token.
 func GetUsername() string {
-	token, _, err := GetTokenFromSession()
+	token, _, err := currentAccessToken()
 	if err != nil || token == "" {
 		return ""
 	}
@@ -206,6 +221,12 @@ func GetUsername() string {
 // the token can't be parsed, since none of those give the caller anything
 // usable either.
 func TokenExpired() bool {
+	// A PAT caller's access token is minted on demand and re-minted on a 401, so
+	// "expired" is never a thing they need to act on — and answering true would
+	// send a pipeline down a re-login path meant for a person.
+	if PersonalAccessToken() != "" {
+		return false
+	}
 	token, _, err := GetTokenFromSession()
 	if err != nil || token == "" {
 		return true
