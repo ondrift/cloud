@@ -196,6 +196,15 @@ jobs:
         run: |
           set -o pipefail
           go test ./... 2>&1 | tee /tmp/sdk-test.log
+      # The one test that needs a REAL server rather than the local store.
+      #
+      # sdk/conformance runs every case against the in-memory store, so a defect
+      # that is correct locally and wrong on the wire is invisible to it — which
+      # is exactly what PHP's missing status check was. This stands up a loopback
+      # HTTP server and asks what `_call` does with a 404.
+      - name: php — a non-2xx is an error, not a value
+        working-directory: sdk
+        run: php php/status_test.php
       - name: version consistency
         working-directory: sdk
         # Six languages, ONE version. A manifest left behind is the failure this

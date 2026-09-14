@@ -230,9 +230,37 @@ function _backbone_http(string $method, string $path, ?string $body, string $con
     return [$status, $result === false ? null : $result];
 }
 
+/**
+ * Thrown when Backbone answers a non-2xx. See _call for why this exists.
+ *
+ * A class of its own rather than \RuntimeException so a caller can tell a
+ * refusal from the store apart from a bug in their own handler, which is the
+ * distinction that decides whether retrying is sensible.
+ */
+class BackboneError extends \RuntimeException {}
+
 function _call(string $method, string $path, $body = null) {
     if (_get_backbone_url() === '') return _call_local($method, $path, $body);
     [$status, $result] = _backbone_http($method, $path, $body !== null ? json_encode($body) : null, 'application/json');
+
+    // A NON-2XX BODY IS AN ERROR, NOT DATA.
+    //
+    // `$status` was read here and then never consulted again, so a 404, a 401 or
+    // a 500 body came back to the caller AS THE VALUE. `Secret::get` on an
+    // undeclared name returned the refusal text, and a guard shaped like
+    // `if ($token !== '')` took the wrong branch holding an error message.
+    //
+    // PHP was the last of the six SDKs without this check — Go's
+    // callBackboneHTTP has it with a comment saying why, Node's `_call` has it,
+    // and Ruby has `_check_backbone_status!`. `_call_raw` IN THIS FILE already
+    // checked (`$status >= 200 && $status < 300`), which is what makes this an
+    // oversight rather than a decision.
+    if ($status >= 400) {
+        $msg = trim((string) $result);
+        if ($msg === '') $msg = "HTTP $status";
+        throw new BackboneError("drift: backbone $path: $msg");
+    }
+
     if ($status === 204 || $result === null || $result === '') return null;
     $decoded = json_decode($result, true);
     return ($decoded !== null) ? $decoded : $result;
