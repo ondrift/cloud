@@ -37,9 +37,14 @@ var (
 // Driftfile, keyed by function name. Called once by `drift file apply`
 // before any function ships; a nil or empty map clears it.
 //
-// The key is the FUNCTION name, which for an HTTP function is also its route —
-// the deploy paths ship `name = f.Path` (see DeployGoElement). That is what
-// lets the operator resolve the trigger target from the name alone.
+// THE KEY IS THE FULL DECLARED NAME — the composite `method:route`, e.g.
+// `get:cronprobe` — because that is what `normaliseFunctionIdentities` writes
+// into every entry and therefore what `FunctionSpec.Name` holds.
+//
+// It is NOT the route. This doc comment said it was, and the reader in
+// triggersFor believed it, so every declared `cron:` missed the map and was
+// dropped without a word. If this sentence and that lookup ever disagree again,
+// TestADeclaredCronSurvivesTheWholeDeployPath is what says so.
 func SetDeclaredSchedules(byFunction map[string]string) {
 	scheduleMu.Lock()
 	defer scheduleMu.Unlock()

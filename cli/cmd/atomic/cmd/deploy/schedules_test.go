@@ -103,3 +103,59 @@ func TestScheduleTriggerFor_BlankMethodDefaults(t *testing.T) {
 		t.Errorf("want a POST default, got %+v", got)
 	}
 }
+
+// THE TEST THAT WAS MISSING, and every test above it is why it was missed.
+//
+// All of them call scheduleTriggerFor with a key they also wrote, so they prove
+// the lookup works and prove nothing about WHICH key the deploy asks with. The
+// deploy asks through triggersFor, from a FunctionSpec — and it asked with the
+// route half of the name while `drift file apply` filed the schedule under the
+// whole composite. Result: every declared cron in every Driftfile silently
+// dropped, deploy reporting success, found only by deploying one to alpha and
+// watching nothing happen.
+//
+// This goes through triggersFor, with a spec named the way a real manifest names
+// one.
+func TestADeclaredCronSurvivesTheWholeDeployPath(t *testing.T) {
+	t.Cleanup(func() { SetDeclaredSchedules(nil) })
+
+	// The key `drift file apply` publishes: the composite `method:route`, which
+	// is what normaliseFunctionIdentities writes into every entry.
+	SetDeclaredSchedules(map[string]string{"get:cronprobe": "*/1 * * * *"})
+
+	f := ElementFunc{Spec: FunctionSpec{Name: "get:cronprobe", Handler: "GetCronprobe"}}
+	got := triggersFor(f)
+
+	if len(got) != 1 {
+		t.Fatalf("A DECLARED CRON PRODUCED NO TRIGGER. The deploy ships an artifact with "+
+			"no schedule on it and reports success, which is how this shipped dead. got %+v", got)
+	}
+	if got[0].Type != "schedule" || got[0].Schedule != "*/1 * * * *" {
+		t.Errorf("want the declared schedule carried verbatim, got %+v", got[0])
+	}
+	if got[0].Method != "get" {
+		t.Errorf("the schedule must carry the function's own method — the slice's registry "+
+			"keys on (method, path), and a mismatch ticks into a 404 forever. got %q", got[0].Method)
+	}
+}
+
+// A queue-triggered function with a cron gets both, and the schedule is still
+// found by the full name.
+func TestAQueueFunctionKeepsItsQueueTriggerAndItsSchedule(t *testing.T) {
+	t.Cleanup(func() { SetDeclaredSchedules(nil) })
+	SetDeclaredSchedules(map[string]string{"queue:orders": "0 * * * *"})
+
+	f := ElementFunc{Spec: FunctionSpec{Name: "queue:orders", Handler: "HandleOrder"}}
+	got := triggersFor(f)
+
+	if len(got) != 2 {
+		t.Fatalf("a queue function with a cron ships both triggers, got %+v", got)
+	}
+	var kinds []string
+	for _, tr := range got {
+		kinds = append(kinds, tr.Type)
+	}
+	if kinds[0] != "queue" || kinds[1] != "schedule" {
+		t.Errorf("want queue then schedule, got %v", kinds)
+	}
+}

@@ -14,10 +14,15 @@ import (
 // declaredSchedules maps function name → cron expression for every Driftfile
 // entry carrying a `cron:`.
 //
-// The key is the function name because that is what the artifact ships and what
-// the operator resolves the trigger target from — for an HTTP function the
-// deployed name IS its route (`buildTriggerDef` builds
-// `http://atomic:8000/api/<name>`), so no path plumbing is needed here.
+// The key is `name` AFTER normaliseFunctionIdentities has run, so it is the
+// composite `method:route` — `get:cronprobe`, not `cronprobe`. Every entry has
+// one by the time a Manifest exists, whichever spelling the Driftfile used,
+// which is why this reads a single key rather than recomposing one.
+//
+// The other end of that agreement is triggersFor, which must look the schedule
+// up by the SAME string. It did not, for the whole life of this feature: it
+// asked for the route half, missed every time, and shipped an artifact with no
+// trigger on it. TestTheScheduleKeyIsTheKeyTheDeployLooksUp is the seam.
 func declaredSchedules(m *Manifest) map[string]string {
 	out := map[string]string{}
 	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
