@@ -69,7 +69,21 @@ func homebrewUpgradeNotice(out io.Writer, path, current, requested string) error
 		fmt.Fprintf(out, "  Couldn't reach GitHub to check for a newer release.\n")
 	}
 	fmt.Fprintf(out, "  Upgrade it with:\n\n")
-	fmt.Fprintf(out, "    brew upgrade drift\n\n")
+	// `brew update` FIRST, and it is not padding.
+	//
+	// Homebrew compares against its LOCAL CLONE of the tap, not against the tap.
+	// A clone that has not been fetched since the last release still describes
+	// the version already installed, so `brew upgrade drift` answers
+	// "Warning: ondrift/tap/drift 0.44.0 already installed" — a refusal that
+	// reads as "you are up to date" while this very command has just said a
+	// newer release exists.
+	//
+	// Observed exactly that way: 0.44.0 installed, this notice offering 0.48.0,
+	// and the upgrade declining. One `brew update` and the same command
+	// installed 0.48.0.
+	fmt.Fprintf(out, "    brew update && brew upgrade drift\n\n")
+	fmt.Fprintf(out, "  %s\n", common.Hint("`brew update` first because Homebrew compares against its local copy of the tap — "+
+		"without it, `brew upgrade` can report the version you already have as the newest one"))
 	fmt.Fprintf(out, "  %s\n", common.Hint("running `go install` instead would NOT replace this binary — "+
 		"it would add a second one in GOPATH/bin and leave Homebrew reporting the old version"))
 	return nil

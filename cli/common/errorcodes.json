@@ -66,6 +66,18 @@
       "meaning": "You are not logged in, so the CLI has no credential to send.",
       "remedy": "Run `drift account login`, or `drift account signup` if you do not have an account yet. This is different from an expired session (DRIFT-1001): there is no session on this machine at all.",
       "command": "drift account login"
+    },
+    {
+      "code": "DRIFT-1012",
+      "meaning": "The platform was briefly unavailable — a restart, a rollout, or something reshaping the slice underneath the request.",
+      "remedy": "Wait a few seconds and run it again. Unlike DRIFT-1005 this CAN be something you just did: a resize restarts the slice's pod, so a deploy issued seconds after one hits a runner that is no longer there. If two commands were in flight at once, that is the likely story. status.ondrift.eu will usually show every component green, because nothing is broken.",
+      "command": ""
+    },
+    {
+      "code": "DRIFT-1013",
+      "meaning": "The thing you asked for conflicts with something that already exists.",
+      "remedy": "The message names the conflicting thing. A second free slice is the common one — the free tier allows a single hacker slice per account, and a second slice of that shape is allowed but paid. Creating something whose name is taken is the other.",
+      "command": "drift slice list"
     }
   ]
 }

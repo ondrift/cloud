@@ -11,8 +11,6 @@ package project
 // shape).
 
 import (
-	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -39,12 +37,9 @@ would abort the deploy (slice oversized vs declared shape).`,
 		Example: "  drift file simulate\n  drift file simulate staging",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))
+			manifestPath, err := requireDriftfile()
 			if err != nil {
-				return fmt.Errorf("resolve manifest path: %w", err)
-			}
-			if _, err := os.Stat(manifestPath); err != nil {
-				return fmt.Errorf("no Driftfile in the current directory (looked for %s)", manifestPath)
+				return err
 			}
 
 			positionalEnv := ""

@@ -139,8 +139,21 @@ func fetchLiveEgress() (liveEgressView, error) {
 	return v, nil
 }
 
+// refreshEgress asks the operator to re-resolve and re-push the allowlist.
+//
+// IT MUST DECLARE A CONTENT TYPE EVEN THOUGH IT SENDS NOTHING INTERESTING. The
+// route gates on `Content-Type: application/json` before it looks at anything
+// else, and `common.DoRequest` sets no content type at all — so this POSTed with
+// none and came back `415 Content-Type must be application/json`, on every
+// deploy whose egress block differed from the live one.
+//
+// The failure was invisible: applyEgress prints the error as a hint and returns
+// nil, so `drift file apply` reported `Done!` immediately underneath it. An
+// empty object rather than a nil body, so the route is handed something to
+// decode rather than an empty stream.
 func refreshEgress() error {
-	resp, err := common.DoRequest(http.MethodPost, common.APIBaseURL+"/ops/atomic/egress/refresh", nil)
+	resp, err := common.DoJSONRequest(http.MethodPost,
+		common.APIBaseURL+"/ops/atomic/egress/refresh", strings.NewReader("{}"))
 	if err != nil {
 		return err
 	}

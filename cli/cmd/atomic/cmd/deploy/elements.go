@@ -57,6 +57,19 @@ type FunctionSpec struct {
 	Response string
 	// Secrets is the allowlist of Backbone secrets the runner injects.
 	Secrets []string
+	// Env is the function's declared plain configuration — NOT credentials.
+	//
+	// Carried verbatim to the operator and on to the slice, which injects it
+	// into the function's environment. The CLI does not validate the names: the
+	// runtime owns which ones it refuses (`is_reserved_env`) and is the only
+	// layer a tenant cannot bypass, so a second copy of that list here would be
+	// a security rule in two places that can disagree. The schema carries a
+	// third spelling, for the error message alone.
+	//
+	// hurdles/011: before this, `secrets:` was the only per-function injection
+	// channel, so an in-cluster address was declared beside the token that
+	// authenticates to it.
+	Env map[string]string
 }
 
 // Trigger reports how the function is invoked: "http" or "queue".
@@ -285,6 +298,7 @@ func DeployGoElement(el Element, digest string, quiet bool) error {
 			Name: name, Method: method, Language: "go", Auth: f.Spec.Auth,
 			Element: el.Name, Stream: f.Spec.Stream, Response: f.Spec.Response,
 			Secrets:  f.Spec.Secrets,
+			Env:      f.Spec.Env,
 			Triggers: triggersFor(f), Digest: digest,
 			SourcePath: bin, UserSourcePath: userSrc,
 		})

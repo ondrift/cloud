@@ -38,12 +38,9 @@ fail, or error out.`,
 		Example: "  drift file test\n  drift file test staging",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))
+			manifestPath, err := requireDriftfile()
 			if err != nil {
 				return err
-			}
-			if _, err := os.Stat(manifestPath); err != nil {
-				return fmt.Errorf("no Driftfile in the current directory (looked for %s)", manifestPath)
 			}
 			projectDir := filepath.Dir(manifestPath)
 

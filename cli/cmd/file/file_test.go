@@ -10,6 +10,7 @@ import (
 
 	"github.com/ondrift/cloud/cli/cmd/project"
 	"github.com/ondrift/cloud/cli/common"
+	"gopkg.in/yaml.v3"
 )
 
 // The scaffold tests below round-trip through the real parser, and the parser's
@@ -54,17 +55,21 @@ func TestNew_ScaffoldPassesTheRealParser(t *testing.T) {
 	}
 }
 
-// A function's `memory` is mandatory: it is that function's own admission pool
-// and what it is billed at, so there is no default to fall back to and a
-// Driftfile declaring a function without one is refused. The scaffold has to
-// carry it, so its presence is asserted rather than left to whoever next edits
-// the template.
-// Asserted through the PARSER, on the BASE slice, not by searching the text.
-// A string match for "memory: 32MB" passes on the staging override alone —
-// the scaffold writes it twice — so it would still be green with the base knob
-// deleted, which is the exact regression this is here to catch. Proven by
-// deleting that line and watching this fail.
-func TestNew_ScaffoldFillsTheRequiredInPracticeKnobs(t *testing.T) {
+// THE SCAFFOLD TEACHES THE CURRENT GRAMMAR, and that is the whole of what this
+// asserts now.
+//
+// It used to assert the opposite — that every scaffolded function carries
+// `memory:` — which was right when memory was mandatory and became wrong when
+// the slice form took ownership of it. The file the scaffolder wrote then drew
+// three deprecation warnings from `drift file lint` in the same breath as being
+// called valid: `name:` at the top level, `functions[].name`, and
+// `functions[].memory`, whose own warning says the value is ignored. The first
+// file a new user ever sees taught the retired spelling.
+//
+// Asserted by PARSING, never by searching the text: the scaffold's comments
+// mention every key it explains, so a string match for "memory" is green on a
+// file that only documents it and red on one that merely describes it.
+func TestNew_ScaffoldUsesTheCurrentGrammar(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Driftfile")
 	if err := os.WriteFile(path, []byte(starterDriftfile("demo", "")), 0o600); err != nil {
@@ -80,9 +85,50 @@ func TestNew_ScaffoldFillsTheRequiredInPracticeKnobs(t *testing.T) {
 			"teaches nothing; a first edit should be changing a real entry")
 	}
 	for i, fn := range fns {
-		if fn.Str("memory") == "" {
-			t.Errorf("scaffolded function %d (%q) books no memory — there is no default, "+
-				"so this is rejected on the user's first deploy", i, fn.Str("name"))
+		if fn.Str("handler") == "" {
+			t.Errorf("scaffolded function %d names no handler, so nothing binds it to the source", i)
+		}
+	}
+
+	// THE KEYS THE FILE ACTUALLY CONTAINS, read as raw YAML.
+	//
+	// Not through ParseDriftfile: that NORMALISES the current spelling back into
+	// the retired one — `route: hello` + `method: get` arrive as `name:
+	// get:hello` — which is right for the parser and useless for asking what the
+	// scaffolder wrote. The retired keys are the ones a linter flags in the user's
+	// file, so the user's file is what has to be inspected.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Slice  string `yaml:"slice"`
+		Name   string `yaml:"name"`
+		Atomic struct {
+			Functions []map[string]any `yaml:"functions"`
+		} `yaml:"atomic"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+
+	if doc.Slice == "" {
+		t.Error("the scaffold does not set `slice:` — that is the current key for the slice it deploys into")
+	}
+	if doc.Name != "" {
+		t.Errorf("the scaffold still writes the retired top-level `name: %q`", doc.Name)
+	}
+	for i, fn := range doc.Atomic.Functions {
+		if fn["route"] == nil || fn["method"] == nil {
+			t.Errorf("scaffolded function %d declares no route/method pair — that is the "+
+				"current identity, and `name: get:hello` is the retired one", i)
+		}
+		if got, ok := fn["name"]; ok {
+			t.Errorf("scaffolded function %d uses the retired `name: %v` spelling", i, got)
+		}
+		if got, ok := fn["memory"]; ok {
+			t.Errorf("scaffolded function %d sets memory: %v — the slice form owns that now, "+
+				"and the linter reports the value as ignored", i, got)
 		}
 	}
 }
