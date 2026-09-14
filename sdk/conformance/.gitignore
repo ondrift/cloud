@@ -1,0 +1,4 @@
+# Build output from the Rust conformance driver. The driver is source; what
+# cargo compiles it into is not, and a target/ tree is tens of thousands of
+# files.
+rust/target/

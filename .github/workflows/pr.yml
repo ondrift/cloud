@@ -219,3 +219,49 @@ jobs:
             cat /tmp/sdk-test.log 2>/dev/null || echo "(tests did not run)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # THE SAME CASES, ALL SIX LANGUAGES.
+  #
+  # The job above is a Go job. It builds Go, vets Go and runs Go's tests, and for
+  # a long time that was the entire automated opinion the repo held about an SDK —
+  # so Node, Python, Ruby, PHP and Rust could each disagree with Go about what a
+  # primitive does and CI stayed green. They did: a local Blob.put reported
+  # success and the matching get returned empty in five languages at once, and
+  # nothing here noticed because nothing here ran them.
+  #
+  # This runs one set of assertions (sdk/conformance/expected.json) against all
+  # six, each through a thin driver that performs the operations and prints what
+  # it got. --strict makes a missing toolchain a FAILURE rather than a skip: a
+  # skipped language is a language nobody tested, and "ok" from a suite that ran
+  # nothing is the exact defect this harness exists to find.
+  conformance:
+    name: SDK conformance — six languages, one set of assertions
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: sdk/go.mod, cache-dependency-path: sdk/go.sum }
+      # Node, Python, Ruby, PHP and Rust are all preinstalled on ubuntu-latest.
+      # Nothing here installs them on purpose — --strict fails the job if one is
+      # absent, which is the honest signal that the runner image changed under us
+      # rather than a silent drop to five languages.
+      - name: versions
+        run: |
+          go version; node --version; python3 --version
+          ruby --version; php --version; cargo --version
+      - name: conformance
+        working-directory: sdk
+        run: |
+          set -o pipefail
+          bash conformance/run.sh --strict 2>&1 | tee /tmp/conformance.log
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### SDK conformance"
+            echo '```'
+            cat /tmp/conformance.log 2>/dev/null || echo "(conformance did not run)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
