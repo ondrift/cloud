@@ -109,6 +109,108 @@ func TestWhoami_WithNoSessionItFailsRatherThanPrintingNothing(t *testing.T) {
 	}
 }
 
+// --- a member's session ------------------------------------------------------
+
+// writeMemberSession is writeSession for somebody working on ANOTHER account:
+// `username` names the owner, `actor` names them.
+func writeMemberSession(t *testing.T, owner, actor string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	claims, _ := json.Marshal(map[string]any{"username": owner, "actor": actor, "exp": 1})
+	payload := base64.RawURLEncoding.EncodeToString(claims)
+	token := "header." + payload + ".signature"
+
+	dir := filepath.Join(home, ".drift")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body, _ := json.Marshal(map[string]string{"token": token, "refresh_token": "r"})
+	if err := os.WriteFile(filepath.Join(dir, "session.json"), body, 0o600); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+}
+
+// STDOUT IS UNCHANGED FOR A MEMBER. Their commands act on the owner's account,
+// so the owner's name is what every `$(drift account whoami)` in a pipeline
+// needs — and putting a second word there would break every existing use of this
+// command to make one of them more honest.
+func TestWhoami_AMembersStdoutIsStillOneBareUsername(t *testing.T) {
+	writeMemberSession(t, "isrand", "erica")
+
+	out, err := runWhoami(t)
+	if err != nil {
+		t.Fatalf("whoami: %v", err)
+	}
+	if out != "isrand\n" {
+		t.Errorf("got %q, want %q — a member acts on the OWNER's account, and stdout "+
+			"must stay usable in $(…)", out, "isrand\n")
+	}
+}
+
+// And the honest half, on stderr, where a command substitution cannot see it.
+func TestWhoami_AMemberIsToldWhoTheyAreOnStderr(t *testing.T) {
+	writeMemberSession(t, "isrand", "erica")
+
+	original := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+
+	_, cmdErr := runWhoami(t)
+
+	if cerr := w.Close(); cerr != nil {
+		t.Fatalf("close: %v", cerr)
+	}
+	os.Stderr = original
+	if cmdErr != nil {
+		t.Fatalf("whoami: %v", cmdErr)
+	}
+
+	var buf bytes.Buffer
+	if _, rerr := buf.ReadFrom(r); rerr != nil {
+		t.Fatalf("read: %v", rerr)
+	}
+	note := buf.String()
+	for _, want := range []string{"erica", "isrand", "member"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the note does not mention %q: %q", want, note)
+		}
+	}
+}
+
+// An owner's session says nothing extra — there is nobody else involved.
+func TestWhoami_AnOwnerGetsNoNote(t *testing.T) {
+	writeSession(t, "alice")
+
+	original := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+
+	if _, cmdErr := runWhoami(t); cmdErr != nil {
+		t.Fatalf("whoami: %v", cmdErr)
+	}
+
+	if cerr := w.Close(); cerr != nil {
+		t.Fatalf("close: %v", cerr)
+	}
+	os.Stderr = original
+
+	var buf bytes.Buffer
+	if _, rerr := buf.ReadFrom(r); rerr != nil {
+		t.Fatalf("read: %v", rerr)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an owner's own session printed a note: %q", buf.String())
+	}
+}
+
 // A session file whose token is not a readable JWT is the same refusal. It is a
 // broken session rather than a missing one, but the caller can do exactly one
 // thing about either.

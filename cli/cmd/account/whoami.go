@@ -22,9 +22,22 @@ package account
 // after a token ages out — the session is refreshable and the account has not
 // changed — and refusing there would make the command useless at exactly the
 // moment someone is debugging why a call 401'd.
+//
+// # A MEMBER gets a second line, and it goes to stderr
+//
+// A member acts on somebody ELSE'S account: their token names the owner, so the
+// one line on stdout is the owner's name — which is the right answer for the
+// scripting use above, because it names the account every other command in the
+// pipeline is about.
+//
+// It is the wrong answer to "who am I", so that is said too, on STDERR. A
+// command substitution captures stdout alone, so the note reaches the person at
+// the terminal and changes nothing for the script. Printing it on stdout would
+// break every existing use of this command to keep one of them honest.
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/ondrift/cloud/cli/common"
 	"github.com/spf13/cobra"
@@ -33,11 +46,14 @@ import (
 func GetWhoamiCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "whoami",
-		Short: "Print the username this machine is logged in as",
+		Short: "Print the account this machine is acting on",
 		Long: "Prints the username and nothing else, so it can be used directly:\n\n" +
 			"  drift backbone secret set OWNER \"$(drift account whoami)\"\n\n" +
 			"Reads the stored session locally — no network call, and no way for it to\n" +
-			"fail because the platform is busy.",
+			"fail because the platform is busy.\n\n" +
+			"If you are a MEMBER of someone else's account, this prints THEIR username —\n" +
+			"the account your commands act on. Your own name is noted on stderr, so a\n" +
+			"command substitution still captures just the one word.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(*cobra.Command, []string) error {
@@ -50,6 +66,11 @@ func GetWhoamiCmd() *cobra.Command {
 				return fmt.Errorf("not logged in — run `drift account login`")
 			}
 			fmt.Println(username)
+			if actor := common.ActorFromToken(); actor != "" {
+				fmt.Fprintf(os.Stderr,
+					"(you are signed in as %s, a member of %s — this prints the account you act on)\n",
+					actor, username)
+			}
 			return nil
 		},
 	}
