@@ -13,6 +13,8 @@ func GetAccountCmd() *cobra.Command {
 		Example: `  drift account create
   drift account login
   drift account whoami
+  drift account list
+  drift account use alice
   drift account mfa enrol
   drift account token create ci --scope slice:read --scope slice:write
   drift account reset-password
@@ -24,6 +26,8 @@ func GetAccountCmd() *cobra.Command {
 		GetCreateCmd(),
 		GetLoginCmd(),
 		GetWhoamiCmd(),
+		GetAccountListCmd(),
+		GetAccountUseCmd(),
 		GetMFACmd(),
 		tokenCmd(),
 		GetResetPasswordCmd(),
