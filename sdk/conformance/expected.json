@@ -1,0 +1,54 @@
+{
+  "$comment": [
+    "THE SAME TEST, FOR ALL SIX LANGUAGES. Drift ships six SDKs so a customer can",
+    "build in the language their team already uses, and that promise is worth",
+    "exactly as much as the weakest one. Six independently-worded test suites can",
+    "each pass while asserting subtly different things — which is how Go came to",
+    "round-trip a local blob correctly while the other five silently did not.",
+    "",
+    "So the assertions live HERE, once, and each language ships a thin driver that",
+    "performs the operations and prints what it got. check.py compares the two.",
+    "A language cannot quietly hold a weaker opinion about what correct means.",
+    "",
+    "Every case runs against the LOCAL store — no BACKBONE_URL, no running slice —",
+    "because that is the loop a developer meets first and the one where the six",
+    "drifted apart."
+  ],
+
+  "blob_with_bucket": {
+    "why": "Put then Get must return the bytes. The failure shape being guarded against is a Put that reports success and a Get that returns empty with no error — indistinguishable from 'I stored an empty value'.",
+    "expect": "hello, slice"
+  },
+
+  "blob_without_bucket": {
+    "why": "A bare name has no bucket, so it lands in the default one and must come back from there rather than from whatever the slash-splitting produced.",
+    "expect": "bare"
+  },
+
+  "blob_absent": {
+    "why": "THE CONTROL, and the sharpest case here. A key that was never written must FAIL — Go answers a 404 — and the driver reports the string \"error\" when the call raises. An SDK that returns empty-with-no-error instead reports null and fails this case, which is exactly the defect the two cases above cannot catch on their own: an implementation that returns empty for EVERYTHING passes both of them by accident.",
+    "expect": "error"
+  },
+
+  "list_in_order": {
+    "why": "ListInOrder exists solely to fix the order a plain List returns. Twelve documents, inserted 1..12, must come back 1..12.",
+    "expect": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+  },
+
+  "list_default_order": {
+    "why": "THE CONTROL for the one above, and the contract a paging caller already holds. The DEFAULT read is byte order over the storage key, which for twelve documents is 1,10,11,12,2,…,9 — documented behaviour, not a bug. Adding the ordered variant must not change it.",
+    "expect": ["1", "10", "11", "12", "2", "3", "4", "5", "6", "7", "8", "9"]
+  },
+
+  "list_all_in_order_count": {
+    "why": "ListAllInOrder pages, so the ordered cursor has to advance in the ordered sequence rather than in key order. 1200 documents crosses the 1000-row page cap, which is where a cursor that advances by key silently truncates.",
+    "expect": 1200
+  },
+
+  "list_all_in_order_first": { "why": "The first document of the first page.", "expect": 1 },
+  "list_all_in_order_boundary": {
+    "why": "The document either side of the page boundary is where a wrong cursor loses or repeats rows.",
+    "expect": [999, 1000, 1001, 1002]
+  },
+  "list_all_in_order_last": { "why": "The last document of the last page.", "expect": 1200 }
+}

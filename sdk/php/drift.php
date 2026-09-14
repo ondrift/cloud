@@ -239,7 +239,15 @@ function _call(string $method, string $path, $body = null) {
 }
 
 function _call_raw(string $method, string $path, string $data_bytes, string $content_type = 'application/octet-stream'): ?string {
-    if (_get_backbone_url() === '') return null;
+    // Local dev goes through the SAME dispatch every other primitive uses. This
+    // used to `return null` here, before building a query string or touching the
+    // store at all — so a local Blob::put reported success, wrote nothing, and
+    // the matching get came back null. That reads as "blobs are broken" rather
+    // than "blobs are not implemented", which is the worse of the two.
+    if (_get_backbone_url() === '') {
+        $r = _call_local($method, $path, $data_bytes);
+        return is_string($r) ? $r : null;
+    }
     [$status, $result] = _backbone_http($method, $path, $data_bytes, $content_type);
     return ($status >= 200 && $status < 300) ? $result : null;
 }
@@ -256,6 +264,27 @@ $_local_store = [
     'nosql' => [], 'cache' => [], 'queues' => [],
     'blobs' => [], 'locks' => [], 'next_id' => 0,
 ];
+
+/**
+ * The position a local document key encodes. The local store mints keys from its
+ * own counter, so ordering by that value IS insertion order — the same guarantee
+ * a slice gets from its order index, reached differently because the two mint
+ * keys differently. A key that is not a number sorts as 0 and falls back to the
+ * string compare beside it.
+ */
+function _local_key_index($key): int {
+    return is_numeric($key) ? (int) $key : 0;
+}
+
+/**
+ * The ONE address a blob has in the local store. put and get must derive it the
+ * same way or they address different things while both reporting success —
+ * precisely the defect this replaced, where the put never reached the store and
+ * the get read a `name` query parameter the bucket/key wire format never sends.
+ */
+function _blob_address(string $bucket, string $key): string {
+    return "$bucket/$key";
+}
 
 function _call_local(string $method, string $path, $body = null) {
     global $_local_store;
@@ -286,24 +315,48 @@ function _call_local(string $method, string $path, $body = null) {
     }
     if ($base_path === 'nosql/list' && $method === 'GET') {
         $col = $query['collection'] ?? 'default';
-        $docs = $s['nosql'][$col] ?? [];
         $field = $query['field'] ?? null;
         $value = $query['value'] ?? null;
-        // Walk in key order, like the platform's ordered walk, and apply the same
-        // page cap — a local store answering every read in full would hide the
-        // truncation a paged read exists to avoid.
+        $order = (string)($query['order'] ?? '');
+
+        // The slice refuses an order it does not recognise rather than serving an
+        // unordered read under the caller's name for one, and refuses the
+        // combination with a filter because the field index carries no order.
+        // Accepting either here would hide the failure until deployment.
+        if ($order !== '' && $order !== 'insertion') {
+            throw new \RuntimeException("drift: backbone nosql/list: HTTP 400: unknown order \"$order\"");
+        }
+        if ($order === 'insertion' && $field !== null) {
+            throw new \RuntimeException('drift: backbone nosql/list: HTTP 400: order=insertion cannot be combined with a field filter');
+        }
+
+        $docs = $s['nosql'][$col] ?? [];
+        // Walk in a DEFINED order, like the platform's ordered walk, and apply the
+        // same page cap — a local store answering every read in full would hide
+        // the truncation a paged read exists to avoid.
+        //
+        // The comparator is also what the cursor compares against, so paging
+        // resumes in whichever order was asked for. strcmp, not <=, for the
+        // default: an array key that looks like an integer is STORED as one, and
+        // PHP compares two numeric strings NUMERICALLY — which would disagree
+        // with the bytewise sort and both skip and repeat rows.
+        $cmp = $order === 'insertion'
+            ? static function ($a, $b): int {
+                $ia = _local_key_index($a);
+                $ib = _local_key_index($b);
+                return $ia !== $ib ? $ia <=> $ib : strcmp((string)$a, (string)$b);
+            }
+            : static fn($a, $b): int => strcmp((string)$a, (string)$b);
+
         $after = (string)($query['after'] ?? '');
         $limit = (int)($query['limit'] ?? 0);
         if ($limit <= 0) $limit = LIST_DEFAULT;
         if ($limit > LIST_MAX) $limit = LIST_MAX;
         $keys = array_keys($docs);
-        sort($keys, SORT_STRING);
+        usort($keys, $cmp);
         $results = [];
         foreach ($keys as $k) {
-            // strcmp, not <=. An array key that looks like an integer is stored as
-            // one, and PHP compares two numeric strings NUMERICALLY — which would
-            // disagree with the bytewise sort above and both skip and repeat rows.
-            if ($after !== '' && strcmp((string)$k, $after) <= 0) continue;
+            if ($after !== '' && $cmp($k, $after) <= 0) continue;
             $doc = $docs[$k];
             if ($field !== null && (string)($doc[$field] ?? '') !== $value) continue;
             $results[] = $doc;
@@ -343,12 +396,31 @@ function _call_local(string $method, string $path, $body = null) {
     }
 
     // Blob
+    //
+    // Addressed by BUCKET AND KEY, which is what the wire format sends. These arms
+    // used to read a `name` — the shape from before the bucket/key split — and
+    // nothing ever reached them anyway, because _call_raw returned before the
+    // dispatch. Both halves are fixed together: one local address for a blob.
     if ($base_path === 'blob/put' && $method === 'POST') {
-        $s['blobs'][($body ?? [])['name'] ?? ''] = ($body ?? [])['data'] ?? null;
+        $bucket = (string)($query['bucket'] ?? '');
+        $key = (string)($query['key'] ?? '');
+        if ($bucket === '' || $key === '') {
+            throw new \RuntimeException('drift: backbone blob/put: HTTP 400: bucket and key are required');
+        }
+        $s['blobs'][_blob_address($bucket, $key)] = $body;
         return null;
     }
     if ($base_path === 'blob/get' && $method === 'GET') {
-        return $s['blobs'][$query['name'] ?? ''] ?? null;
+        $bucket = (string)($query['bucket'] ?? '');
+        $key = (string)($query['key'] ?? '');
+        $addr = _blob_address($bucket, $key);
+        // ABSENT IS AN ERROR, matching the slice's 404 and Go's SDK. Returning
+        // null would make "never stored" and "stored an empty value" the same
+        // answer, which is the defect this whole path is being fixed for.
+        if (!array_key_exists($addr, $s['blobs'])) {
+            throw new \RuntimeException("drift: backbone blob/get: HTTP 404: no object \"$key\" in bucket \"$bucket\"");
+        }
+        return $s['blobs'][$addr];
     }
 
     // Secret — in local dev, read from environment variables (loaded from .env by the CLI)
@@ -824,6 +896,72 @@ class NosqlCollection {
         }
     }
 
+    /**
+     * Return ONE page of documents in the order they were WRITTEN.
+     *
+     * list() and list_all() return rows in storage-key order, which is not the
+     * order anything was appended: the key's counter is not zero-padded, so a
+     * collection written 1…12 comes back 10, 11, 12, 1, 2 … 9. That is stable and
+     * complete and it is not chronological, and it LOOKS chronological for the
+     * first nine documents — long enough to pass a manual test.
+     *
+     * This is the read for anything shaped like a LOG: an event store, a ledger,
+     * an activity feed, an outbox, a chat history. The platform keeps a separate
+     * order index for it, so no document key changes and a cursor you already
+     * hold keeps working.
+     *
+     * NO FILTER. The field index carries the same unpadded key the scan does, so
+     * an ordered filtered read needs a second index rather than a flag — the
+     * platform refuses the combination rather than quietly ignoring it. Filter in
+     * the caller, or keep the partition in its own collection.
+     *
+     * Same limit rules as list(): pass one for any collection that grows, and the
+     * platform clamps to 1000. Use list_all_in_order for a log past a page.
+     */
+    public function list_in_order(?int $limit = null, ?string $after = null): array {
+        $path = 'nosql/list?order=insertion&collection=' . urlencode($this->name);
+        if ($limit !== null && $limit > 0) {
+            $path .= '&limit=' . urlencode((string) $limit);
+        }
+        if ($after !== null && $after !== '') {
+            $path .= '&after=' . urlencode($after);
+        }
+        $resp = _call('GET', $path);
+        return is_array($resp) ? $resp : [];
+    }
+
+    /**
+     * Return EVERY document in the order it was written, paging until the
+     * collection is exhausted.
+     *
+     * This is what makes a hash-chained log verifiable: walking it in order is the
+     * whole point, and a Merkle root over a subset is not a proof of the set.
+     * Every document is held in memory at once — the point for a ledger, and a
+     * cost worth knowing elsewhere, since a function runs under a limit.
+     */
+    public function list_all_in_order(): array {
+        $page = \Drift\LIST_MAX;
+        $out = [];
+        $after = null;
+        while (true) {
+            $rows = $this->list_in_order($page, $after);
+            $out = array_merge($out, $rows);
+            if (count($rows) < $page) return $out;
+            $last = $rows[count($rows) - 1];
+            $next = is_array($last) ? ($last['_key'] ?? null) : null;
+            if ($next === null || $next === '') {
+                throw new \RuntimeException('drift: list row carries no _key, so the collection cannot be paged');
+            }
+            // A full page that does not move the cursor would loop forever. Same
+            // guard, same reason, as list_all: a short read is the failure this
+            // method exists to prevent.
+            if ($next === $after) {
+                throw new \RuntimeException("drift: listing {$this->name} did not advance past _key {$after}");
+            }
+            $after = (string) $next;
+        }
+    }
+
     public function drop(): void {
         _call('POST', 'nosql/drop?collection=' . urlencode($this->name));
     }
@@ -871,8 +1009,16 @@ class Blob {
 
     public static function get(string $name) {
         [$bucket, $key] = _split_bucket_key($name);
-        if (_get_backbone_url() === '') return null;
         $path = 'blob/get?bucket=' . urlencode($bucket) . '&key=' . urlencode($key);
+        // Same dispatch as the put, so the two agree on where a blob lives. This
+        // used to `return null` in local dev, which made a missing blob and a
+        // stored empty one the same answer.
+        //
+        // Fully qualified, like \Drift\LIST_MAX above: an unqualified name inside
+        // Drift\Backbone resolves to THIS namespace and then the global one,
+        // never to the parent, and _call_local is not among the names imported
+        // here the way _call is.
+        if (_get_backbone_url() === '') return \Drift\_call_local('GET', $path, null);
         [$status, $r] = _backbone_http('GET', $path, null, '');
         return ($status >= 200 && $status < 300) ? $r : null;
     }

@@ -350,6 +350,31 @@ _local_store = {
 }
 
 
+def _local_key_index(key):
+    """The position a local document key encodes.
+
+    The local store mints keys from its own counter, so ordering by that value IS
+    insertion order — the same guarantee a slice gets from its order index,
+    reached differently because the two stores mint keys differently. A key that
+    is not a number sorts as 0 and falls back to the string compare beside it.
+    """
+    try:
+        return int(key)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _blob_address(bucket, key):
+    """The ONE address a blob has in the local store.
+
+    put and get must derive it the same way or they address different things
+    while both reporting success — precisely the defect this replaced, where the
+    put wrote under the full request path and the get read a `name` query
+    parameter the bucket/key wire format never sends.
+    """
+    return f"{bucket or ''}/{key or ''}"
+
+
 def _call_local(method, path, body=None):
     """In-memory backbone for local development."""
     s = _local_store
@@ -380,12 +405,29 @@ def _call_local(method, path, body=None):
 
     if base_path == "nosql/list" and method == "GET":
         col = query.get("collection", "default")
-        docs = s["nosql"].get(col, {})
         field = query.get("field")
         value = query.get("value")
-        # Walk in key order, like the platform's ordered walk, and apply the same
-        # page cap — a local store answering every read in full would hide the
-        # truncation a paged read exists to avoid.
+        order = query.get("order") or ""
+
+        # The slice refuses an order it does not recognise rather than serving an
+        # unordered read under the caller's name for one, and refuses the
+        # combination with a filter because the field index carries no order.
+        # Accepting either here would hide the failure until deployment.
+        if order and order != "insertion":
+            raise RuntimeError(f"drift: backbone nosql/list: HTTP 400: unknown order {order!r}")
+        if order == "insertion" and field:
+            raise RuntimeError(
+                "drift: backbone nosql/list: HTTP 400: order=insertion cannot be "
+                "combined with a field filter"
+            )
+
+        docs = s["nosql"].get(col, {})
+        # Walk in a DEFINED order, like the platform's ordered walk, and apply the
+        # same page cap — a local store answering every read in full would hide
+        # the truncation a paged read exists to avoid. The sort key is also what
+        # the cursor compares against, so paging resumes in whichever order was
+        # asked for.
+        sort_key = (lambda k: (_local_key_index(k), k)) if order == "insertion" else (lambda k: k)
         after = query.get("after") or ""
         try:
             limit = int(query.get("limit") or _LIST_DEFAULT)
@@ -395,8 +437,8 @@ def _call_local(method, path, body=None):
             limit = _LIST_DEFAULT
         limit = min(limit, _LIST_MAX)
         results = []
-        for key in sorted(docs):
-            if after and key <= after:
+        for key in sorted(docs, key=sort_key):
+            if after and sort_key(key) <= sort_key(after):
                 continue
             doc = docs[key]
             if field and str(doc.get(field)) != value:
@@ -438,12 +480,32 @@ def _call_local(method, path, body=None):
         return q.pop(0)
 
     # Blob
+    #
+    # Addressed by BUCKET AND KEY, which is what the wire format sends. These arms
+    # used to read a `name` — the shape from before the bucket/key split — and
+    # _call_raw never reached them at all: it wrote the bytes into the store under
+    # the full request path `blob/put?bucket=…&key=…`. Two code paths that were
+    # supposed to agree on a key format and did not, so every local put reported
+    # success and every local get returned None, indistinguishable from "the key
+    # never existed".
     if base_path == "blob/put" and method == "POST":
-        s["blobs"][(body or {}).get("name", "")] = (body or {}).get("data")
+        bucket, key = query.get("bucket", ""), query.get("key", "")
+        if not bucket or not key:
+            raise RuntimeError("drift: backbone blob/put: HTTP 400: bucket and key are required")
+        s["blobs"][_blob_address(bucket, key)] = body
         return None
 
     if base_path == "blob/get" and method == "GET":
-        return s["blobs"].get(query.get("name", ""))
+        bucket, key = query.get("bucket", ""), query.get("key", "")
+        addr = _blob_address(bucket, key)
+        # ABSENT IS AN ERROR, matching the slice's 404 and Go's SDK. Returning
+        # None would make "never stored" and "stored an empty value" the same
+        # answer, which is the defect this whole path is being fixed for.
+        if addr not in s["blobs"]:
+            raise RuntimeError(
+                f"drift: backbone blob/get: HTTP 404: no object {key!r} in bucket {bucket!r}"
+            )
+        return s["blobs"][addr]
 
     # Secret — in local dev, read from environment variables (loaded from .env by the CLI)
     if base_path == "secret/get" and method == "GET":
@@ -605,6 +667,63 @@ class _CollectionHandle:
                 raise RuntimeError(f"drift: listing {self.name!r} did not advance past _key {after!r}")
             after = nxt
 
+    def list_in_order(self, limit=None, after=None):
+        """Return ONE page of documents in the order they were WRITTEN.
+
+        list() and list_all() return rows in storage-key order, which is not the
+        order anything was appended: the key's counter is not zero-padded, so a
+        collection written 1…12 comes back 10, 11, 12, 1, 2 … 9. That is stable
+        and complete and it is not chronological, and it LOOKS chronological for
+        the first nine documents — long enough to pass a manual test.
+
+        This is the read for anything shaped like a LOG: an event store, a
+        ledger, an activity feed, an outbox, a chat history. The platform keeps a
+        separate order index for it, so no document key changes and a cursor you
+        already hold keeps working.
+
+        NO FILTER. The field index carries the same unpadded key the scan does, so
+        an ordered filtered read needs a second index rather than a flag — the
+        platform refuses the combination rather than quietly ignoring it. Filter
+        in the caller, or keep the partition in its own collection.
+
+        Same limit rules as list(): pass one for any collection that grows, and
+        the platform clamps to 1000. Use list_all_in_order for a log past a page.
+        """
+        path = f"nosql/list?order=insertion&collection={urllib.parse.quote(self.name)}"
+        if limit:
+            path += f"&limit={int(limit)}"
+        if after:
+            path += f"&after={urllib.parse.quote(str(after))}"
+        resp = _call("GET", path)
+        return resp if isinstance(resp, list) else []
+
+    def list_all_in_order(self):
+        """Return EVERY document in the order it was written, paging until the
+        collection is exhausted.
+
+        This is what makes a hash-chained log verifiable: walking it in order is
+        the whole point, and a Merkle root over a subset is not a proof of the
+        set. Every document is held in memory at once — the point for a ledger,
+        and a cost worth knowing elsewhere, since a function runs under a limit.
+        """
+        page = _LIST_MAX
+        out = []
+        after = None
+        while True:
+            rows = self.list_in_order(limit=page, after=after)
+            out.extend(rows)
+            if len(rows) < page:
+                return out
+            nxt = rows[-1].get("_key") if isinstance(rows[-1], dict) else None
+            if not nxt:
+                raise RuntimeError("drift: list row carries no _key, so the collection cannot be paged")
+            # A full page that does not move the cursor would loop forever. Same
+            # guard, same reason, as list_all: a short read is the failure this
+            # method exists to prevent.
+            if nxt == after:
+                raise RuntimeError(f"drift: listing {self.name!r} did not advance past _key {after!r}")
+            after = nxt
+
     def drop(self):
         _call("POST", f"nosql/drop?collection={urllib.parse.quote(self.name)}")
 
@@ -659,9 +778,12 @@ def _call_raw(method, path, data_bytes, content_type="application/octet-stream")
     """
     global _conn
     base = _get_backbone_url()
+    # Local dev goes through the SAME dispatch every other primitive uses, so a
+    # blob has one local address rather than two. This used to write the bytes
+    # under the request path itself — a second, parallel store that only Blob
+    # used, and one blob.get never read.
     if not base:
-        _local_store["blobs"][path] = data_bytes
-        return None
+        return _call_local(method, path, data_bytes)
 
     headers = {"Content-Type": content_type}
     with _conn_lock:

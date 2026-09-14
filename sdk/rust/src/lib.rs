@@ -551,16 +551,52 @@ fn call_local(_method: &str, path: &str, body: Option<Value>) -> Option<Value> {
         }
         "nosql/list" => {
             let coll = q.get("collection")?;
+            let order = q.get("order").map(|s| s.as_str()).unwrap_or("");
             let mut docs = store.nosql.get(coll).cloned().unwrap_or_default();
             // Order by storage key, like the platform's ordered walk. Documents are
             // held in insertion order here, which is numeric — the platform orders
             // bytewise, where "1000" precedes "999".
-            docs.sort_by(|a, b| {
-                let ka = a.get("_key").and_then(|k| k.as_str()).unwrap_or("");
-                let kb = b.get("_key").and_then(|k| k.as_str()).unwrap_or("");
-                ka.cmp(kb)
-            });
+            //
+            // `order=insertion` asks for the order they were WRITTEN instead. The
+            // local store mints keys from a per-collection counter, so ordering by
+            // that NUMBER is insertion order — the same guarantee a slice gets from
+            // its order index, reached differently because the two mint keys
+            // differently. This comparator is also what the cursor is compared
+            // with below, so paging resumes in whichever order was asked for.
+            //
+            // THE TWO REFUSALS THE OTHER FIVE SDKs RAISE ARE ABSENT HERE, and that
+            // is a limit of this dispatch rather than a decision: `call_local`
+            // returns Option<Value> and has no error channel at all, so an unknown
+            // `order` or an `order=insertion` combined with a field filter cannot
+            // be reported as the 400 a slice answers. Neither is reachable from
+            // this SDK's public API — `list_in_order` is the only caller that sends
+            // an order, it hardcodes `insertion`, and it takes no filter.
+            let key_index = |v: &Value| -> i64 {
+                v.get("_key")
+                    .and_then(|k| k.as_str())
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(0)
+            };
+            if order == "insertion" {
+                docs.sort_by(|a, b| {
+                    key_index(a).cmp(&key_index(b)).then_with(|| {
+                        let ka = a.get("_key").and_then(|k| k.as_str()).unwrap_or("");
+                        let kb = b.get("_key").and_then(|k| k.as_str()).unwrap_or("");
+                        ka.cmp(kb)
+                    })
+                });
+            } else {
+                docs.sort_by(|a, b| {
+                    let ka = a.get("_key").and_then(|k| k.as_str()).unwrap_or("");
+                    let kb = b.get("_key").and_then(|k| k.as_str()).unwrap_or("");
+                    ka.cmp(kb)
+                });
+            }
             let after = q.get("after").map(|s| s.as_str()).unwrap_or("");
+            // The cursor is compared in the SAME order the rows are sorted in. A
+            // bytewise `key <= after` under an insertion-ordered walk both skips
+            // and repeats rows the moment the counter passes 9.
+            let after_index = after.parse::<i64>().unwrap_or(0);
             let limit = q
                 .get("limit")
                 .and_then(|s| s.parse::<usize>().ok())
@@ -574,8 +610,16 @@ fn call_local(_method: &str, path: &str, body: Option<Value>) -> Option<Value> {
             let mut out: Vec<Value> = Vec::new();
             for d in docs {
                 let key = d.get("_key").and_then(|k| k.as_str()).unwrap_or("");
-                if !after.is_empty() && key <= after {
-                    continue;
+                if !after.is_empty() {
+                    let past = if order == "insertion" {
+                        let ki = key.parse::<i64>().unwrap_or(0);
+                        (ki, key) > (after_index, after)
+                    } else {
+                        key > after
+                    };
+                    if !past {
+                        continue;
+                    }
                 }
                 if !field.is_empty() {
                     let got = match d.get(field) {
@@ -848,6 +892,95 @@ pub mod backbone {
                         ));
                     }
                     after = Some(next);
+                }
+            }
+
+            /// ONE page of documents in the order they were WRITTEN.
+            ///
+            /// `list` and `list_all` return rows in storage-key order, which is
+            /// not the order anything was appended: the key's counter is not
+            /// zero-padded, so a collection written 1…12 comes back 10, 11, 12,
+            /// 1, 2 … 9. That is stable and complete and it is not chronological,
+            /// and it LOOKS chronological for the first nine documents — long
+            /// enough to pass a manual test.
+            ///
+            /// This is the read for anything shaped like a LOG: an event store, a
+            /// ledger, an activity feed, an outbox, a chat history. The platform
+            /// keeps a separate order index for it, so no document key changes and
+            /// a cursor you already hold keeps working.
+            ///
+            /// NO FILTER. The field index carries the same unpadded key the scan
+            /// does, so an ordered filtered read needs a second index rather than
+            /// a flag — the platform refuses the combination rather than quietly
+            /// ignoring it. Filter in the caller, or keep the partition in its own
+            /// collection.
+            ///
+            /// The platform clamps the limit to 1000. Use [`list_all_in_order`]
+            /// for a log that outgrows one page.
+            ///
+            /// [`list_all_in_order`]: Self::list_all_in_order
+            pub fn list_in_order(&self, limit: Option<usize>) -> Vec<Value> {
+                self.list_page_ordered(limit, None)
+            }
+
+            /// EVERY document in the order it was written, paging until the
+            /// collection is exhausted.
+            ///
+            /// This is what makes a hash-chained log verifiable: walking it in
+            /// order is the whole point, and a Merkle root over a subset is not a
+            /// proof of the set. Every document is held in memory at once — the
+            /// point for a ledger, and a cost worth knowing elsewhere, since a
+            /// function runs under a memory limit.
+            ///
+            /// `Err` carries the storage key a page failed to advance past, for
+            /// the same reason `list_all` does: a short read is the failure this
+            /// method exists to prevent, so it reports rather than returning what
+            /// it managed to collect.
+            pub fn list_all_in_order(&self) -> Result<Vec<Value>, String> {
+                let mut all: Vec<Value> = Vec::new();
+                let mut after: Option<String> = None;
+                loop {
+                    let rows = self.list_page_ordered(Some(LIST_MAX), after.as_deref());
+                    let got = rows.len();
+                    let next = rows
+                        .last()
+                        .and_then(|d| d.get("_key"))
+                        .and_then(|k| k.as_str())
+                        .map(|s| s.to_string());
+                    all.extend(rows);
+                    if got < LIST_MAX {
+                        return Ok(all);
+                    }
+                    let next = next.ok_or_else(|| {
+                        "drift: list row carries no _key, so the collection cannot be paged"
+                            .to_string()
+                    })?;
+                    if Some(&next) == after.as_ref() {
+                        return Err(format!(
+                            "drift: listing {} did not advance past _key {next}",
+                            self.name
+                        ));
+                    }
+                    after = Some(next);
+                }
+            }
+
+            /// One ordered list request. The cursor is still the document's own
+            /// `_key`, so the wire contract does not change with the ordering.
+            fn list_page_ordered(&self, limit: Option<usize>, after: Option<&str>) -> Vec<Value> {
+                let mut path = format!(
+                    "nosql/list?order=insertion&collection={}",
+                    percent_encode(&self.name)
+                );
+                if let Some(n) = limit.filter(|&n| n > 0) {
+                    path.push_str(&format!("&limit={n}"));
+                }
+                if let Some(a) = after.filter(|a| !a.is_empty()) {
+                    path.push_str(&format!("&after={}", percent_encode(a)));
+                }
+                match call("GET", &path, None) {
+                    Some(Value::Array(arr)) => arr,
+                    _ => vec![],
                 }
             }
 

@@ -1,0 +1,17 @@
+# The Rust conformance driver. A crate of its own rather than a test inside the
+# SDK, so it exercises drift-sdk exactly as a tenant's function does — through
+# the public API, with nothing private in reach.
+#
+# `[workspace]` is empty and deliberate: without it cargo walks up looking for a
+# parent workspace and finds the SDK's own, which does not list this crate.
+[package]
+name = "conformance-rust"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+drift-sdk = { path = "../../rust" }
+serde_json = "1"
+
+[workspace]

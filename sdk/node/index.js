@@ -256,10 +256,11 @@ async function _call(method, path, body) {
 
 async function _callRaw(method, path, dataBytes, contentType) {
   const base = _getBackboneUrl();
-  if (!base) {
-    _store.blobs[path] = dataBytes;
-    return null;
-  }
+  // Local dev goes through the SAME dispatch every other primitive uses, so a
+  // blob has one local address rather than two. This used to write the bytes
+  // into _store.blobs under the request path itself — a second, parallel store
+  // that only Blob used, and one blob.get never read.
+  if (!base) return _callLocal(method, path, dataBytes);
   const { status, body: respBody } = await _backboneRequest(
     method,
     path,
@@ -395,6 +396,14 @@ const _store = {
   nextId: 0,
 };
 
+// The position a local document key encodes. The local store mints keys from
+// its own counter, so ordering by that value IS insertion order. A key that is
+// not a number sorts as 0 and falls back to the string compare beside it.
+function _localKeyIndex(key) {
+  const n = parseInt(key, 10);
+  return Number.isInteger(n) ? n : 0;
+}
+
 function _callLocal(method, path, body) {
   const [basePath, qs] = path.split("?", 2);
   const query = {};
@@ -423,18 +432,47 @@ function _callLocal(method, path, body) {
   }
   if (basePath === "nosql/list" && method === "GET") {
     const col = query.collection || "default";
+    const order = query.order || "";
+
+    // The slice refuses an order it does not recognise rather than serving an
+    // unordered read under the caller's name for one, and refuses the
+    // combination with a filter because the field index carries no order.
+    // Accepting either here would hide the failure until deployment.
+    if (order && order !== "insertion") {
+      throw new Error(`drift: backbone nosql/list: HTTP 400: unknown order "${order}"`);
+    }
+    if (order === "insertion" && query.field) {
+      throw new Error(
+        "drift: backbone nosql/list: HTTP 400: order=insertion cannot be combined with a field filter",
+      );
+    }
+
     const docs = _store.nosql[col] || {};
-    // Walk in key order, like the platform's ordered walk, and apply the same page
-    // cap. An object with integer-like keys enumerates numerically, so the sort is
-    // explicit: the platform orders bytewise, where "1000" precedes "999".
-    const keys = Object.keys(docs).sort();
+    // Walk in a DEFINED order, like the platform's ordered walk, and apply the
+    // same page cap. An object with integer-like keys enumerates numerically, so
+    // the sort is explicit: the platform orders bytewise, where "1000" precedes
+    // "999". `less` is also what the cursor compares against, so paging resumes
+    // in whichever order was asked for.
+    let less = (a, b) => a < b;
+    if (order === "insertion") {
+      // The local store mints keys from its own counter, so ordering by that
+      // NUMBER is insertion order — the same guarantee a slice gets from its
+      // order index, reached differently because the two mint keys differently.
+      less = (a, b) => {
+        const ia = _localKeyIndex(a);
+        const ib = _localKeyIndex(b);
+        if (ia !== ib) return ia < ib;
+        return a < b;
+      };
+    }
+    const keys = Object.keys(docs).sort((a, b) => (less(a, b) ? -1 : less(b, a) ? 1 : 0));
     const after = query.after || "";
     let limit = parseInt(query.limit, 10);
     if (!Number.isInteger(limit) || limit <= 0) limit = LIST_DEFAULT;
     if (limit > LIST_MAX) limit = LIST_MAX;
     const results = [];
     for (const k of keys) {
-      if (after && k <= after) continue;
+      if (after && !less(after, k)) continue;
       const doc = docs[k];
       if (query.field && String(doc[query.field]) !== query.value) continue;
       results.push(doc);
@@ -475,12 +513,34 @@ function _callLocal(method, path, body) {
   }
 
   // Blob
+  //
+  // Addressed by BUCKET AND KEY, which is what the wire format sends. These arms
+  // used to read `name` — the shape from before the bucket/key split — and
+  // _callRaw never reached them at all: it wrote the bytes into _store.blobs
+  // under the full request path `blob/put?bucket=…&key=…`, while blob.get read
+  // `blob/get?bucket=…&key=…`. Two code paths that were supposed to agree on a
+  // key format and did not, so every local Put reported success and every local
+  // Get returned null — indistinguishable from "the key never existed".
+  //
+  // Both now route through here, so there is ONE local address for a blob.
   if (basePath === "blob/put" && method === "POST") {
-    _store.blobs[(body && body.name) || ""] = body && body.data;
+    if (!query.bucket || !query.key) {
+      throw new Error("drift: backbone blob/put: HTTP 400: bucket and key are required");
+    }
+    _store.blobs[_blobAddress(query.bucket, query.key)] = body;
     return null;
   }
   if (basePath === "blob/get" && method === "GET") {
-    return _store.blobs[query.name] !== undefined ? _store.blobs[query.name] : null;
+    const addr = _blobAddress(query.bucket, query.key);
+    // ABSENT IS AN ERROR, matching the slice's 404 and Go's SDK. Returning null
+    // would make "never stored" and "stored an empty value" the same answer,
+    // which is the defect this whole path is being fixed for.
+    if (!(addr in _store.blobs)) {
+      throw new Error(
+        `drift: backbone blob/get: HTTP 404: no object "${query.key}" in bucket "${query.bucket || "default"}"`,
+      );
+    }
+    return _store.blobs[addr];
   }
 
   // Secret — in local dev, read from environment variables (loaded from .env by the CLI)
@@ -616,6 +676,60 @@ const nosql = {
         after = next;
       }
     },
+    // Returns ONE page of documents in the order they were WRITTEN.
+    //
+    // list() and listAll() return rows in storage-key order, which is not the
+    // order anything was appended: the key's counter is not zero-padded, so a
+    // collection written 1…12 comes back 10, 11, 12, 1, 2 … 9. That is stable
+    // and complete and it is not chronological, and it LOOKS chronological for
+    // the first nine documents — long enough to pass a manual test.
+    //
+    // This is the read for anything shaped like a LOG: an event store, a
+    // ledger, an activity feed, an outbox, a chat history. The platform keeps a
+    // separate order index for it, so no document key changes and a cursor you
+    // already hold keeps working.
+    //
+    // NO FILTER. The field index carries the same unpadded key the scan does, so
+    // an ordered filtered read needs a second index rather than a flag — the
+    // platform refuses the combination rather than quietly ignoring it. Filter
+    // in the caller, or keep the partition in its own collection.
+    //
+    // Same limit rules as list(): pass one for any collection that grows, and
+    // the platform clamps to 1000. Use listAllInOrder for a log past a page.
+    listInOrder: (limit, after) => {
+      let path = `nosql/list?order=insertion&collection=${encodeURIComponent(name)}`;
+      if (limit > 0) path += `&limit=${encodeURIComponent(limit)}`;
+      if (after) path += `&after=${encodeURIComponent(after)}`;
+      return _call("GET", path).then((r) => (Array.isArray(r) ? r : []));
+    },
+    // Returns EVERY document in the order it was written, paging until the
+    // collection is exhausted.
+    //
+    // This is what makes a hash-chained log verifiable: walking it in order is
+    // the whole point, and a Merkle root over a subset is not a proof of the
+    // set. Every document is held in memory at once — the point for a ledger,
+    // and a cost worth knowing elsewhere, since a function runs under a limit.
+    listAllInOrder: async () => {
+      const page = LIST_MAX;
+      const all = [];
+      let after = "";
+      for (;;) {
+        const rows = await nosql.collection(name).listInOrder(page, after);
+        all.push(...rows);
+        if (rows.length < page) return all;
+        const next = rows[rows.length - 1] && rows[rows.length - 1]._key;
+        if (!next) {
+          throw new Error("drift: list row carries no _key, so the collection cannot be paged");
+        }
+        // A full page that does not move the cursor would loop forever. Same
+        // guard, same reason, as listAll: a short read is the failure this
+        // method exists to prevent.
+        if (next === after) {
+          throw new Error(`drift: listing ${name} did not advance past _key ${after}`);
+        }
+        after = next;
+      }
+    },
     drop: () => _call("POST", `nosql/drop?collection=${encodeURIComponent(name)}`),
   }),
 };
@@ -641,6 +755,14 @@ function _splitBucketKey(name) {
   return [name.slice(0, i), name.slice(i + 1)];
 }
 
+// The ONE address a blob has in the local store. Put and Get must derive it the
+// same way or they address different things while both reporting success, which
+// is precisely the defect this replaced: one wrote under the full request path
+// `blob/put?bucket=…&key=…` and the other read `blob/get?bucket=…&key=…`.
+function _blobAddress(bucket, key) {
+  return `${bucket || ""}/${key || ""}`;
+}
+
 const blob = {
   put: async (name, data, contentType) => {
     const [bucket, key] = _splitBucketKey(name);
@@ -654,7 +776,10 @@ const blob = {
     const [bucket, key] = _splitBucketKey(name);
     const path = `blob/get?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(key)}`;
     const base = _getBackboneUrl();
-    if (!base) return _store.blobs[path] || null;
+    // Same dispatch as the put, so the two agree on where a blob lives. An
+    // absent key THROWS here, matching the slice's 404 — returning null made
+    // "never stored" and "stored an empty value" the same answer.
+    if (!base) return _callLocal("GET", path, null);
     const resp = await fetch(`${base}/${path}`);
     if (!resp.ok) {
       const text = (await resp.text()).trim();
