@@ -27,10 +27,19 @@ package common
 //
 // # Migration is silent and lossless
 //
-// A flat file is read as a single profile named from its own token's `username`
-// claim, and rewritten in the new shape on the next write. Nobody is logged out
-// and nobody has to log in again. `migrate` below is the only place that knows
-// the old shape.
+// A flat file is read as a single profile named from its own token, and
+// rewritten in the new shape on the next write. Nobody is logged out and nobody
+// has to log in again. `migrate` below is the only place that knows the old
+// shape.
+//
+// # A profile is named after the PERSON, not the account
+//
+// The two are the same string for an owner, and differ for a MEMBER — somebody
+// invited onto another account, whose token names the OWNER in `username` so
+// that their commands reach the owner's slices. profileNameFromToken is what
+// keeps this file straight: naming a profile from `username` would file a
+// member's credentials under the owner's name, and two members of one account
+// logging in on the same machine would overwrite each other.
 
 import (
 	"crypto/rand"
@@ -155,7 +164,7 @@ func migrate(raw map[string]json.RawMessage) sessionFile {
 		return out
 	}
 
-	name := usernameFromToken(flat.Token)
+	name := profileNameFromToken(flat.Token)
 	if name == "" {
 		name = "default"
 	}
@@ -253,7 +262,7 @@ func SaveSession(token, refreshToken string) error {
 		s.Accounts = map[string]AccountProfile{}
 	}
 
-	name := usernameFromToken(token)
+	name := profileNameFromToken(token)
 	if name == "" {
 		// A token whose claims will not parse still has to go somewhere, and the
 		// current profile is the least surprising place — it is the account the
@@ -413,26 +422,64 @@ func decodeTokenClaims(token string, v any) error {
 	return json.Unmarshal(decoded, v)
 }
 
-// usernameFromToken reads the `username` claim, or "" if it cannot.
+// sessionClaims is the part of an access token this file reads.
 //
-// This is what names a profile, so it is the one place the mapping from a
-// credential to an account NAME lives — the migration, the login write and the
-// whoami display all go through it rather than deriving a name three ways.
-func usernameFromToken(token string) string {
-	if token == "" {
-		return ""
-	}
-	var claims struct {
-		Username string `json:"username"`
-	}
-	if decodeTokenClaims(token, &claims) != nil {
-		return ""
-	}
-	return claims.Username
+// Two names, and they are the same string for almost every session. `username`
+// is the ACCOUNT the token acts on; `actor` is the person acting, present only
+// when they differ — a MEMBER working on somebody else's account. See
+// ActorFromToken for why the distinction has to exist here rather than only
+// server-side.
+type sessionClaims struct {
+	Username string `json:"username"`
+	Actor    string `json:"actor"`
 }
 
-// GetUsername extracts the username from the JWT access token this invocation is
-// acting with.
+func sessionClaimsOf(token string) sessionClaims {
+	if token == "" {
+		return sessionClaims{}
+	}
+	var claims sessionClaims
+	if decodeTokenClaims(token, &claims) != nil {
+		return sessionClaims{}
+	}
+	return claims
+}
+
+// usernameFromToken reads the ACCOUNT a token acts on, or "" if it cannot.
+func usernameFromToken(token string) string {
+	return sessionClaimsOf(token).Username
+}
+
+// actorFromToken reads WHO IS ACTING, empty when that is the account itself.
+func actorFromToken(token string) string {
+	return sessionClaimsOf(token).Actor
+}
+
+// profileNameFromToken is what a session profile is CALLED on this machine.
+//
+// THE PERSON, NOT THE ACCOUNT, and the difference only shows up for a member. A
+// member's token names the owner in `username`, so naming the profile from that
+// claim would file Erica's credentials under "isrand" — and two of Isrand's
+// members logging in on one laptop would land in the SAME profile and overwrite
+// each other, each looking like a successful login.
+//
+// It is also what the user would type. `drift account use erica` is the name
+// they know; `drift account use isrand` would be a name that belongs to somebody
+// who is not logged in here.
+func profileNameFromToken(token string) string {
+	c := sessionClaimsOf(token)
+	if c.Actor != "" {
+		return c.Actor
+	}
+	return c.Username
+}
+
+// GetUsername extracts the ACCOUNT this invocation is acting on.
+//
+// The account and not the person: for a member this is the OWNER, which is the
+// right answer for every caller — it names the tenant whose slices, secrets and
+// Backbone the command is about. `drift account whoami` uses ActorFromToken
+// alongside it to say who is doing the acting.
 //
 // Returns an empty string if there is no session and no exchanged token, or if
 // the token cannot be parsed. A PAT caller has no session file, so the name comes
@@ -444,6 +491,18 @@ func GetUsername() string {
 		return ""
 	}
 	return usernameFromToken(token)
+}
+
+// ActorFromToken reports who is acting, when that is not the account itself —
+// a MEMBER working on somebody else's slices. Empty for an owner's own session,
+// and for a personal access token, which belongs to the account rather than to a
+// person.
+func ActorFromToken() string {
+	token, _, err := currentAccessToken()
+	if err != nil || token == "" {
+		return ""
+	}
+	return actorFromToken(token)
 }
 
 // TokenExpired reports whether the stored access token's `exp` claim has

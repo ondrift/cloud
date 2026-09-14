@@ -360,3 +360,104 @@ func TestClearSessionRemovesOnlyTheCurrentAccount(t *testing.T) {
 		t.Error("the session file survived the last account being cleared")
 	}
 }
+
+// --- a member's profile ------------------------------------------------------
+
+// memberToken is the shape a MEMBER's session has: `username` names the OWNER —
+// which is what makes their commands reach the owner's slices — and `actor`
+// names them.
+func memberToken(owner, actor string) string {
+	p := base64.RawURLEncoding.EncodeToString(
+		[]byte(`{"username":"` + owner + `","actor":"` + actor + `","exp":9999999999}`))
+	return "h." + p + ".s"
+}
+
+// A PROFILE IS NAMED AFTER THE PERSON. Naming it from `username` would file
+// Erica's credentials under "isrand" — the account she works on, and a name
+// belonging to somebody who is not logged in on this machine.
+func TestAMembersProfileIsNamedAfterThemAndNotTheOwner(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv(AccountEnv, "")
+	t.Setenv(SliceEnv, "")
+
+	if err := SaveSession(memberToken("isrand", "erica"), "ref-e"); err != nil {
+		t.Fatalf("login erica: %v", err)
+	}
+
+	if got := CurrentAccount(); got != "erica" {
+		t.Errorf("the profile is named %q, want \"erica\" — `drift account use isrand` "+
+			"would name an account that is not logged in here", got)
+	}
+	// And the ACCOUNT is still the owner: that is what the commands act on.
+	if got := GetUsername(); got != "isrand" {
+		t.Errorf("GetUsername() = %q, want \"isrand\" — a member acts on the owner's account", got)
+	}
+	if got := ActorFromToken(); got != "erica" {
+		t.Errorf("ActorFromToken() = %q, want \"erica\"", got)
+	}
+}
+
+// THE COLLISION. Two members of the same account, on one machine. Named from
+// `username` they land in the SAME profile and silently overwrite each other —
+// each login reporting success, and the second one taking the first's slice.
+func TestTwoMembersOfOneAccountDoNotOverwriteEachOther(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv(AccountEnv, "")
+	t.Setenv(SliceEnv, "")
+
+	if err := SaveSession(memberToken("isrand", "erica"), "ref-e"); err != nil {
+		t.Fatalf("login erica: %v", err)
+	}
+	if err := SaveActiveSlice("erica-slice"); err != nil {
+		t.Fatalf("slice erica: %v", err)
+	}
+	if err := SaveSession(memberToken("isrand", "sam"), "ref-s"); err != nil {
+		t.Fatalf("login sam: %v", err)
+	}
+	if err := SaveActiveSlice("sam-slice"); err != nil {
+		t.Fatalf("slice sam: %v", err)
+	}
+
+	names, current, err := Accounts()
+	if err != nil {
+		t.Fatalf("Accounts: %v", err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("got %v, want both members — the second login overwrote the first, and "+
+			"said nothing", names)
+	}
+	if current != "sam" {
+		t.Errorf("current is %q, want the member who just logged in", current)
+	}
+
+	if err := UseAccount("erica"); err != nil {
+		t.Fatalf("UseAccount(erica): %v", err)
+	}
+	if _, ref, _ := GetTokenFromSession(); ref != "ref-e" {
+		t.Errorf("switching to erica produced %q — the two members share credentials", ref)
+	}
+	if got := GetActiveSlice(); got != "erica-slice" {
+		t.Errorf("erica's active slice is %q — the two members share one", got)
+	}
+}
+
+// An OWNER's profile is unaffected: with no actor claim the two names are the
+// same string, which is every session that exists today.
+func TestAnOwnersProfileIsStillNamedFromTheUsernameClaim(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv(AccountEnv, "")
+
+	p := base64.RawURLEncoding.EncodeToString([]byte(`{"username":"alice","exp":9999999999}`))
+	if err := SaveSession("h."+p+".s", "ref-a"); err != nil {
+		t.Fatalf("login alice: %v", err)
+	}
+	if got := CurrentAccount(); got != "alice" {
+		t.Errorf("an owner's profile is named %q, want \"alice\"", got)
+	}
+	if got := ActorFromToken(); got != "" {
+		t.Errorf("an owner's session reports an actor: %q", got)
+	}
+}
