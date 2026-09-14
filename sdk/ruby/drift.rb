@@ -221,7 +221,12 @@ module Drift
   end
 
   def self._call_raw(method, path, data_bytes, content_type = 'application/octet-stream')
-    return nil if _get_backbone_url.empty?
+    # Local dev goes through the SAME dispatch every other primitive uses. This
+    # used to `return nil` here, before building a query string or touching the
+    # store at all — so a local Blob.put reported success, wrote nothing, and the
+    # matching get came back nil. That reads as "blobs are broken" rather than
+    # "blobs are not implemented", which is the worse of the two.
+    return _call_local(method, path, data_bytes) if _get_backbone_url.empty?
     code, resp_body = _backbone_http(method, path, data_bytes, content_type)
     _check_backbone_status!(code, resp_body, path)
     resp_body
@@ -283,6 +288,21 @@ module Drift
     'blobs' => {}, 'locks' => {}, 'next_id' => 0,
   }
 
+  # The position a local document key encodes. The local store mints keys from
+  # its own counter, so ordering by that value IS insertion order. A key that is
+  # not a number sorts as 0 and falls back to the string compare beside it.
+  def self._local_key_index(key)
+    Integer(key, 10)
+  rescue ArgumentError, TypeError
+    0
+  end
+
+  # The ONE address a blob has in the local store. put and get must derive it the
+  # same way or they address different things while both reporting success.
+  def self._blob_address(bucket, key)
+    "#{bucket}/#{key}"
+  end
+
   def self._call_local(method, path, body = nil)
     s = @local_store
     base_path, qs = path.split('?', 2)
@@ -312,19 +332,40 @@ module Drift
     end
     if base_path == 'nosql/list' && method == 'GET'
       col = query['collection'] || 'default'
-      docs = s['nosql'][col] || {}
       field = query['field']
       value = query['value']
-      # Walk in key order, like the platform's ordered walk, and apply the same
-      # page cap — a local store answering every read in full would hide the
-      # truncation a paged read exists to avoid.
+      order = query['order'].to_s
+
+      # The slice refuses an order it does not recognise rather than serving an
+      # unordered read under the caller's name for one, and refuses the
+      # combination with a filter because the field index carries no order.
+      # Accepting either here would hide the failure until deployment.
+      unless order.empty? || order == 'insertion'
+        raise BackboneError, "drift: backbone nosql/list: HTTP 400: unknown order #{order.inspect}"
+      end
+      if order == 'insertion' && field
+        raise BackboneError, 'drift: backbone nosql/list: HTTP 400: order=insertion cannot be combined with a field filter'
+      end
+
+      docs = s['nosql'][col] || {}
+      # Walk in a DEFINED order, like the platform's ordered walk, and apply the
+      # same page cap — a local store answering every read in full would hide the
+      # truncation a paged read exists to avoid. The sort key is also what the
+      # cursor compares against, so paging resumes in whichever order was asked
+      # for.
+      #
+      # For order=insertion the key's NUMBER is the sequence: the local store
+      # mints keys from its own counter, so ordering by that value IS insertion
+      # order — the same guarantee a slice gets from its order index, reached
+      # differently because the two mint keys differently.
+      sort_key = order == 'insertion' ? ->(k) { [_local_key_index(k), k] } : ->(k) { [k] }
       after = query['after'].to_s
       limit = query['limit'].to_i
       limit = LIST_DEFAULT if limit <= 0
       limit = LIST_MAX if limit > LIST_MAX
       results = []
-      docs.keys.sort.each do |k|
-        next if !after.empty? && k <= after
+      docs.keys.sort_by(&sort_key).each do |k|
+        next if !after.empty? && (sort_key.call(k) <=> sort_key.call(after)) <= 0
         doc = docs[k]
         next if field && doc[field].to_s != value
         results << doc
@@ -365,12 +406,31 @@ module Drift
     end
 
     # Blob
+    #
+    # Addressed by BUCKET AND KEY, which is what the wire format sends. These arms
+    # used to read a `name` — the shape from before the bucket/key split — and
+    # nothing ever reached them anyway, because _call_raw returned before the
+    # dispatch. Both halves are fixed together: one local address for a blob.
     if base_path == 'blob/put' && method == 'POST'
-      s['blobs'][(body || {})['name'] || ''] = (body || {})['data']
+      bucket = query['bucket'].to_s
+      key = query['key'].to_s
+      if bucket.empty? || key.empty?
+        raise BackboneError, 'drift: backbone blob/put: HTTP 400: bucket and key are required'
+      end
+      s['blobs'][_blob_address(bucket, key)] = body
       return nil
     end
     if base_path == 'blob/get' && method == 'GET'
-      return s['blobs'][query['name'] || '']
+      bucket = query['bucket'].to_s
+      key = query['key'].to_s
+      addr = _blob_address(bucket, key)
+      # ABSENT IS AN ERROR, matching the slice's 404 and Go's SDK. Returning nil
+      # would make "never stored" and "stored an empty value" the same answer,
+      # which is the defect this whole path is being fixed for.
+      unless s['blobs'].key?(addr)
+        raise BackboneError, "drift: backbone blob/get: HTTP 404: no object #{key.inspect} in bucket #{bucket.inspect}"
+      end
+      return s['blobs'][addr]
     end
 
     # Secret — in local dev, read from environment variables (loaded from .env by the CLI)
@@ -575,6 +635,63 @@ module Drift
           end
         end
 
+        # Return ONE page of documents in the order they were WRITTEN.
+        #
+        # list and list_all return rows in storage-key order, which is not the
+        # order anything was appended: the key's counter is not zero-padded, so a
+        # collection written 1…12 comes back 10, 11, 12, 1, 2 … 9. That is stable
+        # and complete and it is not chronological, and it LOOKS chronological
+        # for the first nine documents — long enough to pass a manual test.
+        #
+        # This is the read for anything shaped like a LOG: an event store, a
+        # ledger, an activity feed, an outbox, a chat history. The platform keeps
+        # a separate order index for it, so no document key changes and a cursor
+        # you already hold keeps working.
+        #
+        # NO FILTER. The field index carries the same unpadded key the scan does,
+        # so an ordered filtered read needs a second index rather than a flag —
+        # the platform refuses the combination rather than quietly ignoring it.
+        # Filter in the caller, or keep the partition in its own collection.
+        #
+        # Same limit rules as list: pass one for any collection that grows, and
+        # the platform clamps to 1000. Use list_all_in_order for a log past a
+        # page.
+        def list_in_order(limit: nil, after: nil)
+          path = "nosql/list?order=insertion&collection=#{URI.encode_www_form_component(@name)}"
+          path += "&limit=#{limit.to_i}" if limit && limit.to_i > 0
+          path += "&after=#{URI.encode_www_form_component(after.to_s)}" if after && !after.to_s.empty?
+          resp = Drift._call('GET', path)
+          resp.is_a?(Array) ? resp : []
+        end
+
+        # Return EVERY document in the order it was written, paging until the
+        # collection is exhausted.
+        #
+        # This is what makes a hash-chained log verifiable: walking it in order
+        # is the whole point, and a Merkle root over a subset is not a proof of
+        # the set. Every document is held in memory at once — the point for a
+        # ledger, and a cost worth knowing elsewhere, since a function runs under
+        # a limit.
+        def list_all_in_order
+          page = Drift::LIST_MAX
+          out = []
+          after = nil
+          loop do
+            rows = list_in_order(limit: page, after: after)
+            out.concat(rows)
+            return out if rows.length < page
+
+            nxt = rows.last.is_a?(Hash) ? rows.last['_key'] : nil
+            raise 'drift: list row carries no _key, so the collection cannot be paged' if nxt.nil? || nxt.to_s.empty?
+            # A full page that does not move the cursor would loop forever. Same
+            # guard, same reason, as list_all: a short read is the failure this
+            # method exists to prevent.
+            raise "drift: listing #{@name} did not advance past _key #{after}" if nxt == after
+
+            after = nxt
+          end
+        end
+
         def drop
           Drift._call('POST', "nosql/drop?collection=#{URI.encode_www_form_component(@name)}")
         end
@@ -622,8 +739,11 @@ module Drift
 
       def self.get(name)
         bucket, key = _split(name)
-        return nil if Drift._get_backbone_url.empty?
         path = "blob/get?bucket=#{URI.encode_www_form_component(bucket)}&key=#{URI.encode_www_form_component(key)}"
+        # Same dispatch as the put, so the two agree on where a blob lives. This
+        # used to `return nil` in local dev, which made a missing blob and a
+        # stored empty one the same answer.
+        return Drift._call_local('GET', path, nil) if Drift._get_backbone_url.empty?
         code, body = Drift._backbone_http('GET', path, nil, nil)
         Drift._check_backbone_status!(code, body, path)
         body
