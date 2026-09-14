@@ -18,14 +18,32 @@ func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request,
 }
 
 func newAuthenticatedRequestCtx(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
-	token, _, err := GetTokenFromSession()
-	if err != nil {
-		// The first failure a new install hits, and it used to surface as the
-		// raw filesystem error — an absolute path to a session file the user has
-		// never heard of, for the condition "you have not logged in yet".
-		return nil, errors.New(withCode(
-			"you're not logged in. Run `drift account login` (or `drift account signup` if you don't have an account yet).",
-			"DRIFT-1011"))
+	var token string
+
+	// A PERSONAL ACCESS TOKEN REPLACES THE SESSION ENTIRELY, and is checked
+	// first. A CI job has no session file, and a developer's machine that has
+	// one must not quietly use it in preference to the credential the caller
+	// explicitly handed this invocation — that would make DRIFT_TOKEN a hint
+	// rather than an instruction, and the command would run with the owner's
+	// scopes while appearing to run with the token's.
+	if raw := PersonalAccessToken(); raw != "" {
+		exchangedToken, err := patAccessToken(ctx, raw)
+		if err != nil {
+			return nil, err
+		}
+		token = exchangedToken
+	} else {
+		sessionToken, _, err := GetTokenFromSession()
+		if err != nil {
+			// The first failure a new install hits, and it used to surface as the
+			// raw filesystem error — an absolute path to a session file the user has
+			// never heard of, for the condition "you have not logged in yet".
+			return nil, errors.New(withCode(
+				"you're not logged in. Run `drift account login` (or `drift account signup` if you don't have an account yet)."+
+					"\n  Scripting this? Mint a token with `drift account token create` and put it in "+TokenEnv+".",
+				"DRIFT-1011"))
+		}
+		token = sessionToken
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
@@ -132,6 +150,16 @@ func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reade
 		return resp, nil
 	}
 	resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
+
+	// A PAT caller has no refresh token and needs none: it holds the credential
+	// itself, so the fix for an access token that aged out mid-command is to
+	// present it again. Routing this through RefreshAccessToken would look for a
+	// session file that does not exist and tell a pipeline to run
+	// `drift account login`, which is advice for a person at a terminal.
+	if raw := PersonalAccessToken(); raw != "" {
+		forgetExchangedToken()
+		return send()
+	}
 
 	// Attempt token refresh. A 401 here is ambiguous on its own — it can mean
 	// the access token simply aged out (refresh fixes it, invisibly) or that
