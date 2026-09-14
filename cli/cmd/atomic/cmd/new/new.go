@@ -271,7 +271,7 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	// Manifest / .env / .gitignore: one per element, written only when absent so
 	// adding a function never clobbers an existing element's shared files.
 	created := []string{srcFile}
-	manifestName, manifestBody := manifest(lang, elementID)
+	manifestName, manifestBody := Manifest(lang, elementID)
 	if mp := filepath.Join(elementDir, manifestName); !exists(mp) {
 		if err := os.WriteFile(mp, []byte(manifestBody), 0o600); err != nil {
 			return fmt.Errorf("write manifest: %w", err)
@@ -441,10 +441,16 @@ func sourceTemplate(lang, shape string) string {
 	return ""
 }
 
-// manifest returns the (filename, contents) of the function's dependency
+// Manifest returns the (filename, contents) of the function's dependency
 // manifest. The SDK is declared unversioned so builds always track latest;
 // Go's go.mod stays bare (the build/fetch path runs `go get …@latest`).
-func manifest(lang, name string) (string, string) {
+//
+// Exported so the build path can be tested against what this actually writes
+// rather than against a copy of it. The Rust build decides whether to supply a
+// musl C compiler by reading the Cargo.toml, and a test that restated the
+// scaffold instead of reading it would keep passing after the two diverged —
+// which is the only way that decision can go wrong.
+func Manifest(lang, name string) (string, string) {
 	switch lang {
 	case "go":
 		return "go.mod", fmt.Sprintf("module atomic/%s\n\ngo 1.26.2\n", name)
@@ -485,6 +491,18 @@ name = "atomic-function"
 path = "src/main.rs"
 
 [dependencies]
+# Calling an https:// URL from http_request()? Add the "tls" feature:
+#
+#   drift-sdk = { git = "https://github.com/ondrift/cloud/sdk", features = ["tls"] }
+#
+# It is off here because it pulls in ring, which is C and assembly: the build
+# then needs a musl C compiler, and it costs minutes rather than seconds. Drift
+# installs that compiler for you the moment this line says "tls" — you do not
+# need to find one — so the only cost of turning it on is the build time.
+#
+# Plain http:// to the loopback Backbone needs none of this, which is why a new
+# function starts without it. Without the feature an https:// call comes back as
+# status 0 with the reason in the body, rather than failing at build time.
 drift-sdk = { git = "https://github.com/ondrift/cloud/sdk" }
 serde_json = "1"
 

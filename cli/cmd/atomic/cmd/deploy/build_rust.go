@@ -80,7 +80,11 @@ func buildRust(absFolder, method, name string, c atomic_common.Callable) (string
 	// natively rather than cross-compiling.
 	target := rustTarget()
 
-	if out, err := runRustContainer(stageDir, target); err != nil {
+	// A crate enabling the SDK's `tls` feature compiles ring, which needs a musl C
+	// compiler the stock rust image does not carry. Read from the resolved
+	// Cargo.toml — the user's if they wrote one, the skeleton otherwise — so the
+	// decision follows what is actually being built.
+	if out, err := runRustContainer(stageDir, target, crateWantsTLS(cargoData)); err != nil {
 		return "", fmt.Errorf("cargo build error (target %s): %w\n%s\n%s", target, err, string(out), rustBuildHint(string(out), target))
 	}
 
@@ -98,14 +102,17 @@ func buildRust(absFolder, method, name string, c atomic_common.Callable) (string
 }
 
 // rustBuildHint tailors the failure message. A `ring` error means the function
-// enabled outbound HTTPS (the SDK's `tls` feature), which drags in C/assembly.
-// That now compiles natively in the image, so the usual cause is a missing musl
-// C toolchain in the image rather than a cross-compilation problem.
+// enabled outbound HTTPS (the SDK's `tls` feature), which drags in C/assembly and
+// needs a musl C compiler. The CLI now builds an image carrying one whenever the
+// Cargo.toml asks for `tls`, so reaching this hint means that detection missed —
+// worth naming, because the override is the user's way out either way.
 func rustBuildHint(buildOutput, target string) string {
 	if strings.Contains(strings.ToLower(buildOutput), "ring") {
 		return "Hint: outbound HTTPS (the SDK's \"tls\" feature) pulls `ring`, which has C/assembly and " +
-			"needs musl-gcc in the build image. Point DRIFT_BUILD_IMAGE_RUST at an image with musl-tools " +
-			"installed, or use only http:// (drop the \"tls\" feature) to keep the build pure-Rust."
+			"needs musl-gcc in the build image. Drift adds it automatically when Cargo.toml enables " +
+			"\"tls\"; if you reached this, name the feature in Cargo.toml rather than enabling it " +
+			"indirectly, point DRIFT_BUILD_IMAGE_RUST at an image with musl-tools installed, or use " +
+			"only http:// (drop the \"tls\" feature) to keep the build pure-Rust."
 	}
 	return fmt.Sprintf("Hint: the build runs in %s under --platform %s, targeting %s. "+
 		"Override the image with DRIFT_BUILD_IMAGE_RUST if it lacks that target.",

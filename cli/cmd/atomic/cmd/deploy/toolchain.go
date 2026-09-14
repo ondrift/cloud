@@ -138,12 +138,86 @@ func runToolchain(c toolchainCmd) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
+// crateWantsTLS reports whether a Cargo.toml opts into the SDK's `tls` feature —
+// outbound HTTPS from http_request().
+//
+// A line scan, not a TOML parse: the CLI carries no TOML dependency, and the two
+// ways to be wrong are not symmetric. A false positive builds the musl image for
+// a crate that did not need it, which still compiles everything correctly and
+// costs one image layer and some minutes. A false negative is the status quo — a
+// build that dies inside cc-rs. So where it is unsure, it says yes.
+//
+// COMMENTS ARE STRIPPED FIRST, which is not a refinement. The scaffold's own
+// Cargo.toml shows the reader the opt-in line in a comment, so a plain substring
+// test answers yes for every freshly generated function — handing ring's compile
+// to exactly the people who have not asked for it and do not know what it is.
+func crateWantsTLS(cargoToml string) bool {
+	for _, line := range strings.Split(cargoToml, "\n") {
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		if strings.Contains(line, `"tls"`) {
+			return true
+		}
+	}
+	return false
+}
+
+// rustBuildImage is the image runRustContainer compiles in.
+//
+// The default rust image cannot build a crate that enables `tls`. That feature
+// pulls in ring, which is C and assembly, and ring cross-compiles to a musl
+// target through a musl C compiler — `x86_64-linux-musl-gcc` or
+// `aarch64-linux-musl-gcc` — which rust:1-bookworm does not ship. The failure is
+// a cc-rs `failed to find tool` deep in a build script, naming a binary the user
+// has never heard of and no way to install it: the build runs in a container
+// they do not control, so every piece of advice about musl-gcc, zig or
+// cargo-zigbuild is advice about a machine that is not the one compiling.
+//
+// So the CLI provides the compiler instead of asking for it. The derived image
+// is built once per base image per architecture and cached by Docker under a
+// deterministic tag, which makes the second build a no-op lookup.
+//
+// ON DEMAND, not always: musl-tools is only needed by ring, and ring is only
+// pulled by `tls`. A function talking plain HTTP to the loopback Backbone — the
+// common case, and what a new function starts as — keeps the stock image and
+// pays nothing.
+func rustBuildImage(wantsTLS bool) (string, error) {
+	base := toolchainImage("rust")
+	if !wantsTLS {
+		return base, nil
+	}
+	// The tag pins BOTH the base and the architecture: a musl-tools layer built
+	// for arm64 holds an arm64 compiler, and reusing it for an amd64 build is the
+	// same class of bug the per-architecture build cache exists to prevent.
+	tag := fmt.Sprintf("drift-build-rust-tls:%s-%s", strings.NewReplacer("/", "-", ":", "-").Replace(base), targetArch())
+	if err := exec.Command("docker", "image", "inspect", tag).Run(); err == nil { // #nosec G204 -- tag is CLI-derived
+		return tag, nil
+	}
+	dockerfile := "FROM " + base + "\n" +
+		"RUN apt-get update && apt-get install -y --no-install-recommends musl-tools && rm -rf /var/lib/apt/lists/*\n"
+	cmd := exec.Command("docker", "build", "--platform", targetPlatform(), "-t", tag, "-") // #nosec G204 -- args are CLI-derived
+	cmd.Stdin = strings.NewReader(dockerfile)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("preparing the Rust TLS build image (%s): %w\n%s\n"+
+			"This image is the stock %s plus musl-tools, which `ring` needs to compile for the\n"+
+			"musl target. Drop the SDK's \"tls\" feature from Cargo.toml to build without it.",
+			tag, err, strings.TrimSpace(string(out)), base)
+	}
+	return tag, nil
+}
+
 // runRustContainer compiles the staged Rust crate to a static musl binary inside
 // the rust image. The musl target's std is added on demand (cached in the mounted
 // RUSTUP_HOME); the SDK is pure-Rust by default, so rustc's self-contained musl
-// linking needs no external C toolchain.
-func runRustContainer(stageDir, target string) ([]byte, error) {
+// linking needs no external C toolchain. A crate enabling `tls` is the exception
+// and gets an image carrying one — see rustBuildImage.
+func runRustContainer(stageDir, target string, wantsTLS bool) ([]byte, error) {
 	if err := ensureDocker(); err != nil {
+		return nil, err
+	}
+	image, err := rustBuildImage(wantsTLS)
+	if err != nil {
 		return nil, err
 	}
 	cacheDir, err := toolchainCacheDir("rust")
@@ -163,7 +237,7 @@ func runRustContainer(stageDir, target string) ([]byte, error) {
 		"-e", "RUSTUP_HOME=/cache/rustup",
 	}
 	args = append(args, dockerUserArgs()...)
-	args = append(args, toolchainImage("rust"), "sh", "-c", script)
+	args = append(args, image, "sh", "-c", script)
 	cmd := exec.Command("docker", args...) // #nosec G204 -- args are CLI-derived; the workload is the user's own crate
 	return cmd.CombinedOutput()
 }
