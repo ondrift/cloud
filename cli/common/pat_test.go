@@ -17,8 +17,11 @@ func TestTheEnvironmentsSliceBeatsTheStoredOne(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv(SliceEnv, "")
 
-	if err := writeSessionMap(map[string]string{
-		"token": "x", "refresh_token": "y", "active_slice": "the-stored-one",
+	if err := writeSession(sessionFile{
+		Current: "alice",
+		Accounts: map[string]AccountProfile{
+			"alice": {Token: "x", RefreshToken: "y", ActiveSlice: "the-stored-one"},
+		},
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
@@ -38,8 +41,11 @@ func TestTheEnvironmentsSliceBeatsTheStoredOne(t *testing.T) {
 func TestTheEnvironmentsSliceIsTrimmedAndBlankIsIgnored(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	if err := writeSessionMap(map[string]string{
-		"token": "x", "refresh_token": "y", "active_slice": "stored",
+	if err := writeSession(sessionFile{
+		Current: "alice",
+		Accounts: map[string]AccountProfile{
+			"alice": {Token: "x", RefreshToken: "y", ActiveSlice: "stored"},
+		},
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
