@@ -233,7 +233,7 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	// The source carries no Drift-specific marking. What this function is —
 	// its trigger, its gate, the memory it books — is declared in the
 	// Driftfile, and the handler name is the only thing binding the two.
-	funcName := handlerName(funcMethod, name, lang)
+	funcName := HandlerName(funcMethod, name, lang)
 	source := strings.NewReplacer("{{FUNC}}", funcName).Replace(sourceTemplate(lang, shape))
 
 	// ---- resolve the target element + drop a flat handler file into it ----
@@ -304,6 +304,25 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	// scaffolders agreeing with each other and disagreeing with the linter is
 	// worse than either being wrong alone: it teaches the retired form as the
 	// house style.
+	// ALREADY DECLARED IS A DIFFERENT MESSAGE, and this is the case `drift file
+	// new` creates on purpose. That scaffolder writes a Driftfile declaring
+	// `route: hello, method: get` and prints the command that produces its
+	// source — which is this one. Telling the user who followed that hint to
+	// "declare it in your Driftfile" sends them to paste a duplicate of an entry
+	// already three lines above, and a second entry for one route is a parse
+	// error rather than a no-op.
+	//
+	// So the two commands point at each other rather than each assuming the
+	// other half of the round trip: file new names this command, and this
+	// command recognises the entry that command wrote.
+	if declaredRoute(funcMethod, name, queue, isQueue) {
+		fmt.Printf("\nAlready declared in your Driftfile — nothing to add.\n")
+		fmt.Printf("\nThen:\n")
+		fmt.Printf("\tdrift file apply      # ship it\n")
+		fmt.Printf("\tdrift file benchmark  # what it has actually cost, once it has served traffic\n")
+		return nil
+	}
+
 	fmt.Printf("\nDeclare it in your Driftfile, under atomic.functions:\n\n")
 	if isQueue {
 		fmt.Printf("    - route: %s\n", queue)
@@ -325,10 +344,16 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	return nil
 }
 
-// handlerName is the callable the scaffolder writes and names in the Driftfile
+// HandlerName is the callable the scaffolder writes and names in the Driftfile
 // entry it prints. It is a STARTING POINT — the manifest binds the two, so
 // renaming the function only means editing `handler:` beside it.
-func handlerName(method, route, lang string) string {
+//
+// Exported because `drift file new` scaffolds a Driftfile declaring a handler
+// and prints the `drift atomic new` command that writes it. The two must name
+// the SAME callable, and the only way to guarantee that is for the Driftfile
+// side to derive it here rather than restate it. A literal "GetHello" in the
+// other file agrees with this one until the day the derivation changes.
+func HandlerName(method, route, lang string) string {
 	route = strings.ReplaceAll(route, ":", "")
 	route = strings.ReplaceAll(route, "/", "-")
 

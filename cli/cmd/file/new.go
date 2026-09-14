@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	atomic_cmd_new "github.com/ondrift/cloud/cli/cmd/atomic/cmd/new"
 	"github.com/ondrift/cloud/cli/common"
 	"github.com/spf13/cobra"
 )
@@ -89,6 +90,22 @@ func getNewCmd() *cobra.Command {
 			if chosen == "the directory name" {
 				fmt.Printf("  %s\n", common.Hint("no active slice — run `drift slice use <name>` and re-run, or edit `slice:` by hand"))
 			}
+			// NAME THE COMMAND THAT WRITES THE SOURCE, because this file declares
+			// a function that does not exist yet.
+			//
+			// The scaffolded entry is `route: hello, method: get, handler:
+			// GetHello`, and nothing on disk defines GetHello — a Driftfile
+			// declares functions, it does not create them. So `drift file new`
+			// followed by `drift file apply` fails at handler resolution, and the
+			// failure names the missing handler rather than the command that would
+			// produce it. A new user's second command dead-ends on their first.
+			//
+			// The command below is not an example: it is the one that writes source
+			// matching THIS entry exactly — same route, same method, and
+			// `handlerName` derives the same `GetHello` from them. The two halves
+			// are generated from `starterFn`, so they cannot drift apart while the
+			// test that compares them holds.
+			fmt.Printf("  %s\n", common.Hint(starterFnCommand()+" # write the source it declares"))
 			fmt.Printf("  %s\n", common.Hint("drift file lint    # check it"))
 			fmt.Printf("  %s\n", common.Hint("drift file explain # see what it provisions"))
 			return nil
@@ -116,6 +133,27 @@ func nameLooksValid(s string) bool {
 		}
 	}
 	return true
+}
+
+// The ONE function the starter Driftfile declares, and the only place its route,
+// method and language are written down.
+//
+// Two things are generated from these three values: the `atomic.functions` entry
+// in the scaffolded file, and the `drift atomic new` command printed beside it.
+// They have to agree — the entry names a handler that only that exact command
+// produces — and a second copy of "hello"/"get" in either half is how they stop
+// agreeing. `TestStarterEntryAndItsCommandAgree` holds them together against the
+// real handler-name derivation rather than a restatement of it.
+const (
+	starterRoute  = "hello"
+	starterMethod = "get"
+	starterLang   = "go"
+)
+
+// starterFnCommand is the `drift atomic new` invocation that writes source for
+// the function the starter Driftfile declares.
+func starterFnCommand() string {
+	return fmt.Sprintf("drift atomic new %s -l %s -m %s", starterRoute, starterLang, starterMethod)
 }
 
 func starterDriftfile(name, canvasDir string) string {
@@ -147,9 +185,15 @@ func starterDriftfile(name, canvasDir string) string {
 	b.WriteString("  # draws — not a key in this file. `drift file benchmark` reports what\n")
 	b.WriteString("  # each function has actually cost.\n")
 	b.WriteString("  functions:\n")
-	b.WriteString("    - route: hello\n")
-	b.WriteString("      method: get\n")
-	b.WriteString("      handler: GetHello\n\n")
+	b.WriteString("    - route: " + starterRoute + "\n")
+	b.WriteString("      method: " + starterMethod + "\n")
+	// Derived, never written out. This handler exists only once
+	// `starterFnCommand()` has been run, and that command's own naming rule is
+	// the one that decides what it will be called.
+	// Derived, never written out. This handler exists only once
+	// `starterFnCommand()` has been run, and that command's own naming rule is
+	// the one that decides what it will be called.
+	b.WriteString("      handler: " + atomic_cmd_new.HandlerName(starterMethod, starterRoute, starterLang) + "\n\n")
 
 	b.WriteString("# Per-environment overrides. Anything set here replaces the base for that\n")
 	b.WriteString("# environment — including a 0 or a false, which is the point of the block.\n")
