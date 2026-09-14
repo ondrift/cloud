@@ -107,6 +107,65 @@ func TestDeclaredSchedules_KeyedByFunctionName(t *testing.T) {
 	}
 }
 
+// THE SEAM, and the test that was missing while the feature was dead.
+//
+// declaredSchedules WRITES a map that triggersFor READS, and the two are in
+// different packages. Each half had tests; each half passed; and they keyed on
+// different strings — `get:cronprobe` written against `cronprobe` read — so
+// every `cron:` in every Driftfile was dropped, with the deploy reporting
+// success.
+//
+// Nothing here calls triggersFor (it is unexported, one package over). What it
+// asserts is the contract underneath: the key declaredSchedules produces must be
+// a name that appears in FunctionSpecs, which is what the deploy path looks up
+// by. A key that matches no spec can only ever miss.
+func TestTheScheduleKeyIsTheKeyTheDeployLooksUp(t *testing.T) {
+	// THE MODERN SPELLING, which is the whole point: `route` + `method`, no
+	// `name`. Every other test in this file writes the deprecated `name:`, which
+	// is why they all passed against a broken feature — a hand-written `name`
+	// happens to look like the composite the normaliser would have produced.
+	doc := Node{"slice": "lab", "atomic": map[string]any{"functions": []any{
+		map[string]any{"route": "cronprobe", "method": "get", "handler": "GetCronprobe", "cron": "*/1 * * * *"},
+		map[string]any{"route": "menu", "method": "get", "handler": "GetMenu"},
+	}}}
+	normaliseFunctionIdentities(doc)
+	m := &Manifest{doc: doc, slice: doc, baseDir: t.TempDir()}
+
+	schedules := declaredSchedules(m)
+	if len(schedules) != 1 {
+		t.Fatalf("a Driftfile written the documented way declared one cron and produced %d: %v",
+			len(schedules), schedules)
+	}
+
+	specNames := map[string]bool{}
+	for _, s := range FunctionSpecs(m) {
+		specNames[s.Name] = true
+	}
+	for key := range schedules {
+		if !specNames[key] {
+			t.Errorf("the schedule is filed under %q, and no function ships under that name (%v).\n"+
+				"  The deploy looks a schedule up by FunctionSpec.Name, so this key can only miss — "+
+				"which is exactly how every declared cron was dropped in silence.",
+				key, specNames)
+		}
+	}
+}
+
+// And the composite is what it is, stated once so a change to the normaliser
+// has to come past this line.
+func TestAScheduleIsKeyedByMethodAndRouteTogether(t *testing.T) {
+	doc := Node{"atomic": map[string]any{"functions": []any{
+		map[string]any{"route": "cronprobe", "method": "GET", "handler": "H", "cron": "*/1 * * * *"},
+	}}}
+	normaliseFunctionIdentities(doc)
+	m := &Manifest{doc: doc, slice: doc}
+
+	got := declaredSchedules(m)
+	if got["get:cronprobe"] != "*/1 * * * *" {
+		t.Errorf("want the cron under \"get:cronprobe\", got %v", got)
+	}
+}
+
 // The envelope a schedule is sized against belongs to the SLICE FORM.
 //
 // `MaxNumberOfScheduledJobs` is not reachable from a manifest: the Driftfile

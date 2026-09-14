@@ -233,9 +233,22 @@ func CheckCollisions(specs []FunctionSpec) error {
 
 // triggersFor assembles the trigger specs a function ships with: the queue it
 // consumes, if any, plus the Driftfile schedule bound to it.
+//
+// THE SCHEDULE IS LOOKED UP BY THE FULL DECLARED NAME, `f.Spec.Name`, and not by
+// the route half of it. The two are different strings — `get:cronprobe` against
+// `cronprobe` — and this line asked for the second while declaredSchedules
+// stored the first, so EVERY `cron:` in a Driftfile was silently dropped: the
+// deploy succeeded, no trigger was registered, and nothing anywhere said so.
+//
+// It was true once. `name` used to be a function's route, and the retired
+// spelling `name: post:auth/challenge` was the exception; normaliseFunctionIdentities
+// now composes `name` as `method:route` for EVERY entry, which changed what this
+// side was reading without changing this side. functionidentity.go names exactly
+// this failure — those accessors are total, so a reader left on a key that
+// stopped being written yields "" with no error anywhere.
 func triggersFor(f ElementFunc) []TriggerSpec {
 	var triggers []TriggerSpec
-	method, name := f.Spec.Wire()
+	method, _ := f.Spec.Wire()
 	if q := f.Spec.QueueSource(); q != "" {
 		triggers = append(triggers, TriggerSpec{
 			Type: "queue", Source: q, Method: "queue", PollMS: 500, MaxRetry: 3,
@@ -243,7 +256,7 @@ func triggersFor(f ElementFunc) []TriggerSpec {
 	}
 	// A Driftfile `cron:` is additive — the function keeps its own trigger and
 	// also fires on schedule, so the schedule carries the function's own method.
-	return append(triggers, scheduleTriggerFor(name, method)...)
+	return append(triggers, scheduleTriggerFor(f.Spec.Name, method)...)
 }
 
 // DeployGoElement builds and deploys every function in a Go element. The
