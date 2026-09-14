@@ -2,6 +2,7 @@ package slice
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/ondrift/cloud/cli/common"
 
@@ -17,18 +18,43 @@ import (
 // refuses one that reprices the whole slice until the new figure is sent back,
 // and one that takes something away until the slice is named. Both are answered
 // on the form — see resizeform.go.
+//
+// # And both can be answered WITHOUT one
+//
+// The form needs a terminal, so for a long time there was no resize at all in a
+// script, a CI job or an SDK consumer: every automated path onto Drift began
+// with a human at a form. `--dump` and `--config` are the other way round the
+// same two questions — see resizefile.go, which explains why a flag is as safe
+// as a prompt here and the form is not what makes either safe.
 func getResizeCmd() *cobra.Command {
 	var (
 		allowDestructive bool
 		autoYes          bool
 		billingMonths    int
+		dump             bool
+		configPath       string
+		ackCents         int
+		confirm          string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "resize [name]",
 		Short: "Resize a slice — defaults to the active slice",
+		Long: "Resize a slice.\n\n" +
+			"With no flags this draws a form, opened on what the slice already is.\n\n" +
+			"For a script or a CI job, the same change is three commands:\n\n" +
+			"    drift slice resize my-slice --dump > shape.json\n" +
+			"    $EDITOR shape.json\n" +
+			"    drift slice resize my-slice --config shape.json\n\n" +
+			"The platform asks two questions of every caller, form or not: it refuses a\n" +
+			"resize that changes what the slice costs until the new figure is sent back,\n" +
+			"and one that takes something away until the slice is named. Answer them with\n" +
+			"--acknowledge-monthly-cents and --confirm. Each refusal says which is needed\n" +
+			"and what the figure or the loss actually is.",
 		Example: `  drift slice resize
-  drift slice resize my-slice`,
+  drift slice resize my-slice
+  drift slice resize my-slice --dump > shape.json
+  drift slice resize my-slice --config shape.json --acknowledge-monthly-cents 1200`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// No name given → resize the currently active slice (the one
@@ -43,6 +69,23 @@ func getResizeCmd() *cobra.Command {
 				}
 				name = active
 			}
+
+			if dump && configPath != "" {
+				return fmt.Errorf("--dump writes the current shape and --config applies one; " +
+					"they are the two halves of the loop, not one command")
+			}
+			if dump {
+				return dumpSliceConfig(name, os.Stdout)
+			}
+			if configPath != "" {
+				// -1 means "not given", which is not 0: a slice can cost nothing,
+				// so the absence of a figure and the figure zero must differ.
+				ack := -1
+				if cmd.Flags().Changed("acknowledge-monthly-cents") {
+					ack = ackCents
+				}
+				return resizeFromFile(name, configPath, billingMonths, ack, confirm)
+			}
 			return resizeFromPrompts(name, billingMonths)
 		},
 	}
@@ -51,9 +94,20 @@ func getResizeCmd() *cobra.Command {
 	// removal is authorised by typing the slice's name on the form, and the
 	// price is confirmed on the row that shows it. They keep parsing so a
 	// script that passes them is not stopped by an unknown flag.
+	//
+	// `--confirm` below is NOT a replacement for either: it is the non-interactive
+	// answer to the destructive question, and it takes the slice's NAME for the
+	// same reason the form does — a bare boolean agrees to whatever the loss turns
+	// out to be, and the refusal lists it first.
 	cmd.Flags().BoolVar(&allowDestructive, "allow-destructive", false, "Deprecated: does nothing; the form confirms a removal by naming the slice")
 	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Deprecated: does nothing; the form confirms")
 	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period in months for the resize")
+	cmd.Flags().BoolVar(&dump, "dump", false, "Write the slice's current shape as JSON to stdout, for editing")
+	cmd.Flags().StringVar(&configPath, "config", "", "Apply the shape in this JSON file instead of drawing the form")
+	cmd.Flags().IntVar(&ackCents, "acknowledge-monthly-cents", 0,
+		"Agree to the new monthly price, in cents, when the resize changes it")
+	cmd.Flags().StringVar(&confirm, "confirm", "",
+		"Name the slice to confirm a resize that takes something away")
 	return cmd
 }
 

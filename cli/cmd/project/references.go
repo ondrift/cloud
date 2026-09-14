@@ -42,8 +42,65 @@ import (
 // and secrets (a count). The refusal names the classes it checked rather than
 // claiming to be complete.
 func CheckSliceReferences(m *Manifest, live *LiveSlice) error {
+	missing, err := sliceReferenceMisses(m, live)
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return referenceError(m.Name(), missing)
+}
+
+// ReconcileSliceReferences is CheckSliceReferences plus the one repair it is
+// allowed to make: renaming idle slots the slice already holds.
+//
+// # This is the writing one, and CheckSliceReferences is the reading one
+//
+// They were a single function, and `drift file simulate` / `drift file apply
+// --plan` called it. So a DRY RUN PERFORMED A REAL RESIZE — it printed "nothing
+// was deployed" under a line reporting the rename it had just made on the live
+// slice. The rename is small and reversible, which is exactly why nobody
+// noticed; a plan that writes is wrong at any size.
+//
+// The split is the fix. A caller that is only looking asks the question; a
+// caller that is applying asks for the repair by name. There is no flag,
+// because a boolean parameter is how the two readings end up back in one
+// function.
+//
+// # THE SLOT IS OFTEN ALREADY THERE, and only the name differs
+//
+// A fresh free slice holds five slots called `get:slot-1` … `get:slot-5` —
+// placeholders for a tenant to type over — and `drift file new` scaffolds
+// `route: hello`. So the commonest reading of this refusal was "your slice has
+// no room", when the truth was "your slice has five rooms and none of them is
+// called that", and the remedy was a form that needs a terminal.
+//
+// Renaming an idle slot is not what the form exists for: the form asks about
+// repricing and about destruction, and a rename within the same count and sizes
+// is neither. AdoptIdleSlots sends the resize WITHOUT the acknowledgements those
+// two refusals demand, so the platform is what decides whether this really was a
+// rename.
+func ReconcileSliceReferences(m *Manifest, live *LiveSlice) error {
+	missing, err := sliceReferenceMisses(m, live)
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if renamed, rerr := adoptIdleSlots(m, live, missing); rerr == nil && len(renamed) > 0 {
+		return nil
+	}
+	return referenceError(m.Name(), missing)
+}
+
+// sliceReferenceMisses is the comparison both entry points share: everything the
+// manifest names that the live slice does not declare. It reads and never
+// writes, which is what lets the plan path use it.
+func sliceReferenceMisses(m *Manifest, live *LiveSlice) ([]referenceMiss, error) {
 	if live == nil {
-		return fmt.Errorf("slice %q does not exist — create it first with `drift slice create %s`, then deploy into it",
+		return nil, fmt.Errorf("slice %q does not exist — create it first with `drift slice create %s`, then deploy into it",
 			m.Name(), m.Name())
 	}
 
@@ -61,28 +118,7 @@ func CheckSliceReferences(m *Manifest, live *LiveSlice) error {
 		entryNames(m, "name", "backbone", "blobs"), keySet(live.Config.Backbone.Blobs.Buckets))...)
 	missing = append(missing, missesIn("sql database",
 		entryNames(m, "name", "backbone", "sql"), keySet(live.Config.Backbone.SQL.Databases))...)
-
-	if len(missing) == 0 {
-		return nil
-	}
-
-	// THE SLOT IS OFTEN ALREADY THERE, and only the name differs.
-	//
-	// A fresh free slice holds five slots called `get:slot-1` … `get:slot-5` —
-	// placeholders for a tenant to type over — and `drift file new` scaffolds
-	// `route: hello`. So the commonest reading of this refusal was "your slice
-	// has no room", when the truth was "your slice has five rooms and none of
-	// them is called that", and the remedy was a form that needs a terminal.
-	//
-	// Renaming an idle slot is not what the form exists for: the form asks about
-	// repricing and about destruction, and a rename within the same count and
-	// sizes is neither. AdoptIdleSlots sends the resize WITHOUT the
-	// acknowledgements those two refusals demand, so the platform is what decides
-	// whether this really was a rename.
-	if renamed, rerr := adoptIdleSlots(m, live, missing); rerr == nil && len(renamed) > 0 {
-		return nil
-	}
-	return referenceError(m.Name(), missing)
+	return missing, nil
 }
 
 // adoptIdleSlots renames idle slots to the function names this manifest declares,

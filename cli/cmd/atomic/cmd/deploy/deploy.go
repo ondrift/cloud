@@ -682,14 +682,19 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 		defer os.Remove(userSourcePath)
 	}
 
-	// Content fingerprint of this function's source, recorded with the deploy
-	// so a later `drift file apply` can skip it if nothing changed.
+	// Content fingerprint of this function — its source AND its declaration —
+	// recorded with the deploy so a later `drift file apply` can skip it if
+	// nothing changed.
+	//
 	// Best-effort: on error we send "" — the deploy still succeeds, it just
-	// won't be skippable next time (an empty digest never matches).
-	digest, dErr := FunctionDigest(absFolder, element)
+	// won't be skippable next time (an empty digest never matches, and
+	// DeployDigest keeps it empty rather than hashing the emptiness into a value
+	// that could).
+	buildDigest, dErr := FunctionDigest(absFolder, element)
 	if dErr != nil {
-		digest = ""
+		buildDigest = ""
 	}
+	digest := DeployDigest(buildDigest, spec)
 
 	// The two facts the SLICE needs to render this function's entry-point
 	// wrapper itself, taken from the same callable the build was bound to

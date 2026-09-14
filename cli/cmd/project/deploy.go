@@ -226,7 +226,12 @@ single slice otherwise.`,
 			// 400 — at runtime, on a live slice, after the upload — and a
 			// function the config does not name silently draws on the shared
 			// pool. Both become a refusal here instead.
-			if err := CheckSliceReferences(m, liveSlice); err != nil {
+			//
+			// RECONCILE, not check: this is the applying path, and it is the
+			// only one allowed to rename an idle slot to make room. The plan
+			// path below calls the read-only half — it used to call this one,
+			// and a dry run therefore resized the live slice.
+			if err := ReconcileSliceReferences(m, liveSlice); err != nil {
 				return err
 			}
 
@@ -452,6 +457,10 @@ func runPlan(m *Manifest, live *LiveSlice) error {
 	// The reference check, reported rather than enforced: a plan that refused
 	// would stop someone finding out what is missing, which is what they ran it
 	// to learn.
+	//
+	// THE READ-ONLY HALF. This called ReconcileSliceReferences' predecessor,
+	// which renames idle slots — so `--plan` and `drift file simulate` performed
+	// a real resize on the live slice and then printed "nothing was deployed".
 	if rerr := CheckSliceReferences(m, live); rerr != nil {
 		fmt.Printf("\n  %s %v\n", common.Hint("!"), rerr)
 	}
@@ -518,12 +527,19 @@ func applyAtomic(m *Manifest, out io.Writer) error {
 
 // elementUnchanged reports whether every function in el already matches the
 // deployed digest (so the whole element can be skipped — no stage, no build).
+//
+// PER FUNCTION, against DeployDigest, which is the element's build digest plus
+// that function's own declaration. The comparison was against the bare element
+// digest, so a function whose source was untouched skipped even when its gate,
+// its secrets, its env or its `cron:` had changed — and a skip sends nothing at
+// all, so the change never reached the operator. The deploy printed
+// `(unchanged)` beside it, which was true of the code and false of the function.
 func elementUnchanged(el atomic_cmd.Element, digest string, deployed map[string]string) bool {
 	if digest == "" {
 		return false
 	}
 	for _, f := range el.Funcs {
-		if deployed[f.DeployKey()] != digest {
+		if deployed[f.DeployKey()] != atomic_cmd.DeployDigest(digest, f.Spec) {
 			return false
 		}
 	}

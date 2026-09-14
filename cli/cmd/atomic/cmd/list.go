@@ -124,15 +124,18 @@ func List() *cobra.Command {
 		Example: "  drift atomic list",
 		GroupID: "operations",
 		Args:    cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
+		// RunE, not Run. A `Run` handler has no error channel, so a failure could
+		// only be printed and returned — which exits 0, so `drift atomic list &&
+		// …` carried on as though the listing had worked. Returning the error
+		// also stops it being printed twice: main() prints it once, to stderr.
+		RunE: func(cmd *cobra.Command, args []string) error {
 			deployed, err := fetchSlots()
 			if err != nil {
-				fmt.Println(err)
-				return
+				return err
 			}
 			if len(deployed) == 0 {
 				fmt.Println("No functions deployed.")
-				return
+				return nil
 			}
 
 			// Check if any function belongs to an element.
@@ -146,7 +149,7 @@ func List() *cobra.Command {
 
 			if !hasElements {
 				printFlatTable(deployed)
-				return
+				return nil
 			}
 
 			// Group by element; collect ungrouped separately.
@@ -187,6 +190,7 @@ func List() *cobra.Command {
 				}
 			}
 			fmt.Println()
+			return nil
 		},
 	}
 }

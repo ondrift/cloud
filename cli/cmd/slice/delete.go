@@ -19,14 +19,21 @@ func getDeleteCmd() *cobra.Command {
 		Short:   "Delete a slice and everything in it (irreversible)",
 		Args:    cobra.ExactArgs(1),
 		Example: "  drift slice delete my-slice\n  drift slice delete my-slice --yes",
-		Run: func(cmd *cobra.Command, args []string) {
+		// RunE, not Run. A `Run` handler has no error channel, so a refused or
+		// failed delete could only be printed and returned — which exits 0, and a
+		// script then reads "the slice is gone" from a command that deleted
+		// nothing.
+		//
+		// The two CANCELLATIONS stay `nil`: a person answering "no" chose the
+		// safe outcome, and exiting non-zero on that would make it read as a
+		// failure.
+		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
 			// Pre-check: verify the slice actually exists before showing
 			// the scary confirmation prompts.
 			if !sliceExists(name) {
-				fmt.Printf("Couldn't delete slice: no slice named %q was found.\n", name)
-				return
+				return fmt.Errorf("Couldn't delete slice: no slice named %q was found", name) //nolint:staticcheck // ST1005: user-facing copy.
 			}
 
 			// --yes skips both interactive confirmations. The slice name
@@ -41,7 +48,7 @@ func getDeleteCmd() *cobra.Command {
 				))
 				if first != "y" && first != "yes" {
 					fmt.Println("Deletion cancelled.")
-					return
+					return nil
 				}
 
 				// Second confirmation: type the slice name verbatim.
@@ -50,7 +57,7 @@ func getDeleteCmd() *cobra.Command {
 				)
 				if typed != name {
 					fmt.Println("Deletion cancelled — name did not match.")
-					return
+					return nil
 				}
 			}
 
@@ -60,14 +67,12 @@ func getDeleteCmd() *cobra.Command {
 				nil,
 			)
 			if err != nil {
-				fmt.Println(common.TransportError("delete slice", err))
-				return
+				return common.TransportError("delete slice", err)
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "delete slice"); err != nil {
-				fmt.Println(err)
-				return
+				return err
 			}
 
 			// Clear active slice if it was the deleted one.
@@ -76,6 +81,7 @@ func getDeleteCmd() *cobra.Command {
 			}
 
 			fmt.Printf("Slice '%s' deleted.\n", name)
+			return nil
 		},
 	}
 

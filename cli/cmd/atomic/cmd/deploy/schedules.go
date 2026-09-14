@@ -17,12 +17,20 @@
 //
 // # Why a package-level registry
 //
-// The element deploy functions are called from `drift file apply` (which
-// has read the Driftfile) and from `drift atomic deploy` (which has not). Only
-// the first can supply schedules, and threading a manifest through three deploy
-// signatures to carry one optional map would put a Driftfile concept into the
-// single-function path that has no Driftfile. Same shape as the existing
-// `atomicForce` flag, and for the same reason.
+// The deploy functions are called from `drift file apply` and from `drift
+// atomic deploy`, and BOTH have read a Driftfile — the second through
+// `FunctionSpecsInDir`, which walks up to the project's manifest to learn what
+// the directory it was given declares. Each publishes here before shipping
+// anything.
+//
+// Threading a manifest through three deploy signatures to carry one optional
+// map would put the Driftfile's whole vocabulary into paths that need one field
+// of it. Same shape as the existing `atomicForce` flag, and for the same reason.
+//
+// It was called by `file apply` ALONE, which meant `atomic deploy` shipped every
+// function with its `cron:` dropped and said nothing — the same Driftfile
+// producing a schedule under one command and not the other. That is precisely
+// what `refuseScheduleComments` refuses the retired spelling FOR.
 
 package atomic_cmd
 

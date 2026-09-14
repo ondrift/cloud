@@ -18,7 +18,13 @@ func getUseCmd() *cobra.Command {
 		Short:   "Set the active slice for subsequent commands",
 		Example: "  drift slice use my-slice",
 		Args:    cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		// RunE, not Run. The refusal below is the whole point of this command —
+		// it exists so a mistyped name is caught ONCE rather than answered three
+		// different ways by the next three subcommands — and on a `Run` handler
+		// it could only be printed, leaving the process to exit 0. A script doing
+		// `drift slice use staging && drift file apply` deployed into whatever
+		// slice was selected before.
+		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
 			// Validate the slice exists before saving, and REFUSE if it does not.
@@ -55,17 +61,19 @@ func getUseCmd() *cobra.Command {
 						}
 					}
 					if !found {
-						fmt.Print(unknownSliceMessage(name, names))
-						return
+						// The message carries its own trailing newline and the
+						// list of what does exist, so it is returned as the error
+						// rather than summarised into one.
+						return fmt.Errorf("%s", strings.TrimRight(unknownSliceMessage(name, names), "\n"))
 					}
 				}
 			}
 
 			if err := common.SaveActiveSlice(name); err != nil {
-				fmt.Println("Failed to set active slice:", err)
-				return
+				return fmt.Errorf("failed to set active slice: %w", err)
 			}
 			fmt.Printf("Active slice set to '%s'.\n", name)
+			return nil
 		},
 	}
 }

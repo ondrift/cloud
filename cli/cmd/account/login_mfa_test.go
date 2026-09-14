@@ -41,7 +41,12 @@ func newAuthStub(t *testing.T) *authStub {
 		b, _ := io.ReadAll(r.Body)
 		a.loginBodies = append(a.loginBodies, string(b))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"mfa_required":true,"mfa_token":"handle-1","expires_in":300}`)
+		// `expires_in` as a STRING, which is what the platform sends on every
+		// reply — the fixture had a number here, matching a challenge shape that
+		// disagreed with the token pair's and broke login for every account
+		// without a second factor. The client tolerates both; the fixture should
+		// be what is actually sent.
+		_, _ = io.WriteString(w, `{"mfa_required":true,"mfa_token":"handle-1","expires_in":"300"}`)
 	})
 	mux.HandleFunc("/login/mfa", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)

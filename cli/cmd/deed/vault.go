@@ -55,21 +55,18 @@ with 'drift deed vault get <uid>'.`,
 				common.APIBaseURL+"/ops/deed/admin/vault/list", nil)
 			if err != nil {
 				e := common.TransportError("list vault entries", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			body, err := common.CheckResponse(resp, "list vault entries")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
 			var uids []string
 			if err := json.Unmarshal(body, &uids); err != nil {
 				e := fmt.Errorf("couldn't read the list response: %w", err)
-				fmt.Println(e)
 				return e
 			}
 			if len(uids) == 0 {
@@ -108,14 +105,12 @@ anything this platform can read.`,
 			resp, err := common.DoRequest(http.MethodGet, reqURL, nil)
 			if err != nil {
 				e := common.TransportError("read vault entry", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			body, err := common.CheckResponse(resp, "read vault entry")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 

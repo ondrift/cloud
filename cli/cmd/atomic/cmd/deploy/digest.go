@@ -5,14 +5,34 @@
 // it can compare against the digest the platform recorded at the last deploy.
 //
 // The digest is computed entirely client-side; the platform stores and returns
-// it as an opaque token (see core/common/db/atomic.go). It hashes the SOURCE:
-// handler code, trigger/schedule comments, and dependency manifests, plus the
-// element grouping folded in explicitly.
+// it as an opaque token (see core/common/db/atomic.go). It has two halves, and
+// what is recorded against a function is both:
 //
-// It deliberately does NOT hash the Driftfile entry. Changing a function's gate
-// or its secrets changes what the operator is told, not what is built, and both
-// are sent on every deploy — so a manifest-only edit must not force a rebuild of
-// code that did not change.
+//   - the BUILD digest — handler code, trigger comments, dependency manifests,
+//     plus the element grouping. FunctionDigest and ElementDigest.
+//   - the DECLARATION digest — everything the Driftfile entry tells the
+//     operator: the gate, the secrets, the env, the reply shape, the stream mode
+//     and the declared `cron:`. DeclarationDigest.
+//
+// # Why the declaration is in here, when it once deliberately was not
+//
+// This file used to say: "It deliberately does NOT hash the Driftfile entry.
+// Changing a function's gate or its secrets changes what the operator is told,
+// not what is built, and both are sent on every deploy — so a manifest-only edit
+// must not force a rebuild of code that did not change."
+//
+// The reasoning is right and the premise is false. A function whose digest
+// matches is SKIPPED — `elementUnchanged` drops the whole element before
+// anything is staged, built or uploaded — so there is no deploy on which to send
+// the gate. Changing `auth: none` to `auth: apikey` and re-applying therefore
+// left the function open, with the deploy printing `(unchanged)` beside it. The
+// same held for secrets, env, the response shape, and the `cron:` a schedule is
+// declared by.
+//
+// Hashing the declaration costs what the old comment wanted to avoid — a
+// manifest-only edit now rebuilds code that did not change — and that is the
+// cheaper mistake by a wide margin. One wasted build against a change that
+// silently does not happen.
 package atomic_cmd
 
 import (
@@ -35,7 +55,11 @@ import (
 // digestVersion is mixed into every digest. Bump it whenever the algorithm
 // changes, so a changed algorithm can never read as "unchanged" against
 // digests written by an older CLI — every function re-deploys exactly once.
-const digestVersion = "drift-fn-digest-v1"
+//
+// v2 folds the DECLARATION in beside the source. Under v1 a manifest-only change
+// — a gate, a secret, a `cron:` — read as unchanged and was skipped, so it never
+// reached the operator at all.
+const digestVersion = "drift-fn-digest-v2"
 
 // digestSkipDirs are build/runtime artefact directories that must never
 // influence a digest: they're regenerated on every build (or by local `drift
@@ -177,6 +201,77 @@ func ElementDigest(dir, name string) (string, error) {
 		fmt.Fprint(h, "\x00")
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// DeclarationDigest fingerprints everything a Driftfile entry TELLS THE
+// OPERATOR, as opposed to everything it takes to build the function.
+//
+// The field list is `operatorSink`'s metadata minus what the build already
+// covers: it is the gate, the reply shape, the stream mode, the secrets, the
+// env, the element, and the schedule the manifest declares. Get this list out of
+// step with what is actually sent and the failure is silent in one direction
+// only — a field left out here is a field whose change is skipped.
+//
+// `dir` is deliberately absent. It says where the source is on THIS machine and
+// is never sent, so folding it in would make the same project redeploy for every
+// developer who checked it out somewhere else.
+//
+// Maps and slices are written in sorted order so the same declaration always
+// hashes the same way. `secrets` is a set in meaning, and a reordered list that
+// forced a redeploy would be a digest reporting a change nobody made.
+func DeclarationDigest(spec FunctionSpec) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00decl\x00", digestVersion)
+
+	for _, kv := range [][2]string{
+		{"name", spec.Name},
+		{"element", spec.Element},
+		{"auth", spec.Auth},
+		{"stream", spec.Stream},
+		{"response", spec.Response},
+		{"handler", spec.Handler},
+		// The declared schedule, read from the registry the manifest published.
+		// It is the one field here that does not live on the spec — see
+		// schedules.go for why it travels as a package-level map.
+		{"cron", DeclaredScheduleFor(spec.Name)},
+	} {
+		fmt.Fprintf(h, "%s\x00%s\x00", kv[0], kv[1])
+	}
+
+	secrets := append([]string(nil), spec.Secrets...)
+	sort.Strings(secrets)
+	for _, s := range secrets {
+		fmt.Fprintf(h, "secret\x00%s\x00", s)
+	}
+
+	envKeys := make([]string, 0, len(spec.Env))
+	for k := range spec.Env {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+	for _, k := range envKeys {
+		fmt.Fprintf(h, "env\x00%s\x00%s\x00", k, spec.Env[k])
+	}
+
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// DeployDigest is what gets RECORDED against a deployed function, and what a
+// later deploy compares to decide whether to skip it: the build digest and the
+// declaration digest together.
+//
+// ONE function computes it, called from both sides. The record side and the
+// compare side disagreeing by one field is a function that either never skips or
+// never redeploys, and both look like the tool working.
+func DeployDigest(build string, spec FunctionSpec) string {
+	if build == "" {
+		// An unknown build digest must never become a matchable value. The empty
+		// string is what every caller already treats as "not skippable".
+		return ""
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00", digestVersion, build, DeclarationDigest(spec))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // deployedAtomic is the subset of an /ops/atomic/list record needed to match a

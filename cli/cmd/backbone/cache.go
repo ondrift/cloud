@@ -39,13 +39,11 @@ func cacheSetCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("set cache key", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "set cache key"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -77,19 +75,16 @@ func cacheGetCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("get cache key", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode == http.StatusNotFound {
 				e := fmt.Errorf("Key %q not found.", key)
-				fmt.Println(e)
 				return e
 			}
 			b, err := common.CheckResponse(resp, "get cache key")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 			fmt.Println(string(b))
@@ -115,7 +110,6 @@ func cacheDelCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("delete cache key", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
@@ -125,7 +119,6 @@ func cacheDelCmd() *cobra.Command {
 				return nil
 			}
 			if _, err := common.CheckResponse(resp, "delete cache key"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -151,14 +144,12 @@ func cacheExistsCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("check cache key", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			b, err := common.CheckResponse(resp, "check cache key")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 			var result struct {
@@ -166,7 +157,6 @@ func cacheExistsCmd() *cobra.Command {
 			}
 			if err := json.Unmarshal(b, &result); err != nil {
 				e := fmt.Errorf("Couldn't check cache key: the API response didn't look right (%s)", string(b))
-				fmt.Println(e)
 				return e
 			}
 

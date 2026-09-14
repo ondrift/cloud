@@ -63,21 +63,18 @@ states are genuinely identical and there is nothing to tell apart.`,
 			resp, err := common.DoRequest(http.MethodGet, reqURL, nil)
 			if err != nil {
 				e := common.TransportError("list pocket keys", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			body, err := common.CheckResponse(resp, "list pocket keys")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
 			var keys []string
 			if err := json.Unmarshal(body, &keys); err != nil {
 				e := fmt.Errorf("couldn't read the list response: %w", err)
-				fmt.Println(e)
 				return e
 			}
 			if len(keys) == 0 {

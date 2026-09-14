@@ -108,7 +108,7 @@ func DeployInterpretedElement(el Element, digest string, quiet bool) error {
 			Element: el.Name, Stream: f.Spec.Stream, Response: f.Spec.Response,
 			Secrets:  f.Spec.Secrets,
 			Env:      f.Spec.Env,
-			Triggers: triggersFor(f), Digest: digest,
+			Triggers: triggersFor(f), Digest: DeployDigest(digest, f.Spec),
 			SourcePath: archivePath, UserSourcePath: userSrc,
 			// The same two facts the wrapper was just rendered from, so the slice
 			// can render it itself on a restore.

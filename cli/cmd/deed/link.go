@@ -55,21 +55,18 @@ which reports that implicit device honestly.`,
 				common.APIBaseURL+"/ops/deed/admin/link/list", nil)
 			if err != nil {
 				e := common.TransportError("list link identities", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			body, err := common.CheckResponse(resp, "list link identities")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
 			var identities []string
 			if err := json.Unmarshal(body, &identities); err != nil {
 				e := fmt.Errorf("couldn't read the list response: %w", err)
-				fmt.Println(e)
 				return e
 			}
 			if len(identities) == 0 {
@@ -123,14 +120,12 @@ removed device as active.`,
 			resp, err := common.DoRequest(http.MethodGet, reqURL, nil)
 			if err != nil {
 				e := common.TransportError("read device registry", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			body, err := common.CheckResponse(resp, "read device registry")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -141,7 +136,6 @@ removed device as active.`,
 			}
 			if err := json.Unmarshal(body, &reg); err != nil {
 				e := fmt.Errorf("couldn't read the registry response: %w", err)
-				fmt.Println(e)
 				return e
 			}
 

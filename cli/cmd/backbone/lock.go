@@ -39,18 +39,15 @@ func lockAcquireCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("acquire lock", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode == http.StatusConflict {
 				e := fmt.Errorf("Lock %q is already held.", name)
-				fmt.Println(e)
 				return e
 			}
 			if _, err := common.CheckResponse(resp, "acquire lock"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -79,13 +76,11 @@ func lockReleaseCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("release lock", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "release lock"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -113,13 +108,11 @@ func lockRenewCmd() *cobra.Command {
 			)
 			if err != nil {
 				e := common.TransportError("renew lock", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "renew lock"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 

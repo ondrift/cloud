@@ -168,6 +168,27 @@ func FunctionSpecsInDir(dir string) ([]atomic_cmd.FunctionSpec, error) {
 		return nil, err
 	}
 
+	// THE SCHEDULES THIS MANIFEST DECLARES, published for the deploy that is
+	// about to read them.
+	//
+	// Without this line `drift atomic deploy` shipped every function with its
+	// `cron:` dropped — the schedule registry was empty because only `drift file
+	// apply` had ever filled it, so the same Driftfile produced a schedule under
+	// one command and none under the other, silently. That is the exact failure
+	// `refuseScheduleComments` exists to prevent for the RETIRED spelling, and
+	// the supported one had it.
+	//
+	// It belongs here because this is the function that reads the Driftfile on
+	// the single-directory path. `atomic deploy` is documented as deploying "a
+	// subset of the manifest and never something the manifest has not seen" — a
+	// subset of the functions, not a subset of what each function IS.
+	//
+	// Publishing the WHOLE manifest's schedules, not just the ones in `dir`, is
+	// deliberate: the registry is keyed by function name and only the functions
+	// being deployed ever look themselves up in it, so a wider map cannot reach a
+	// function this command is not shipping.
+	atomic_cmd.SetDeclaredSchedules(declaredSchedules(m))
+
 	want, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", dir, err)

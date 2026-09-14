@@ -39,14 +39,12 @@ func sqlListCmd() *cobra.Command {
 				common.APIBaseURL+"/ops/backbone/sql/admin/list", nil)
 			if err != nil {
 				e := common.TransportError("list sql databases", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			b, err := common.CheckResponse(resp, "list sql databases")
 			if err != nil {
-				fmt.Println(err)
 				return err
 			}
 
@@ -83,13 +81,11 @@ func sqlDropCmd() *cobra.Command {
 				bytes.NewBuffer(payload))
 			if err != nil {
 				e := common.TransportError("drop sql database", err)
-				fmt.Println(e)
 				return e
 			}
 			defer resp.Body.Close()
 
 			if _, err := common.CheckResponse(resp, "drop sql database"); err != nil {
-				fmt.Println(err)
 				return err
 			}
 			fmt.Printf("Database %q dropped\n", name)

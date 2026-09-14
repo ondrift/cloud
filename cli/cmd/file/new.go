@@ -59,8 +59,10 @@ func getNewCmd() *cobra.Command {
 			// composing: `drift slice create hello` followed by `drift file new` in
 			// ~/work/myapp writes `myapp`, and `drift file apply` then answers
 			// "slice myapp does not exist — create it first". Following THAT advice
-			// hits "only one free hacker slice is allowed per account", and nothing
-			// printed anywhere names the way out.
+			// hits the free-tier refusal, which at the time read "only one free
+			// hacker slice is allowed per account" and named no way out. That
+			// message has since been rewritten to say a second slice is allowed and
+			// priced; this block is what stops the user meeting it at all.
 			//
 			// Reproduce it by reverting this block: create a slice, then scaffold in
 			// a directory named anything else.
