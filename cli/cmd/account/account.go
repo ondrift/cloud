@@ -30,6 +30,7 @@ func GetAccountCmd() *cobra.Command {
 		GetAccountUseCmd(),
 		GetMFACmd(),
 		tokenCmd(),
+		GetExportCmd(),
 		GetResetPasswordCmd(),
 		GetAuditCmd(),
 		GetDeleteCmd(),
