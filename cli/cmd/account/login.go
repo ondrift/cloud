@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,13 +49,49 @@ func DoLoginErr(username, password string) error {
 
 // loginReply is what /login answers with. The two shapes are exclusive: either
 // the token pair, or a challenge and no tokens at all.
+//
+// # ExpiresIn is flexSeconds, and that is not fussiness
+//
+// ONE STRUCT PARSES BOTH REPLIES, and the platform sends `expires_in` as a
+// different JSON type in each: a NUMBER on the challenge and a STRING on the
+// token pair. Declared as `int`, this field therefore made every token-pair
+// reply fail to parse — so `drift account login` was broken for every account
+// WITHOUT a second factor, in a shipped release, with the message
+//
+//	couldn't log in: the API response didn't look right — json: cannot
+//	unmarshal string into Go struct field loginReply.expires_in of type int
+//
+// which reads as the platform being wrong rather than as the CLI refusing a
+// reply it was handed correctly.
+//
+// The field is not read by anything here, so deleting it would also have fixed
+// it. It stays, tolerant, because the failure to learn from is not "an unused
+// field was the wrong type" — it is that a login broke on a value it did not
+// need. A client must not fall over on the shape of something it ignores.
 type loginReply struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 
-	MFARequired bool   `json:"mfa_required"`
-	MFAToken    string `json:"mfa_token"`
-	ExpiresIn   int    `json:"expires_in"`
+	MFARequired bool        `json:"mfa_required"`
+	MFAToken    string      `json:"mfa_token"`
+	ExpiresIn   flexSeconds `json:"expires_in"`
+}
+
+// flexSeconds is a count of seconds that arrives as either a JSON number or a
+// JSON string, and is zero when it arrives as neither.
+//
+// It NEVER FAILS, deliberately. An unparseable duration is not a reason to
+// refuse a session that came with a working pair of tokens, and returning an
+// error here would put this field back in the position of being able to break a
+// login by being unexpected.
+type flexSeconds int
+
+func (s *flexSeconds) UnmarshalJSON(b []byte) error {
+	raw := strings.Trim(string(b), `"`)
+	if n, err := strconv.Atoi(raw); err == nil {
+		*s = flexSeconds(n)
+	}
+	return nil
 }
 
 // factorSupplier is asked for a second factor when the platform demands one. It
