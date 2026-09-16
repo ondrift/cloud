@@ -797,6 +797,36 @@ func (secretNS) Get(name string) (string, error) {
 	return string(resp), nil
 }
 
+// Previous returns the value this secret held before it was last replaced,
+// while that is still inside its grace window, and "" once it closes.
+//
+// # What this is for
+//
+// A credential a function PRESENTS needs nothing here: it reads Get and moves
+// on. This is for one a function VERIFIES. A webhook signing secret is the
+// ordinary case — after `drift backbone secret set`, the sender keeps signing
+// with the old value until they notice, and a handler checking only the current
+// one rejects every one of those as forged.
+//
+//	sig := r.Header.Get("X-Signature")
+//	ok, _ := drift.Secret.Get("WEBHOOK")
+//	if !verify(sig, ok) {
+//	    if prev, _ := drift.Secret.Previous("WEBHOOK"); prev != "" {
+//	        // still inside the grace window
+//	    }
+//	}
+//
+// "" RATHER THAN AN ERROR when there is none, because "no previous value" is
+// the normal state and the caller's branch is the same for all three ways of
+// reaching it: never replaced, replaced long ago, or no such secret. An error
+// would make the common path the exceptional one.
+func (secretNS) Previous(name string) (string, error) {
+	if v, ok := os.LookupEnv("DRIFT_SECRET_" + strings.ToUpper(name) + "_PREVIOUS"); ok {
+		return v, nil
+	}
+	return "", nil
+}
+
 func (secretNS) Set(name, value string) error {
 	_, err := callBackbone("POST", "secret/set", map[string]any{
 		"name":  name,

@@ -510,6 +510,20 @@ module Drift
         resp.is_a?(String) ? resp : (resp ? JSON.generate(resp) : '')
       end
 
+      # The value this secret held before it was last replaced, while that is
+      # still inside its grace window; '' once it closes.
+      #
+      # For a credential the handler VERIFIES rather than presents — a webhook
+      # signing secret whose sender is still using the old value while they
+      # catch up.
+      #
+      # '' rather than raising when there is none: that is the normal state, and
+      # the caller's branch is the same whether the secret was never replaced,
+      # was replaced long ago, or does not exist.
+      def self.previous(name)
+        ENV["DRIFT_SECRET_#{name.upcase}_PREVIOUS"] || ''
+      end
+
       def self.set(name, value)
         Drift._call('POST', 'secret/set', { 'name' => name, 'value' => value })
       end

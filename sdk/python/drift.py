@@ -545,6 +545,20 @@ class _SecretNS:
         resp = _call("GET", f"secret/get?name={urllib.parse.quote(name)}")
         return resp if isinstance(resp, str) else (json.dumps(resp) if resp else "")
 
+    def previous(self, name):
+        # The value this secret held before it was last replaced, while that is
+        # still inside its grace window; "" once it closes.
+        #
+        # For a credential the handler VERIFIES rather than presents — a webhook
+        # signing secret whose sender is still using the old value while they
+        # catch up. The language server injects it per call, the same way it
+        # injects the current one.
+        #
+        # "" rather than raising when there is none: that is the normal state,
+        # and the caller's branch is the same whether the secret was never
+        # replaced, was replaced long ago, or does not exist.
+        return os.environ.get("DRIFT_SECRET_" + name.upper() + "_PREVIOUS", "")
+
     def set(self, name, value):
         _call("POST", "secret/set", {"name": name, "value": value})
 
