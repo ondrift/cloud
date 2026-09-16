@@ -28,7 +28,12 @@ type snapshotResponse struct {
 	// backup and one missing every secret is invisible until after the restore.
 	Partial    bool              `json:"partial,omitempty"`
 	Components map[string]string `json:"components,omitempty"`
-	CreatedAt  string            `json:"created_at"`
+	// PassphraseProtected says this archive is sealed under a passphrase the
+	// tenant chose, so the platform cannot open it. Decoded so `list` can say
+	// which archives will ask for one — and which are gone for good if the
+	// passphrase is.
+	PassphraseProtected bool   `json:"passphrase_protected,omitempty"`
+	CreatedAt           string `json:"created_at"`
 }
 
 // missingComponents names the components that failed to capture, sorted so the
@@ -63,6 +68,7 @@ func getSnapshotCmd() *cobra.Command {
 
 func getSnapshotCreateCmd() *cobra.Command {
 	var name string
+	var passphrase, passphraseStdin bool
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a snapshot of the active slice",
@@ -72,8 +78,21 @@ func getSnapshotCreateCmd() *cobra.Command {
 				return err
 			}
 
+			// Read BEFORE the request, so a mistyped confirmation costs nothing.
+			// Asked for after the archive existed, a mismatch would leave a
+			// snapshot sealed under half an answer.
+			headers := map[string]string{}
+			if passphrase || passphraseStdin {
+				pass, perr := newPassphrase(passphraseStdin)
+				if perr != nil {
+					return perr
+				}
+				headers[snapshotPassphraseHeader] = pass
+			}
+
 			body, _ := json.Marshal(map[string]string{"name": name})
-			resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/slice/snapshot", strings.NewReader(string(body)))
+			resp, err := common.DoRequestWithHeaders(http.MethodPost, common.APIBaseURL+"/ops/slice/snapshot",
+				strings.NewReader(string(body)), withJSONContentType(headers))
 			if err != nil {
 				return common.TransportError("create snapshot", err)
 			}
@@ -120,6 +139,13 @@ func getSnapshotCreateCmd() *cobra.Command {
 						spinner.Stop()
 						fmt.Printf("%s Snapshot '%s' created (%s, %s)\n",
 							common.Check(), snap.Name, snap.ID, formatSize(snap.Size))
+						if snap.PassphraseProtected {
+							// Said on the way out, while the passphrase is still
+							// in mind. There is no later moment where this can be
+							// recovered, so there is no later moment where saying
+							// it would help.
+							fmt.Printf("  %s\n", common.Hint("Encrypted with your passphrase. Downloading or restoring it will ask for that passphrase, and no one can open it without."))
+						}
 						fmt.Printf("  %s\n", common.Hint("Download with: drift slice snapshot download "+snap.ID))
 						_ = slice
 						return nil
@@ -137,6 +163,14 @@ func getSnapshotCreateCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Optional label for the snapshot")
+	// SWITCHES, not values. A passphrase passed as `--passphrase hunter2` lands
+	// in shell history and in `ps`, and this one cannot be rotated or reset: it
+	// is the only thing that will ever open the archive.
+	cmd.Flags().BoolVar(&passphrase, "passphrase", false,
+		"Encrypt with a passphrase you are prompted for. Drift cannot open the archive afterwards, and a forgotten passphrase cannot be recovered")
+	cmd.Flags().BoolVar(&passphraseStdin, "passphrase-stdin", false,
+		"Read the passphrase from stdin instead of prompting (for scripts)")
+	cmd.MarkFlagsMutuallyExclusive("passphrase", "passphrase-stdin")
 	return cmd
 }
 
@@ -172,7 +206,7 @@ func getSnapshotListCmd() *cobra.Command {
 			}
 
 			fmt.Printf("%-26s  %-20s  %-10s  %-9s  %s\n", "ID", "NAME", "SIZE", "STATUS", "CREATED")
-			partials := 0
+			partials, protected := 0, 0
 			for _, s := range snapshots {
 				created := ""
 				if t, err := time.Parse(time.RFC3339Nano, s.CreatedAt); err == nil {
@@ -186,14 +220,25 @@ func getSnapshotListCmd() *cobra.Command {
 					status = s.Status + "*"
 					partials++
 				}
+				name := truncate(s.Name, 20)
+				// Marked on the NAME rather than the status, because it is not a
+				// state the archive is in. It is a fact about who can open it,
+				// and it never changes.
+				if s.PassphraseProtected {
+					name = truncate(s.Name, 18) + " 🔒"
+					protected++
+				}
 				fmt.Printf("%-26s  %-20s  %-10s  %-9s  %s\n",
-					s.ID, truncate(s.Name, 20), formatSize(s.Size), status, created)
+					s.ID, name, formatSize(s.Size), status, created)
 				if missing := s.missingComponents(); len(missing) > 0 {
 					fmt.Printf("%-26s  %s\n", "", common.Hint("incomplete — did not capture: "+strings.Join(missing, ", ")))
 				}
 			}
 			if partials > 0 {
 				fmt.Printf("\n%s\n", common.Hint("* incomplete snapshot — some data was not captured; restoring one cannot bring back what is missing."))
+			}
+			if protected > 0 {
+				fmt.Printf("\n%s\n", common.Hint("🔒 encrypted with your own passphrase — downloading or restoring it will ask for that passphrase, and nothing can open it without."))
 			}
 			return nil
 		},
@@ -204,6 +249,7 @@ func getSnapshotListCmd() *cobra.Command {
 
 func getSnapshotDownloadCmd() *cobra.Command {
 	var output string
+	var passphraseStdin bool
 	cmd := &cobra.Command{
 		Use:   "download <snapshot-id>",
 		Short: "Download a snapshot archive",
@@ -217,9 +263,27 @@ func getSnapshotDownloadCmd() *cobra.Command {
 			id := args[0]
 			url := fmt.Sprintf("%s/ops/slice/snapshot/download?id=%s", common.APIBaseURL, id)
 
+			// ASKED BEFORE THE DOWNLOAD IS ATTEMPTED, unlike the step-up grant
+			// below, and for a reason worth stating: the grant is SINGLE-USE and
+			// is spent by the attempt that carries it. Learning from a refusal
+			// that a passphrase was also needed would mean minting a second
+			// grant — a second password prompt — for one download.
+			//
+			// So this asks the platform up front whether the archive is
+			// protected. That read is cheap, is not gated, and tells nobody
+			// anything they could not learn from `snapshot list`.
+			headers := map[string]string{}
+			if snapshotIsPassphraseProtected(id) {
+				pass, perr := askForPassphrase(passphraseStdin)
+				if perr != nil {
+					return perr
+				}
+				headers[snapshotPassphraseHeader] = pass
+			}
+
 			spinner := common.StartSpinner("  ", "Downloading snapshot...")
 
-			resp, err := common.DoRequest(http.MethodGet, url, nil)
+			resp, err := common.DoRequestWithHeaders(http.MethodGet, url, nil, headers)
 			if err != nil {
 				spinner.Stop()
 				return common.TransportError("download snapshot", err)
@@ -245,8 +309,8 @@ func getSnapshotDownloadCmd() *cobra.Command {
 					return cerr
 				}
 				spinner = common.StartSpinner("  ", "Downloading snapshot...")
-				resp, err = common.DoRequestWithHeaders(http.MethodGet, url, nil,
-					map[string]string{stepUpHeader: grant})
+				headers[stepUpHeader] = grant
+				resp, err = common.DoRequestWithHeaders(http.MethodGet, url, nil, headers)
 				if err != nil {
 					spinner.Stop()
 					return common.TransportError("download snapshot", err)
@@ -257,6 +321,13 @@ func getSnapshotDownloadCmd() *cobra.Command {
 			if resp.StatusCode != http.StatusOK {
 				spinner.Stop()
 				body, _ := io.ReadAll(resp.Body)
+				// A passphrase failure is named rather than reported as a failed
+				// download, because it is the one refusal here the user fixes
+				// themselves. Not retried in place: the step-up grant was spent
+				// by the attempt above, so a retry needs a fresh password too.
+				if reason := passphraseRefused(resp.StatusCode, body); reason != "" {
+					return passphraseError(reason, id, "download")
+				}
 				// Was print + return nil, so a bad id or a missing snapshot
 				// exited 0 and left no file behind.
 				return fmt.Errorf("download failed: %s", strings.TrimSpace(string(body)))
@@ -304,6 +375,8 @@ func getSnapshotDownloadCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output file path (default: <name>.tar.gz)")
+	cmd.Flags().BoolVar(&passphraseStdin, "passphrase-stdin", false,
+		"Read the snapshot's passphrase from stdin instead of prompting (for scripts)")
 	return cmd
 }
 
@@ -361,7 +434,8 @@ func getSnapshotDeleteCmd() *cobra.Command {
 // ─── restore ───────────────────────────────────────────────────────────
 
 func getSnapshotRestoreCmd() *cobra.Command {
-	return &cobra.Command{
+	var passphraseStdin bool
+	cmd := &cobra.Command{
 		Use:   "restore <snapshot-id>",
 		Short: "Restore a snapshot into the active slice",
 		Args:  cobra.ExactArgs(1),
@@ -373,17 +447,42 @@ func getSnapshotRestoreCmd() *cobra.Command {
 
 			id := args[0]
 
+			// Asked up front, as on download. Nothing single-use is spent on a
+			// restore, so a refusal could be retried in place — but a restore
+			// OVERWRITES a live slice, and the platform holds a lease for the
+			// duration. Getting the passphrase before the call means the lease
+			// is not held open across a prompt.
+			headers := map[string]string{}
+			if snapshotIsPassphraseProtected(id) {
+				pass, perr := askForPassphrase(passphraseStdin)
+				if perr != nil {
+					return perr
+				}
+				headers[snapshotPassphraseHeader] = pass
+			}
+
 			body, _ := json.Marshal(map[string]string{"id": id})
 			spinner := common.StartSpinner("  ", "Restoring snapshot...")
 
-			resp, err := common.DoJSONRequest(http.MethodPost,
+			resp, err := common.DoRequestWithHeaders(http.MethodPost,
 				common.APIBaseURL+"/ops/slice/snapshot/restore",
-				strings.NewReader(string(body)))
+				strings.NewReader(string(body)), withJSONContentType(headers))
 			if err != nil {
 				spinner.Stop()
 				return common.TransportError("restore snapshot", err)
 			}
 			defer resp.Body.Close()
+
+			// Read before CheckResponse, which turns a 401 into a generic
+			// failure and would bury the one refusal the user can act on.
+			if resp.StatusCode == http.StatusUnauthorized {
+				spinner.Stop()
+				raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+				if reason := passphraseRefused(resp.StatusCode, raw); reason != "" {
+					return passphraseError(reason, id, "restore")
+				}
+				return fmt.Errorf("restore snapshot: %s", strings.TrimSpace(string(raw)))
+			}
 
 			respBody, err := common.CheckResponse(resp, "restore snapshot")
 			if err != nil {
@@ -455,6 +554,9 @@ func getSnapshotRestoreCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&passphraseStdin, "passphrase-stdin", false,
+		"Read the snapshot's passphrase from stdin instead of prompting (for scripts)")
+	return cmd
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
