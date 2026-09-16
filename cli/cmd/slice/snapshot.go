@@ -215,22 +215,50 @@ func getSnapshotDownloadCmd() *cobra.Command {
 			}
 
 			id := args[0]
+			url := fmt.Sprintf("%s/ops/slice/snapshot/download?id=%s", common.APIBaseURL, id)
 
 			spinner := common.StartSpinner("  ", "Downloading snapshot...")
 
-			resp, err := common.DoRequest(http.MethodGet,
-				fmt.Sprintf("%s/ops/slice/snapshot/download?id=%s", common.APIBaseURL, id), nil)
+			resp, err := common.DoRequest(http.MethodGet, url, nil)
 			if err != nil {
 				spinner.Stop()
 				return common.TransportError("download snapshot", err)
 			}
 			defer resp.Body.Close()
 
+			// A SNAPSHOT NEEDS A FRESH PROOF OF IDENTITY, and the first attempt
+			// is what asks for one.
+			//
+			// Asked for rather than volunteered: a grant is single-use, so
+			// minting one before knowing whether it is needed spends a password
+			// prompt on every download — including the ones an older platform
+			// would have served without asking.
+			if purpose := needsStepUp(resp.StatusCode, peek(resp)); purpose != "" {
+				spinner.Stop()
+				grant, gerr := mintStepUpGrant(purpose,
+					"A snapshot holds every secret, document and row in this slice. "+
+						"Confirm your password to download it.")
+				if gerr != nil {
+					return gerr
+				}
+				if cerr := resp.Body.Close(); cerr != nil {
+					return cerr
+				}
+				spinner = common.StartSpinner("  ", "Downloading snapshot...")
+				resp, err = common.DoRequestWithHeaders(http.MethodGet, url, nil,
+					map[string]string{stepUpHeader: grant})
+				if err != nil {
+					spinner.Stop()
+					return common.TransportError("download snapshot", err)
+				}
+				defer resp.Body.Close()
+			}
+
 			if resp.StatusCode != http.StatusOK {
 				spinner.Stop()
 				body, _ := io.ReadAll(resp.Body)
-				// #CLI-STANDARDUSAGE-3F5TDV — was print + return nil, so a bad id or a
-				// missing snapshot exited 0 and left no file behind.
+				// Was print + return nil, so a bad id or a missing snapshot
+				// exited 0 and left no file behind.
 				return fmt.Errorf("download failed: %s", strings.TrimSpace(string(body)))
 			}
 
@@ -248,7 +276,13 @@ func getSnapshotDownloadCmd() *cobra.Command {
 				}
 			}
 
-			f, err := os.Create(output) // #nosec G304
+			// 0600, NOT whatever the umask allows.
+			//
+			// This file holds every Backbone secret in this slice in cleartext,
+			// along with every document, blob and row. `os.Create` is 0666 before
+			// the umask, which on a normal machine lands at 0644 — world-readable,
+			// in whatever directory the command happened to run in.
+			f, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) // #nosec G304
 			if err != nil {
 				spinner.Stop()
 				return fmt.Errorf("failed to create file: %w", err)
@@ -262,6 +296,10 @@ func getSnapshotDownloadCmd() *cobra.Command {
 			}
 
 			fmt.Printf("%s Snapshot downloaded to %s (%s)\n", common.Check(), output, formatSize(written))
+			// Said every time, because the file is now somewhere the platform
+			// cannot protect it. It is stored encrypted and served over TLS; on
+			// disk it is a plain archive of everything this slice holds.
+			fmt.Println(common.Hint("  It contains this slice's secrets in cleartext. Written 0600; delete it when you are done."))
 			return nil
 		},
 	}
