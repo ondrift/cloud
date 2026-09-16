@@ -586,6 +586,25 @@ const secret = {
     const resp = await _call("GET", `secret/get?name=${encodeURIComponent(name)}`);
     return typeof resp === "string" ? resp : resp ? JSON.stringify(resp) : "";
   },
+  // The value this secret held before it was last replaced, while that is
+  // still inside its grace window; "" once it closes.
+  //
+  // For a credential the handler VERIFIES rather than presents — a webhook
+  // signing secret whose sender is still using the old value while they catch
+  // up. Same read order as get: the per-request store, then the environment.
+  //
+  // "" rather than a throw when there is none, because that is the normal
+  // state and the caller's branch is the same whether the secret was never
+  // replaced, was replaced long ago, or does not exist.
+  previous: async (name) => {
+    const store =
+      globalThis.__driftSecretsPrevious && globalThis.__driftSecretsPrevious.getStore();
+    if (store && Object.prototype.hasOwnProperty.call(store, name)) {
+      return store[name];
+    }
+    const envVal = process.env["DRIFT_SECRET_" + name.toUpperCase() + "_PREVIOUS"];
+    return envVal === undefined ? "" : envVal;
+  },
   set: (name, value) => _call("POST", "secret/set", { name, value }),
   delete: (name) => _call("DELETE", `secret/delete?name=${encodeURIComponent(name)}`),
 };

@@ -725,6 +725,21 @@ pub mod backbone {
             }
         }
 
+        /// The value this secret held before it was last replaced, while that
+        /// is still inside its grace window; empty once it closes.
+        ///
+        /// For a credential the handler VERIFIES rather than presents — a
+        /// webhook signing secret whose sender is still using the old value
+        /// while they catch up.
+        ///
+        /// Empty rather than an error when there is none: that is the normal
+        /// state, and the caller's branch is the same whether the secret was
+        /// never replaced, was replaced long ago, or does not exist.
+        pub fn previous(name: &str) -> String {
+            std::env::var(format!("DRIFT_SECRET_{}_PREVIOUS", name.to_uppercase()))
+                .unwrap_or_default()
+        }
+
         pub fn set(name: &str, value: &str) {
             call("POST", "secret/set", Some(serde_json::json!({"name": name, "value": value})));
         }

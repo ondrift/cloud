@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	drift "github.com/ondrift/cloud/sdk/go"
@@ -16,6 +17,7 @@ import (
 func main() {
 	dec := json.NewDecoder(os.Stdin)
 	enc := json.NewEncoder(os.Stdout)
+	injected := map[string]bool{}
 	for {
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
@@ -30,12 +32,48 @@ func main() {
 		// it per envelope and the runtime is pointed at it here, so os.TempDir()
 		// and anything reading HOME land in a directory nobody else shares.
 		var envelope struct {
-			Tmpdir string `json:"tmpdir"`
+			Tmpdir   string            `json:"tmpdir"`
+			Secrets  map[string]string `json:"secrets"`
+			Previous map[string]string `json:"secrets_previous"`
 		}
 		_ = json.Unmarshal(raw, &envelope)
 		if envelope.Tmpdir != "" && filepath.IsAbs(envelope.Tmpdir) {
 			_ = os.Setenv("TMPDIR", envelope.Tmpdir)
 			_ = os.Setenv("HOME", envelope.Tmpdir)
+		}
+
+		// Secrets for THIS call, for exactly the reason TMPDIR is re-pointed
+		// above: the slice sets DRIFT_SECRET_* once at spawn, and this process
+		// then serves up to 200 more calls. A secret rotated in between stayed
+		// stale for all of them, because the SDK's accessor reads the
+		// environment and the environment was fixed before the rotation
+		// happened. The slice already sends the current values in every
+		// envelope; this is what makes the SDK see them.
+		//
+		// A name the envelope no longer carries is REMOVED, not left behind. A
+		// secret deleted from the store must stop being readable, and a stale
+		// variable is indistinguishable from a live one to the accessor.
+		for k := range injected {
+			if _, still := envelope.Secrets[k]; !still {
+				_ = os.Unsetenv("DRIFT_SECRET_" + strings.ToUpper(k))
+				delete(injected, k)
+			}
+			if _, still := envelope.Previous[k]; !still {
+				_ = os.Unsetenv("DRIFT_SECRET_" + strings.ToUpper(k) + "_PREVIOUS")
+			}
+		}
+		for k, v := range envelope.Secrets {
+			_ = os.Setenv("DRIFT_SECRET_"+strings.ToUpper(k), v)
+			injected[k] = true
+		}
+		// The value each secret held before it was last replaced, while that is
+		// still inside its grace window. Usually absent, and removed above the
+		// moment the envelope stops carrying it — a grace window that ends has
+		// to end here too, or this worker keeps accepting a retired credential
+		// for the rest of its life.
+		for k, v := range envelope.Previous {
+			_ = os.Setenv("DRIFT_SECRET_"+strings.ToUpper(k)+"_PREVIOUS", v)
+			injected[k] = true
 		}
 
 		status, message, payload, headers := {{FUNC}}(req)
