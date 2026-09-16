@@ -149,6 +149,21 @@ func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reade
 	if resp.StatusCode != http.StatusUnauthorized {
 		return resp, nil
 	}
+
+	// NOT EVERY 401 IS AN EXPIRED SESSION. Some are the platform answering the
+	// request it was asked: this action needs a fresh proof of identity, or this
+	// snapshot needs its passphrase. Both are 401 and both are the caller's to
+	// act on, so refreshing the token and re-sending answers a question nobody
+	// asked — and re-sends whatever single-use credential the request carried.
+	//
+	// That is not theoretical. A snapshot download spends a step-up grant on the
+	// attempt that carries it; the operator then refuses for a wrong passphrase,
+	// this retried with the SPENT grant, and the user was told their proof of
+	// identity had "already been used" instead of that their passphrase was
+	// wrong. The real refusal never reached them.
+	if isApplicationRefusal(resp) {
+		return resp, nil
+	}
 	resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 
 	// A PAT caller has no refresh token and needs none: it holds the credential
@@ -173,6 +188,44 @@ func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reade
 	}
 
 	return send()
+}
+
+// isApplicationRefusal reports whether a 401 is the platform answering the
+// request rather than rejecting the session, and RESTORES the body either way
+// so the caller still reads it whole.
+//
+// Recognised by a machine-readable key, never by the sentence: the prose in
+// `error` is free to change, and a client matching on it breaks the first time
+// somebody improves the wording. A key the platform grows later and this does
+// not know reads as a session problem, which is the behaviour that was there
+// before — wrong, but no more wrong than it already was.
+func isApplicationRefusal(resp *http.Response) bool {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	// Put back what was consumed, before deciding anything. The caller reads
+	// this body on every path out of here, including the ones that conclude
+	// this was an ordinary expired session.
+	rest := resp.Body
+	resp.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(body), rest), Closer: rest}
+	if err != nil {
+		return false
+	}
+
+	var refusal struct {
+		StepUp     string `json:"step_up_required"`
+		Passphrase string `json:"passphrase_required"`
+	}
+	if json.Unmarshal(body, &refusal) != nil {
+		return false
+	}
+	return refusal.StepUp != "" || refusal.Passphrase != ""
+}
+
+// readCloser rejoins a reader that has been peeked at with the closer that owns
+// the underlying connection. Closing the original is what returns it to the
+// pool, so the Closer must stay the response's own.
+type readCloser struct {
+	io.Reader
+	io.Closer
 }
 
 // RefreshAccessToken uses the stored refresh token to obtain a new access
