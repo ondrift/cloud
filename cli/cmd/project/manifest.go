@@ -242,6 +242,15 @@ func ParseDriftfile(path string) (*Manifest, error) {
 		fmt.Fprintf(os.Stderr, "  %s %s\n", common.Hint("·"), w)
 	}
 
+	// A value written out in `backbone.secrets:` — which is a value in git.
+	//
+	// BEFORE the resolution below, and that ordering is the whole check: once
+	// `$VAR` has been substituted every value is a literal, and a pass running
+	// after this point cannot tell the two apart at all.
+	for _, w := range checkHardcodedSecrets(&m) {
+		fmt.Fprintf(os.Stderr, "  %s %s\n", common.Hint("·"), w)
+	}
+
 	// $ENVREF resolution is not validation — it substitutes a value from the
 	// deployer's environment, and reports the ones that are not set because a
 	// secret silently becoming the literal "$VAR" is a credential that is wrong
@@ -250,6 +259,82 @@ func ParseDriftfile(path string) (*Manifest, error) {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// checkHardcodedSecrets reports every `backbone.secrets:` entry written as a
+// literal rather than as a `$VAR` reference.
+//
+// # Why a literal there is worth a line, whatever it holds
+//
+// The Driftfile is the one file guaranteed to be in the repository, and
+// `backbone.secrets:` accepts a plain string with no constraint — so it is also
+// a legal place to write a live credential. The schema's own description names
+// the literal form FIRST, and the documentation shows it first, which is what
+// teaches the habit. Nothing anywhere said a word.
+//
+// A literal here is one of exactly two things, and both are worth saying:
+//
+//   - a CREDENTIAL, now committed, readable by everyone with repository access
+//     and present in the history after it is removed;
+//   - CONFIGURATION that is not secret at all — an app name, a region, a bucket
+//     — which belongs in `env:` instead.
+//
+// The second is not pedantry. `secrets:` is an isolation boundary: a reviewer
+// reading a diff can see which functions gained privilege, and that reading
+// holds only while the list carries credentials. The moment it also carries
+// addresses and feature flags, a new entry stops meaning "this function can now
+// read something secret".
+//
+// Naming both is what makes this warning actionable without a heuristic. Trying
+// to GUESS which literals look like credentials would be wrong in both
+// directions — a short passphrase reads as innocuous, a long product name reads
+// as high entropy — and a guess that is wrong either way teaches people to
+// ignore the line.
+//
+// A WARNING, NOT A REFUSAL. Literals are legal, documented, and in use; failing
+// the parse would break working manifests to make a point. This is the same
+// posture `checkQueueReferences` takes for the same reason.
+func checkHardcodedSecrets(m *Manifest) []string {
+	secrets := m.Slice().Sub("backbone", "secrets")
+	if len(secrets) == 0 {
+		return nil
+	}
+	var literal []string
+	for k, v := range secrets.StrMap() {
+		// `$VAR` is the referenced form and the one this points people at.
+		// Anything else is written out in the file.
+		if !strings.HasPrefix(v, "$") {
+			literal = append(literal, k)
+		}
+	}
+	if len(literal) == 0 {
+		return nil
+	}
+	sort.Strings(literal)
+
+	subject, verb := "secret", "is"
+	if len(literal) > 1 {
+		subject, verb = "secrets", "are"
+	}
+	return []string{
+		fmt.Sprintf("%s %s %s written out in the Driftfile, and so committed to your repository.",
+			subject, strings.Join(quoteAll(literal), ", "), verb),
+		"For a credential, reference it instead: `SECRET: $SECRET`, resolved from your " +
+			"environment or a sibling .env. Or leave it out and set it with " +
+			"`drift backbone secret set`.",
+		"For anything that is not secret, use `env:` rather than `secrets:`. That is what " +
+			"keeps a new `secrets:` entry meaning \"this function gained privilege\".",
+	}
+}
+
+// quoteAll renders names for a message, so a list reads as names rather than as
+// prose that happens to contain them.
+func quoteAll(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, fmt.Sprintf("%q", n))
+	}
+	return out
 }
 
 // checkLocalPaths verifies that every path the document names resolves on this
