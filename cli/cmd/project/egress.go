@@ -52,24 +52,24 @@ func applyEgress(m *Manifest) error {
 		return nil
 	}
 
-	if err := refreshEgress(); err != nil {
-		fmt.Printf("  %s egress refresh: %v\n", common.Hint("·"), err)
-		return nil
+	// THE DECLARATION TRAVELS WITH THE REFRESH. The platform stores what arrives
+	// here and renders it into the slice's NetworkPolicy; a refusal (a wildcard
+	// host, an unknown mode) comes back as a 400 naming the entry.
+	if err := refreshEgress(declaredMode, declaredHosts); err != nil {
+		// Loud, and it fails the apply. This used to print a hint and return nil,
+		// which was right while the declaration reached nothing — there was no
+		// control to lose. Now there is: swallowing the error would leave the
+		// slice on its previous posture while the deploy reported Done, which is
+		// the shape of every "reports success while doing nothing" defect this
+		// codebase keeps finding.
+		return fmt.Errorf("egress: %w", err)
 	}
 
-	// No check mark, and the wording says what actually happened.
-	//
-	// A ✓ beside "egress allowlist applied" reads as a security control now in
-	// force. It is not: the platform stores no egress declaration — the field is
-	// schema-only, so nothing a Driftfile declares here reaches the workload that
-	// would enforce it. Reporting success for a control that does not exist is
-	// worse than reporting nothing, because it is the reason someone stops
-	// checking.
-	//
-	// This becomes a ✓ when the declaration is stored and enforced end to end.
+	// The ✓ the old comment here promised. It is earned now: the declaration is
+	// stored, resolved and rendered before this returns.
 	if declaredMode == "allowlist" {
-		fmt.Printf("  %s egress allowlist declared (%d host%s) — not yet enforced by the platform\n",
-			common.Hint("·"), len(declaredHosts), pluralS(len(declaredHosts)))
+		fmt.Printf("  %s egress allowlist applied (%d host%s)\n",
+			common.Check(), len(declaredHosts), pluralS(len(declaredHosts)))
 	} else {
 		fmt.Printf("  %s egress mode open\n", common.Hint("·"))
 	}
@@ -139,21 +139,31 @@ func fetchLiveEgress() (liveEgressView, error) {
 	return v, nil
 }
 
-// refreshEgress asks the operator to re-resolve and re-push the allowlist.
+// refreshEgress sends the Driftfile's declaration and asks the operator to
+// resolve and apply it.
 //
-// IT MUST DECLARE A CONTENT TYPE EVEN THOUGH IT SENDS NOTHING INTERESTING. The
-// route gates on `Content-Type: application/json` before it looks at anything
-// else, and `common.DoRequest` sets no content type at all — so this POSTed with
-// none and came back `415 Content-Type must be application/json`, on every
-// deploy whose egress block differed from the live one.
+// IT MUST DECLARE A CONTENT TYPE. The route gates on
+// `Content-Type: application/json` before it looks at anything else, and
+// `common.DoRequest` sets none — so this once POSTed without one and came back
+// `415 Content-Type must be application/json`, on every deploy whose egress
+// block differed from the live one. The failure was invisible, because the
+// caller printed it as a hint and returned nil.
 //
-// The failure was invisible: applyEgress prints the error as a hint and returns
-// nil, so `drift file apply` reported `Done!` immediately underneath it. An
-// empty object rather than a nil body, so the route is handed something to
-// decode rather than an empty stream.
-func refreshEgress() error {
+// `mode` IS ALWAYS SENT, including "open". The operator tells an absent mode
+// from `"open"` and treats only the absent one as "re-resolve what you hold" —
+// so omitting it when a tenant removes their allowlist would leave the old one
+// in force, and the slice would stay locked down after the manifest said it
+// should not be.
+func refreshEgress(mode string, hosts []string) error {
+	if hosts == nil {
+		hosts = []string{}
+	}
+	body, err := json.Marshal(map[string]any{"mode": mode, "hosts": hosts})
+	if err != nil {
+		return err
+	}
 	resp, err := common.DoJSONRequest(http.MethodPost,
-		common.APIBaseURL+"/ops/atomic/egress/refresh", strings.NewReader("{}"))
+		common.APIBaseURL+"/ops/atomic/egress/refresh", strings.NewReader(string(body)))
 	if err != nil {
 		return err
 	}

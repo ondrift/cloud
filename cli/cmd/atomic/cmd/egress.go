@@ -153,10 +153,24 @@ func getEgressTestCmd() *cobra.Command {
 	}
 }
 
-// matchHostAgainstList does the wildcard-aware prefix match for
-// `drift atomic egress test`. Wildcard rule: a leading `*.` matches
-// any single subdomain label or longer. Returns the matching entry,
-// or "" if no match.
+// matchHostAgainstList answers `drift atomic egress test`: does this target
+// match an entry on the slice's allowlist? Returns the matching entry, or ""
+// if none.
+//
+// THE MATCH IS EXACT, AND THE WILDCARD BRANCH IS GONE DELIBERATELY.
+//
+// It used to treat a leading `*.` as a suffix match, so `drift atomic egress
+// test s3.amazonaws.com` printed "✔ matches "*.amazonaws.com" on the
+// allowlist" — for a rule that had never been created. The operator resolves
+// each entry to an `<ip>/32` NetworkPolicy rule and skips a `*.` entry with a
+// log line, so a wildcard becomes no rule at all. The diagnostic would have
+// confirmed a control that does not exist, which is the one thing a diagnostic
+// must never do: it is the reason somebody stops checking.
+//
+// The wildcard is now refused at the schema and again at the operator, so a
+// list reaching here cannot contain one. This branch stayed dangerous anyway —
+// an allowlist stored before those guards, or one written by a hand-rolled API
+// call, would still have been confirmed by it.
 //
 // Pure logic — covered by egress_test.go.
 func matchHostAgainstList(target string, list []string) string {
@@ -168,13 +182,6 @@ func matchHostAgainstList(target string, list []string) string {
 		host := strings.ToLower(strings.TrimSpace(entry))
 		if i := strings.Index(host, ":"); i > 0 {
 			host = host[:i]
-		}
-		if strings.HasPrefix(host, "*.") {
-			suffix := host[1:] // ".amazonaws.com"
-			if strings.HasSuffix(target, suffix) && len(target) > len(suffix) {
-				return entry
-			}
-			continue
 		}
 		if target == host {
 			return entry
