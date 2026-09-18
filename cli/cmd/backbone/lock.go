@@ -29,6 +29,10 @@ func lockAcquireCmd() *cobra.Command {
 		Example: "  drift backbone lock acquire deploy-lock worker-1\n  drift backbone lock acquire db-migration runner-0 --ttl 120",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			name, owner := args[0], args[1]
 
 			payload, _ := json.Marshal(map[string]any{"name": name, "owner": owner, "ttl": ttl})
@@ -66,6 +70,10 @@ func lockReleaseCmd() *cobra.Command {
 		Example: "  drift backbone lock release deploy-lock worker-1",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			name, owner := args[0], args[1]
 
 			payload, _ := json.Marshal(map[string]any{"name": name, "owner": owner})
@@ -98,6 +106,10 @@ func lockRenewCmd() *cobra.Command {
 		Example: "  drift backbone lock renew deploy-lock worker-1\n  drift backbone lock renew deploy-lock worker-1 --ttl 120",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			name, owner := args[0], args[1]
 
 			payload, _ := json.Marshal(map[string]any{"name": name, "owner": owner, "ttl": ttl})

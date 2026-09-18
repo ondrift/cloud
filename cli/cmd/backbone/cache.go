@@ -29,6 +29,10 @@ func cacheSetCmd() *cobra.Command {
 		Example: "  drift backbone cache set session-token abc123\n  drift backbone cache set rate-limit 100 --ttl 60",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			key, value := args[0], args[1]
 
 			payload, _ := json.Marshal(map[string]any{"key": key, "value": value, "ttl": ttl})
@@ -66,6 +70,10 @@ func cacheGetCmd() *cobra.Command {
 		Example: "  drift backbone cache get session-token",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			key := args[0]
 
 			resp, err := common.DoRequest(
@@ -100,6 +108,10 @@ func cacheDelCmd() *cobra.Command {
 		Example: "  drift backbone cache del session-token",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			key := args[0]
 
 			payload, _ := json.Marshal(map[string]string{"key": key})
@@ -135,6 +147,10 @@ func cacheExistsCmd() *cobra.Command {
 		Example: "  drift backbone cache exists session-token",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			key := args[0]
 
 			resp, err := common.DoRequest(
