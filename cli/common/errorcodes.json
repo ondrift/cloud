@@ -64,7 +64,7 @@
     {
       "code": "DRIFT-1011",
       "meaning": "You are not logged in, so the CLI has no credential to send.",
-      "remedy": "Run `drift account login`, or `drift account signup` if you do not have an account yet. This is different from an expired session (DRIFT-1001): there is no session on this machine at all.",
+      "remedy": "Run `drift account login`, or `drift account create` if you do not have an account yet. This is different from an expired session (DRIFT-1001): there is no session on this machine at all.",
       "command": "drift account login"
     },
     {
