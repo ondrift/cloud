@@ -26,6 +26,6 @@ func (r *devRunner) generateNode() error {
 		"{{FUNC}}", funcName,
 	).Replace(tmpl)
 
-	// SDK comes from `npm install github:ondrift/sdk` in installDeps.
+	// SDK comes from `npm install github:ondrift/cloud` in installDeps.
 	return os.WriteFile(filepath.Join(r.workDir, "app.js"), []byte(code), 0o644) // #nosec G306 -- build-time artefact on the user's machine
 }

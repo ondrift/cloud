@@ -47,7 +47,7 @@ func TestVerifySDKManifest_EmptyDependenciesIsRejected(t *testing.T) {
 func TestVerifySDKManifest_DeclaredIsAccepted(t *testing.T) {
 	dir := writeFn(t, map[string]string{
 		"h.js":         "const drift = require('@ondrift/sdk');\nfunction h() {}\nmodule.exports={h};\n",
-		"package.json": `{"dependencies":{"@ondrift/sdk":"github:ondrift/sdk#semver:*"}}`,
+		"package.json": `{"dependencies":{"@ondrift/sdk":"github:ondrift/cloud"}}`,
 	})
 	if err := VerifySDKManifest(dir, "node"); err != nil {
 		t.Errorf("a correctly declared manifest must pass: %v", err)

@@ -23,17 +23,22 @@ import (
 	"testing"
 )
 
-const stubSDKTag = "v4.1.2"
+// The tag carries the `sdk/` prefix the monorepo namespaces its SDK releases
+// with, because the CLI is tagged out of the same repository.
+const stubSDKTag = "sdk/v4.1.2"
 
-// stubSDKFiles mirrors the real SDK repo's layout — one stdlib-only source
-// file per language, plus the root package.json Node resolves through.
+// stubSDKFiles mirrors the MONOREPO's layout: the SDK is a directory beside the
+// CLI, so every path is under `sdk/`. It used to have a repository to itself,
+// where these sat at the root — a stub still shaped that way would pass against
+// a vendor layout that could no longer find a single file in the real tarball.
 var stubSDKFiles = map[string]string{
-	"package.json":    `{"name":"@ondrift/sdk","version":"4.1.2","main":"node/index.js"}`,
-	"node/index.js":   "module.exports = { run: () => {} };\n",
-	"python/drift.py": "def run(h):\n    pass\n",
-	"ruby/drift.rb":   "module Drift; end\n",
-	"php/drift.php":   "<?php\n",
-	"README.md":       "# Drift SDK\n",
+	"sdk/package.json":    `{"name":"@ondrift/sdk","version":"4.1.2","main":"node/index.js"}`,
+	"sdk/node/index.js":   "module.exports = { run: () => {} };\n",
+	"sdk/python/drift.py": "def run(h):\n    pass\n",
+	"sdk/ruby/drift.rb":   "module Drift; end\n",
+	"sdk/php/drift.php":   "<?php\n",
+	"README.md":           "# Drift\n",
+	"cli/main.go":         "package main\n",
 }
 
 // buildStubTarball produces a gzipped tar with GitHub's `<repo>-<ref>/` prefix.
@@ -44,7 +49,7 @@ func buildStubTarball(t *testing.T) []byte {
 	tw := tar.NewWriter(gz)
 	for name, body := range stubSDKFiles {
 		hdr := &tar.Header{
-			Name:     "sdk-4.1.2/" + name,
+			Name:     "cloud-4.1.2/" + name,
 			Mode:     0o644,
 			Size:     int64(len(body)),
 			Typeflag: tar.TypeReg,
@@ -118,7 +123,7 @@ func TestInstallNodeDeps_SDKOnlyNeedsNoDocker(t *testing.T) {
 	// Exactly what `drift atomic new` scaffolds.
 	writeFile(t, filepath.Join(elem, "package.json"),
 		`{"name":"atomic-hello","version":"1.0.0","private":true,`+
-			`"dependencies":{"@ondrift/sdk":"github:ondrift/sdk#semver:*"}}`)
+			`"dependencies":{"@ondrift/sdk":"github:ondrift/cloud"}}`)
 
 	if err := installNodeDeps(elem, stage); err != nil {
 		t.Fatalf("installNodeDeps failed with no Docker on PATH: %v", err)
@@ -284,7 +289,7 @@ func TestInstallNodeDeps_StagesThePackageJsonItWasGiven(t *testing.T) {
 	elem, stage := t.TempDir(), t.TempDir()
 	writeFile(t, filepath.Join(elem, "package.json"),
 		`{"name":"atomic-hello","version":"1.0.0","private":true,`+
-			`"dependencies":{"@ondrift/sdk":"github:ondrift/sdk#semver:*"}}`)
+			`"dependencies":{"@ondrift/sdk":"github:ondrift/cloud"}}`)
 	writeFile(t, filepath.Join(elem, "package-lock.json"), `{"lockfileVersion":3}`)
 
 	if err := installNodeDeps(elem, stage); err != nil {
@@ -310,7 +315,7 @@ func TestInstallNodeDeps_RealDependencyStillUsesContainer(t *testing.T) {
 
 	elem, stage := t.TempDir(), t.TempDir()
 	writeFile(t, filepath.Join(elem, "package.json"),
-		`{"dependencies":{"@ondrift/sdk":"github:ondrift/sdk","sharp":"^0.33.0"}}`)
+		`{"dependencies":{"@ondrift/sdk":"github:ondrift/cloud","sharp":"^0.33.0"}}`)
 
 	err := installNodeDeps(elem, stage)
 	if err == nil {
@@ -351,7 +356,7 @@ func TestSDKOnlyDetection(t *testing.T) {
 		want     bool
 	}{
 		{"node: scaffolded SDK only", "node", "package.json",
-			`{"dependencies":{"@ondrift/sdk":"github:ondrift/sdk#semver:*"}}`, true},
+			`{"dependencies":{"@ondrift/sdk":"github:ondrift/cloud"}}`, true},
 		{"node: no dependencies at all", "node", "package.json",
 			`{"name":"x","dependencies":{}}`, true},
 		{"node: devDependencies are ignored", "node", "package.json",
@@ -460,9 +465,39 @@ func TestResolveLatestSDKTag_HonoursPin(t *testing.T) {
 	}
 }
 
-// TestPickLatestSemverTag pins the selection rule. The real tag list (checked
-// against the live API on 2026-07-27) is the first case; the rest are the ways
-// a naive "take the first element" or a lexical sort gets it wrong.
+// THE PREFIX HAS TO SURVIVE THE ROUND TRIP, and this is the one assertion that
+// says so. The SDK shares a repository with the CLI, so its releases are tagged
+// `sdk/vX.Y.Z`; the resolver strips that to compare versions and puts it back to
+// name the tag. Strip without re-adding and the download URL becomes
+// `refs/tags/v0.9.0` — a tag that does not exist, so resolution reports success
+// and the fetch 404s a step later.
+//
+// The refs are the shape `git/matching-refs/tags/sdk/` really returns; check it
+// with `gh api repos/ondrift/cloud/git/matching-refs/tags/sdk/`.
+func TestSDKTagResolution_StripsAndRestoresTheNamespace(t *testing.T) {
+	refs := []string{
+		"refs/tags/sdk/v0.8.1",
+		"refs/tags/sdk/v0.10.0",
+		"refs/tags/sdk/v0.9.0",
+	}
+	bare := sdkTagsFromRefs(refs)
+	for _, b := range bare {
+		if strings.Contains(b, "/") {
+			t.Fatalf("%q still carries a prefix — the version comparison would see a path", b)
+		}
+	}
+
+	got := sdkTagPrefix + pickLatestSemverTag(bare)
+	// 0.10.0 over 0.9.0 is also the case a lexical sort gets wrong.
+	if got != "sdk/v0.10.0" {
+		t.Errorf("resolved tag = %q, want sdk/v0.10.0", got)
+	}
+}
+
+// TestPickLatestSemverTag pins the selection rule. The first case is the real
+// tag list; check it against the live API with
+// `gh api repos/ondrift/cloud/git/matching-refs/tags/sdk/`. The rest are the
+// ways a naive "take the first element" or a lexical sort gets it wrong.
 func TestPickLatestSemverTag(t *testing.T) {
 	cases := []struct {
 		name string

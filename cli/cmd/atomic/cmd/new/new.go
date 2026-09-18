@@ -479,23 +479,36 @@ func Manifest(lang, name string) (string, string) {
 	switch lang {
 	case "go":
 		return "go.mod", fmt.Sprintf("module atomic/%s\n\ngo 1.26.2\n", name)
+	// THE REPOSITORY IS `ondrift/cloud`. The SDK is a directory inside it, so
+	// each language reaches it by that language's own means — pip's
+	// `#subdirectory=`, bundler's `glob:`, composer's and npm's root manifests.
+	//
+	// Three of these named `github.com/ondrift/cloud/sdk`, which is not an
+	// address: a GitHub repository is owner/repo, and that is three segments. It
+	// 404s, so a scaffolded Python, Ruby or PHP project shipped a dependency
+	// nothing could install. The fourth named `ondrift/sdk`, a repository that no
+	// longer exists.
 	case "python":
-		return "requirements.txt", "drift-sdk @ git+https://github.com/ondrift/cloud/sdk.git#subdirectory=python\n"
+		return "requirements.txt", "drift-sdk @ git+https://github.com/ondrift/cloud.git#subdirectory=sdk/python\n"
 	case "node":
+		// No `#semver:*`: npm matches that against semver-shaped tags, and this
+		// repository namespaces its releases `sdk/v0.9.0` beside `cli/v0.61.0`,
+		// none of which parse as one. It would silently resolve to the default
+		// branch anyway, so the branch is what it asks for.
 		return "package.json", fmt.Sprintf("{\n"+
 			"  \"name\": \"atomic-%s\",\n"+
 			"  \"version\": \"1.0.0\",\n"+
 			"  \"private\": true,\n"+
 			"  \"dependencies\": {\n"+
-			"    \"@ondrift/sdk\": \"github:ondrift/sdk#semver:*\"\n"+
+			"    \"@ondrift/sdk\": \"github:ondrift/cloud\"\n"+
 			"  }\n}\n", name)
 	case "ruby":
 		return "Gemfile", "source \"https://rubygems.org\"\n\n" +
-			"gem \"drift-sdk\", git: \"https://github.com/ondrift/cloud/sdk\", branch: \"master\", glob: \"ruby/*.gemspec\"\n"
+			"gem \"drift-sdk\", git: \"https://github.com/ondrift/cloud\", glob: \"sdk/ruby/*.gemspec\"\n"
 	case "php":
 		return "composer.json", "{\n" +
 			"  \"repositories\": [\n" +
-			"    { \"type\": \"vcs\", \"url\": \"https://github.com/ondrift/cloud/sdk\" }\n" +
+			"    { \"type\": \"vcs\", \"url\": \"https://github.com/ondrift/cloud\" }\n" +
 			"  ],\n" +
 			"  \"require\": {\n" +
 			"    \"ondrift/sdk\": \"*\"\n" +

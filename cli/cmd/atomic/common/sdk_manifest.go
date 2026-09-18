@@ -20,26 +20,45 @@ type sdkManifestSpec struct {
 	declaration string   // what the user should put in the manifest
 }
 
+// THE REPOSITORY IS `ondrift/cloud`, AND THE SDK IS A DIRECTORY IN IT.
+//
+// Three of these four named `https://github.com/ondrift/cloud/sdk`, which is not
+// a repository: GitHub addresses are owner/repo, two segments, and that URL is
+// three. It 404s. So the advice this file exists to give — the message a user
+// sees at deploy time, telling them exactly what to paste — could not work for
+// Python, Ruby or PHP. The fourth pointed at `ondrift/sdk`, a repository that is
+// now archived and removed.
+//
+// Each language reaches the subdirectory its own way, which is why no two of
+// these look alike: pip has `#subdirectory=`, bundler has `glob:`, composer
+// finds the package through the repository's own layout, and npm has nothing —
+// it cannot install from a subdirectory at all, so the monorepo carries a root
+// package.json that points at `sdk/node/index.js` for it.
+//
+// Node also loses its `#semver:*`. npm matches that against semver-shaped tags,
+// and this repository namespaces its releases `sdk/v0.9.0` beside
+// `cli/v0.61.0` — none of which parse as one, so it resolves to the default
+// branch regardless. Asking for the branch says what actually happens.
 var sdkManifestSpecs = map[string]sdkManifestSpec{
 	"python": {
 		manifest: "requirements.txt", ext: ".py",
 		needles:     []string{"import drift"},
-		declaration: "drift-sdk @ git+https://github.com/ondrift/cloud/sdk.git#subdirectory=python",
+		declaration: "drift-sdk @ git+https://github.com/ondrift/cloud.git#subdirectory=sdk/python",
 	},
 	"node": {
 		manifest: "package.json", ext: ".js",
 		needles:     []string{"@ondrift/sdk"},
-		declaration: `{ "dependencies": { "@ondrift/sdk": "github:ondrift/sdk#semver:*" } }`,
+		declaration: `{ "dependencies": { "@ondrift/sdk": "github:ondrift/cloud" } }`,
 	},
 	"ruby": {
 		manifest: "Gemfile", ext: ".rb",
 		needles:     []string{"require 'drift'", "require \"drift\""},
-		declaration: "gem \"drift-sdk\", git: \"https://github.com/ondrift/cloud/sdk\", branch: \"master\", glob: \"ruby/*.gemspec\"",
+		declaration: "gem \"drift-sdk\", git: \"https://github.com/ondrift/cloud\", glob: \"sdk/ruby/*.gemspec\"",
 	},
 	"php": {
 		manifest: "composer.json", ext: ".php",
 		needles:     []string{`Drift\`},
-		declaration: `{ "repositories": [{ "type": "vcs", "url": "https://github.com/ondrift/cloud/sdk" }], "require": { "ondrift/sdk": "*" } }`,
+		declaration: `{ "repositories": [{ "type": "vcs", "url": "https://github.com/ondrift/cloud" }], "require": { "ondrift/sdk": "*" } }`,
 	},
 }
 

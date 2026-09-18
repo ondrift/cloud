@@ -1,0 +1,32 @@
+{
+  "name": "@ondrift/sdk",
+  "version": "0.9.0",
+  "description": "Drift SDK for Node.js. This root manifest exists so `npm install github:ondrift/cloud` resolves — npm cannot install from a subdirectory of a git repository, and the SDK lives in sdk/. The manifest sdk/package.json describes the same code laid out as it appears inside node_modules, which is what the CLI's vendor path copies; this one describes it as it appears at the repository root, which is what npm clones. Two layouts, two manifests.",
+  "main": "sdk/node/index.js",
+  "type": "commonjs",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "drift",
+    "serverless",
+    "atomic",
+    "sdk"
+  ],
+  "author": "Drift",
+  "homepage": "https://ondrift.eu",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ondrift/cloud.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ondrift/cloud/issues"
+  },
+  "files": [
+    "sdk/node/index.js",
+    "sdk/README.md",
+    "sdk/LICENSE"
+  ],
+  "dependencies": {}
+}
