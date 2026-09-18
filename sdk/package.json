@@ -18,10 +18,10 @@
   "homepage": "https://ondrift.eu",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ondrift/cloud/sdk.git"
+    "url": "git+https://github.com/ondrift/cloud.git"
   },
   "bugs": {
-    "url": "https://github.com/ondrift/cloud/sdk/issues"
+    "url": "https://github.com/ondrift/cloud/issues"
   },
   "files": [
     "node/index.js",

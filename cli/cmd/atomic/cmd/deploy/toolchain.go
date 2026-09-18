@@ -261,7 +261,7 @@ func ensureDocker() error {
 // DRIFT_BUILD_IMAGE_<LANG> for air-gapped mirrors or version pinning.
 //
 // Every image here MUST contain git. Every Drift SDK is a git-sourced
-// dependency — `drift-sdk @ git+https://…` (pip), `github:ondrift/sdk` (npm),
+// dependency — `drift-sdk @ git+https://…` (pip), `github:ondrift/cloud` (npm),
 // `gem "drift-sdk", git:` (bundler), `{"type":"vcs"}` (composer),
 // `drift-sdk = { git = … }` (cargo) — so a build image without git cannot
 // resolve the SDK, which is the default path rather than an edge case. The

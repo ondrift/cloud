@@ -61,14 +61,19 @@ var sdkModule = map[string]string{
 //	node   — wrapper requires '@ondrift/sdk', resolved via node_modules/
 //	ruby   — wrapper does $LOAD_PATH.unshift(__dir__) then require 'drift'
 //	php    — wrapper require_once's vendor/autoload.php when present
+//
+// The `from` paths are relative to the extracted tarball root. They carry the
+// `sdk/` prefix because the SDK lives in a MONOREPO alongside the CLI — the
+// tarball's root holds `cli/`, `sdk/` and a README, not the four language
+// directories directly.
 var sdkVendorLayout = map[string][]struct{ from, to string }{
-	"python": {{from: "python/drift.py", to: "vendor/drift.py"}},
+	"python": {{from: "sdk/python/drift.py", to: "vendor/drift.py"}},
 	"node": {
-		{from: "package.json", to: "node_modules/@ondrift/sdk/package.json"},
-		{from: "node/index.js", to: "node_modules/@ondrift/sdk/node/index.js"},
+		{from: "sdk/package.json", to: "node_modules/@ondrift/sdk/package.json"},
+		{from: "sdk/node/index.js", to: "node_modules/@ondrift/sdk/node/index.js"},
 	},
-	"ruby": {{from: "ruby/drift.rb", to: "drift.rb"}},
-	"php":  {{from: "php/drift.php", to: "vendor/php/drift.php"}},
+	"ruby": {{from: "sdk/ruby/drift.rb", to: "drift.rb"}},
+	"php":  {{from: "sdk/php/drift.php", to: "vendor/php/drift.php"}},
 }
 
 // sdkResolveTag and sdkFetchTarball are the entire network surface, isolated
@@ -304,7 +309,17 @@ func vendorDriftSDK(lang, stageDir string) error {
 
 // ─── Fetch + cache ──────────────────────────────────────────────────────────
 
-const sdkRepo = "ondrift/sdk"
+// The SDK lives in the public MONOREPO with the CLI. It used to have a
+// repository of its own, `ondrift/sdk`, which is archived and gone: every
+// version line there was 1.x, which the SDKs are not supposed to have, and
+// nothing had pointed a user at it deliberately for some time.
+const sdkRepo = "ondrift/cloud"
+
+// Its tags are namespaced, because the CLI is tagged out of the same repository:
+// `sdk/v0.9.0` beside `cli/v0.61.0`. Everything below reads and writes bare
+// semver and this prefix is added or stripped at the boundary, so the version
+// comparison never has to know about it.
+const sdkTagPrefix = "sdk/"
 
 // resolveLatestSDKTag returns the SDK tag to vendor.
 //
@@ -313,17 +328,25 @@ const sdkRepo = "ondrift/sdk"
 //
 // Otherwise the tag list is read from GitHub and the highest semver wins.
 // Deliberately NOT the `/releases/latest` redirect, which is the obvious move
-// and does not work here: the SDK repo publishes git TAGS but no GitHub
-// Releases, so that endpoint 302s to the releases index and the "tag" parsed
-// out of it is the literal string "releases" — a resolution that looks like it
-// succeeded and then 404s at download.
+// and does not work here: the SDK publishes git TAGS but no GitHub Releases, so
+// that endpoint 302s to the releases index and the "tag" parsed out of it is the
+// literal string "releases" — a resolution that looks like it succeeded and then
+// 404s at download.
 //
-// The order the API returns is not contracted, so the highest version is
-// selected explicitly rather than by taking the first element.
+// MATCHING-REFS, NOT `/tags`, and that is not a style preference. The monorepo
+// carries the CLI's tags too — 116 in total, only 13 of them the SDK's — and
+// `/tags` is paginated with an order the API does not contract. Whether an
+// `sdk/` tag landed on the first page would be luck, and the failure when it did
+// not would read as "no version tags found" against a repository visibly full of
+// them. `git/matching-refs/tags/sdk/` returns exactly the SDK's refs.
 //
-// A resolved tag is always a concrete version, never a floating ref: vendoring
-// a moving target is what CLI-STANDARDUSAGE-0KTV3V is about, and reintroducing
-// it here in a new place would be a poor trade for skipping a container.
+// The order is still not contracted, so the highest version is selected
+// explicitly rather than by taking the first element.
+//
+// A resolved tag is always a concrete version, never a floating ref. Vendoring a
+// moving target means two deploys of identical source can ship different SDKs,
+// with nothing in either artifact recording which — a poor trade for skipping a
+// container.
 func resolveLatestSDKTag() (string, error) {
 	if v := strings.TrimSpace(os.Getenv("DRIFT_SDK_TAG")); v != "" {
 		return v, nil
@@ -331,7 +354,7 @@ func resolveLatestSDKTag() (string, error) {
 	hint := "\nPin one with DRIFT_SDK_TAG=<tag>, or set DRIFT_FORCE_CONTAINER_BUILD=1 to build in a container instead."
 
 	client := &http.Client{Timeout: sdkHTTPTimeout}
-	resp, err := client.Get("https://api.github.com/repos/" + sdkRepo + "/tags") // #nosec G107 -- constant host, constant path
+	resp, err := client.Get("https://api.github.com/repos/" + sdkRepo + "/git/matching-refs/tags/" + sdkTagPrefix) // #nosec G107 -- constant host, constant path
 	if err != nil {
 		return "", fmt.Errorf("resolve the latest Drift SDK version: %w%s", err, hint)
 	}
@@ -341,21 +364,36 @@ func resolveLatestSDKTag() (string, error) {
 		// IP), which is worth naming rather than reporting as a bare status.
 		return "", fmt.Errorf("resolve the latest Drift SDK version: GitHub returned %s%s", resp.Status, hint)
 	}
-	var tags []struct {
-		Name string `json:"name"`
+	var refs []struct {
+		Ref string `json:"ref"`
 	}
-	if derr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tags); derr != nil {
+	if derr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&refs); derr != nil {
 		return "", fmt.Errorf("resolve the latest Drift SDK version: %w%s", derr, hint)
 	}
-	names := make([]string, 0, len(tags))
-	for _, t := range tags {
-		names = append(names, t.Name)
+	names := make([]string, 0, len(refs))
+	for _, r := range refs {
+		names = append(names, r.Ref)
 	}
-	latest := pickLatestSemverTag(names)
+	latest := pickLatestSemverTag(sdkTagsFromRefs(names))
 	if latest == "" {
 		return "", fmt.Errorf("resolve the latest Drift SDK version: no version tags found%s", hint)
 	}
-	return latest, nil
+	return sdkTagPrefix + latest, nil
+}
+
+// sdkTagsFromRefs turns `refs/tags/sdk/v0.9.0` into `v0.9.0`.
+//
+// The prefix comes off here and goes back on at the end of the resolver, so the
+// version comparison in between is a comparison of versions and nothing else.
+// Both halves matter: strip and forget to re-add, and the download URL becomes
+// `refs/tags/v0.9.0`, which does not exist — a resolution that looks like it
+// worked and 404s one step later.
+func sdkTagsFromRefs(refs []string) []string {
+	out := make([]string, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, strings.TrimPrefix(r, "refs/tags/"+sdkTagPrefix))
+	}
+	return out
 }
 
 // pickLatestSemverTag returns the highest vMAJOR.MINOR.PATCH tag in names.

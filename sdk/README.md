@@ -36,7 +36,7 @@ drift-sdk @ git+https://github.com/ondrift/cloud/sdk.git#subdirectory=python
 ```
 ```bash
 # Node.js (package.json dependency) — #semver:* = latest tag
-npm i "github:ondrift/sdk#semver:*"
+npm i "github:ondrift/cloud"
 ```
 ```ruby
 # Ruby (Gemfile) — branch:master is the repo default (and bundler's default
