@@ -182,12 +182,23 @@ func driftfileVersionOf(raw []byte) string {
 //
 // Bump it in the release that implements a format change.
 //
-// 1.15.1 covers `atomic.functions[].env` (plain per-function configuration,
-// carried through the deploy by cmd/project) and `backbone.nosql[].unique`
-// (sent to the slice on ensure by the apply path). Both are keys this binary
-// now reads and forwards, which is what "implements" means for a CLI that
-// holds no typed mirror of the format.
-const ImplementedDriftfileFormat = "1.15.1"
+// 1.16.0 covers `slice.atomic.egress` as a declaration that travels. The
+// platform stores what arrives and renders it into the slice's NetworkPolicy,
+// so cmd/project sends the mode and the host list on every reconcile that finds
+// them changed, always including `open` — an absent mode means "re-resolve what
+// you hold", and omitting it when a tenant removes their allowlist would leave
+// the old one in force. A refusal fails the apply rather than printing a hint.
+//
+// The same version stopped accepting a wildcard host, and this binary needs no
+// code for that: it validates against the schema it fetched, so the constraint
+// arrives with the format. That is the point of holding no typed mirror, and it
+// is why "implements" here means reads and forwards rather than mirrors.
+//
+// 1.15.2 is skipped through rather than missed. It was description text on
+// `backbone.secrets` — no constraint, no pattern, nothing that changes what
+// validates — which is a PATCH under the schema's own versioning rule and
+// therefore nothing for a client to implement.
+const ImplementedDriftfileFormat = "1.16.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every
 // authenticated request.
