@@ -616,47 +616,82 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 	return nil
 }
 
+// triadPhase is one of the independent subsystems runTriad runs concurrently.
+type triadPhase struct {
+	name string
+	fn   func(*Manifest, io.Writer) error
+}
+
 // applySliceTriad deploys the three independent slice subsystems — Atomic
 // functions, Backbone data, and Canvas sites — CONCURRENTLY. They touch
 // different parts of the slice and share no mutable state (each makes its own
 // stateless HTTP calls), so the wall-clock becomes the slowest of the three
-// instead of their sum. The spinner is single-line by contract, so concurrent
-// phases can't animate it: each phase buffers its own section, one aggregate
-// spinner runs while they work, then the sections print in a stable order
-// (Atomic → Backbone → Canvas). The first failure in that order is returned
-// with its real error; every phase is attempted so all failures are visible.
+// instead of their sum.
 func applySliceTriad(m *Manifest) error {
-	type phase struct {
-		fn  func(*Manifest, io.Writer) error
-		buf bytes.Buffer
-		err error
+	return runTriad(m, "Deploying Atomic, Backbone & Canvas…", []triadPhase{
+		{"Atomic", applyAtomic},
+		{"Backbone", applyBackbone},
+		{"Canvas", applyCanvas},
+	})
+}
+
+// runTriad runs every phase concurrently against m. The spinner is
+// single-line by contract, so concurrent phases can't animate it: each phase
+// buffers its own section, one aggregate spinner runs while they work, then
+// the sections print in the order given (Atomic → Backbone → Canvas).
+//
+// EVERY failure is reported, not just the first. A token scoped for exactly
+// one phase's job — say secret:write for the Backbone secrets it declares —
+// fails only that phase, and the other two succeed; returning just the first
+// non-nil error picked an arbitrary winner among however many actually
+// failed and silently dropped the rest, which is what made a token scoped
+// slice:read+slice:write look like it failed for no stated reason instead of
+// naming the one phase (secrets) it never had scope for (ABN-03/04).
+func runTriad(m *Manifest, spinnerLabel string, phases []triadPhase) error {
+	type result struct {
+		name string
+		buf  bytes.Buffer
+		err  error
 	}
-	phases := []*phase{
-		{fn: applyAtomic},
-		{fn: applyBackbone},
-		{fn: applyCanvas},
+	results := make([]*result, len(phases))
+	for i, p := range phases {
+		results[i] = &result{name: p.name}
 	}
 
-	sp := common.StartSpinner("  ", "Deploying Atomic, Backbone & Canvas…")
+	sp := common.StartSpinner("  ", spinnerLabel)
 	var wg sync.WaitGroup
-	for _, p := range phases {
+	for i, p := range phases {
 		wg.Add(1)
-		go func(p *phase) {
+		go func(r *result, fn func(*Manifest, io.Writer) error) {
 			defer wg.Done()
-			p.err = p.fn(m, &p.buf)
-		}(p)
+			r.err = fn(m, &r.buf)
+		}(results[i], p.fn)
 	}
 	wg.Wait()
 	sp.Stop()
 
-	var firstErr error
-	for _, p := range phases {
-		fmt.Print(p.buf.String())
-		if p.err != nil && firstErr == nil {
-			firstErr = p.err
+	var failed []*result
+	for _, r := range results {
+		fmt.Print(r.buf.String())
+		if r.err != nil {
+			failed = append(failed, r)
 		}
 	}
-	return firstErr
+	switch len(failed) {
+	case 0:
+		return nil
+	case 1:
+		// Unwrapped: the common case keeps exactly the error its phase
+		// returned, with no name prefix a single failure does not need.
+		return failed[0].err
+	default:
+		lines := make([]string, len(failed))
+		for i, r := range failed {
+			lines[i] = fmt.Sprintf("%s: %v", r.name, r.err)
+		}
+		return fmt.Errorf("%d of %d deploy phases failed:\n  %s",
+			len(failed), len(phases), strings.Join(lines, "\n  "))
+	}
 }
 
 // ─── Backbone ───────────────────────────────────────────────────────
