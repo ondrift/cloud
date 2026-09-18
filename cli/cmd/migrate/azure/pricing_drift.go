@@ -1,20 +1,27 @@
 package azure
 
 // Drift-side pricing — a deliberate MIRROR of the platform's billing constants
-// at platform/core/common/plan/pricing.go. The CLI is its own module and must
-// not import core internals, so the numbers are copied here and pinned by a
+// at src/common/tier/pricing.go. The CLI is its own module and must not
+// import core internals, so the numbers are copied here and pinned by a
 // tripwire test (pricing_drift_test.go). If the platform's prices change, that
 // test fails and reminds us to update this mirror.
 //
 // Source of truth: docs/memos/done/pricing-v2-ram-storage-model.md (and the
-// constants in platform/core/common/plan/pricing.go). Integer cents, never
-// floats (same discipline as the platform). The model charges for the box:
-// RAM (function memory, realtime) + storage (per GiB) + a tiny function
-// token; collections / queues / SQL dbs / blob count are FREE. No flat base
-// fee — removed platform-side (see pricing.go's own comment) since it was
-// the one line that didn't map to a configured resource.
+// constants in src/common/tier/pricing.go). Integer cents, never floats (same
+// discipline as the platform). The model charges for the box: RAM (function
+// memory, realtime) + storage (per GiB); collections / queues / SQL dbs /
+// blob count are FREE. No flat base fee, and no per-function charge either —
+// both removed platform-side (see pricing.go's own comments) since neither
+// mapped to a configured resource: a function itself is free, you pay for
+// what it consumes (the memory it books, the disk its artifact occupies).
+// verified-against: cloud-platform@3618395 — the four values below matched
+// src/common/tier/pricing.go's CentsPer* constants exactly at that commit.
+// The two repos cannot share a Go import, so this is the manual half of the
+// tripwire: TestPricingMirrorAgainstPlatform (pricing_drift_test.go) checks
+// automatically whenever cloud-platform is checked out as a sibling of this
+// repo (this workspace's own layout) and reminds a human to re-pin otherwise.
+// Re-run it and update this SHA whenever any of the four changes on purpose.
 const (
-	driftCentsPerFunction     = 5  // per declared function (surface token)
 	driftCentsPerScheduledJob = 30 // per scheduled (cron) job (background load)
 	driftCentsPerMiBMemory    = 3  // per MiB of function-memory cap (RAM, primary lever)
 	driftCentsPerRealtimeConn = 1  // per concurrent realtime connection (RAM)
@@ -53,10 +60,14 @@ func clampNonNeg(n int) int {
 	return n
 }
 
-// priceDrift mirrors plan.PriceConfig: base + RAM + storage + tokens → monthly
-// cents. Kept structurally aligned so the tripwire test can compare totals.
+// priceDrift mirrors tier.PriceConfig: RAM + storage + tokens → monthly cents.
+// Kept structurally aligned so the tripwire test can compare totals.
+//
+// r.Functions is not priced here — it never has been a chargeable resource
+// on the platform side, and is carried on driftResources only as a count the
+// estimate's output surfaces (movable Function Apps found), not as a pricing
+// input.
 func priceDrift(r driftResources) driftBreakdown {
-	funcs := clampNonNeg(r.Functions)
 	sched := clampNonNeg(r.ScheduledJobs)
 	mem := clampNonNeg(r.MemoryMiB)
 	conns := clampNonNeg(r.RealtimeConns)
@@ -64,11 +75,10 @@ func priceDrift(r driftResources) driftBreakdown {
 	if storage < 0 {
 		storage = 0
 	}
-	// Byte-accurate, rounded half-up to the cent (same as plan.PriceConfig).
+	// Byte-accurate, rounded half-up to the cent (same as tier.PriceConfig).
 	storageCents := int((storage*int64(driftCentsPerGiBStorage) + bytesPerGiB/2) / bytesPerGiB)
 
 	lines := []driftLine{
-		{"atomic_functions", "Atomic functions", funcs, driftCentsPerFunction, funcs * driftCentsPerFunction},
 		{"atomic_scheduled", "Scheduled jobs", sched, driftCentsPerScheduledJob, sched * driftCentsPerScheduledJob},
 		{"realtime_connections", "Realtime connections", conns, driftCentsPerRealtimeConn, conns * driftCentsPerRealtimeConn},
 	}
