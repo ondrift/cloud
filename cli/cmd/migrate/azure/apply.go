@@ -30,7 +30,7 @@ func getApplyCmd() *cobra.Command {
 			}
 			fmt.Printf("%s  deploying %s to your active slice via `drift file apply`…\n\n",
 				common.Check(), common.Highlight(in))
-			return runProjectDeploy(in)
+			return runFileApply(in)
 		},
 	}
 	cmd.Flags().StringVarP(&in, "in", "i", "./drift_workspace", "Workspace produced by `transform`")
@@ -69,18 +69,22 @@ func migrationRefusedCount(dir string) int {
 	return s.Refused
 }
 
-// runProjectDeploy shells out to `drift file apply` from the workspace,
+// runFileApply shells out to `drift file apply` from the workspace,
 // having loaded .env.migrate so the Driftfile's $ENV secret refs resolve. This
 // is the deliberate MVP shape (shell-out, not in-process) — clean isolation,
 // and the migration pipeline borrows no privileges the deploy doesn't already
 // have.
-func runProjectDeploy(dir string) error {
+//
+// The current spelling, not `project deploy`: `project` is a deprecated alias
+// for `file` and `deploy` one for `apply`, so invoking both stacked two
+// deprecation notices onto a command the operator never actually typed.
+func runFileApply(dir string) error {
 	loadDotEnv(filepath.Join(dir, ".env.migrate"))
 	bin, err := exec.LookPath("drift")
 	if err != nil {
 		return fmt.Errorf("`drift` is not on PATH — install the CLI, then run `drift file apply` from %s", dir)
 	}
-	cmd := exec.Command(bin, "project", "deploy")
+	cmd := exec.Command(bin, "file", "apply")
 	cmd.Dir = dir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
