@@ -3,6 +3,7 @@ package slice
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -325,13 +326,21 @@ func postResize(payload map[string]any) (ok bool, refusal *resizeRefusal, err er
 	return false, nil, fmt.Errorf("resize refused: %s", generic.Error)
 }
 
+// noTTYResizeHint is what resizeFromPrompts refuses with when there is no
+// terminal to draw the form on. Named so TestNoTTYResizeHintNamesTheRealEscape
+// can pin its wording: this used to say "there is no non-interactive resize"
+// outright, which stopped being true the moment resizefile.go shipped --dump
+// and --config (flow enumeration finding SLC-37) — that file's own header
+// explains why the form was never what made a resize safe, only one way to
+// answer the platform's own questions.
+var noTTYResizeHint = "drift slice resize draws a form, which needs a terminal.\n" +
+	"  In CI or a script, use '--dump' to read the current shape and '--config' " +
+	"to apply an edited one — see 'drift slice resize --help'."
+
 // resizeFromPrompts opens the form on a slice and applies what comes back.
 func resizeFromPrompts(name string, billingMonths int) error {
 	if !interactive() {
-		return fmt.Errorf(
-			"drift slice resize draws a form, which needs a terminal.\n" +
-				"  In CI or a script there is no non-interactive resize: a resize can " +
-				"reprice a slice or destroy what it holds, and both are answered at the form")
+		return errors.New(noTTYResizeHint)
 	}
 	if billingMonths < 1 {
 		billingMonths = 1

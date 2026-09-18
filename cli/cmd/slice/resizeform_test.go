@@ -2,8 +2,27 @@ package slice
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
+
+// The no-TTY refusal used to claim resize has no non-interactive path at all,
+// which stopped being true once --dump/--config shipped in resizefile.go.
+// Pinned as a string rather than by actually driving a non-interactive
+// resizeFromPrompts, because interactive() reads the real stdin fd and is not
+// mockable — the same reason createFromPrompts's sibling message in
+// interactive.go has no exec test either.
+func TestNoTTYResizeHintNamesTheRealEscape(t *testing.T) {
+	if strings.Contains(noTTYResizeHint, "no non-interactive resize") {
+		t.Errorf("claims there is no non-interactive resize, but there has been one since "+
+			"resizefile.go shipped --dump/--config:\n%s", noTTYResizeHint)
+	}
+	for _, flag := range []string{"--dump", "--config"} {
+		if !strings.Contains(noTTYResizeHint, flag) {
+			t.Errorf("does not mention %s, the actual non-interactive escape:\n%s", flag, noTTYResizeHint)
+		}
+	}
+}
 
 // configFrom decodes a config literal the way the api serves one, so a test
 // reads the same bytes the form does.
