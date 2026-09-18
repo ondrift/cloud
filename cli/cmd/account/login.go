@@ -35,14 +35,15 @@ import (
 )
 
 // DoLoginErr performs the login POST and persists the session, returning an
-// error instead of printing one. Lets callers outside the CLI-command UX
-// (the portal's pre-launch login window) react to a failed attempt
-// themselves — DoLogin below is just this plus the command's print-and-return
-// behavior.
+// error instead of printing one. Lets a caller outside the CLI-command UX
+// react to a failed attempt itself — DoLogin below is just this plus the
+// command's print-and-return behavior.
 //
-// An account with a second factor does not get a session from this call alone:
-// the platform answers `mfa_required` with a short-lived handle, and the code is
-// supplied separately. See DoLoginWithFactor, which is what the command uses.
+// An account with a second factor does not get a session from this call at
+// all: the platform answers `mfa_required` with a short-lived handle and no
+// tokens, and the nil factor here has nothing to answer it with. A caller
+// that must complete an MFA login — the portal's pre-launch window is one —
+// needs DoLoginWithFactor with a real factorSupplier, e.g. PromptForFactor.
 func DoLoginErr(username, password string) error {
 	return DoLoginWithFactor(username, password, nil)
 }
@@ -222,13 +223,18 @@ func DoLoginFactor(username, password string, factor factorSupplier) error {
 	return nil
 }
 
-// promptForFactor asks a person for their code.
+// PromptForFactor asks a person for their code.
 //
 // A code left EMPTY is taken as "I do not have my phone" and the prompt switches
 // to a recovery code, rather than failing and making them start the whole login
 // again — which is a bad moment to be sent back to the beginning, because it is
 // exactly the moment the device is missing.
-func promptForFactor() (string, bool, error) {
+//
+// Exported so a caller outside this command's own RunE — the portal's
+// pre-launch login window — can offer the identical prompt instead of passing
+// a nil factorSupplier, which left an MFA-enrolled user retrying username and
+// password forever with no way to ever complete the second leg.
+func PromptForFactor() (string, bool, error) {
 	code := strings.TrimSpace(common.PromptForInput("Authentication code (or press enter to use a recovery code)"))
 	if code != "" {
 		return code, false, nil
@@ -288,7 +294,7 @@ func GetLoginCmd() *cobra.Command {
 			case mfaCode != "":
 				factor = fixedFactor(mfaCode, false)
 			case !passwordStdin:
-				factor = promptForFactor
+				factor = PromptForFactor
 			}
 
 			return DoLoginFactor(username, password, factor)
