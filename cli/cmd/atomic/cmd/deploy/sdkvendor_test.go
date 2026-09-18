@@ -528,3 +528,46 @@ func TestPickLatestSemverTag(t *testing.T) {
 		})
 	}
 }
+
+// TestSDKVendorLayout_MatchesTheRealSDK is the half TestPickLatestSemverTag
+// and the install tests above cannot cover: every test in this file proves
+// the installer correctly copies from wherever sdkVendorLayout SAYS the SDK
+// files are, using stubSDKFiles — a map written by hand, in this same
+// sitting, to match sdkVendorLayout. Neither can catch sdkVendorLayout itself
+// going stale against the SDK this monorepo actually ships.
+//
+// So this reads past the stub, straight off disk. cli/ and sdk/ are siblings
+// under cloud/public (this file's own comment: "the tarball's root holds
+// cli/, sdk/ and a README"), which is why no network fetch is needed — the
+// real tarball IS this checkout, at deploy time, and `from` is relative to
+// exactly the root a checkout of this repo already has.
+func TestSDKVendorLayout_MatchesTheRealSDK(t *testing.T) {
+	// cli/cmd/atomic/cmd/deploy -> cli/cmd/atomic/cmd -> cli/cmd/atomic ->
+	// cli/cmd -> cli -> repo root. Five levels; anchored here explicitly so a
+	// future reorganisation of cloud/public updates it deliberately rather
+	// than the path silently stopping resolving and this test skipping the
+	// question it exists to ask.
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", "..", "..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	// Sanity-check the anchor itself before trusting any os.Stat below —
+	// a wrong repoRoot would otherwise report every `from` as missing for a
+	// reason that has nothing to do with sdkVendorLayout.
+	if _, err := os.Stat(filepath.Join(repoRoot, "sdk")); err != nil {
+		t.Fatalf("repo root resolved to %s, which has no sdk/ directory (%v) — "+
+			"cli/cmd/atomic/cmd/deploy's depth from the repo root changed; update the five ..'s above",
+			repoRoot, err)
+	}
+
+	for lang, entries := range sdkVendorLayout {
+		for _, e := range entries {
+			path := filepath.Join(repoRoot, e.from)
+			if _, err := os.Stat(path); err != nil {
+				t.Errorf("sdkVendorLayout[%q] names %q, which does not exist at %s: %v — "+
+					"the SDK moved and this fast path would silently vendor nothing at that path",
+					lang, e.from, path, err)
+			}
+		}
+	}
+}
