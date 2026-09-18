@@ -46,9 +46,12 @@ var nameDeprecation = common.Deprecation{
 // normaliseFunctionIdentities gives every function entry both spellings,
 // agreeing with each other.
 //
-// Runs after schema validation, so it only ever sees a legal document: an entry
-// reaching here has either the pair or the retired string, and the pair's method
-// is one of the eight the enum admits.
+// Runs after schema validation, so a route/method pair present here always has
+// a method from the eight the enum admits. Schema validation does NOT enforce
+// that the pair and the retired `name:` are mutually exclusive — a document can
+// legally write both, which is why the branch below exists at all and is
+// pinned by TestFunctionIdentity_ThePairWinsWhenADocumentStatesBoth rather than
+// being unreachable defensive code.
 func normaliseFunctionIdentities(doc Node) {
 	for _, fn := range doc.Nodes("atomic", "functions") {
 		route, method := fn.Str("route"), fn.Str("method")
