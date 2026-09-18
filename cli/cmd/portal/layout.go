@@ -233,6 +233,9 @@ func (m *model) renderTooSmall() {
 }
 
 func (m *model) render() {
+	// Refreshed on every repaint, not read once at launch, so the header
+	// never lags behind which account a fetch is actually running as.
+	m.refreshUser()
 	// Gate: don't render the dashboard into a window too small to hold it —
 	// show the size requirement instead (btop-style). Covers every repaint path
 	// (resize watcher, log ticker, key loop) since they all funnel through here.
