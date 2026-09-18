@@ -59,8 +59,8 @@ func eq(t *testing.T, name string, got, want int) {
 //	Azure: Functions 120 + Cosmos 45.50 + Storage 30 + Bandwidth 12.25 = 207.75 movable
 //	       + App Insights 60 (unmapped → stays on Azure) = 267.75 total
 //	Drift: 2 movable apps (Python, Node) → 2 functions; 1 Cosmos → 1 collection
-//	       base 100 + 2*5 + 1*100 = 210 cents
-//	Saving: 20775 - 210 = 20565 cents
+//	       functions and collections are both free by count — 0 cents
+//	Saving: 20775 - 0 = 20775 cents
 func TestBuildEstimate_Golden(t *testing.T) {
 	res, err := buildEstimate(fakeAz{t}, "Contoso-Prod", "demo-rg")
 	if err != nil {
@@ -70,11 +70,11 @@ func TestBuildEstimate_Golden(t *testing.T) {
 	eq(t, "azure total", res.Azure.TotalCents, 26775)
 	eq(t, "azure movable", res.Azure.MovableCents, 20775)
 	eq(t, "azure other (unmapped, stays on Azure)", res.Azure.OtherCents, 6000)
-	// Drift estimate: 2 movable functions × 5 = 10 (no flat base fee). The Cosmos
-	// container maps to a NoSQL collection, which is now FREE by count (storage
-	// GiB is sized at transform, not here) — so it no longer adds to the bill.
-	eq(t, "drift monthly", res.Drift.MonthlyCents, 10)
-	eq(t, "monthly saving", res.SavingCents, 20765) // azure movable 20775 − drift 10
+	// Drift estimate: functions are free (no per-function charge, no flat base
+	// fee). The Cosmos container maps to a NoSQL collection, also free by count
+	// (storage GiB is sized at transform, not here) — neither adds to the bill.
+	eq(t, "drift monthly", res.Drift.MonthlyCents, 0)
+	eq(t, "monthly saving", res.SavingCents, 20775) // azure movable 20775 − drift 0
 
 	eq(t, "movable function apps", len(res.Movable), 2)
 	eq(t, "refused/unverified function apps", len(res.Refused), 1)
