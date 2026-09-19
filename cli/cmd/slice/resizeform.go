@@ -292,26 +292,36 @@ type resizeRefusal struct {
 	} `json:"violations"`
 }
 
+// resizeSuccess is a committed resize's 2xx body — see SliceResizeResult
+// (slice_resize.go). Committed and billed either way; Note is the one place
+// that says the running pod did NOT pick up the new shape yet, because the
+// two delivery steps after the write are best-effort by design (SNP-41).
+type resizeSuccess struct {
+	Note string `json:"note,omitempty"`
+}
+
 // postResize sends one attempt and separates the answerable refusals from the
 // rest. A 409 is not necessarily an error here: it is often the platform asking
 // a question the form can carry back.
-func postResize(payload map[string]any) (ok bool, refusal *resizeRefusal, err error) {
+func postResize(payload map[string]any) (ok bool, note string, refusal *resizeRefusal, err error) {
 	body, _ := json.Marshal(payload)
 	resp, err := common.DoJSONRequest(http.MethodPost,
 		common.APIBaseURL+"/ops/slice/resize", bytes.NewBuffer(body))
 	if err != nil {
-		return false, nil, common.TransportError("resize slice", err)
+		return false, "", nil, common.TransportError("resize slice", err)
 	}
 	defer resp.Body.Close()
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return true, nil, nil
+		var s resizeSuccess
+		_ = json.Unmarshal(raw, &s)
+		return true, s.Note, nil, nil
 	}
 	if resp.StatusCode == http.StatusConflict {
 		var r resizeRefusal
 		if json.Unmarshal(raw, &r) == nil {
-			return false, &r, nil
+			return false, "", &r, nil
 		}
 	}
 	// Anything else is the caller's to fix, and its own message is the best one
@@ -323,7 +333,18 @@ func postResize(payload map[string]any) (ok bool, refusal *resizeRefusal, err er
 	if generic.Error == "" {
 		generic.Error = strings.TrimSpace(string(raw))
 	}
-	return false, nil, fmt.Errorf("resize refused: %s", generic.Error)
+	return false, "", nil, fmt.Errorf("resize refused: %s", generic.Error)
+}
+
+// printResizeNote reports a resize's best-effort delivery note, if the
+// operator sent one. Shared by the form path and --config path: neither used
+// to read anything past a 2xx status, so the one case that needs a second
+// look — the shape committed, but the running pod did not accept it yet —
+// was indistinguishable from an ordinary, fully-applied resize (SNP-41).
+func printResizeNote(note string) {
+	if note != "" {
+		fmt.Printf("  %s\n", common.Hint(note))
+	}
 }
 
 // noTTYResizeHint is what resizeFromPrompts refuses with when there is no
@@ -397,12 +418,13 @@ func ResizeWithConfig(name string, cfg map[string]any, billingMonths int) error 
 			payload["confirm_slice_name"] = confirmName
 		}
 
-		ok, refusal, perr := postResize(payload)
+		ok, note, refusal, perr := postResize(payload)
 		if perr != nil {
 			return false, perr
 		}
 		if ok {
 			fmt.Printf("Slice '%s' resized.\n", rec.Name)
+			printResizeNote(note)
 			return true, nil
 		}
 

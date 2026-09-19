@@ -111,12 +111,13 @@ func resizeFromFile(name, path string, billingMonths, ackCents int, confirm stri
 		payload["confirm_slice_name"] = confirm
 	}
 
-	ok, refusal, perr := postResize(payload)
+	ok, note, refusal, perr := postResize(payload)
 	if perr != nil {
 		return perr
 	}
 	if ok {
 		fmt.Printf("Slice '%s' resized from %s.\n", name, path)
+		printResizeNote(note)
 		return nil
 	}
 
