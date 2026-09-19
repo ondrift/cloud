@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 )
 
 // A phase that always succeeds, echoing a line so runTriad's ordering is
@@ -70,5 +72,57 @@ func TestRunTriad_NoFailuresReturnsNil(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
+	}
+}
+
+// splitDeployedByDigest must sort a currently-deployed function into
+// exactly one of its two maps, never both and never neither — a function
+// present in both would read as simultaneously skippable and warned-about.
+func TestSplitDeployedByDigest_SeparatesByWhetherADigestWasRecorded(t *testing.T) {
+	deployed, noDigest := splitDeployedByDigest([]atomic_cmd.DeployedFunction{
+		{Key: "get:greet", Name: "greet", Method: "get", Digest: "abc123"},
+		{Key: "post:reset", Name: "reset", Method: "post", Digest: ""},
+	})
+
+	if deployed["get:greet"] != "abc123" {
+		t.Errorf("a function with a recorded digest must be in the digest map, got %q", deployed["get:greet"])
+	}
+	if noDigest["get:greet"] {
+		t.Error("a function with a recorded digest must not also be in noDigest")
+	}
+
+	if !noDigest["post:reset"] {
+		t.Error("a function with no recorded digest — rolled back, restored, or deployed by an older CLI — must be in noDigest")
+	}
+	if _, ok := deployed["post:reset"]; ok {
+		t.Error("a function with no recorded digest must not be in the digest map")
+	}
+}
+
+// functionsRedeployingWithNoDigestOnFile is the guard against ABN-22: a
+// deliberate `drift atomic rollback` clears the deployed digest by design
+// (see routes/atomic_artifact.go), so the very next `drift file apply` —
+// for any reason, unrelated to the rolled-back function — redeploys it from
+// local source and silently undoes the rollback. This is what makes that
+// visible before it happens.
+func TestFunctionsRedeployingWithNoDigestOnFile_OnlyNamesFunctionsThatAreActuallyLive(t *testing.T) {
+	el := atomic_cmd.Element{
+		Name: "default",
+		Funcs: []atomic_cmd.ElementFunc{
+			{Spec: atomic_cmd.FunctionSpec{Name: "get:rolledback"}},
+			{Spec: atomic_cmd.FunctionSpec{Name: "post:changed"}},
+			{Spec: atomic_cmd.FunctionSpec{Name: "post:brandnew"}},
+		},
+	}
+
+	// "get:rolledback" is live with no digest (a rollback, most likely).
+	// "post:changed" is live WITH a digest (a genuine, unrelated source
+	// change — not what this warning is about). "post:brandnew" has never
+	// been deployed at all and so appears in neither map.
+	noDigest := map[string]bool{"get:rolledback": true}
+
+	got := functionsRedeployingWithNoDigestOnFile(el, noDigest)
+	if len(got) != 1 || got[0] != "get:rolledback" {
+		t.Errorf("want exactly [\"get:rolledback\"] named, got %v", got)
 	}
 }

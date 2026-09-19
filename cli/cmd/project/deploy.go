@@ -546,6 +546,45 @@ func elementUnchanged(el atomic_cmd.Element, digest string, deployed map[string]
 	return true
 }
 
+// splitDeployedByDigest separates the currently-deployed functions into
+// those carrying a recorded digest (keyed by DeployKey, for
+// elementUnchanged's skip check) and those without one.
+//
+// An absent digest has three honest causes — a rollback, a snapshot
+// restore, or a deploy from a CLI old enough to predate DeployDigest — and
+// all three read identically here: the function is live, but nothing on
+// file says what "unchanged" means for it, so it always redeploys. That is
+// correct (source is the only thing left to trust), but silent unless a
+// caller checks for it, and a rolled-back function looks from here exactly
+// like a genuinely changed one (ABN-22).
+func splitDeployedByDigest(fns []atomic_cmd.DeployedFunction) (deployed map[string]string, noDigest map[string]bool) {
+	deployed = map[string]string{}
+	noDigest = map[string]bool{}
+	for _, f := range fns {
+		if f.Digest != "" {
+			deployed[f.Key] = f.Digest
+		} else {
+			noDigest[f.Key] = true
+		}
+	}
+	return deployed, noDigest
+}
+
+// functionsRedeployingWithNoDigestOnFile names every function in el that is
+// about to redeploy specifically because it has no recorded digest, as
+// opposed to a genuine source change. A function absent from noDigest
+// entirely — never deployed before — is not named: that redeploy is an
+// ordinary first deploy, not a silent overwrite of anything.
+func functionsRedeployingWithNoDigestOnFile(el atomic_cmd.Element, noDigest map[string]bool) []string {
+	var names []string
+	for _, f := range el.Funcs {
+		if noDigest[f.DeployKey()] {
+			names = append(names, f.MethodPath())
+		}
+	}
+	return names
+}
+
 // applyAtomicElements deploys the project's Atomic functions Element by Element.
 // Each Go element is staged + dependency-resolved once, then every function is
 // compiled and shipped; an unchanged element is skipped wholesale.
@@ -556,9 +595,10 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 	// the deploy command before any reconcile.)
 
 	deployed := map[string]string{}
+	noDigest := map[string]bool{}
 	if !atomicForce {
-		if d, err := atomic_cmd.DeployedDigests(); err == nil {
-			deployed = d
+		if fns, err := atomic_cmd.DeployedFunctions(); err == nil {
+			deployed, noDigest = splitDeployedByDigest(fns)
 		} else {
 			fmt.Fprintf(out, "  %s couldn't check which functions are unchanged — deploying all\n", common.Hint("·"))
 		}
@@ -576,6 +616,15 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 				skippedCount++
 			}
 			continue
+		}
+
+		// A function about to redeploy for want of a digest, not a source
+		// change, may be undoing a deliberate `drift atomic rollback` — say so
+		// before it happens rather than after (ABN-22).
+		for _, name := range functionsRedeployingWithNoDigestOnFile(el, noDigest) {
+			fmt.Fprintf(out, "    %s %s has no recorded digest for its current deploy — redeploying "+
+				"now will overwrite it with local source (it may have been rolled back, restored "+
+				"from a snapshot, or last deployed by an older CLI)\n", common.Hint("!"), name)
 		}
 
 		// Header the element only when the layout is non-trivial (>1 element or
