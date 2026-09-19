@@ -35,6 +35,10 @@ func sqlListCmd() *cobra.Command {
 		Example: "  drift backbone sql list",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			resp, err := common.DoRequest(http.MethodGet,
 				common.APIBaseURL+"/ops/backbone/sql/admin/list", nil)
 			if err != nil {
@@ -73,6 +77,10 @@ func sqlDropCmd() *cobra.Command {
 		Example: "  drift backbone sql drop ledger\n  drift backbone sql drop temp-import",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			name := args[0]
 
 			payload, _ := json.Marshal(map[string]string{"db": name})

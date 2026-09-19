@@ -29,6 +29,10 @@ func queuePushCmd() *cobra.Command {
 		Example: "  drift backbone queue push jobs '{\"task\":\"build\",\"ref\":\"main\"}'\n  drift backbone queue push emails '{\"to\":\"alice@example.com\",\"subject\":\"Hello\"}'",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			name, rawJSON := args[0], args[1]
 
 			var body map[string]any
@@ -72,6 +76,10 @@ func queuePopCmd() *cobra.Command {
 		Example: "  drift backbone queue pop jobs",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			name := args[0]
 
 			url := fmt.Sprintf("%s/ops/backbone/queue/pop?queue=%s", common.APIBaseURL, url.QueryEscape(name))
@@ -104,6 +112,10 @@ func queuePeekCmd() *cobra.Command {
 		Example: "  drift backbone queue peek jobs",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			name := args[0]
 
 			url := fmt.Sprintf("%s/ops/backbone/queue/peek?queue=%s", common.APIBaseURL, url.QueryEscape(name))
@@ -136,6 +148,10 @@ func queueDropCmd() *cobra.Command {
 		Example: "  drift backbone queue drop jobs",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			name := args[0]
 
 			url := fmt.Sprintf("%s/ops/backbone/queue/drop?queue=%s", common.APIBaseURL, url.QueryEscape(name))
@@ -162,6 +178,10 @@ func queueLenCmd() *cobra.Command {
 		Example: "  drift backbone queue len jobs",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			name := args[0]
 
 			url := fmt.Sprintf("%s/ops/backbone/queue/len?queue=%s", common.APIBaseURL, url.QueryEscape(name))

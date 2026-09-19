@@ -30,6 +30,10 @@ func nosqlWriteCmd() *cobra.Command {
 		Example: "  drift backbone nosql write --data '{\"key\":\"user-1\",\"name\":\"Alice\"}'\n  drift backbone nosql write --collection users --data '{\"key\":\"user-2\",\"name\":\"Bob\"}'",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			if data == "" {
 				e := fmt.Errorf("Couldn't write document: --data is required.")
 				return e
@@ -81,6 +85,10 @@ func nosqlDropCmd() *cobra.Command {
 		Example: "  drift backbone nosql drop old-logs\n  drift backbone nosql drop temp-data",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			name := args[0]
 
 			url := fmt.Sprintf("%s/ops/backbone/nosql/drop?collection=%s", common.APIBaseURL, url.QueryEscape(name))
@@ -161,6 +169,10 @@ rather than merely the oldest.`,
 		Example: "  drift backbone nosql list\n  drift backbone nosql list --collection users\n  drift backbone nosql list --collection users --field status --value active\n  drift backbone nosql list --collection orders --limit 10\n  drift backbone nosql list --collection ops --all\n  drift backbone nosql list --collection ops --after 996_1786513835945132303",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			page := limit
 			if all {
 				page = nosqlPageMax
@@ -230,6 +242,10 @@ func nosqlReadCmd() *cobra.Command {
 		Example: "  drift backbone nosql read --key user-1\n  drift backbone nosql read --collection users --key user-1",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			if key == "" {
 				e := fmt.Errorf("Couldn't read document: --key is required.\nHint: to browse every document in a collection instead, use 'drift backbone nosql list --collection <name>'.")
 				return e

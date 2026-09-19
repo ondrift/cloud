@@ -47,10 +47,13 @@ func getResizeCmd() *cobra.Command {
 			"    $EDITOR shape.json\n" +
 			"    drift slice resize my-slice --config shape.json\n\n" +
 			"The platform asks two questions of every caller, form or not: it refuses a\n" +
-			"resize that changes what the slice costs until the new figure is sent back,\n" +
-			"and one that takes something away until the slice is named. Answer them with\n" +
+			"resize that books memory per function for the FIRST time -- the one repricing\n" +
+			"that can look like bookkeeping -- until the new figure is sent back, and one\n" +
+			"that takes something away until the slice is named. Answer them with\n" +
 			"--acknowledge-monthly-cents and --confirm. Each refusal says which is needed\n" +
-			"and what the figure or the loss actually is.",
+			"and what the figure or the loss actually is. An ordinary price increase --\n" +
+			"more storage, scheduled jobs, realtime connections -- is not asked to confirm:\n" +
+			"it is exactly what was requested.",
 		Example: `  drift slice resize
   drift slice resize my-slice
   drift slice resize my-slice --dump > shape.json

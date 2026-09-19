@@ -70,19 +70,36 @@ func GetResetPasswordCmd() *cobra.Command {
 				return fmt.Errorf("%v Nothing was changed", err)
 			}
 
-			verifyPayload, _ := json.Marshal(map[string]string{
+			verifyFields := map[string]string{
 				"username":     username,
 				"code":         code,
 				"new_password": newPassword,
-			})
-			resp, err = client.Post(common.APIBaseURL+"/reset/verify", "application/json", bytes.NewBuffer(verifyPayload))
-			if err != nil {
-				return common.TransportError("verify the reset code", err)
 			}
-			_, err = common.CheckResponse(resp, "verify the reset code")
-			resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
-			if err != nil {
-				return err
+			body, verr := postResetVerify(client, verifyFields)
+			if verr != nil {
+				return verr
+			}
+
+			// The account has a confirmed second factor: the reset code alone
+			// is only the first factor (proof of the inbox), so the platform
+			// asks for the phone or a recovery code before it will touch the
+			// password — otherwise MFA buys nothing against a reset. This is
+			// the SAME round trip, not a new one: the pending reset row is
+			// untouched, so retrying with a factor added replays this exact
+			// code rather than needing a fresh email.
+			if resetNeedsMFA(body) {
+				mfaCode, isRecovery, ferr := PromptForFactor()
+				if ferr != nil {
+					return ferr
+				}
+				if isRecovery {
+					verifyFields["recovery_code"] = mfaCode
+				} else {
+					verifyFields["mfa_code"] = mfaCode
+				}
+				if _, verr := postResetVerify(client, verifyFields); verr != nil {
+					return verr
+				}
 			}
 
 			fmt.Println("Password reset. Every existing session for this account has been signed out.")
@@ -99,4 +116,29 @@ func GetResetPasswordCmd() *cobra.Command {
 
 	resetCmd.Flags().StringVarP(&username, "username", "u", "", "Username (skips interactive prompt)")
 	return resetCmd
+}
+
+// postResetVerify sends one /reset/verify attempt and returns the raw
+// response body on success, so the caller can look for mfa_required before
+// deciding the round trip is actually done.
+func postResetVerify(client *http.Client, fields map[string]string) ([]byte, error) {
+	payload, _ := json.Marshal(fields)
+	resp, err := client.Post(common.APIBaseURL+"/reset/verify", "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, common.TransportError("verify the reset code", err)
+	}
+	body, err := common.CheckResponse(resp, "verify the reset code")
+	resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
+	return body, err
+}
+
+// resetNeedsMFA reports whether a successful /reset/verify reply is actually
+// the mfa_required signal rather than a completed reset — the same shape
+// /login answers with for a confirmed second factor.
+func resetNeedsMFA(body []byte) bool {
+	var out struct {
+		MFARequired bool `json:"mfa_required"`
+	}
+	_ = json.Unmarshal(body, &out)
+	return out.MFARequired
 }

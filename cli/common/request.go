@@ -13,6 +13,14 @@ import (
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
+// NotLoggedInHint is the remedy printed whenever a command needs a session
+// that does not exist. Exported so TestPrintedHintsNameRealCommands
+// (cmd/drift/typeablehints_test.go) can resolve the commands it names against
+// the real tree — the class of bug this once let through, naming
+// `drift account signup`, which was never a real command.
+var NotLoggedInHint = "you're not logged in. Run 'drift account login' (or 'drift account create' if you don't have an account yet)." +
+	"\n  Scripting this? Mint a token with 'drift account token create' and put it in " + TokenEnv + "."
+
 func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request, error) {
 	return newAuthenticatedRequestCtx(context.Background(), method, url, body)
 }
@@ -38,10 +46,7 @@ func newAuthenticatedRequestCtx(ctx context.Context, method, url string, body io
 			// The first failure a new install hits, and it used to surface as the
 			// raw filesystem error — an absolute path to a session file the user has
 			// never heard of, for the condition "you have not logged in yet".
-			return nil, errors.New(withCode(
-				"you're not logged in. Run `drift account login` (or `drift account signup` if you don't have an account yet)."+
-					"\n  Scripting this? Mint a token with `drift account token create` and put it in "+TokenEnv+".",
-				"DRIFT-1011"))
+			return nil, errors.New(withCode(NotLoggedInHint, "DRIFT-1011"))
 		}
 		token = sessionToken
 	}

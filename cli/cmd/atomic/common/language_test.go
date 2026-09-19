@@ -147,6 +147,26 @@ func TestFindCallable_UnexportedIsNotAHandler(t *testing.T) {
 	}
 }
 
+// A lowercase Go handler is still refused — TestFindCallable_UnexportedIsNotAHandler
+// pins that — but the error should point straight at it by name rather than
+// claiming nothing is there. The sentinel that decides validity only matches
+// exported names, and nearMiss's own report used to reuse that same sentinel
+// to look for candidates, so a file holding ONLY a lowercase handler had
+// nothing for the scan to find and fell back to "declares a callable of any
+// name" for a function sitting right there in the file.
+func TestFindCallable_NearMissFindsLowercaseGo(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "users.go", "package main\n\nfunc postUsers(b any) {}\n")
+
+	_, err := FindCallable(dir, "PostUsers")
+	if err == nil {
+		t.Fatal("a lowercase handler must still be refused")
+	}
+	if !strings.Contains(err.Error(), `"postUsers"`) || !strings.Contains(err.Error(), "differ only in case") {
+		t.Errorf("the error should point at the near-miss by name, got: %v", err)
+	}
+}
+
 // A helper is any callable the manifest does not name. It costs nothing, is
 // never routed, and sharing a file with a handler changes neither fact.
 func TestFindCallable_HelpersAreIgnored(t *testing.T) {

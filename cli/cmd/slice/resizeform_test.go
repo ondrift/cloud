@@ -2,8 +2,31 @@ package slice
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/ondrift/cloud/cli/common"
 )
+
+// The no-TTY refusal used to claim resize has no non-interactive path at all,
+// which stopped being true once --dump/--config shipped in resizefile.go.
+// Pinned as a string rather than by actually driving a non-interactive
+// resizeFromPrompts, because interactive() reads the real stdin fd and is not
+// mockable — the same reason createFromPrompts's sibling message in
+// interactive.go has no exec test either.
+func TestNoTTYResizeHintNamesTheRealEscape(t *testing.T) {
+	if strings.Contains(noTTYResizeHint, "no non-interactive resize") {
+		t.Errorf("claims there is no non-interactive resize, but there has been one since "+
+			"resizefile.go shipped --dump/--config:\n%s", noTTYResizeHint)
+	}
+	for _, flag := range []string{"--dump", "--config"} {
+		if !strings.Contains(noTTYResizeHint, flag) {
+			t.Errorf("does not mention %s, the actual non-interactive escape:\n%s", flag, noTTYResizeHint)
+		}
+	}
+}
 
 // configFrom decodes a config literal the way the api serves one, so a test
 // reads the same bytes the form does.
@@ -160,6 +183,64 @@ func TestFillFromConfigRoundTripsWhatTheSliceDeclares(t *testing.T) {
 	}
 	if s := byRoute["ingest"]; s.Method != "post" || s.Memory != 64 {
 		t.Errorf("ingest came back as %s at %d MB, want post at 64", s.Method, s.Memory)
+	}
+}
+
+// withResizeAPI stubs POST /ops/slice/resize with responseJSON at the given
+// status, seeding a session the same way the rest of this package's HTTP
+// tests do.
+func withResizeAPI(t *testing.T, status int, responseJSON string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(responseJSON))
+	}))
+	t.Cleanup(srv.Close)
+
+	t.Setenv("HOME", t.TempDir())
+	if err := common.SaveSession("test-token", "test-refresh"); err != nil {
+		t.Fatalf("seeding the session: %v", err)
+	}
+	prev := common.APIBaseURL
+	common.APIBaseURL = srv.URL
+	t.Cleanup(func() { common.APIBaseURL = prev })
+}
+
+// The bug: neither of postResize's two callers read anything past a 2xx
+// status, so the one case that needs a second look — the shape committed,
+// but the running pod did not accept it yet (SliceResizeResult.Note) — was
+// indistinguishable from an ordinary, fully-applied resize (SNP-41).
+func TestPostResize_SurfacesTheDeliveryNoteOnSuccess(t *testing.T) {
+	withResizeAPI(t, http.StatusOK, `{"committed":true,"workload_reapplied":false,"quota_pushed":true,`+
+		`"note":"the new shape is stored and billed, but the running slice did not accept it."}`)
+
+	ok, note, refusal, err := postResize(map[string]any{"name": "demo"})
+	if err != nil {
+		t.Fatalf("postResize failed: %v", err)
+	}
+	if !ok || refusal != nil {
+		t.Fatalf("want a plain success, got ok=%v refusal=%v", ok, refusal)
+	}
+	if !strings.Contains(note, "did not accept it") {
+		t.Errorf("the delivery note was not surfaced, got %q", note)
+	}
+}
+
+// The control: an ordinary resize that fully applied sends no note, and none
+// must be invented.
+func TestPostResize_NoNoteWhenDeliverySucceeds(t *testing.T) {
+	withResizeAPI(t, http.StatusOK, `{"committed":true,"workload_reapplied":true,"quota_pushed":true}`)
+
+	ok, note, _, err := postResize(map[string]any{"name": "demo"})
+	if err != nil {
+		t.Fatalf("postResize failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("want success")
+	}
+	if note != "" {
+		t.Errorf("a fully-applied resize must carry no note, got %q", note)
 	}
 }
 

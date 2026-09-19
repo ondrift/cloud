@@ -137,7 +137,7 @@ func AdoptIdleSlots(sliceName string, want []string, keep map[string]bool) ([]Sl
 	// those are what a form sends after asking a person, and a rename must need
 	// neither. If the platform asks for one, this is not the rename it claimed to
 	// be and the answer is to refuse rather than to answer the question.
-	ok, refusal, perr := postResize(map[string]any{
+	ok, _, refusal, perr := postResize(map[string]any{
 		"name":                  sliceName,
 		"config":                rec.Config,
 		"billing_period_months": 1,

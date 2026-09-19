@@ -1,11 +1,13 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
 	account "github.com/ondrift/cloud/cli/cmd/account"
 	atomic_cmd_new "github.com/ondrift/cloud/cli/cmd/atomic/cmd/new"
+	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
 )
@@ -22,7 +24,8 @@ import (
 // account is told to type, where a wrong line is the first thing the product
 // ever does to someone. It grows as other runtime-printed suggestions are found.
 var typeableHints = map[string][]string{
-	"the post-signup banner (drift account create)": account.FirstRunHints,
+	"the post-signup banner (drift account create)":  account.FirstRunHints,
+	"the not-logged-in hint (common.NotLoggedInHint)": {common.NotLoggedInHint},
 }
 
 func TestPrintedHintsNameRealCommands(t *testing.T) {
@@ -103,16 +106,22 @@ func TestSurveyOptionsAreAcceptedByTheirOwnValidation(t *testing.T) {
 	}
 }
 
+// quotedInvocationRe matches a single-quoted `drift …` command directly,
+// rather than splitting the line on every `'` and alternating. Splitting broke
+// on ordinary prose: an apostrophe in a contraction ("you're", "don't") ahead
+// of the first real quote shifts every span's parity, so the odd/even split
+// silently paired the wrong halves and stopped extracting anything at all from
+// that point on — the exact class of silently-checks-nothing test this
+// mechanism exists to prevent. Anchoring on "starts with drift" instead makes
+// a stray apostrophe elsewhere in the line harmless.
+var quotedInvocationRe = regexp.MustCompile(`'(drift(?:\s[^']*)?)'`)
+
 // quotedInvocations returns the single-quoted `drift …` commands in a printed
 // line. The hints quote what to type precisely so it can be lifted back out.
 func quotedInvocations(line string) []string {
 	var out []string
-	parts := strings.Split(line, "'")
-	// Quoted spans are the odd-indexed parts: a'B'c'D'e.
-	for i := 1; i < len(parts); i += 2 {
-		if strings.HasPrefix(parts[i], "drift ") || parts[i] == "drift" {
-			out = append(out, parts[i])
-		}
+	for _, m := range quotedInvocationRe.FindAllStringSubmatch(line, -1) {
+		out = append(out, m[1])
 	}
 	return out
 }

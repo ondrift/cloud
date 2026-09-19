@@ -30,6 +30,10 @@ func blobPutCmd() *cobra.Command {
 		Example: "  drift backbone blob put assets logo.png ./logo.png\n  drift backbone blob put uploads report.pdf ./report.pdf",
 		Args:    cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			bucket, key, file := args[0], args[1], args[2]
 
 			// #nosec G304 -- path is constructed from a validated function/element/key name (regex-pinned ^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$) plus a base directory under the slice's PVC; not user-controlled.
@@ -74,6 +78,10 @@ func blobGetCmd() *cobra.Command {
 		// stderr and exits 1 — and adds what os.Exit skipped: the deferred
 		// `resp.Body.Close()` below now actually runs.
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			bucket, key := args[0], args[1]
 
 			url := fmt.Sprintf("%s/ops/backbone/blob/get?bucket=%s&key=%s", common.APIBaseURL, url.QueryEscape(bucket), url.QueryEscape(key))
@@ -104,6 +112,10 @@ func blobListCmd() *cobra.Command {
 		Example: "  drift backbone blob list assets",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			bucket := args[0]
 
 			url := fmt.Sprintf("%s/ops/backbone/blob/list?bucket=%s", common.APIBaseURL, url.QueryEscape(bucket))
@@ -139,6 +151,10 @@ func blobDeleteCmd() *cobra.Command {
 		Example: "  drift backbone blob delete assets logo.png",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			bucket, key := args[0], args[1]
 
 			url := fmt.Sprintf("%s/ops/backbone/blob/delete?bucket=%s&key=%s", common.APIBaseURL, url.QueryEscape(bucket), url.QueryEscape(key))
