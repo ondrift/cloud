@@ -47,6 +47,24 @@ var callableShape = map[string]string{
 	"rust":   "pub fn post_users(...)         // must be pub",
 }
 
+// nearMissSentinelRe is a looser per-language pattern than sentinelRe, used
+// only by nearMiss to report what candidates a file declares — never to
+// decide validity, which stays sentinelRe's job alone. Only entries that
+// differ from sentinelRe need to be listed here.
+//
+// Go's own sentinel requires an exported (capitalised) name, because that is
+// the shape a deployable handler must have — TestFindCallable_UnexportedIsNotAHandler
+// pins that, and this map does not change it. But nearMiss's docstring names
+// "a lowercase Go function" as the overwhelmingly common case it exists to
+// catch, and the strict sentinel makes that exact function invisible to the
+// scan meant to catch it: callableNames never captures it at all, so the near
+// miss falls through to "declares a callable of any name" for a function
+// sitting right there in the file. A separate, broader pattern for the report
+// alone fixes that without touching what a valid handler is.
+var nearMissSentinelRe = map[string]*regexp.Regexp{
+	"go": regexp.MustCompile(`^[ \t]*func[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(`),
+}
+
 // languageFromExt returns the parser language key for a file extension.
 func languageFromExt(ext string) string {
 	switch ext {
@@ -181,7 +199,7 @@ func FindCallable(dir, handler string) (Callable, error) {
 			"%s declares a function served by %q, and no such callable is in %s.\n"+
 				"       In %s a handler looks like:\n         %s\n"+
 				"       %s",
-			"the Driftfile", handler, dir, lang, callableShape[lang], nearMiss(dir, rx, handler, files))
+			"the Driftfile", handler, dir, lang, callableShape[lang], nearMiss(dir, lang, rx, handler, files))
 	default:
 		return Callable{}, fmt.Errorf(
 			"%q is declared in %d files in %s (%s) — a handler has to be unique within its "+
@@ -212,10 +230,19 @@ func callableNames(path string, rx *regexp.Regexp) ([]string, error) {
 // differently — a lowercase Go function, a `handle_order` written `handleOrder`
 // in the manifest. Listing what the directory does declare costs one pass over
 // files already read and answers the question the bare error leaves open.
-func nearMiss(dir string, rx *regexp.Regexp, handler string, files []string) string {
+//
+// Scans with nearMissSentinelRe[lang] when the language has a broader entry
+// there, rx (the same strict pattern FindCallable validated against)
+// otherwise — see nearMissSentinelRe's comment for why the two need to
+// differ for Go.
+func nearMiss(dir, lang string, rx *regexp.Regexp, handler string, files []string) string {
+	scanRe := rx
+	if broader, ok := nearMissSentinelRe[lang]; ok {
+		scanRe = broader
+	}
 	var all []string
 	for _, f := range files {
-		names, err := callableNames(filepath.Join(dir, f), rx)
+		names, err := callableNames(filepath.Join(dir, f), scanRe)
 		if err != nil {
 			continue
 		}
