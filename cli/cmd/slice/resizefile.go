@@ -11,12 +11,14 @@ package slice
 //
 // The refusal was honest about its reason and it was the wrong conclusion:
 //
-//	a resize can reprice a slice or destroy what it holds,
-//	and both are answered at the form
+//	a resize can book memory per function for the first time, or destroy what
+//	it holds, and both are answered at the form
 //
 // Both are answered at the form, and the FORM IS NOT WHAT MAKES THEM SAFE. The
-// platform is. `/ops/slice/resize` refuses a repricing change unless the caller
-// sends `acknowledge_monthly_cents`, and a destructive one unless it sends
+// platform is. `/ops/slice/resize` refuses that ONE repricing transition unless
+// the caller sends `acknowledge_monthly_cents` (an ordinary price increase from
+// more storage, scheduled jobs or realtime connections is not asked to confirm —
+// it is exactly what was requested), and a destructive change unless it sends
 // `confirm_slice_name` — it asks those questions of every caller, form or not,
 // and answers them itself. The form is one way to collect the answers; a flag is
 // another.
@@ -109,12 +111,13 @@ func resizeFromFile(name, path string, billingMonths, ackCents int, confirm stri
 		payload["confirm_slice_name"] = confirm
 	}
 
-	ok, refusal, perr := postResize(payload)
+	ok, note, refusal, perr := postResize(payload)
 	if perr != nil {
 		return perr
 	}
 	if ok {
 		fmt.Printf("Slice '%s' resized from %s.\n", name, path)
+		printResizeNote(note)
 		return nil
 	}
 

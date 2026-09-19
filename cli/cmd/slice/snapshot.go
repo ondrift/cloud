@@ -36,6 +36,30 @@ type snapshotResponse struct {
 	CreatedAt           string `json:"created_at"`
 }
 
+// snapshotRestoreResult is the body of POST /ops/slice/snapshot/restore —
+// see restoreSummary (routes/snapshot_restore.go), which this mirrors field
+// for field.
+type snapshotRestoreResult struct {
+	Restored struct {
+		Secrets          int `json:"secrets"`
+		NoSQLCollections int `json:"nosql_collections"`
+		Blobs            int `json:"blobs"`
+		Queues           int `json:"queues"`
+		SQLDatabases     int `json:"sql_databases"`
+		Functions        int `json:"functions"`
+		Canvas           int `json:"canvas"`
+		VaultEntries     int `json:"vault_entries"`
+		LinkIdentities   int `json:"link_identities"`
+		PocketItems      int `json:"pocket_items"`
+		// Notes carry work the restore could not do itself and the caller
+		// must finish — e.g. an interpreted function whose dependencies are
+		// deliberately not in the archive. Not errors: everything the
+		// archive held did land (SNP-40).
+		Notes []string `json:"notes,omitempty"`
+	} `json:"restored"`
+	Errors []string `json:"errors"`
+}
+
 // missingComponents names the components that failed to capture, sorted so the
 // output is stable between runs.
 func (s snapshotResponse) missingComponents() []string {
@@ -491,21 +515,7 @@ func getSnapshotRestoreCmd() *cobra.Command {
 			}
 			spinner.Stop()
 
-			var result struct {
-				Restored struct {
-					Secrets          int `json:"secrets"`
-					NoSQLCollections int `json:"nosql_collections"`
-					Blobs            int `json:"blobs"`
-					Queues           int `json:"queues"`
-					SQLDatabases     int `json:"sql_databases"`
-					Functions        int `json:"functions"`
-					Canvas           int `json:"canvas"`
-					VaultEntries     int `json:"vault_entries"`
-					LinkIdentities   int `json:"link_identities"`
-					PocketItems      int `json:"pocket_items"`
-				} `json:"restored"`
-				Errors []string `json:"errors"`
-			}
+			var result snapshotRestoreResult
 			json.Unmarshal(respBody, &result) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 
 			// The headline reflects the RESULT, not the HTTP status.
@@ -534,6 +544,13 @@ func getSnapshotRestoreCmd() *cobra.Command {
 			fmt.Printf("  Pocket:      %d items\n", r.PocketItems)
 			fmt.Printf("  Functions:   %d\n", r.Functions)
 			fmt.Printf("  Canvas:      %d sites\n", r.Canvas)
+
+			if len(r.Notes) > 0 {
+				fmt.Println()
+				for _, n := range r.Notes {
+					fmt.Printf("  %s\n", common.Hint(n))
+				}
+			}
 
 			if len(result.Errors) > 0 {
 				fmt.Println()

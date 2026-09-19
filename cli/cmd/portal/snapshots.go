@@ -42,12 +42,7 @@ func (m *model) handleSlice(k key) bool {
 	case keyDownload:
 		if m.snapSel < len(m.snaps) {
 			s := m.snaps[m.snapSel]
-			fname := snapFilename(s)
-			if n, err := downloadSnapshot(s.ID, fname); err != nil {
-				m.status = "✗ " + err.Error()
-			} else {
-				m.status = fmt.Sprintf("saved %s (%s)", fname, fmtBytes(n))
-			}
+			m.downloadSnapshotForm(s.ID, snapFilename(s))
 		}
 	case keyDelete:
 		if m.snapSel < len(m.snaps) {
@@ -101,6 +96,31 @@ func (m *model) openConfigure() {
 	m.suspendAndRun("drift slice resize "+m.cfg.Name+"  (the form opens here)", cmd,
 		"resized "+m.cfg.Name, "✗ resize failed (see output above)",
 		func() { m.invalidateAll(); m.load(m.tab) })
+}
+
+// downloadSnapshotForm suspends the dashboard and runs the real `drift slice
+// snapshot download`, the only place the step-up handshake a snapshot always
+// demands is implemented: notice the 401 naming a purpose, ask for the
+// account password, mint a single-use grant, retry once.
+//
+// An in-process download has no way to do any of that (CNV-45) — every
+// attempt failed outright with no password ever asked. Suspending is what
+// makes asking possible at all: the dashboard owns stdin for its own raw
+// keystroke reader, and a line-buffered password prompt needs the same fd in
+// cooked mode, which is exactly the trade every other suspended action here
+// already makes.
+func (m *model) downloadSnapshotForm(id, fname string) {
+	args := snapshotDownloadArgs(id, fname)
+	cmd := exec.Command(driftExe(), args...) // #nosec G204 -- our own binary, fixed args
+	m.suspendAndRun("drift "+strings.Join(args, " ")+"  (your password may be requested)", cmd,
+		"downloaded "+fname, "✗ download failed (see output above)", nil)
+}
+
+// snapshotDownloadArgs is the argv `downloadSnapshotForm` execs, pulled out so
+// the one thing worth getting wrong here — the flag that names the output
+// path — is checked without spawning a process or touching the terminal.
+func snapshotDownloadArgs(id, fname string) []string {
+	return []string{"slice", "snapshot", "download", id, "-o", fname}
 }
 
 // sliceSummaryCards is the at-a-glance headline above the census: the slice's

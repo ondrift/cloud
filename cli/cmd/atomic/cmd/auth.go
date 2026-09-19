@@ -23,6 +23,53 @@ func Auth() *cobra.Command {
 	return cmd
 }
 
+// resolveAuthMethod decides which method `auth set`/`auth revoke` acts
+// against. An explicit --method is always honoured, unchanged.
+//
+// Otherwise the flag's own "post" default is silently wrong the moment the
+// function is not deployed as POST: it gates a method the function does not
+// answer on while reporting success, and the route it actually serves stays
+// permanently 503 with nothing pointing at the mismatch (ATM-47). So when the
+// function resolves to EXACTLY one deployed method, that method is used
+// instead of the default.
+//
+// Falls back to the flag's default in the two cases where a real answer
+// is not available: the function is not found (not deployed yet, or a typo
+// the platform will refuse on its own — not this command's job to diagnose),
+// or the platform could not be reached (best-effort; an outage must not block
+// the command). Refuses outright only when the name resolves to MORE than one
+// method — get:x and post:x are different functions, and guessing between
+// them would be exactly as wrong as the bug this fixes.
+func resolveAuthMethod(cmd *cobra.Command, function, flagMethod string) (string, error) {
+	if cmd.Flags().Changed("method") {
+		return flagMethod, nil
+	}
+	slots, err := fetchSlots()
+	if err != nil {
+		return flagMethod, nil
+	}
+	var matches []atomicRecord
+	for _, s := range slots {
+		if s.FunctionName == function {
+			matches = append(matches, s)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0].Method, nil
+	case 0:
+		return flagMethod, nil
+	default:
+		methods := make([]string, len(matches))
+		for i, m := range matches {
+			methods[i] = strings.ToLower(m.Method)
+		}
+		return "", fmt.Errorf(
+			"%q is deployed under more than one method (%s) -- pass --method to say which one",
+			function, strings.Join(methods, ", "))
+	}
+}
+
 // authSet sets or rotates the API key for a function+method.
 func authSet() *cobra.Command {
 	var method string
@@ -36,9 +83,14 @@ func authSet() *cobra.Command {
 			function := args[0]
 			key := args[1]
 
+			resolved, rerr := resolveAuthMethod(cmd, function, method)
+			if rerr != nil {
+				return rerr
+			}
+
 			body, _ := json.Marshal(map[string]string{
 				"function": function,
-				"method":   strings.ToUpper(method),
+				"method":   strings.ToUpper(resolved),
 				"key":      key,
 			})
 
@@ -56,7 +108,7 @@ func authSet() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("API key set for %s %s\n", strings.ToUpper(method), function)
+			fmt.Printf("API key set for %s %s\n", strings.ToUpper(resolved), function)
 			return nil
 		},
 	}
@@ -122,9 +174,14 @@ func authRevoke() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			function := args[0]
 
+			resolved, rerr := resolveAuthMethod(cmd, function, method)
+			if rerr != nil {
+				return rerr
+			}
+
 			body, _ := json.Marshal(map[string]string{
 				"function": function,
-				"method":   strings.ToUpper(method),
+				"method":   strings.ToUpper(resolved),
 			})
 
 			resp, err := common.DoJSONRequest(
@@ -141,7 +198,7 @@ func authRevoke() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("API key revoked for %s %s\n", strings.ToUpper(method), function)
+			fmt.Printf("API key revoked for %s %s\n", strings.ToUpper(resolved), function)
 			return nil
 		},
 	}

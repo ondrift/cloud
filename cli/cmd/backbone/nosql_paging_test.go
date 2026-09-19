@@ -24,7 +24,9 @@ func pageOf(start, n int) []byte {
 }
 
 // seedSession points the CLI at a stub and gives it a token to attach, in a scratch
-// HOME so the operator's own ~/.drift is never touched.
+// HOME so the operator's own ~/.drift is never touched. Also selects an active
+// slice — every backbone command refuses before making a request when none is
+// set (RequireActiveSlice), the same guard `drift backbone status` always had.
 func seedSession(t *testing.T, srv *httptest.Server) {
 	t.Helper()
 	previous := common.APIBaseURL
@@ -33,6 +35,9 @@ func seedSession(t *testing.T, srv *httptest.Server) {
 	t.Setenv("HOME", t.TempDir())
 	if err := common.SaveSession("access-token", "refresh-token"); err != nil {
 		t.Fatalf("seeding the session: %v", err)
+	}
+	if err := common.SaveActiveSlice("test-slice"); err != nil {
+		t.Fatalf("seeding the active slice: %v", err)
 	}
 }
 

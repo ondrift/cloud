@@ -30,6 +30,10 @@ func secretSetCmd() *cobra.Command {
 		Example: "  drift backbone secret set API_KEY=sk-abc123\n  drift backbone secret set DB_PASSWORD=hunter2",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			parts := strings.SplitN(args[0], "=", 2)
 			if len(parts) != 2 || parts[0] == "" {
 				e := fmt.Errorf("Couldn't store secret: argument must be in KEY=VALUE format.")
@@ -110,6 +114,10 @@ func secretPreviousCmd() *cobra.Command {
 		Example: "  drift backbone secret previous WEBHOOK_SECRET",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			if secretWindowIsOpen(args[0]) {
 				fmt.Printf("%q: the value it replaced is still accepted (up to %s after the change).\n",
 					args[0], previousWindow)
@@ -128,6 +136,10 @@ func secretGetCmd() *cobra.Command {
 		Example: "  drift backbone secret get API_KEY",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			resp, err := common.DoRequest(
 				http.MethodGet,
 				common.APIBaseURL+"/ops/backbone/secret/get?name="+args[0],
@@ -157,6 +169,10 @@ func secretListCmd() *cobra.Command {
 		Example: "  drift backbone secret list",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			resp, err := common.DoRequest(
 				http.MethodGet,
 				common.APIBaseURL+"/ops/backbone/secret/list",
@@ -193,6 +209,10 @@ func secretDeleteCmd() *cobra.Command {
 		Example: "  drift backbone secret delete API_KEY",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := common.RequireActiveSlice(); err != nil {
+				return err
+			}
+
 			body, _ := json.Marshal(map[string]string{"name": args[0]})
 			resp, err := common.DoJSONRequest(
 				http.MethodDelete,

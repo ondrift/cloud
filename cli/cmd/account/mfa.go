@@ -253,7 +253,7 @@ func getMFADisableCmd() *cobra.Command {
 				supplied = recoveryCode
 			}
 			if supplied == "" {
-				supplied, isRecovery, err = promptForFactor()
+				supplied, isRecovery, err = PromptForFactor()
 				if err != nil {
 					return err
 				}

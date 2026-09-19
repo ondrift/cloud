@@ -10,10 +10,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/ondrift/cloud/cli/common"
@@ -520,22 +518,10 @@ func fetchSliceDoc(name string) (*sliceDoc, error) {
 	return &doc, nil
 }
 
-// downloadSnapshot streams the snapshot archive to path and returns bytes written.
-func downloadSnapshot(id, path string) (int64, error) {
-	resp, err := common.DoRequest(http.MethodGet,
-		fmt.Sprintf("%s/ops/slice/snapshot/download?id=%s", common.APIBaseURL, url.QueryEscape(id)), nil)
-	if err != nil {
-		return 0, common.TransportError("download snapshot", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, e := common.CheckResponse(resp, "download snapshot")
-		return 0, e
-	}
-	f, err := os.Create(path) // #nosec G304 -- user-chosen output path for their own backup
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-	return io.Copy(f, resp.Body)
-}
+// Snapshot download runs through downloadSnapshotForm (snapshots.go), which
+// suspends the dashboard and shells out to the real `drift slice snapshot
+// download` — the ONLY implementation of that step-up-grant handshake, which
+// an in-process request here has no way to carry out at all (CNV-45): a
+// snapshot download always demands a fresh password re-entry, and the
+// dashboard's raw-mode key reader and a line-buffered password prompt cannot
+// share one stdin.

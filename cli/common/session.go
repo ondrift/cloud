@@ -173,22 +173,53 @@ func migrate(raw map[string]json.RawMessage) sessionFile {
 	return out
 }
 
+// writeSession writes s to disk by writing a temp file in the SAME
+// directory and renaming it over the target, rather than truncating and
+// writing the target in place.
+//
+// rename(2) is atomic on POSIX filesystems — even when the destination
+// already exists — so two `drift` commands saving at nearly the same
+// instant (a login completing in one shell while `slice use` saves in
+// another) can never leave the file byte-interleaved into invalid JSON.
+// migrate() has no way to tell a corrupted file apart from one nobody ever
+// created, so every later command would have silently read "not logged in"
+// (PLM-81, and the failure mode PLM-82 already names). Which writer's
+// change survives is still an ordinary last-write-wins, same as any config
+// file with no lock — this closes the corruption case, not the race.
 func writeSession(s sessionFile) error {
 	path, err := expandPath(SessionFile)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) // #nosec G304
+
+	tmp, err := os.CreateTemp(dir, ".session-*.json.tmp")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	enc := json.NewEncoder(f)
+	tmpPath := tmp.Name()
+	// A failure below leaves a stray temp file rather than a corrupted
+	// session.json. Harmless no-op after a successful rename, which has
+	// already moved tmpPath to path.
+	defer os.Remove(tmpPath) // #nosec G104 -- best-effort cleanup, not load-bearing
+
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close() // #nosec G104 -- already returning the chmod error
+		return err
+	}
+	enc := json.NewEncoder(tmp)
 	enc.SetIndent("", "  ")
-	return enc.Encode(s)
+	if err := enc.Encode(s); err != nil {
+		tmp.Close() // #nosec G104 -- already returning the encode error
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // CurrentAccount is the profile name this command acts as.

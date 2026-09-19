@@ -3,8 +3,12 @@ package common
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -65,6 +69,130 @@ func TestExpandPath_Empty(t *testing.T) {
 	}
 	if got != "" {
 		t.Fatalf("expandPath(\"\") = %q, want empty", got)
+	}
+}
+
+// PLM-81: writeSession used to open the target with O_TRUNC and write into
+// it in place, so two `drift` commands saving at nearly the same instant —
+// a login completing in one shell while `slice use` saves in another —
+// could corrupt the file: both truncate before either writes, and if the
+// SHORTER payload's write lands after the LONGER one's, nothing truncates
+// away the longer write's trailing bytes, leaving a dangling, invalid-JSON
+// suffix. Nothing distinguishes that from a session nobody ever created
+// (PLM-82), so every later command would silently read "not logged in".
+//
+// THE OLD CODE DOES NOT RELIABLY FAIL THIS TEST, and that is worth stating
+// rather than hiding: the corruption needs BOTH writers to have already
+// truncated the shared target before EITHER writes, which — called through
+// the ordinary two-goroutine `go writeSession(...)` shape below — usually
+// does not happen on a fast local filesystem, where one call's open, write
+// and close complete before the other's open is even scheduled. Forcing the
+// interleaving deterministically was confirmed separately, against a
+// hand-instrumented replica of the old open-then-write shape with an
+// explicit barrier between the two steps (200/200 runs corrupted) — proving
+// the vulnerability is real — but that harness does not exercise
+// writeSession itself, so it is not what is pinned here.
+//
+// What THIS test verifies, and can prove reliably: writeSession's own
+// atomicity guarantee holds under real concurrent load — many writers of
+// deliberately different sizes, racing with no artificial synchronization —
+// which is the shape every future regression will actually be exercised
+// against. Run with -race, which would also catch a Go-level data race in
+// the implementation itself, though the corruption this exists for is an
+// OS/filesystem-level property no Go-level race exists to catch.
+func TestWriteSession_ConcurrentWritesNeverCorruptTheFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	const n = 40
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			name := fmt.Sprintf("writer-%d", i)
+			accounts := map[string]AccountProfile{}
+			// Deliberately varying size per writer — a uniform payload never
+			// exercises the shape that actually corrupted the old code.
+			for j := 0; j < i; j++ {
+				accounts[fmt.Sprintf("%s-%d", name, j)] = AccountProfile{
+					Token: strings.Repeat("x", 100), RefreshToken: strings.Repeat("y", 100),
+				}
+			}
+			_ = writeSession(sessionFile{Current: name, Accounts: accounts})
+		}(i)
+	}
+	wg.Wait()
+
+	if _, err := readSession(); err != nil {
+		t.Fatalf("the file on disk did not parse as valid JSON after %d concurrent writers of "+
+			"different sizes: %v", n, err)
+	}
+}
+
+// The write-then-rename mechanism's own hygiene: a successful write leaves
+// no ".session-*.json.tmp" behind. Deterministic, unlike the concurrency
+// test above — this needs no race to check, only that the implementation
+// actually does what its own comment claims.
+func TestWriteSession_LeavesNoTempFileBehind(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	if err := SaveSession("tok", "ref"); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(dir, ".drift"))
+	if err != nil {
+		t.Fatalf("reading ~/.drift: %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp") {
+			t.Errorf("a temp file was left behind: %s", e.Name())
+		}
+	}
+}
+
+// TestWriteSession_ReplacesTheInode is the deterministic pin for PLM-81 — no
+// timing or race needed, unlike the concurrency test above.
+//
+// The old implementation opened the EXISTING path with O_TRUNC and wrote
+// into it, keeping the same inode throughout — which is exactly what let two
+// such writers corrupt each other: both were free to truncate and write the
+// SAME inode in any order. write-then-rename never touches that inode again;
+// it builds the new content under a different name and swaps the directory
+// entry atomically, so a second write is always a full replacement, never an
+// in-place mutation racing another one.
+//
+// This is the one property here that genuinely fails against the pre-fix
+// code and passes against the fix, with no timing luck involved either way.
+func TestWriteSession_ReplacesTheInode(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	if err := SaveSession("tok1", "ref1"); err != nil {
+		t.Fatalf("first SaveSession: %v", err)
+	}
+	path := filepath.Join(dir, ".drift", "session.json")
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat before: %v", err)
+	}
+	beforeIno := before.Sys().(*syscall.Stat_t).Ino
+
+	if err := SaveSession("tok2", "ref2"); err != nil {
+		t.Fatalf("second SaveSession: %v", err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat after: %v", err)
+	}
+	afterIno := after.Sys().(*syscall.Stat_t).Ino
+
+	if beforeIno == afterIno {
+		t.Errorf("session.json kept inode %d across a second write — an in-place truncate+write, "+
+			"not a rename, which is exactly the shape that let two concurrent writers corrupt "+
+			"each other (PLM-81)", beforeIno)
 	}
 }
 

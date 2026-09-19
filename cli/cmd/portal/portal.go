@@ -130,6 +130,24 @@ type model struct {
 	loadedAt [4]time.Time // per-tab cache stamp; tab switches reuse fresh data
 }
 
+// refreshUser re-reads the session file's current account and updates the
+// header. Every request already resolves the account fresh on each call
+// (newAuthenticatedRequestCtx reads GetTokenFromSession, not a cached copy),
+// so a `drift account login` as a different account in another terminal
+// re-scopes this portal's very next fetch — but before this, the displayed
+// "logged in as X" stayed whatever GetUsername() returned at launch, showing
+// the OLD user while every fetch was already running as the new one.
+//
+// A momentary empty read (GetUsername returns "" only when there is no
+// session or token at all, which cannot happen once the portal is running —
+// ensureLoggedIn gates launch) leaves m.user at its last known value rather
+// than blanking the header.
+func (m *model) refreshUser() {
+	if u := common.GetUsername(); u != "" {
+		m.user = u
+	}
+}
+
 // Run launches the full-screen dashboard. It's the bare `drift` entrypoint
 // (and the hidden `drift portal` alias). version is the running CLI version,
 // used for the "update available" banner.
