@@ -1,0 +1,455 @@
+# release.yml — Gitea holds the source and does the building; GitHub is where
+# the result is published, because that is where consumers can reach it.
+#
+# ── WHY IT IS SPLIT THIS WAY ────────────────────────────────────────────────
+#
+# Two things about this repository are load-bearing and neither can move:
+#
+#   1. The Go module path is `github.com/ondrift/cloud/cli`, in every consumer's
+#      go.mod. `go install …@cli/vX.Y.Z` is resolved by the module proxy, which
+#      fetches from GitHub — so THE TAG AND THE COMMIT IT POINTS AT MUST BE ON
+#      GITHUB or nobody can install the version this workflow just cut.
+#   2. Homebrew downloads the tarballs by URL and must clone the tap
+#      anonymously. This instance answers on wg0 only, so it can serve neither.
+#
+# `drift upgrade` is the one that sounds like a third dependency and is not: it
+# runs `go install`, and calls GitHub's release API only to resolve the label
+# "latest" — falling back to `@latest` when GitHub is unreachable. It never
+# downloads a tarball. The tarballs exist for Homebrew.
+#
+# So: build here, publish there. The credential is a GitHub token held as a
+# Gitea secret, which is the cost of this arrangement stated plainly — a
+# credential on the internal box pointing back at the host this instance was
+# meant to replace. The alternative was cutting releases from a laptop.
+#
+# ── `gh` DOES NOT EXIST ON THIS RUNNER ──────────────────────────────────────
+#
+# The old workflow used `gh release create`. `docker.gitea.com/runner-images:
+# ubuntu-latest` ships node, python3, curl, git, jq, tar and sudo — no `gh` and
+# no Go. Everything below therefore talks to GitHub's REST API with curl, which
+# is one fewer thing to install and one fewer version to pin.
+#
+# ── ORDER IS THE CORRECTNESS ARGUMENT ───────────────────────────────────────
+#
+# GitHub is written FIRST and completely, and the Gitea tag is written LAST.
+# A Gitea tag therefore means "this version is fully published", and a run that
+# dies halfway leaves no Gitea tag — so the next attempt computes the SAME
+# version rather than skipping one. The pre-flight below refuses to start if
+# that version already exists anywhere, which turns a confusing half-published
+# state into one sentence.
+#
+# ── runs-on ─────────────────────────────────────────────────────────────────
+#
+# `ubuntu-latest`, not the `release` label the platform's release job uses. That
+# label belongs to a second runner, and whether it serves this repository is
+# unverified — ⚠ A LABEL WITH NO RUNNER QUEUES FOREVER, with no error and no
+# timeout. Switch only after confirming a runner carrying it picks this up.
+
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      module:
+        description: "Module to release"
+        required: true
+        type: choice
+        options: [cli, sdk, both]
+      bump:
+        description: "Version bump"
+        required: true
+        type: choice
+        options: [patch, minor, major]
+
+permissions:
+  contents: write
+
+env:
+  # The GitHub side, named once. `ondrift/cloud` is this repository's public
+  # home; the tap is a second repository the formula is pushed to.
+  GH_REPO: ondrift/cloud
+  GH_TAP: ondrift/homebrew-tap
+
+jobs:
+  plan:
+    name: Decide what to release
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    outputs:
+      cli: ${{ steps.plan.outputs.cli }}
+      sdk: ${{ steps.plan.outputs.sdk }}
+      bump: ${{ steps.plan.outputs.bump }}
+      cli_version: ${{ steps.ver.outputs.cli_version }}
+      sdk_version: ${{ steps.ver.outputs.sdk_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - id: plan
+        name: Which modules, which bump
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            m="${{ inputs.module }}"
+            [ "$m" = "cli"  ] || [ "$m" = "both" ] && echo "cli=true"  >> "$GITHUB_OUTPUT" || echo "cli=false" >> "$GITHUB_OUTPUT"
+            [ "$m" = "sdk"  ] || [ "$m" = "both" ] && echo "sdk=true"  >> "$GITHUB_OUTPUT" || echo "sdk=false" >> "$GITHUB_OUTPUT"
+            echo "bump=${{ inputs.bump }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          ref="${{ github.event.pull_request.head.ref }}"
+          case "$ref" in
+            feature/*)  bump=minor ;;
+            bugfix/*)   bump=patch ;;
+            breaking/*) bump=major ;;
+            *)          echo "branch '$ref' is not a release branch — nothing to do"
+                        echo "cli=false" >> "$GITHUB_OUTPUT"
+                        echo "sdk=false" >> "$GITHUB_OUTPUT"
+                        echo "bump=none" >> "$GITHUB_OUTPUT"
+                        exit 0 ;;
+          esac
+          echo "bump=$bump" >> "$GITHUB_OUTPUT"
+
+          # THE MERGE COMMIT, not the branch tip. `head.sha` is the branch's own
+          # commit, and merging with "delete branch" removes it — so this step
+          # died on `fatal: bad object <sha>` and the release was silently not
+          # cut, while the merge itself looked perfectly clean.
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.merge_commit_sha }}"
+          changed=$(git diff --name-only "$base" "$head")
+          echo "$changed" | grep -q '^cli/' && echo "cli=true" >> "$GITHUB_OUTPUT" || echo "cli=false" >> "$GITHUB_OUTPUT"
+          echo "$changed" | grep -q '^sdk/' && echo "sdk=true" >> "$GITHUB_OUTPUT" || echo "sdk=false" >> "$GITHUB_OUTPUT"
+
+      - id: ver
+        name: Compute next versions
+        run: |
+          # BOTH LINES STAY ON 0.x FOR THE WHOLE ALPHA, deliberately. This is
+          # the repo where it matters most: `cli` is what people install and
+          # `sdk` is what they import, so a 1.0.0 here is a stability promise
+          # made to someone else — and Go changes module resolution at v1, which
+          # would make `go get` behave differently for every consumer.
+          #
+          # Read the arithmetic with MA=0 and notice that NO bump leaves 0.x:
+          # `major` moves the minor, `minor` moves the minor, `patch` moves the
+          # patch. 1.0.0 is reachable only by cutting a tag by hand.
+          next() {
+            prefix="$1"; bump="$2"
+            last=$(git tag -l "${prefix}/v*" | sed "s|^${prefix}/v||" \
+                   | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+            [ -z "$last" ] && last="0.0.0"
+            IFS=. read -r MA MI PA <<EOF
+          $last
+          EOF
+            case "$bump" in
+              major) if [ "$MA" -eq 0 ]; then MI=$((MI+1)); PA=0; else MA=$((MA+1)); MI=0; PA=0; fi ;;
+              minor) MI=$((MI+1)); PA=0 ;;
+              patch) PA=$((PA+1)) ;;
+            esac
+            echo "v${MA}.${MI}.${PA}"
+          }
+          # The 0.x invariant, enforced rather than trusted to the arithmetic
+          # above. If someone edits that `MA -eq 0` branch out, the release
+          # FAILS instead of quietly publishing a stability claim.
+          alpha_only() {
+            case "$2" in
+              v0.*) echo "$2" ;;
+              *)
+                echo "::error::refusing to cut ${1}/${2} — both lines stay on 0.x for the alpha."
+                echo "cli is installed and sdk is imported, so a 1.0.0 is a promise made to"
+                echo "someone else, and Go changes module resolution at v1. If leaving the alpha"
+                echo "is the intent, cut the tag by hand and remove this guard in the same change."
+                exit 1 ;;
+            esac
+          }
+
+          b="${{ steps.plan.outputs.bump }}"
+          if [ "$b" != "none" ]; then
+            echo "cli_version=$(alpha_only cli "$(next cli "$b")")" >> "$GITHUB_OUTPUT"
+            echo "sdk_version=$(alpha_only sdk "$(next sdk "$b")")" >> "$GITHUB_OUTPUT"
+          fi
+
+  cli:
+    name: Release the CLI
+    needs: plan
+    if: needs.plan.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_PUBLISH_TOKEN }}
+      VERSION: ${{ needs.plan.outputs.cli_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: cli/go.mod, cache-dependency-path: cli/go.sum }
+
+      # ── The credential must exist before anything is built ────────────────
+      # Eight minutes of cross-compilation followed by "no token" is a waste and
+      # reads like a build failure. `secrets.X != ''` is checked rather than the
+      # value being echoed anywhere: a secret printed into a log is a secret.
+      - name: the publish credential is present and can write
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::GH_PUBLISH_TOKEN is not set on this repository."
+            echo "  Gitea builds the release; GitHub is where it is published, because the Go"
+            echo "  module proxy and Homebrew both fetch from there. Without this token nothing"
+            echo "  can be published and the tag would exist only on an instance no consumer"
+            echo "  can reach."
+            exit 1
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+                   -H "Authorization: Bearer $GH_TOKEN" \
+                   -H "Accept: application/vnd.github+json" \
+                   "https://api.github.com/repos/$GH_REPO")
+          [ "$code" = "200" ] || { echo "::error::the token cannot read $GH_REPO (HTTP $code)"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+                   -H "Authorization: Bearer $GH_TOKEN" \
+                   -H "Accept: application/vnd.github+json" \
+                   "https://api.github.com/repos/$GH_TAP")
+          [ "$code" = "200" ] || { echo "::error::the token cannot read $GH_TAP (HTTP $code) — the formula could not be pushed"; exit 1; }
+          echo "✓ the token can see both $GH_REPO and $GH_TAP"
+
+      # ── Refuse a version that already exists ANYWHERE ─────────────────────
+      # A half-published version is the failure worth designing against: the
+      # Gitea tag is written last, so a run that died leaves GitHub tagged and
+      # Gitea not. Re-running would then recompute the same version and collide.
+      # Say so in one sentence instead.
+      - name: this version is not already published
+        run: |
+          set -euo pipefail
+          tag="cli/${VERSION}"
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+                   -H "Authorization: Bearer $GH_TOKEN" \
+                   "https://api.github.com/repos/$GH_REPO/git/ref/tags/$tag")
+          if [ "$code" = "200" ]; then
+            echo "::error::$tag already exists on $GH_REPO."
+            echo "  Either this release already went out, or a previous run published to GitHub"
+            echo "  and died before tagging Gitea. Compare the two and delete the GitHub tag if"
+            echo "  it is genuinely orphaned — do not bump past it, that silently skips a version."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::$tag already exists on this instance but NOT on GitHub — the reverse of the usual half-state."
+            exit 1
+          fi
+          echo "✓ $tag is free on both sides"
+
+      - name: Build every platform
+        working-directory: cli
+        run: |
+          mkdir -p dist
+          # darwin/amd64 is still built: Homebrew supports Intel Macs, and a
+          # missing slice means `brew install` fails on that arch rather than
+          # falling back.
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            os=${target%/*}; arch=${target#*/}
+            echo "building $os/$arch"
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
+              go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+                       -o "dist/drift" ./cmd/drift
+            tar -czf "dist/drift_${VERSION}_${os}_${arch}.tar.gz" -C dist drift
+            rm dist/drift
+          done
+          cd dist && sha256sum *.tar.gz > checksums.txt && cat checksums.txt
+
+      - name: Verify the binary reports the tag
+        working-directory: cli
+        run: |
+          # The whole point of ldflags versioning is that the binary and the tag
+          # cannot disagree. Prove it rather than assume it.
+          CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /tmp/drift ./cmd/drift
+          got=$(/tmp/drift --version | head -1 | awk '{print $2}')
+          [ "$got" = "$VERSION" ] || { echo "✗ binary says '$got', tag is '$VERSION'"; exit 1; }
+          echo "✓ binary reports $got"
+
+      # ── GitHub first, and completely ──────────────────────────────────────
+      # The commit has to be there before the tag, or the module proxy resolves
+      # a tag pointing at an object GitHub does not have.
+      - name: Push main and the tag to GitHub
+        run: |
+          set -euo pipefail
+          tag="cli/${VERSION}"
+          git config user.name "drift-ci"
+          git config user.email "isrand@protonmail.com"
+          # The token goes in the URL's credential slot, which git does not log,
+          # rather than into a stored credential helper on a shared runner.
+          git remote add github "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
+          git push github HEAD:main
+          git tag "$tag"
+          git push github "$tag"
+          echo "✓ main and $tag are on $GH_REPO"
+
+      - name: Create the GitHub release and upload the artefacts
+        run: |
+          set -euo pipefail
+          tag="cli/${VERSION}"
+          notes="Built on the self-hosted instance and published here.
+
+          Install:
+
+              brew install ondrift/tap/drift
+
+          or:
+
+              go install github.com/ondrift/cloud/cli/cmd/drift@${VERSION}"
+
+          id=$(jq -n --arg t "$tag" --arg n "cli ${VERSION}" --arg b "$notes" \
+                 '{tag_name:$t, name:$n, body:$b}' \
+               | curl -s -X POST \
+                   -H "Authorization: Bearer $GH_TOKEN" \
+                   -H "Accept: application/vnd.github+json" \
+                   --data-binary @- \
+                   "https://api.github.com/repos/$GH_REPO/releases" \
+               | jq -r '.id // empty')
+          [ -n "$id" ] || { echo "::error::could not create the release on $GH_REPO"; exit 1; }
+
+          # Assets go to uploads.github.com, not api.github.com, and the
+          # Content-Type is required — without it GitHub stores the file and
+          # serves it as something Homebrew will not accept.
+          for f in cli/dist/*.tar.gz cli/dist/checksums.txt; do
+            name=$(basename "$f")
+            case "$name" in *.tar.gz) ct="application/gzip" ;; *) ct="text/plain" ;; esac
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+                     -H "Authorization: Bearer $GH_TOKEN" \
+                     -H "Content-Type: $ct" \
+                     --data-binary @"$f" \
+                     "https://uploads.github.com/repos/$GH_REPO/releases/$id/assets?name=$name")
+            [ "$code" = "201" ] || { echo "::error::upload of $name failed (HTTP $code)"; exit 1; }
+            echo "  uploaded $name"
+          done
+          echo "✓ release $tag published with its artefacts"
+
+      - name: Update the Homebrew formula
+        run: |
+          set -euo pipefail
+          # HTTPS with the token, not the old multi-line deploy key. A secret
+          # split across lines is not masked in a job log — Gitea matches a
+          # secret by its literal value, which does not survive the split — so
+          # the key would have been printed in full.
+          git clone -q "https://x-access-token:${GH_TOKEN}@github.com/${GH_TAP}.git" /tmp/tap
+
+          sha() { grep " drift_${VERSION}_$1.tar.gz\$" cli/dist/checksums.txt | awk '{print $1}'; }
+          base="https://github.com/${GH_REPO}/releases/download/cli%2F${VERSION}"
+          mkdir -p /tmp/tap/Formula
+          cat > /tmp/tap/Formula/drift.rb <<RUBY
+          # GENERATED by cloud/public .gitea/workflows/release.yml — do not edit.
+          # Hand edits survive only until the next release overwrites this file.
+          class Drift < Formula
+            desc "CLI for Drift — the European serverless platform"
+            homepage "https://ondrift.eu"
+            version "${VERSION#v}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "${base}/drift_${VERSION}_darwin_arm64.tar.gz"
+                sha256 "$(sha darwin_arm64)"
+              end
+              on_intel do
+                url "${base}/drift_${VERSION}_darwin_amd64.tar.gz"
+                sha256 "$(sha darwin_amd64)"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "${base}/drift_${VERSION}_linux_arm64.tar.gz"
+                sha256 "$(sha linux_arm64)"
+              end
+              on_intel do
+                url "${base}/drift_${VERSION}_linux_amd64.tar.gz"
+                sha256 "$(sha linux_amd64)"
+              end
+            end
+
+            def install
+              bin.install "drift"
+            end
+
+            test do
+              assert_match "drift ${VERSION}", shell_output("#{bin}/drift --version")
+            end
+          end
+          RUBY
+
+          cd /tmp/tap
+          git config user.name "drift-ci"
+          git config user.email "isrand@protonmail.com"
+          git add Formula/drift.rb
+          git commit -q -m "drift ${VERSION}"
+          git push origin HEAD:main
+          echo "✓ formula updated to ${VERSION}"
+
+      # ── The Gitea tag goes LAST, and that is what makes it mean something ──
+      # Its presence says "this version is fully published on GitHub". A run
+      # that died before here leaves no tag, so the next attempt recomputes the
+      # same version instead of skipping one.
+      - name: Tag this instance
+        run: |
+          set -euo pipefail
+          git push origin "cli/${VERSION}"
+          echo "✓ cli/${VERSION} tagged here — the release is complete on both sides"
+
+  sdk:
+    name: Release the SDK
+    needs: plan
+    if: needs.plan.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_PUBLISH_TOKEN }}
+      VERSION: ${{ needs.plan.outputs.sdk_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: the publish credential is present
+        run: |
+          set -euo pipefail
+          [ -n "${GH_TOKEN:-}" ] || { echo "::error::GH_PUBLISH_TOKEN is not set on this repository"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+                   -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$GH_REPO")
+          [ "$code" = "200" ] || { echo "::error::the token cannot read $GH_REPO (HTTP $code)"; exit 1; }
+
+      - name: this version is not already published
+        run: |
+          set -euo pipefail
+          tag="sdk/${VERSION}"
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+                   -H "Authorization: Bearer $GH_TOKEN" \
+                   "https://api.github.com/repos/$GH_REPO/git/ref/tags/$tag")
+          [ "$code" = "200" ] && { echo "::error::$tag already exists on $GH_REPO"; exit 1; }
+          echo "✓ $tag is free"
+
+      # No binaries: the SDK is consumed as source by six language toolchains,
+      # and the tag is the whole release. Registry publishing (npm, PyPI,
+      # RubyGems, crates.io) is still a separate manual step — note that
+      # drift-sdk on PyPI is taken by an unrelated project.
+      - name: Push main and the tag to GitHub, then release
+        run: |
+          set -euo pipefail
+          tag="sdk/${VERSION}"
+          git config user.name "drift-ci"
+          git config user.email "isrand@protonmail.com"
+          git remote add github "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
+          git push github HEAD:main
+          git tag "$tag"
+          git push github "$tag"
+
+          jq -n --arg t "$tag" --arg n "sdk ${VERSION}" \
+                --arg b "Six languages, one version. Consumed as source; the CLI resolves it at deploy time." \
+                '{tag_name:$t, name:$n, body:$b}' \
+            | curl -s -f -X POST \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                --data-binary @- \
+                "https://api.github.com/repos/$GH_REPO/releases" >/dev/null \
+            || { echo "::error::could not create the release on $GH_REPO"; exit 1; }
+          echo "✓ $tag published"
+
+      - name: Tag this instance
+        run: |
+          set -euo pipefail
+          git push origin "sdk/${VERSION}"
+          echo "✓ sdk/${VERSION} tagged here — the release is complete on both sides"

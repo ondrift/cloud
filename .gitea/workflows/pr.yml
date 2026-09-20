@@ -316,13 +316,22 @@ jobs:
       # Every one of the six, named and printed. If the runner image changes
       # under us this is where it shows, as a missing binary rather than as a
       # skipped language buried in the harness output.
+      # `go version`, NOT `go --version` — Go is the one of the six that does not
+      # accept the double-dash form, and answers `flag provided but not defined:
+      # -version`. A loop that assumes one spelling prints an error beside a
+      # toolchain that is installed and working, which is the most confusing
+      # possible output from a step whose entire job is to say what is present.
       - name: versions
         run: |
           set -euo pipefail
           missing=""
           for t in go node python3 ruby php cargo; do
             if command -v "$t" >/dev/null 2>&1; then
-              printf '  %-8s %s\n' "$t" "$("$t" --version 2>&1 | head -1)"
+              case "$t" in
+                go) v=$(go version 2>&1 | head -1) ;;
+                *)  v=$("$t" --version 2>&1 | head -1) ;;
+              esac
+              printf '  %-8s %s\n' "$t" "$v"
             else
               printf '  %-8s MISSING\n' "$t"
               missing="$missing $t"
