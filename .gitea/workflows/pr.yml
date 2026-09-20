@@ -1,0 +1,414 @@
+# pr.yml — what every pull request must pass before it can be merged.
+#
+# Path-aware on purpose: cli/ and sdk/ are separate modules on separate version
+# lines, so a PR touching only one should not be gated on the other. A docs-only
+# PR runs neither and passes immediately.
+#
+# The summary this writes to the job log is not decoration — the PR body is
+# required to state what was tested and what the results were, and this is where
+# those results come from.
+#
+# ── THE RUNNER IMAGE SHIPS ALMOST NOTHING, and that is the whole difference ──
+#
+# On GitHub's `ubuntu-latest`, six language toolchains came preinstalled and the
+# conformance job simply used them. `docker.gitea.com/runner-images:ubuntu-latest`
+# carries **node and python3 only** — measured, not assumed:
+#
+#   PRESENT   node v24.19.0 · python3 3.12.3 · curl · git · jq · tar
+#   MISSING   go · ruby · php · cargo · rustc
+#
+# So every job that needs a toolchain installs it, and the installs are cheap:
+# `ruby` and `php-cli` from apt take about thirteen seconds together, Go comes
+# from setup-go as it always did, and Rust from the same action the platform's
+# slice job already runs on this runner.
+#
+# A MISSING TOOLCHAIN MUST STAY A FAILURE. conformance/run.sh counts a skip
+# separately and `--strict` turns it into an error, because "ok" from a suite
+# that ran nothing is the exact defect the harness exists to find. Do not soften
+# that to make this file shorter — the point of the job is the six.
+#
+# ── No `concurrency:` block, deliberately ───────────────────────────────────
+#
+# Gitea's `concurrency:` does not queue. A run placed in a busy group is
+# cancelled outright even with `cancel-in-progress: false`, and two runs in one
+# group have still executed side by side — so it neither serialises nor fails
+# safely. Nothing here needs exclusion anyway: these jobs build and test in a
+# container and hold no shared resource.
+
+name: PR
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    outputs:
+      cli: ${{ steps.filter.outputs.cli }}
+      sdk: ${{ steps.filter.outputs.sdk }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: filter
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          changed=$(git diff --name-only "$base" "$head")
+          echo "$changed" | grep -q '^cli/'  && echo "cli=true"  >> "$GITHUB_OUTPUT" || echo "cli=false"  >> "$GITHUB_OUTPUT"
+          echo "$changed" | grep -q '^sdk/'  && echo "sdk=true"  >> "$GITHUB_OUTPUT" || echo "sdk=false"  >> "$GITHUB_OUTPUT"
+          {
+            echo "### Changed paths"
+            echo '```'
+            echo "$changed"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  branch-name:
+    name: Branch name declares the bump
+    runs-on: ubuntu-latest
+    steps:
+      # The branch prefix is what the release workflow reads to decide the
+      # version bump. A PR whose branch says nothing releases nothing, so an
+      # unrecognised prefix is caught HERE rather than silently shipping no
+      # release after the merge.
+      - run: |
+          ref="${{ github.event.pull_request.head.ref }}"
+          case "$ref" in
+            feature/*|bugfix/*|breaking/*)
+              echo "✓ '$ref' will produce a release" ;;
+            chore/*|docs/*|ci/*|test/*)
+              echo "✓ '$ref' is a no-release branch — nothing will be tagged or published" ;;
+            *)
+              echo "✗ branch '$ref' has no recognised prefix."
+              echo ""
+              echo "  releases:    feature/  bugfix/  breaking/"
+              echo "  no release:  chore/  docs/  ci/  test/"
+              exit 1 ;;
+          esac
+
+      # A major must name the languages it actually breaks. Six languages share
+      # ONE version, so the major number tracks the most-churning language and
+      # the other five inherit a stability signal that is false for them.
+      # v4.0.0 broke Ruby and Node only; Go, Python, PHP and Rust were bumped
+      # alongside it with nothing changed, and their users read "major, my code
+      # may break" about a Ruby bug fix. That is worse than over-bumping — it is
+      # indistinguishable from a real break.
+      #
+      # The PR body is UNTRUSTED input and is passed through env, never
+      # interpolated into the script. `${{ }}` inlined here would let a PR title
+      # or body containing shell metacharacters execute in this runner.
+      - name: A breaking change must name the languages it breaks
+        if: startsWith(github.event.pull_request.head.ref, 'breaking/')
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          valid="go python node ruby php rust"
+
+          # One line, anywhere in the body: "Breaking: ruby, node"
+          line=$(printf '%s\n' "$PR_BODY" | grep -im1 '^[[:space:]]*Breaking:' || true)
+          if [ -z "$line" ]; then
+            echo "✗ this is a breaking/ branch, so the PR body must carry a Breaking: line."
+            echo ""
+            echo "  Breaking: ruby, node"
+            echo ""
+            echo "  One line, lowercased, comma-separated, from: $valid"
+            echo "  A reader on a language you do NOT list knows the major does not affect them."
+            echo "  That is the whole point — see conventions.md, 'Six languages, ONE version'."
+            exit 1
+          fi
+
+          langs=$(printf '%s' "$line" | sed 's/^[[:space:]]*[Bb]reaking:[[:space:]]*//' | tr ',' ' ' | tr -s ' ')
+          if [ -z "$(printf '%s' "$langs" | tr -d '[:space:]')" ]; then
+            echo "✗ '$line' names no languages. A breaking change breaks something specific."
+            exit 1
+          fi
+
+          bad=""
+          for l in $langs; do
+            case " $valid " in
+              *" $l "*) ;;
+              *) bad="$bad $l" ;;
+            esac
+          done
+          if [ -n "$bad" ]; then
+            echo "✗ unrecognised language(s):$bad"
+            echo "  valid: $valid  (lowercase)"
+            echo "  A typo'd language silently narrows the warning to nobody."
+            exit 1
+          fi
+
+          echo "✓ breaking change declared for:$(printf '%s' " $langs")"
+
+  cli:
+    name: CLI — build, vet, test
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: cli/go.mod, cache-dependency-path: cli/go.sum }
+      - name: gofmt
+        working-directory: cli
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "not gofmt'd:"; echo "$unformatted"; exit 1; fi
+      - name: build
+        working-directory: cli
+        run: go build ./...
+      - name: vet
+        working-directory: cli
+        run: go vet ./...
+      # The CLI holds no copy of the Driftfile format — the platform serves it and
+      # the CLI caches what it fetched. A runner has never run the CLI, so it has
+      # no cache, and without one every test that asserts "the schema rejects
+      # this" passes by validating NOTHING.
+      #
+      # So fetch it, and fail the job if that does not work. Committing a fixture
+      # copy instead would be a second definition of the format, and the copy that
+      # used to exist rotted precisely because nothing compared it to the original.
+      #
+      # ⚠ THIS REACHES ALPHA OVER THE TUNNEL. api.ondrift.eu resolves through
+      # public DNS to the public address, where ufw admits 443 on wg0 only, so
+      # this works because the runner's host holds the WireGuard tunnel — the
+      # same dependency pentest.yml documents on the platform side. If this step
+      # starts timing out, check the tunnel before suspecting the api.
+      - name: fetch the Driftfile schema
+        run: |
+          mkdir -p "$HOME/.drift"
+          curl --fail --silent --show-error --retry 3 --retry-connrefused \
+            https://api.ondrift.eu/driftfile/schema -o "$HOME/.drift/driftfile.schema.json"
+          python3 - "$HOME/.drift/driftfile.schema.json" <<'PY'
+          import json, sys
+          schema = json.load(open(sys.argv[1]))
+          print(f"Driftfile format version {schema['version']}, tested against as served")
+          PY
+      - name: test
+        working-directory: cli
+        run: |
+          set -o pipefail
+          go test ./... 2>&1 | tee /tmp/cli-test.log
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### CLI test results"
+            echo '```'
+            cat /tmp/cli-test.log 2>/dev/null || echo "(tests did not run)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  sdk:
+    name: SDK — build, vet, test
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: sdk/go.mod, cache-dependency-path: sdk/go.sum }
+      # php is NOT in this runner image, and the status test below is the one
+      # assertion in this job that needs it. Installed rather than skipped: the
+      # test exists because PHP's `_call` treated a 404 as a value, which every
+      # other language got right — exactly the defect a skipped language hides.
+      - name: php
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends php-cli
+          php --version | head -1
+      - name: gofmt
+        working-directory: sdk
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "not gofmt'd:"; echo "$unformatted"; exit 1; fi
+      - name: build
+        working-directory: sdk
+        run: go build ./...
+      - name: vet
+        working-directory: sdk
+        run: go vet ./...
+      - name: test
+        working-directory: sdk
+        run: |
+          set -o pipefail
+          go test ./... 2>&1 | tee /tmp/sdk-test.log
+      # The one test that needs a REAL server rather than the local store.
+      #
+      # sdk/conformance runs every case against the in-memory store, so a defect
+      # that is correct locally and wrong on the wire is invisible to it — which
+      # is exactly what PHP's missing status check was. This stands up a loopback
+      # HTTP server and asks what `_call` does with a 404.
+      - name: php — a non-2xx is an error, not a value
+        working-directory: sdk
+        run: php php/status_test.php
+      - name: version consistency
+        working-directory: sdk
+        # Six languages, ONE version. A manifest left behind is the failure this
+        # catches — it is invisible until someone installs the odd one out.
+        run: |
+          v_py=$(grep -m1 '^version' python/pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
+          v_rs=$(grep -m1 '^version' rust/Cargo.toml     | sed 's/.*"\(.*\)".*/\1/')
+          v_npm=$(grep -m1 '"version"' package.json      | sed 's/.*"version"[: ]*"\(.*\)".*/\1/')
+          v_gem=$(grep -m1 'spec.version' ruby/drift.gemspec | sed 's/.*"\(.*\)".*/\1/')
+          echo "python=$v_py rust=$v_rs npm=$v_npm gem=$v_gem"
+          if [ "$v_py" != "$v_rs" ] || [ "$v_py" != "$v_npm" ] || [ "$v_py" != "$v_gem" ]; then
+            echo "✗ SDK manifests disagree — all six languages share one version"; exit 1
+          fi
+          echo "✓ all manifests agree on $v_py"
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### SDK test results"
+            echo '```'
+            cat /tmp/sdk-test.log 2>/dev/null || echo "(tests did not run)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # THE SAME CASES, ALL SIX LANGUAGES.
+  #
+  # The job above is a Go job. It builds Go, vets Go and runs Go's tests, and for
+  # a long time that was the entire automated opinion the repo held about an SDK —
+  # so Node, Python, Ruby, PHP and Rust could each disagree with Go about what a
+  # primitive does and CI stayed green. They did: a local Blob.put reported
+  # success and the matching get returned empty in five languages at once, and
+  # nothing here noticed because nothing here ran them.
+  #
+  # This runs one set of assertions (sdk/conformance/expected.json) against all
+  # six, each through a thin driver that performs the operations and prints what
+  # it got. --strict makes a missing toolchain a FAILURE rather than a skip: a
+  # skipped language is a language nobody tested, and "ok" from a suite that ran
+  # nothing is the exact defect this harness exists to find.
+  conformance:
+    name: SDK conformance — six languages, one set of assertions
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: sdk/go.mod, cache-dependency-path: sdk/go.sum }
+      # Rust, from the action the platform's slice job already runs on this
+      # runner — so it is known to work here rather than hoped to.
+      - uses: dtolnay/rust-toolchain@stable
+
+      # FOUR OF THE SIX ARE NOT IN THE IMAGE. node and python3 are; go comes
+      # from setup-go and rust from the action above; ruby and php come from
+      # apt, which takes about thirteen seconds for both.
+      #
+      # This step exists so a toolchain that fails to install says so HERE,
+      # with apt's own error, rather than surfacing a hundred lines later as
+      # "ruby: SKIPPED" and a --strict failure that reads like a test problem.
+      - name: ruby + php
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ruby php-cli
+
+      # Every one of the six, named and printed. If the runner image changes
+      # under us this is where it shows, as a missing binary rather than as a
+      # skipped language buried in the harness output.
+      - name: versions
+        run: |
+          set -euo pipefail
+          missing=""
+          for t in go node python3 ruby php cargo; do
+            if command -v "$t" >/dev/null 2>&1; then
+              printf '  %-8s %s\n' "$t" "$("$t" --version 2>&1 | head -1)"
+            else
+              printf '  %-8s MISSING\n' "$t"
+              missing="$missing $t"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::toolchain(s) missing before conformance ran:$missing"
+            echo "  conformance --strict would report these as skipped languages, which reads"
+            echo "  like a test failure. It is a runner-image problem. Fix it here."
+            exit 1
+          fi
+      - name: conformance
+        working-directory: sdk
+        run: |
+          set -o pipefail
+          bash conformance/run.sh --strict 2>&1 | tee /tmp/conformance.log
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### SDK conformance"
+            echo '```'
+            cat /tmp/conformance.log 2>/dev/null || echo "(conformance did not run)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── THE ONE CHECK BRANCH PROTECTION SHOULD REQUIRE ─────────────────────────
+  #
+  # ⚠ THE NAME BELOW IS A CONTRACT WITH BRANCH PROTECTION. Renaming this job
+  # silently un-protects `main`: Gitea matches a required check by its context
+  # string, and a required context nothing reports stays PENDING forever — a
+  # pull request that can never go green and a merge button that stays red.
+  #
+  # The other candidates are worse. `cli`, `sdk` and `conformance` all SKIP when
+  # the import paths prove a change cannot reach them, which is the entire point
+  # of the path filter — so requiring one of them makes a docs-only PR
+  # unmergeable, and requiring all three makes every narrow PR unmergeable.
+  #
+  # SKIPPED IS NOT FAILURE. `cancelled` IS counted, deliberately: a cancelled job
+  # ran nothing, and a pipeline that cannot say whether the code is good must not
+  # report that it is.
+  gate:
+    name: all gates
+    needs: [changes, branch-name, cli, sdk, conformance]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: decide
+        env:
+          SDK_TOUCHED: ${{ needs.changes.outputs.sdk }}
+          R_CHANGES: ${{ needs.changes.result }}
+          R_BRANCH: ${{ needs['branch-name'].result }}
+          R_CLI: ${{ needs.cli.result }}
+          R_SDK: ${{ needs.sdk.result }}
+          R_CONF: ${{ needs.conformance.result }}
+        run: |
+          set -uo pipefail
+          failed="" ran="" skipped=""
+          for pair in "what-changed:$R_CHANGES" "branch-name:$R_BRANCH" \
+                      "cli:$R_CLI" "sdk:$R_SDK" "conformance:$R_CONF"; do
+            name="${pair%%:*}"; result="${pair##*:}"
+            case "$result" in
+              success) ran="$ran $name" ;;
+              skipped) skipped="$skipped $name" ;;
+              *)       failed="$failed $name($result)" ;;
+            esac
+          done
+
+          echo "passed: ${ran:- none}"
+          echo "not needed for this change: ${skipped:- none}"
+
+          if [ -n "$failed" ]; then
+            echo "::error::this change is not ready to merge —$failed"
+            exit 1
+          fi
+
+          # A SKIP THAT CONTRADICTS WHAT `changes` DECIDED. Nothing failed, so
+          # every skip above should be honest path filtering — this one is not.
+          # The conformance job is the only automated opinion five of the six
+          # languages have, so an sdk/ change that does not run it is a gap
+          # shaped exactly like a pass.
+          if [ "$SDK_TOUCHED" = "true" ] && [ "$R_CONF" = "skipped" ]; then
+            echo "::error::sdk/ changed and conformance did NOT run."
+            echo "  'changes' said sdk=true, so the six-language harness was meant to run."
+            echo "  Look at its if: — a job whose needs were skipped is skipped too, silently."
+            exit 1
+          fi
+
+          echo "✅ every gate this change reaches has passed"
