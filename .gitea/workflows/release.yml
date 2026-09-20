@@ -72,6 +72,19 @@ env:
   # home; the tap is a second repository the formula is pushed to.
   GH_REPO: ondrift/cloud
   GH_TAP: ondrift/homebrew-tap
+  # This instance's side of the same two things. The tap's history lives here
+  # and is published to GitHub, which is where Homebrew reads it.
+  #
+  # ⚠ `gitea:3000`, NOT `git.ondrift.eu`. A JOB CONTAINER CANNOT REACH THE
+  # PUBLIC NAME: it resolves through public DNS to the public address, where
+  # ufw admits 443 on wg0 only, so a clone aimed there leaves the box and is
+  # refused at the far end — as a timeout, minutes later, looking like a
+  # network fault. The runner injects exactly one host alias,
+  # `--add-host=gitea:host-gateway`, and the instance publishes 3000 on the
+  # docker0 address for precisely this. Plain HTTP, inside the box.
+  GITEA_HOST: gitea:3000
+  GITEA_API: http://gitea:3000/api/v1
+  GITEA_TAP: cloud/homebrew-tap
 
 jobs:
   plan:
@@ -177,6 +190,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GH_PUBLISH_TOKEN }}
+      GITEA_TAP_TOKEN: ${{ secrets.GITEA_TAP_TOKEN }}
       VERSION: ${{ needs.plan.outputs.cli_version }}
     steps:
       - uses: actions/checkout@v4
@@ -344,14 +358,46 @@ jobs:
           done
           echo "✓ release $tag published with its artefacts"
 
+      # ── The tap is OURS, and GitHub is where Homebrew reads it ────────────
+      #
+      # Same shape as the rest of this repository: the instance holds the
+      # history, GitHub is the publishing surface. The clone comes from
+      # `cloud/homebrew-tap` here, the formula is written, and the commit is
+      # pushed to GitHub FIRST — Homebrew is the consumer and must not be left
+      # half-updated — then back to this instance.
+      #
+      # ⚠ GITHUB'S TAP IS NOT A PROTECTED BRANCH, unlike `ondrift/cloud`. Its
+      # main takes a plain push, which is why the branch can be pushed here and
+      # only the tag can be pushed there. Do not generalise one to the other.
+      #
+      # A SECOND CREDENTIAL, and it is worth naming why. `secrets.GITHUB_TOKEN`
+      # is scoped by Gitea to the repository owning this workflow, so it 404s on
+      # `cloud/homebrew-tap`. Cross-repository access on this instance needs its
+      # own token, the same way the platform's suites need TESTS_REPO_TOKEN.
+      - name: the tap credential is present
+        run: |
+          set -euo pipefail
+          if [ -z "${GITEA_TAP_TOKEN:-}" ]; then
+            echo "::error::GITEA_TAP_TOKEN is not set on this repository."
+            echo "  The formula is written into cloud/homebrew-tap here and pushed to"
+            echo "  $GH_TAP from there. secrets.GITHUB_TOKEN cannot reach another"
+            echo "  repository on this instance — Gitea scopes it to the workflow's own."
+            exit 1
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+                   -H "Authorization: token $GITEA_TAP_TOKEN" \
+                   "$GITEA_API/repos/$GITEA_TAP")
+          [ "$code" = "200" ] || { echo "::error::the tap token cannot read $GITEA_TAP (HTTP $code) — 404 here means not permitted at least as often as absent"; exit 1; }
+          echo "✓ the tap token can reach $GITEA_TAP"
+
       - name: Update the Homebrew formula
         run: |
           set -euo pipefail
-          # HTTPS with the token, not the old multi-line deploy key. A secret
-          # split across lines is not masked in a job log — Gitea matches a
-          # secret by its literal value, which does not survive the split — so
-          # the key would have been printed in full.
-          git clone -q "https://x-access-token:${GH_TOKEN}@github.com/${GH_TAP}.git" /tmp/tap
+          # HTTPS with a token, not a deploy key. A secret split across lines is
+          # not masked in a job log — Gitea matches a secret by its literal
+          # value, which does not survive the split — so a key would be printed
+          # in full.
+          git clone -q "https://${GITEA_TAP_TOKEN}@${GITEA_HOST}/${GITEA_TAP}.git" /tmp/tap
 
           sha() { grep " drift_${VERSION}_$1.tar.gz\$" cli/dist/checksums.txt | awk '{print $1}'; }
           base="https://github.com/${GH_REPO}/releases/download/cli%2F${VERSION}"
@@ -401,9 +447,23 @@ jobs:
           git config user.name "drift-ci"
           git config user.email "isrand@protonmail.com"
           git add Formula/drift.rb
-          git commit -q -m "drift ${VERSION}"
-          git push origin HEAD:main
-          echo "✓ formula updated to ${VERSION}"
+          # NOTHING TO COMMIT IS A REAL CASE, not an error: a re-run after a
+          # partial failure regenerates a byte-identical formula. `git commit`
+          # exits non-zero on an empty diff and `set -e` would end the job
+          # there, reporting a failure for work that was already done.
+          if git diff --cached --quiet; then
+            echo "  formula already at ${VERSION} — nothing to commit"
+          else
+            git commit -q -m "drift ${VERSION}"
+          fi
+
+          # GITHUB FIRST. Homebrew is the consumer; the instance is the mirror,
+          # and a mirror that is briefly ahead is a smaller problem than a tap
+          # that points at a release nobody can install.
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GH_TAP}.git" HEAD:main
+          echo "✓ formula on $GH_TAP at ${VERSION}"
+          git push -q origin HEAD:main
+          echo "✓ formula on $GITEA_TAP at ${VERSION}"
 
       # ── The Gitea tag goes LAST, and that is what makes it mean something ──
       # Its presence says "this version is fully published on GitHub". A run
