@@ -264,10 +264,34 @@ jobs:
           [ "$got" = "$VERSION" ] || { echo "✗ binary says '$got', tag is '$VERSION'"; exit 1; }
           echo "✓ binary reports $got"
 
-      # ── GitHub first, and completely ──────────────────────────────────────
-      # The commit has to be there before the tag, or the module proxy resolves
-      # a tag pointing at an object GitHub does not have.
-      - name: Push main and the tag to GitHub
+      # ── THE TAG, AND DELIBERATELY NOT THE BRANCH ──────────────────────────
+      #
+      # This pushed `HEAD:main` first, on the reasoning that the commit must
+      # exist before the tag can point at it. GitHub refuses that push and
+      # always will:
+      #
+      #   remote: error: GH006: Protected branch update failed for refs/heads/main
+      #   remote: - Commits must have verified signatures. Found 2 violations
+      #   remote: - 4 of 4 required status checks are expected
+      #
+      # Both are permanent rather than fixable here. Every merge commit this
+      # instance creates is UNSIGNED, so the signature rule rejects each one
+      # forever; and the required checks are a deadlock, because they cannot run
+      # until the commit is on GitHub and the commit cannot land until they pass.
+      #
+      # IT IS ALSO UNNECESSARY. A tag push carries the commit objects the tag
+      # needs, and the module proxy resolves by tag ref — `@v0.9.1` records
+      # `"Ref":"refs/tags/sdk/v0.9.1"`, not a branch. Homebrew fetches release
+      # assets by URL and never looks at a branch either. So every consumer path
+      # is satisfied by the tag alone.
+      #
+      # ⚠ WHAT THIS COSTS: GitHub's `main` drifts behind this instance's. The
+      # code is reachable — by tag, and in every release — but somebody browsing
+      # the default branch on github.com sees an older tree. Closing that gap
+      # means either signing this instance's merge commits with a key GitHub
+      # trusts, or dropping the signature requirement there. Both are decisions
+      # about GitHub, not something a release job should paper over.
+      - name: Push the tag to GitHub
         run: |
           set -euo pipefail
           tag="cli/${VERSION}"
@@ -276,10 +300,9 @@ jobs:
           # The token goes in the URL's credential slot, which git does not log,
           # rather than into a stored credential helper on a shared runner.
           git remote add github "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
-          git push github HEAD:main
           git tag "$tag"
           git push github "$tag"
-          echo "✓ main and $tag are on $GH_REPO"
+          echo "✓ $tag is on $GH_REPO, with the objects it points at"
 
       - name: Create the GitHub release and upload the artefacts
         run: |
@@ -426,14 +449,17 @@ jobs:
       # and the tag is the whole release. Registry publishing (npm, PyPI,
       # RubyGems, crates.io) is still a separate manual step — note that
       # drift-sdk on PyPI is taken by an unrelated project.
-      - name: Push main and the tag to GitHub, then release
+      # The tag and not the branch, for the reasons spelled out in the CLI job:
+      # GitHub's protected main refuses every unsigned merge commit this
+      # instance makes, the required checks deadlock against their own trigger,
+      # and the module proxy resolves by tag ref anyway.
+      - name: Push the tag to GitHub, then release
         run: |
           set -euo pipefail
           tag="sdk/${VERSION}"
           git config user.name "drift-ci"
           git config user.email "isrand@protonmail.com"
           git remote add github "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
-          git push github HEAD:main
           git tag "$tag"
           git push github "$tag"
 
