@@ -190,7 +190,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GH_PUBLISH_TOKEN }}
-      GITEA_TAP_TOKEN: ${{ secrets.GITEA_TAP_TOKEN }}
+      # ⚠ `TAP_TOKEN`, and it cannot be called anything starting with `GITEA_`.
+      # Gitea reserves that prefix for its own variables and refuses to store a
+      # secret using it, the same way GitHub reserves `GITHUB_`. The refusal
+      # happens when the secret is SAVED, so a workflow naming one reads as
+      # correct right up until the job reports it unset.
+      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
       VERSION: ${{ needs.plan.outputs.cli_version }}
     steps:
       - uses: actions/checkout@v4
@@ -377,15 +382,18 @@ jobs:
       - name: the tap credential is present
         run: |
           set -euo pipefail
-          if [ -z "${GITEA_TAP_TOKEN:-}" ]; then
-            echo "::error::GITEA_TAP_TOKEN is not set on this repository."
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "::error::TAP_TOKEN is not set on this repository."
             echo "  The formula is written into cloud/homebrew-tap here and pushed to"
             echo "  $GH_TAP from there. secrets.GITHUB_TOKEN cannot reach another"
             echo "  repository on this instance — Gitea scopes it to the workflow's own."
+            echo ""
+            echo "  The name may NOT start with GITEA_ — that prefix is reserved and the"
+            echo "  secret is refused when saved, not when read."
             exit 1
           fi
           code=$(curl -s -o /dev/null -w '%{http_code}' \
-                   -H "Authorization: token $GITEA_TAP_TOKEN" \
+                   -H "Authorization: token $TAP_TOKEN" \
                    "$GITEA_API/repos/$GITEA_TAP")
           [ "$code" = "200" ] || { echo "::error::the tap token cannot read $GITEA_TAP (HTTP $code) — 404 here means not permitted at least as often as absent"; exit 1; }
           echo "✓ the tap token can reach $GITEA_TAP"
@@ -397,7 +405,11 @@ jobs:
           # not masked in a job log — Gitea matches a secret by its literal
           # value, which does not survive the split — so a key would be printed
           # in full.
-          git clone -q "https://${GITEA_TAP_TOKEN}@${GITEA_HOST}/${GITEA_TAP}.git" /tmp/tap
+          # http, NOT https. `gitea:3000` is the port the instance publishes on
+          # the docker0 address for job containers, served in the clear inside
+          # the box — TLS is terminated by the host's Caddy on 443, which a job
+          # container cannot reach. `https://gitea:3000` fails at the handshake.
+          git clone -q "http://${TAP_TOKEN}@${GITEA_HOST}/${GITEA_TAP}.git" /tmp/tap
 
           sha() { grep " drift_${VERSION}_$1.tar.gz\$" cli/dist/checksums.txt | awk '{print $1}'; }
           base="https://github.com/${GH_REPO}/releases/download/cli%2F${VERSION}"
