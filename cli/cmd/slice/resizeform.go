@@ -325,13 +325,35 @@ func postResize(payload map[string]any) (ok bool, refusal *resizeRefusal, err er
 	return false, nil, fmt.Errorf("resize refused: %s", generic.Error)
 }
 
+// noTTYResize is the refusal both form entry points give when there is no
+// terminal to draw on.
+//
+// IT NAMES --dump AND --config BECAUSE THEY ARE THE NON-INTERACTIVE RESIZE.
+// This said there was no such thing, two flags away from the loop that is
+// exactly one — so the caller who had already hit the only wall this message
+// exists to explain was told the capability did not exist, and a CI job went
+// looking for a workaround it did not need.
+//
+// One function for one refusal: the two entry points had drifted into two
+// different messages for one condition, and the shorter one said nothing at
+// all about what to do instead.
+func noTTYResize(name string) error {
+	return fmt.Errorf(
+		"drift slice resize draws a form, which needs a terminal.\n"+
+			"  In CI or a script, --dump and --config are the same change:\n"+
+			"    drift slice resize %s --dump > shape.json\n"+
+			"    $EDITOR shape.json\n"+
+			"    drift slice resize %s --config shape.json\n"+
+			"  A resize that moves the price or takes something away is still refused\n"+
+			"  until answered — with --acknowledge-monthly-cents and --confirm. Each\n"+
+			"  refusal says which it needs, and what the figure or the loss is.",
+		name, name)
+}
+
 // resizeFromPrompts opens the form on a slice and applies what comes back.
 func resizeFromPrompts(name string, billingMonths int) error {
 	if !interactive() {
-		return fmt.Errorf(
-			"drift slice resize draws a form, which needs a terminal.\n" +
-				"  In CI or a script there is no non-interactive resize: a resize can " +
-				"reprice a slice or destroy what it holds, and both are answered at the form")
+		return noTTYResize(name)
 	}
 	if billingMonths < 1 {
 		billingMonths = 1
@@ -351,7 +373,7 @@ func resizeFromPrompts(name string, billingMonths int) error {
 // still has to be applied. Exported because that caller is another package.
 func ResizeWithConfig(name string, cfg map[string]any, billingMonths int) error {
 	if !interactive() {
-		return fmt.Errorf("drift slice resize draws a form, which needs a terminal")
+		return noTTYResize(name)
 	}
 	if billingMonths < 1 {
 		billingMonths = 1
