@@ -57,11 +57,11 @@ drift-sdk = { git = "https://github.com/ondrift/cloud/sdk" }
 
 ## Writing a function
 
-A Drift Atomic function is a **named handler your project's Driftfile declares**. Nothing in the source marks it — the CLI reads the manifest and generates the program's entry point, so you don't write `main()` or call `run()` yourself (Ruby is the one exception; see below).
+A Drift Atomic function is a **named handler your project's Driftfile declares**. Nothing in the source marks it — the CLI reads the manifest and generates the program's entry point, so you don't write `main()` or call `run()` yourself. That holds in all six languages, Ruby included: the generated wrapper requires your file and then calls `run()` itself, so a `run()` in your own file is executed at import time and reads the request before the wrapper can.
 
 - **Declaration** — one entry under `atomic.functions`, naming the trigger (`name: post:items`, or `name: queue:orders` for a queue consumer), the `handler` that serves it, and the `memory` it books. Path params use `:name` (e.g. `reviewer/decision/:id`).
 - **Arguments** — `(req)` for a request with no body (GET); `(body, req)` when there's a request body or queue payload.
-- **Return** — `(status, message, payload)`, with an optional 4th `headers` map. It's a tuple in Go/Python/Rust, an array in Node/PHP, a hash in Ruby.
+- **Return** — `(status, message, payload)`: a tuple in Go/Python/Rust, an array in Node/Ruby/PHP. An optional 4th `headers` map rides with it in every language except Rust, whose tuple is fixed at three so that a fourth value cannot stop existing handlers compiling; there, call `drift_sdk::set_response_header(name, value)` and the return stays three.
 - **Request** — read path params from `req.params`, query from `req.query`, headers from `req.headers`, raw body from `req.body`.
 - **Streaming** — set `stream: sse` or `stream: ws` on the entry; the handler receives an extra `emit` (SSE) or `conn` (WebSocket) argument.
 
@@ -221,10 +221,9 @@ require "drift"   # requires Ruby 3.0+
 # Declared in the Driftfile as: name get:reviewer/queue, handler get_reviewer_queue
 def get_reviewer_queue(req)
   rows = Drift::Backbone::Nosql.collection("submissions").list
-  { "status" => 200, "message" => "OK", "payload" => { "count" => rows.length } }
+  [200, "OK", { "count" => rows.length }]   # a 3-element ARRAY, not a hash
 end
-
-Drift.run(method(:get_reviewer_queue))   # Ruby: end the file with this
+# No Drift.run here: the generated wrapper calls it.
 ```
 
 **Backbone** — the sole entrypoint for state (`Drift::Backbone::*`)
