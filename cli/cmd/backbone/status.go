@@ -14,12 +14,10 @@ func statusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show backbone health and resource usage",
+		// The active-slice check that used to sit here now covers the whole
+		// group — see backbone.go. One owner, and seven verbs that were missing
+		// it get it for free.
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := common.RequireActiveSlice()
-			if err != nil {
-				return err
-			}
-
 			resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/backbone/admin/status", nil)
 			if err != nil {
 				return common.TransportError("check backbone status", err)
