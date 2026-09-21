@@ -8,10 +8,29 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+// NotLoggedInHints is what DRIFT-1011 tells a caller with no session to type.
+//
+// `drift account create`, NOT `signup`. The account group registers create,
+// login, whoami, list, use, mfa, token, member, export, reset-password, audit
+// and delete — there has never been a `signup`. So the one user who most needs
+// working advice, on the first failure a new install hits, was sent to
+// `unknown command "signup" for "drift account"`.
+//
+// DECLARED HERE RATHER THAN INLINED so cmd/drift's TestPrintedHintsNameRealCommands
+// can resolve every command it names against the real tree. That check already
+// existed and could not see this text, because a string printed from inside a
+// closure is not a call — which is exactly how a suggestion naming nothing
+// survived in the CLI's most-reached error.
+var NotLoggedInHints = []string{
+	"you're not logged in. Run `drift account login` (or `drift account create` if you don't have an account yet).",
+	"  Scripting this? Mint a token with `drift account token create` and put it in " + TokenEnv + ".",
+}
 
 func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request, error) {
 	return newAuthenticatedRequestCtx(context.Background(), method, url, body)
@@ -38,10 +57,7 @@ func newAuthenticatedRequestCtx(ctx context.Context, method, url string, body io
 			// The first failure a new install hits, and it used to surface as the
 			// raw filesystem error — an absolute path to a session file the user has
 			// never heard of, for the condition "you have not logged in yet".
-			return nil, errors.New(withCode(
-				"you're not logged in. Run `drift account login` (or `drift account signup` if you don't have an account yet)."+
-					"\n  Scripting this? Mint a token with `drift account token create` and put it in "+TokenEnv+".",
-				"DRIFT-1011"))
+			return nil, errors.New(withCode(strings.Join(NotLoggedInHints, "\n"), "DRIFT-1011"))
 		}
 		token = sessionToken
 	}

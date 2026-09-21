@@ -34,6 +34,43 @@ var sentinelRe = map[string]*regexp.Regexp{
 	"rust":   regexp.MustCompile(`^[ \t]*pub[ \t]+fn[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(`),
 }
 
+// discoveryRe is what nearMiss scans with, and it is DELIBERATELY LOOSER than
+// sentinelRe.
+//
+// sentinelRe encodes findability — exported in Go, `pub` in Rust, a named
+// function in Node — because that is what the generated entry point needs to
+// import the handler. Using it to DIAGNOSE a miss is what broke the diagnosis:
+// the handler a user most often gets wrong is one that is right there and
+// merely unexported, and an unexported callable is invisible to the pattern
+// that enforces exportedness. So the hint that exists for "a lowercase Go
+// function" could never fire on one — it reported that the directory declared
+// nothing at all, which is the opposite of true and sends the reader looking
+// for a missing file.
+//
+// Finding it and refusing it are two different jobs. This one finds; the caller
+// still refuses, and the shape line above still says what would have worked.
+//
+// A language whose sentinel already matches every declaration (python, ruby,
+// php — none of them has an exportedness rule) needs no entry and falls back.
+var discoveryRe = map[string]*regexp.Regexp{
+	"go":   regexp.MustCompile(`^[ \t]*func[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(`),
+	"rust": regexp.MustCompile(`^[ \t]*(?:pub[ \t]+)?fn[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(`),
+	// Named function, or the arrow/function expression bound to a const that
+	// the shape line warns about. A binding that is not callable (`const n = 5`)
+	// matches neither alternative, so the list stays a list of callables.
+	"node": regexp.MustCompile(`^[ \t]*(?:(?:async[ \t]+)?function[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)` +
+		`|(?:const|let|var)[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*=[ \t]*(?:async[ \t]+)?(?:\(|function\b))`),
+}
+
+// discoveryPattern returns the pattern to ENUMERATE a language's callables,
+// falling back to the sentinel where the two are the same.
+func discoveryPattern(lang string) *regexp.Regexp {
+	if rx, ok := discoveryRe[lang]; ok {
+		return rx
+	}
+	return sentinelRe[lang]
+}
+
 // callableShape is what a findable callable looks like per language, quoted
 // back at the user when the one they named is absent. Naming the shape is the
 // whole point: "not found" is not actionable when the function is right there
@@ -181,7 +218,7 @@ func FindCallable(dir, handler string) (Callable, error) {
 			"%s declares a function served by %q, and no such callable is in %s.\n"+
 				"       In %s a handler looks like:\n         %s\n"+
 				"       %s",
-			"the Driftfile", handler, dir, lang, callableShape[lang], nearMiss(dir, rx, handler, files))
+			"the Driftfile", handler, dir, lang, callableShape[lang], nearMiss(dir, lang, handler, files))
 	default:
 		return Callable{}, fmt.Errorf(
 			"%q is declared in %d files in %s (%s) — a handler has to be unique within its "+
@@ -199,8 +236,19 @@ func callableNames(path string, rx *regexp.Regexp) ([]string, error) {
 	}
 	var names []string
 	for _, line := range strings.Split(string(data), "\n") {
-		if m := rx.FindStringSubmatch(line); len(m) >= 2 {
-			names = append(names, m[1])
+		m := rx.FindStringSubmatch(line)
+		if len(m) < 2 {
+			continue
+		}
+		// The FIRST NON-EMPTY group, not group 1: a pattern with alternatives
+		// (Node's named-function vs const-bound-arrow) leaves every branch it
+		// did not take empty, and taking group 1 blindly would record "" for
+		// half the matches and report a callable with no name.
+		for _, g := range m[1:] {
+			if g != "" {
+				names = append(names, g)
+				break
+			}
 		}
 	}
 	return names, nil
@@ -212,7 +260,11 @@ func callableNames(path string, rx *regexp.Regexp) ([]string, error) {
 // differently — a lowercase Go function, a `handle_order` written `handleOrder`
 // in the manifest. Listing what the directory does declare costs one pass over
 // files already read and answers the question the bare error leaves open.
-func nearMiss(dir string, rx *regexp.Regexp, handler string, files []string) string {
+func nearMiss(dir, lang, handler string, files []string) string {
+	rx := discoveryPattern(lang)
+	if rx == nil {
+		return ""
+	}
 	var all []string
 	for _, f := range files {
 		names, err := callableNames(filepath.Join(dir, f), rx)
