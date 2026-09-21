@@ -481,13 +481,20 @@ func Manifest(lang, name string) (string, string) {
 		return "go.mod", fmt.Sprintf("module atomic/%s\n\ngo 1.26.2\n", name)
 	// THE REPOSITORY IS `ondrift/cloud`. The SDK is a directory inside it, so
 	// each language reaches it by that language's own means — pip's
-	// `#subdirectory=`, bundler's `glob:`, composer's and npm's root manifests.
+	// `#subdirectory=`, bundler's `glob:`, composer's and npm's root manifests,
+	// and cargo's lookup of a named package anywhere in the clone.
 	//
 	// Three of these named `github.com/ondrift/cloud/sdk`, which is not an
 	// address: a GitHub repository is owner/repo, and that is three segments. It
 	// 404s, so a scaffolded Python, Ruby or PHP project shipped a dependency
 	// nothing could install. The fourth named `ondrift/sdk`, a repository that no
 	// longer exists.
+	//
+	// RUST CARRIED THE SAME BAD ADDRESS THROUGH THAT PASS, in rustCargoToml
+	// below and in both cargo_template.toml copies, so every scaffolded Rust
+	// function failed to build. Cargo reports it as `unexpected http status
+	// code: 404` from inside a clone, naming neither the URL nor the dependency,
+	// which is why it read as a toolchain problem for as long as it did.
 	case "python":
 		return "requirements.txt", "drift-sdk @ git+https://github.com/ondrift/cloud.git#subdirectory=sdk/python\n"
 	case "node":
@@ -531,7 +538,7 @@ path = "src/main.rs"
 [dependencies]
 # Calling an https:// URL from http_request()? Add the "tls" feature:
 #
-#   drift-sdk = { git = "https://github.com/ondrift/cloud/sdk", features = ["tls"] }
+#   drift-sdk = { git = "https://github.com/ondrift/cloud", features = ["tls"] }
 #
 # It is off here because it pulls in ring, which is C and assembly: the build
 # then needs a musl C compiler, and it costs minutes rather than seconds. Drift
@@ -541,7 +548,7 @@ path = "src/main.rs"
 # Plain http:// to the loopback Backbone needs none of this, which is why a new
 # function starts without it. Without the feature an https:// call comes back as
 # status 0 with the reason in the body, rather than failing at build time.
-drift-sdk = { git = "https://github.com/ondrift/cloud/sdk" }
+drift-sdk = { git = "https://github.com/ondrift/cloud" }
 serde_json = "1"
 
 [profile.release]

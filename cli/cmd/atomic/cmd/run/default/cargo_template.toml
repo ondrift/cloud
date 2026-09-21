@@ -3,5 +3,9 @@ name = "atomic-function"
 edition = "2021"
 
 [dependencies]
-drift-sdk = { git = "https://github.com/ondrift/cloud/sdk" }
+# The REPOSITORY, not the sdk/ directory inside it. A cargo git dependency
+# clones a repo and finds the named package anywhere in it; pointing at a
+# subdirectory is a path that no repository exists at, and cargo reports it as
+# `unexpected http status code: 404` from deep inside a clone.
+drift-sdk = { git = "https://github.com/ondrift/cloud" }
 serde_json = "1"
