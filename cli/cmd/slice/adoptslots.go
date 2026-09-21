@@ -40,6 +40,7 @@ package slice
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -83,15 +84,27 @@ func AdoptIdleSlots(sliceName string, want []string, keep map[string]bool) ([]Sl
 	wanted := append([]string(nil), want...)
 	sort.Strings(wanted)
 
-	// An idle slot is one the manifest does not name and that is not itself
-	// something we are trying to create.
+	// An idle slot is a PLACEHOLDER the slice was provisioned with and nothing
+	// has taken over yet — `get:slot-3`, in the platform's own vocabulary.
+	//
+	// It used to be "any slot this manifest does not name", which is the same
+	// thing only on a slice serving ONE project. A slice may serve several —
+	// the apply's own notice says so in as many words — and another project's
+	// live function is not named by this Driftfile, so it looked idle and the
+	// rename aimed at it. The platform refused, correctly, as a change that
+	// takes something away, and the caller fell back to its original message:
+	//
+	//	your Driftfile names a resource that slice "x" does not have
+	//
+	// on a slice holding two spare slots. The remedy it named, the resize form,
+	// would have shown the slots sitting there.
 	var idle []int
 	for i, s := range slots {
 		key := bookingKey(s.Method, s.Route)
-		if keep[key] {
+		if keep[key] || contains(wanted, key) {
 			continue
 		}
-		if contains(wanted, key) {
+		if !isPlaceholderSlot(s.Route) {
 			continue
 		}
 		idle = append(idle, i)
@@ -181,6 +194,17 @@ func functionList(cfg map[string]any) ([]any, error) {
 	}
 	return list, nil
 }
+
+// placeholderSlot matches the routes a slice is PROVISIONED with — `slot-1`,
+// `slot-12` — and nothing else.
+//
+// A tenant who genuinely routes `slot-4` keeps it: this only ever narrows what
+// may be renamed, so the failure it can cause is the original refusal naming
+// the resize form, which is a true statement and was the behaviour before.
+var placeholderSlot = regexp.MustCompile(`^slot-\d+$`)
+
+// isPlaceholderSlot reports whether a route is one of those placeholders.
+func isPlaceholderSlot(route string) bool { return placeholderSlot.MatchString(route) }
 
 // bookingKey is how a function is named everywhere a person sees one.
 func bookingKey(method, route string) string {

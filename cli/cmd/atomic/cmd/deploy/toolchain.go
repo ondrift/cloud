@@ -208,10 +208,11 @@ func rustBuildImage(wantsTLS bool) (string, error) {
 }
 
 // runRustContainer compiles the staged Rust crate to a static musl binary inside
-// the rust image. The musl target's std is added on demand (cached in the mounted
-// RUSTUP_HOME); the SDK is pure-Rust by default, so rustc's self-contained musl
-// linking needs no external C toolchain. A crate enabling `tls` is the exception
-// and gets an image carrying one — see rustBuildImage.
+// the rust image. The toolchain and the musl target's std both live in the
+// mounted RUSTUP_HOME, seeded from the image the first time (see the script);
+// the SDK is pure-Rust by default, so rustc's self-contained musl linking needs
+// no external C toolchain. A crate enabling `tls` is the exception and gets an
+// image carrying one — see rustBuildImage.
 func runRustContainer(stageDir, target string, wantsTLS bool) ([]byte, error) {
 	if err := ensureDocker(); err != nil {
 		return nil, err
@@ -224,8 +225,33 @@ func runRustContainer(stageDir, target string, wantsTLS bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// One container, one shell: add the target (idempotent, cached) then build.
-	script := fmt.Sprintf("set -e; rustup target add %s; cargo build --release --target %s", target, target)
+	// SEED THE CACHED RUSTUP FROM THE IMAGE ON FIRST USE, then add the target
+	// and build — one container, one shell.
+	//
+	// RUSTUP_HOME points at the mounted cache below because the build runs as
+	// the host uid (dockerUserArgs) and the image's own /usr/local/rustup is
+	// root-owned, so `rustup target add` cannot write there. Redirecting it
+	// also took the TOOLCHAIN away: a cold cache is an empty directory, rustup
+	// finds nothing installed in it, and every Rust deploy died with
+	//
+	//	error: rustup could not choose a version of rustup to run, because one
+	//	wasn't specified explicitly, and no default is configured.
+	//
+	// on every machine, because the cache is empty exactly once per machine
+	// and nothing else ever filled it. The hint printed underneath sent people
+	// to DRIFT_BUILD_IMAGE_RUST, which cannot fix an empty RUSTUP_HOME.
+	//
+	// Copied from the image rather than installed with `rustup toolchain
+	// install stable`, so the IMAGE stays the one source of truth for which
+	// toolchain this compiles with — installing `stable` would pin whatever
+	// that meant on the day of the first build and drift from the pinned tag
+	// silently. Measured at ~15s and ~636 MB of cache once, nothing after.
+	script := fmt.Sprintf(
+		"set -e; "+
+			"[ -d /cache/rustup/toolchains ] || { mkdir -p /cache/rustup; cp -a /usr/local/rustup/. /cache/rustup/; }; "+
+			"rustup target add %s; "+
+			"cargo build --release --target %s",
+		target, target)
 	args := []string{
 		"run", "--rm",
 		"--platform", targetPlatform(),
