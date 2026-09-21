@@ -6,6 +6,7 @@ import (
 
 	account "github.com/ondrift/cloud/cli/cmd/account"
 	atomic_cmd_new "github.com/ondrift/cloud/cli/cmd/atomic/cmd/new"
+	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
 )
@@ -23,6 +24,11 @@ import (
 // ever does to someone. It grows as other runtime-printed suggestions are found.
 var typeableHints = map[string][]string{
 	"the post-signup banner (drift account create)": account.FirstRunHints,
+	// The first failure a new install hits, and the most-reached error in the
+	// CLI. It told people to run `drift account signup`, which has never been a
+	// command — caught by the flow suite (IDN-104), not by this test, because
+	// the text was inlined where nothing could ask about it.
+	"the not-logged-in error (DRIFT-1011)": common.NotLoggedInHints,
 }
 
 func TestPrintedHintsNameRealCommands(t *testing.T) {
@@ -103,15 +109,26 @@ func TestSurveyOptionsAreAcceptedByTheirOwnValidation(t *testing.T) {
 	}
 }
 
-// quotedInvocations returns the single-quoted `drift …` commands in a printed
-// line. The hints quote what to type precisely so it can be lifted back out.
+// quotedInvocations returns the quoted `drift …` commands in a printed line.
+// The hints quote what to type precisely so it can be lifted back out.
+//
+// BOTH delimiters, because the CLI uses both: banners quote with ' and error
+// text with backticks. Checking only one is how an unrunnable suggestion sat in
+// the not-logged-in error while this test passed.
+//
+// Each delimiter is scanned independently, and a span only counts when it
+// begins with the binary's name. That guard is load-bearing for the apostrophe:
+// "you're not logged in…" splits on ' into spans that are ordinary prose, and
+// none of them starts with "drift ".
 func quotedInvocations(line string) []string {
 	var out []string
-	parts := strings.Split(line, "'")
-	// Quoted spans are the odd-indexed parts: a'B'c'D'e.
-	for i := 1; i < len(parts); i += 2 {
-		if strings.HasPrefix(parts[i], "drift ") || parts[i] == "drift" {
-			out = append(out, parts[i])
+	for _, delim := range []string{"'", "`"} {
+		parts := strings.Split(line, delim)
+		// Quoted spans are the odd-indexed parts: a'B'c'D'e.
+		for i := 1; i < len(parts); i += 2 {
+			if strings.HasPrefix(parts[i], "drift ") || parts[i] == "drift" {
+				out = append(out, parts[i])
+			}
 		}
 	}
 	return out
