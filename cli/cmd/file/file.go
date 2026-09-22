@@ -46,7 +46,7 @@ func GetCmd() *cobra.Command {
 		Example: "  drift file lint\n  drift file apply\n  drift file simulate\n  drift file logs",
 		GroupID: "project",
 	}
-	cmd.AddCommand(getLintCmd(), getExplainCmd(), getFmtCmd(), getNewCmd())
+	cmd.AddCommand(getLintCmd(), getExplainCmd(), getResolveCmd(), getFmtCmd(), getNewCmd())
 	cmd.AddCommand(project.Verbs()...)
 
 	// The two verbs that changed spelling in the move. Each keeps working and
