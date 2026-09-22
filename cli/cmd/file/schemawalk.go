@@ -357,20 +357,78 @@ func fieldsOf(root, n schemaNode) []string {
 	return append(required, optional...)
 }
 
-// isRequired reports whether key is required on this node.
-func isRequired(root, n schemaNode, key string) bool {
+// requiredSets returns the ALTERNATIVE sets of keys a node requires.
+//
+// A FOURTH CONSTRUCT, and the one that made this command say the opposite of
+// the truth. `atomicEntry` carries no top-level `required` at all: it has an
+// anyOf of two branches, the current `[route, method, handler]` and the retired
+// `[name, memory, handler]`, and a function satisfies either. A walker reading
+// only `required` finds none and renders `atomic.functions` with nothing marked
+// — under a description that says "Required, and never inferred".
+//
+// Each branch is returned with the node's own list folded in, because a schema
+// may state both. One set means ordinary requirements; several mean the reader
+// has a choice and has to be shown it rather than told nothing.
+func requiredSets(root, n schemaNode) [][]string {
 	n = flatten(root, n, 0)
 	if str(n, "type") == "array" {
 		if items := sub(n, "items"); items != nil {
 			n = flatten(root, items, 0)
 		}
 	}
-	for _, r := range strList(n, "required") {
-		if r == key {
-			return true
+	base := strList(n, "required")
+
+	var sets [][]string
+	for _, key := range []string{"anyOf", "oneOf"} {
+		raw, ok := n[key].([]any)
+		if !ok {
+			continue
+		}
+		for _, b := range raw {
+			bm, ok := b.(map[string]any)
+			if !ok {
+				continue
+			}
+			br := strList(flatten(root, schemaNode(bm), 0), "required")
+			if len(br) == 0 {
+				continue
+			}
+			sets = append(sets, dedupeStrings(append(append([]string{}, base...), br...)))
 		}
 	}
-	return false
+	if len(sets) == 0 {
+		if len(base) == 0 {
+			return nil
+		}
+		return [][]string{base}
+	}
+	return sets
+}
+
+// isRequired reports whether key is required NO MATTER WHICH branch is taken.
+//
+// Membership in every set, not in any: `handler` is in both of atomicEntry's
+// branches and is genuinely mandatory, while `route` is required only if you
+// spell the function the current way. Marking `route` required would be as
+// wrong as marking nothing — the alternatives are printed as a block instead.
+func isRequired(root, n schemaNode, key string) bool {
+	sets := requiredSets(root, n)
+	if len(sets) == 0 {
+		return false
+	}
+	for _, s := range sets {
+		found := false
+		for _, r := range s {
+			if r == key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // child returns the subschema for one key, walking THROUGH an array to its

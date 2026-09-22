@@ -197,6 +197,20 @@ func printExplain(root schemaNode, path string, node schemaNode, recursive bool)
 		if multi {
 			header = fmt.Sprintf("FIELDS (form %d of %d, %s):", i+1, len(forms), typeName(root, form))
 		}
+		// THE ALTERNATIVES, when there is a choice to make. A node whose
+		// requirements live in anyOf branches has no single answer to "what must
+		// I write", and printing only the keys common to every branch would tell
+		// someone that `handler` is mandatory while saying nothing about having
+		// to pick a trigger spelling at all.
+		if sets := requiredSets(root, form); len(sets) > 1 {
+			fmt.Printf("\nREQUIRED — any one of these sets:\n")
+			for _, s := range sets {
+				sorted := append([]string(nil), s...)
+				sort.Strings(sorted)
+				fmt.Printf("   %s\n", strings.Join(sorted, " + "))
+			}
+		}
+
 		fmt.Printf("\n%s\n", header)
 		for _, f := range fields {
 			c, ok := child(root, form, f)

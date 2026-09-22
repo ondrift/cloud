@@ -206,6 +206,56 @@ func TestMissReportsTheLevelItReached(t *testing.T) {
 
 // The suggester must stay quiet rather than offer the alphabetically luckiest
 // key — a wrong suggestion sends someone to edit a field that is not theirs.
+// The fourth construct, and the one that made the command say the opposite of
+// the truth: requirements carried in anyOf branches rather than in `required`.
+//
+// The real atomicEntry has no top-level required at all — it is
+// `[route, method, handler]` OR `[name, memory, handler]` — so a walker reading
+// only `required` renders every function field as optional, under a description
+// that says "Required, and never inferred".
+func TestAnyOfRequiredBranchesAreBothShown(t *testing.T) {
+	root, err := parseSchema([]byte(`{
+      "properties": { "fn": { "$ref": "#/definitions/entry" } },
+      "definitions": {
+        "entry": {
+          "type": "object",
+          "anyOf": [
+            { "required": ["route", "method", "handler"] },
+            { "required": ["name", "memory", "handler"] }
+          ],
+          "properties": {
+            "route":   { "type": "string" },
+            "method":  { "type": "string" },
+            "name":    { "type": "string" },
+            "memory":  { "type": "string" },
+            "handler": { "type": "string" }
+          }
+        }
+      }
+    }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := mustNode(t, root, "fn")
+
+	sets := requiredSets(root, node)
+	if len(sets) != 2 {
+		t.Fatalf("requiredSets = %v, want both branches", sets)
+	}
+
+	// Required in EVERY branch, so genuinely mandatory.
+	if !isRequired(root, node, "handler") {
+		t.Error("handler is required in both branches and must be marked")
+	}
+	// Required in ONE branch. Marking it would tell someone to write both
+	// spellings; marking nothing would tell them to write neither.
+	for _, conditional := range []string{"route", "method", "name", "memory"} {
+		if isRequired(root, node, conditional) {
+			t.Errorf("%s is required in only one branch and must not be marked mandatory", conditional)
+		}
+	}
+}
+
 func TestNearestDeclinesWhenNothingIsClose(t *testing.T) {
 	if got := nearest([]string{"queues", "secrets", "nosql"}, "kubernetes"); got != "" {
 		t.Errorf("nearest = %q, want no suggestion", got)
