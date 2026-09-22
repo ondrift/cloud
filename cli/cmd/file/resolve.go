@@ -47,7 +47,7 @@ func getResolveCmd() *cobra.Command {
 		Long: "Resolves the manifest — applying an environment overlay if one is selected — " +
 			"and prints the shape it will provision. Offline; no account needed.\n\n" +
 			"For what a KEY means rather than what this file says, see `drift file explain`.",
-		Example: "  drift file resolve\n  drift file resolve --env staging\n  drift file resolve ./Driftfile",
+		Example:      "  drift file resolve\n  drift file resolve --env staging\n  drift file resolve ./Driftfile",
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
