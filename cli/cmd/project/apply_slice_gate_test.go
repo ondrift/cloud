@@ -170,6 +170,95 @@ func TestPlan_ReportsWhatIsMissingAndChangesNothing(t *testing.T) {
 	}
 }
 
+// A SLOT RENAME IS A CHANGE TO WHAT THE SLICE DECLARES, so an apply may not make
+// one on its own — it shows it and asks first.
+//
+// It used to rename and then report it, in the past tense, in the middle of a
+// deploy's output. A deploy is for what RUNS on a slice; the slice's own shape is
+// `drift slice resize`'s subject, and the only reason this repair lives here at
+// all is that re-pointing a slot the slice already holds costs nothing and
+// destroys nothing.
+//
+// Asserted on the RECORDER, not on the error: refusing while having already
+// posted the resize is exactly the failure that would read like a well-behaved
+// gate. Stdin is closed under `go test`, so the prompt reads empty — and empty
+// must mean no, because "nobody answered" is not agreement.
+func TestApply_ASlotRenameIsNotMadeWithoutAgreement(t *testing.T) {
+	rec := stubAPI(t, slotAdoptionStub)
+	applyWithOneFunction(t)
+
+	err := runApply(t)
+	if err == nil {
+		t.Fatal("apply continued past a slot rename nobody agreed to")
+	}
+	if n := rec.count("POST /ops/slice/resize"); n != 0 {
+		t.Errorf("apply reshaped the slice %d × without agreement — the question was "+
+			"asked after the fact", n)
+	}
+	// And it deployed nothing: the slice does not hold the slot the manifest
+	// names, so proceeding would deploy into a pool no invocation reaches.
+	if n := rec.count("POST /ops/atomic"); n != 0 {
+		t.Errorf("apply deployed %d function(s) into a slot the slice does not declare", n)
+	}
+}
+
+// --yes is the CI path: it skips the QUESTION, never the notice, and it is the
+// only way an unattended run may re-point a slot.
+//
+// This is the control for the test above — without it, deleting the adoption
+// entirely would keep that one green.
+func TestApply_YesAgreesToTheSlotRename(t *testing.T) {
+	rec := stubAPI(t, slotAdoptionStub)
+	applyWithOneFunction(t)
+
+	_ = runApplyYes(t)
+
+	if n := rec.count("POST /ops/slice/resize"); n != 1 {
+		t.Errorf("--yes issued %d resizes, want exactly 1 — the rename is what it agreed to", n)
+	}
+}
+
+// slotAdoptionStub is a slice holding ONE placeholder slot and nothing else, so a
+// manifest naming `get:hello` is one rename away from fitting. That is the
+// commonest first-hour shape: `drift slice create` ships `slot-1`, `drift file
+// new` scaffolds `hello`.
+func slotAdoptionStub(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/ops/slice/get":
+		_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{"atomic":{"functions":[` +
+			`{"name":"get:slot-1","route":"slot-1","method":"get","memory_bytes":33554432}]}}}`))
+	case "/ops/slice/status":
+		_, _ = w.Write([]byte(`{"ready":true}`))
+	default:
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}
+}
+
+// applyWithOneFunction lays out a project declaring a single function the stub
+// slice does not name.
+func applyWithOneFunction(t *testing.T) {
+	t.Helper()
+	applyIn(t, "slice: demo\natomic:\n  functions:\n"+
+		"    - route: hello\n      method: get\n      handler: GetHello\n      memory: 32MB\n      dir: atomic\n",
+		"atomic")
+	if err := os.WriteFile(filepath.Join(".", "atomic", "hello.js"),
+		[]byte("function GetHello(req) { return [200, 'OK', {}]; }\nmodule.exports = { GetHello };\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// runApplyYes drives the real command with --yes, so the flag wiring is under
+// test alongside the body.
+func runApplyYes(t *testing.T) error {
+	t.Helper()
+	cmd := getApplyCmd()
+	cmd.SetArgs([]string{"--yes"})
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	return cmd.Execute()
+}
+
 // runPlanCmd drives the real command with --plan, so the flag wiring is under
 // test alongside the body.
 func runPlanCmd(t *testing.T) error {

@@ -21,7 +21,7 @@ package slice
 // the name differs, and the pricing page already says renaming is free and that
 // nothing about a free slice is compared by name.
 //
-// # Why this is allowed to skip the form
+// # Why this is allowed to skip the form, and why it may not skip the PERSON
 //
 // The form exists because "a resize can reprice a slice or destroy what it
 // holds, and both are answered at the form". A rename within the same count and
@@ -37,6 +37,18 @@ package slice
 // The safety is the platform's existing refusal rather than a second opinion
 // computed here, which is what keeps this from becoming a quieter way to do
 // something the form would have questioned.
+//
+// What it must NOT skip is the person. Applying a Driftfile changes what RUNS on
+// a slice; this changes what the slice DECLARES, and doing that as an unannounced
+// side effect of a deploy is the thing to avoid whatever it costs. So the plan
+// and the write are two calls: a caller computes the renames, shows them, asks,
+// and only then commits. They were one function, and a deploy rewrote the shape
+// of the slice while reporting it in the past tense.
+//
+// The split is deliberately not a boolean parameter. A `confirm bool` is how the
+// two readings end up back in one function, and how the un-asked one gets called
+// by accident — the same lesson CheckSliceReferences and ReconcileSliceReferences
+// learned one repository over.
 
 import (
 	"fmt"
@@ -55,8 +67,23 @@ type SlotAdoption struct {
 // original refusal — naming the resize form — is the right answer after all.
 var ErrNoIdleSlots = fmt.Errorf("no idle slot to rename")
 
-// AdoptIdleSlots renames slots the slice holds and nothing names, to the booking
-// keys a Driftfile declares but the slice does not have.
+// SlotAdoptionPlan is a set of renames worked out and not yet made.
+//
+// It carries the edited config rather than recomputing it at Commit, so what the
+// caller SHOWED and what Commit SENDS are the same bytes. Recomputing between the
+// two would let the slice change underneath the question a person just answered.
+type SlotAdoptionPlan struct {
+	// Adoptions is what a caller shows before asking. Empty is impossible: a plan
+	// with nothing to do is ErrNoIdleSlots instead.
+	Adoptions []SlotAdoption
+
+	sliceName string
+	config    map[string]any
+}
+
+// PlanIdleSlotAdoptions works out which idle slots would be renamed to the
+// booking keys a Driftfile declares but the slice does not have. IT WRITES
+// NOTHING — see the header for why this is not the same function as Commit.
 //
 // `want` is the missing booking keys, `keep` every key the Driftfile DOES name —
 // a slot the manifest already uses is not idle, whatever it is called, and
@@ -65,7 +92,7 @@ var ErrNoIdleSlots = fmt.Errorf("no idle slot to rename")
 // It returns ErrNoIdleSlots when there is nothing to work with, which is a
 // question rather than a failure: the caller then reports what it was going to
 // report anyway.
-func AdoptIdleSlots(sliceName string, want []string, keep map[string]bool) ([]SlotAdoption, error) {
+func PlanIdleSlotAdoptions(sliceName string, want []string, keep map[string]bool) (*SlotAdoptionPlan, error) {
 	if len(want) == 0 {
 		return nil, ErrNoIdleSlots
 	}
@@ -146,39 +173,48 @@ func AdoptIdleSlots(sliceName string, want []string, keep map[string]bool) ([]Sl
 		}
 	}
 
-	// NO acknowledge_monthly_cents AND NO confirm_slice_name. See the header:
-	// those are what a form sends after asking a person, and a rename must need
-	// neither. If the platform asks for one, this is not the rename it claimed to
-	// be and the answer is to refuse rather than to answer the question.
+	return &SlotAdoptionPlan{Adoptions: adoptions, sliceName: sliceName, config: rec.Config}, nil
+}
+
+// Commit sends the renames the plan describes. It is the ONLY thing here that
+// writes, and a caller reaches it only after showing Adoptions and being told to
+// go ahead.
+//
+// NO acknowledge_monthly_cents AND NO confirm_slice_name. See the header: those
+// are what a form sends after asking a person about a PRICE or a REMOVAL, and a
+// rename must need neither. If the platform asks for one, this is not the rename
+// it claimed to be, and the answer is to refuse rather than to answer the
+// question — a deploy must never be the thing that agrees to a bill.
+func (p *SlotAdoptionPlan) Commit() error {
 	ok, refusal, perr := postResize(map[string]any{
-		"name":                  sliceName,
-		"config":                rec.Config,
+		"name":                  p.sliceName,
+		"config":                p.config,
 		"billing_period_months": 1,
 		"payment_token":         "cli",
 	})
 	if perr != nil {
-		return nil, perr
+		return perr
 	}
 	if ok {
-		return adoptions, nil
+		return nil
 	}
 
 	switch {
 	case refusal == nil:
-		return nil, fmt.Errorf("the slice refused the rename")
+		return fmt.Errorf("the slice refused the rename")
 	case refusal.PriceChange != nil:
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"renaming those slots would change what this slice costs, from %s to %s a month — "+
 				"so it is not a rename. Open `drift slice resize %s` and agree to the price there",
 			euros(refusal.PriceChange.CurrentMonthlyCents),
-			euros(refusal.PriceChange.NewMonthlyCents), sliceName)
+			euros(refusal.PriceChange.NewMonthlyCents), p.sliceName)
 	case refusal.ConfirmationRequired != nil:
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"renaming those slots would take something away from this slice — "+
 				"so it is not a rename. Open `drift slice resize %s`, which lists what and asks you to confirm it",
-			sliceName)
+			p.sliceName)
 	default:
-		return nil, fmt.Errorf("the slice refused the rename: %s", refusal.Error)
+		return fmt.Errorf("the slice refused the rename: %s", refusal.Error)
 	}
 }
 

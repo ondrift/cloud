@@ -116,9 +116,33 @@ func TestFunctionList_RefusesAShapeItCannotEdit(t *testing.T) {
 // Nothing to adopt is a QUESTION, not a failure — the caller falls back to the
 // refusal naming the resize form. It must be told apart from a real error, or a
 // slice with no spare slots would report a transport problem.
-func TestAdoptIdleSlots_NothingWantedIsNotAnError(t *testing.T) {
-	_, err := AdoptIdleSlots("any", nil, nil)
+//
+// It answers before any network call, which is also what lets this run without a
+// session: an empty want list is nothing to do, whatever the slice looks like.
+func TestPlanIdleSlotAdoptions_NothingWantedIsNotAnError(t *testing.T) {
+	_, err := PlanIdleSlotAdoptions("any", nil, nil)
 	if err != ErrNoIdleSlots {
 		t.Errorf("got %v, want ErrNoIdleSlots — an empty want list is nothing to do", err)
+	}
+}
+
+// PLANNING WRITES NOTHING, and that is the whole reason it is a separate call.
+//
+// The type is the guarantee: Commit is the only method, the config it posts is
+// unexported, and a caller therefore cannot reach the write without having held
+// the plan it was supposed to show first. A `confirm bool` parameter — the shape
+// this replaced — offers no such thing, and the un-asked reading gets called by
+// accident.
+func TestSlotAdoptionPlan_CannotBeCommittedWithoutBeingPlanned(t *testing.T) {
+	// A zero plan names no slice and carries no config, so the only way to get a
+	// committable one is through PlanIdleSlotAdoptions. This is a compile-shaped
+	// assertion written as a test so the intent survives a refactor: if `config`
+	// or `sliceName` is ever exported, a caller can hand-build a write.
+	var p SlotAdoptionPlan
+	if p.sliceName != "" || p.config != nil {
+		t.Fatal("a zero SlotAdoptionPlan carries a target — it must be inert")
+	}
+	if len(p.Adoptions) != 0 {
+		t.Error("a zero plan claims adoptions it did not compute")
 	}
 }

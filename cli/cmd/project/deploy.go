@@ -231,7 +231,13 @@ single slice otherwise.`,
 			// only one allowed to rename an idle slot to make room. The plan
 			// path below calls the read-only half — it used to call this one,
 			// and a dry run therefore resized the live slice.
-			if err := ReconcileSliceReferences(m, liveSlice); err != nil {
+			//
+			// It reconciles IDENTITY and never CAPACITY. Re-pointing a slot the
+			// slice already holds is shown and confirmed; needing a slot it does
+			// not hold is a refusal naming `drift slice resize`, with no prompt
+			// that could be answered into a bigger bill. --yes skips the question
+			// for CI and never the notice.
+			if err := ReconcileSliceReferences(m, liveSlice, autoYes); err != nil {
 				return err
 			}
 
