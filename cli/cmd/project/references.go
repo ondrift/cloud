@@ -13,6 +13,7 @@ package project
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -81,7 +82,21 @@ func CheckSliceReferences(m *Manifest, live *LiveSlice) error {
 // is neither. AdoptIdleSlots sends the resize WITHOUT the acknowledgements those
 // two refusals demand, so the platform is what decides whether this really was a
 // rename.
-func ReconcileSliceReferences(m *Manifest, live *LiveSlice) error {
+// # What it may repair, and what it may never do
+//
+// An IDENTITY change is the repair: the Driftfile swaps `get:hello` for
+// `post:users`, the slice still holds the same five slots at the same sizes, and
+// one of them is re-pointed. Nothing is bought and nothing is destroyed.
+//
+// A CAPACITY change is not, at any price and behind any confirmation. If the
+// Driftfile names more than the slice holds, this refuses and names `drift slice
+// resize` — it does not offer to grow the slice, and there is deliberately no
+// prompt here that could be answered into a larger bill. Applying a file deploys;
+// resizing is its own command, invoked on purpose.
+//
+// `autoYes` is the caller's --yes, for CI. It skips the question, never the
+// notice: a run that reshaped a slice says so either way.
+func ReconcileSliceReferences(m *Manifest, live *LiveSlice, autoYes bool) error {
 	missing, err := sliceReferenceMisses(m, live)
 	if err != nil {
 		return err
@@ -89,11 +104,25 @@ func ReconcileSliceReferences(m *Manifest, live *LiveSlice) error {
 	if len(missing) == 0 {
 		return nil
 	}
-	if renamed, rerr := adoptIdleSlots(m, live, missing); rerr == nil && len(renamed) > 0 {
+	renamed, rerr := adoptIdleSlots(m, live, missing, autoYes)
+	if errors.Is(rerr, errAdoptionDeclined) {
+		return rerr
+	}
+	if rerr == nil && len(renamed) > 0 {
 		return nil
 	}
 	return referenceError(m.Name(), missing)
 }
+
+// errAdoptionDeclined is the person saying no. It is distinguished from every
+// other adoption failure because those fall back to the refusal naming the resize
+// form, and that message would be wrong here: the slot IS there, and they were
+// asked and said not to.
+var errAdoptionDeclined = fmt.Errorf(
+	"nothing was deployed: the slot your Driftfile names is not the one the slice " +
+		"declares, and the rename was declined.\n" +
+		"Re-run and agree to it, or point the Driftfile back at the slot the slice has.\n" +
+		"Nothing about the slice changed.")
 
 // sliceReferenceMisses is the comparison both entry points share: everything the
 // manifest names that the live slice does not declare. It reads and never
@@ -128,7 +157,7 @@ func sliceReferenceMisses(m *Manifest, live *LiveSlice) ([]referenceMiss, error)
 // collection the slice does not have needs the form whatever happens to the
 // slots, and half-fixing it would send the user there anyway having silently
 // changed their slice on the way.
-func adoptIdleSlots(m *Manifest, live *LiveSlice, missing []referenceMiss) ([]slice.SlotAdoption, error) {
+func adoptIdleSlots(m *Manifest, live *LiveSlice, missing []referenceMiss, autoYes bool) ([]slice.SlotAdoption, error) {
 	var want []string
 	for _, miss := range missing {
 		if miss.Class != "function" {
@@ -145,17 +174,40 @@ func adoptIdleSlots(m *Manifest, live *LiveSlice, missing []referenceMiss) ([]sl
 		keep[name] = true
 	}
 
-	renamed, err := slice.AdoptIdleSlots(m.Name(), want, keep)
+	// PLANNED FIRST, AND SHOWN. This changes what the slice declares, so it is
+	// stated before it happens rather than reported after — a deploy that
+	// reshapes a slice in the past tense is the side effect this split removed.
+	plan, err := slice.PlanIdleSlotAdoptions(m.Name(), want, keep)
 	if err != nil {
 		return nil, err
 	}
 
-	fmt.Printf("  %s Your slice holds %s nothing was using. Renamed, at no change in price:\n",
-		common.Hint("·"), plural(len(renamed), "a slot", "slots"))
-	for _, r := range renamed {
+	fmt.Printf("  %s Your Driftfile re-points %s this slice already holds:\n",
+		common.Hint("!"), plural(len(plan.Adoptions), "a slot", "slots"))
+	for _, r := range plan.Adoptions {
 		fmt.Printf("      %s → %s\n", r.From, r.To)
 	}
-	return renamed, nil
+	fmt.Printf("      The slice keeps the same number of slots at the same sizes, so this\n" +
+		"      changes what it DECLARES and not what it costs.\n")
+
+	if !autoYes && !confirmed("      Proceed?") {
+		return nil, errAdoptionDeclined
+	}
+
+	if err := plan.Commit(); err != nil {
+		return nil, err
+	}
+	return plan.Adoptions, nil
+}
+
+// confirmed asks a yes/no question and defaults to NO.
+//
+// Defaulting to no matters more than the wording: a piped or closed stdin reads
+// as empty, and the safe reading of "nobody answered" is that nobody agreed. CI
+// passes --yes, which never reaches here.
+func confirmed(question string) bool {
+	answer := strings.ToLower(strings.TrimSpace(common.PromptForInput(question + " [y/N]")))
+	return answer == "y" || answer == "yes"
 }
 
 // missingSecrets reports every secret a function declares that will not exist
