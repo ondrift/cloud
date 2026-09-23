@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/ondrift/cloud/cli/common"
 
@@ -21,6 +23,23 @@ type SliceEntry struct {
 	Name             string `json:"name"`
 	Tier             string `json:"tier"`
 	MonthlyCostCents int    `json:"monthly_cost_cents"`
+
+	// Config is the slice's declared shape, decoded only as far as the tenant's
+	// own labels.
+	//
+	// A NESTED STRUCT rather than a field of its own, because `labels` is not a
+	// field of its own: it lives INSIDE the config, where everything the tenant
+	// declares lives. Flattening it here would make this the one place the two
+	// shapes disagree, and the flattened spelling would decode to nothing with
+	// the endpoint answering perfectly.
+	//
+	// Everything else in the config is deliberately absent. This file renders a
+	// list, and a mirror that decoded the whole shape would be a second
+	// definition of it — see cmd/project/config_wire.go, which is the read-only
+	// one that exists on purpose and says why.
+	Config struct {
+		Labels map[string]string `json:"labels"`
+	} `json:"config"`
 }
 
 // FetchSlices returns the caller's slices. Data-only (no printing) so both the
@@ -67,6 +86,34 @@ func PriceLabel(tier string, cents int) string {
 	return fmt.Sprintf("EUR %d.%02d/mo", cents/100, cents%100)
 }
 
+// LabelsLine renders a slice's labels as one `key=value` line, or "" when it has
+// none.
+//
+// SORTED BY KEY, because Go randomises map iteration and a list that prints the
+// same slice's labels in a different order on every invocation cannot be diffed,
+// scanned or piped. The platform sorts for the same reason wherever it names one
+// of these sets in a refusal.
+//
+// Values are printed RAW. These are not Kubernetes labels and never reach
+// cluster metadata, so `client=bakkerij & zn.` is a legal value and quoting or
+// escaping it here would show the tenant something they did not type.
+func LabelsLine(labels map[string]string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+labels[k])
+	}
+	return strings.Join(parts, "  ")
+}
+
 func getListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
@@ -85,6 +132,13 @@ func getListCmd() *cobra.Command {
 					marker = "* "
 				}
 				fmt.Printf("%s%-20s %s\n", marker, s.Name, PriceLabel(s.Tier, s.MonthlyCostCents))
+				// On its own line, and only when there are any. Labels are free
+				// text up to 256 bytes each and a slice may carry 32 of them, so
+				// appending them to the row above would wrap the one column a
+				// reader scans — the slice name — out of alignment.
+				if line := LabelsLine(s.Config.Labels); line != "" {
+					fmt.Printf("  %-20s %s\n", "", line)
+				}
 			}
 			return nil
 		},
