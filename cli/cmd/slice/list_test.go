@@ -70,3 +70,54 @@ func TestSliceEntryDecodesTheStoredPrice(t *testing.T) {
 		t.Errorf("MonthlyCostCents = %d, want 272", got[0].MonthlyCostCents)
 	}
 }
+
+// Labels are read from INSIDE the config, which is where the platform keeps
+// them — beside canvas, atomic and backbone, not beside the name.
+//
+// A flattened `"labels"` at the top level would decode to nothing while the
+// endpoint answered perfectly, and every slice would list as unlabelled. This is
+// the assertion that fails if the nesting is ever "simplified".
+func TestSliceEntryReadsLabelsFromInsideTheConfig(t *testing.T) {
+	const body = `[{"name":"shop","tier":"hacker","monthly_cost_cents":0,` +
+		`"config":{"labels":{"team":"backend","client":"bakkerij & zn."}}}]`
+
+	var got []SliceEntry
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if n := len(got[0].Config.Labels); n != 2 {
+		t.Fatalf("read %d labels, want 2 — they are nested under `config`", n)
+	}
+	if got[0].Config.Labels["client"] != "bakkerij & zn." {
+		t.Errorf("client = %q — a value with spaces and an ampersand must survive",
+			got[0].Config.Labels["client"])
+	}
+}
+
+// A slice that carries no labels prints NO line, rather than an empty one.
+//
+// The whole set is optional and most slices have none, so a blank line under
+// every row would be the common case — turning a list you can scan into one you
+// have to read.
+func TestLabelsLine_NothingToShowIsNoLine(t *testing.T) {
+	if got := LabelsLine(nil); got != "" {
+		t.Errorf("LabelsLine(nil) = %q, want empty", got)
+	}
+	if got := LabelsLine(map[string]string{}); got != "" {
+		t.Errorf("LabelsLine(empty) = %q, want empty", got)
+	}
+}
+
+// SORTED, because Go randomises map iteration. Without this the same slice
+// prints its labels in a different order on consecutive runs, which cannot be
+// diffed and reads as the labels having changed.
+func TestLabelsLine_IsOrderedByKey(t *testing.T) {
+	labels := map[string]string{"team": "backend", "client": "acme", "env": "staging"}
+
+	want := "client=acme  env=staging  team=backend"
+	for i := 0; i < 20; i++ {
+		if got := LabelsLine(labels); got != want {
+			t.Fatalf("run %d rendered %q, want %q — map order reached the output", i, got, want)
+		}
+	}
+}
