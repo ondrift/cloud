@@ -182,6 +182,17 @@ func driftfileVersionOf(raw []byte) string {
 //
 // Bump it in the release that implements a format change.
 //
+// 1.17.0 covers top-level `labels:` — the tenant's own labels on the slice.
+// They live INSIDE the slice's config, so the data this binary has to carry is
+// the reconcile: cmd/project/labels.go compares what the Driftfile declares
+// against what the slice holds and sends a labels-ONLY patch when they differ.
+//
+// The removal half is why this is data rather than a constraint that arrives
+// with the document. A Driftfile with no `labels:` block declares none, and
+// making the slice match means sending an EMPTY set — omitting the key would
+// mean "say nothing about labels", and the slice would keep the ones the file
+// stopped naming. Nothing in the schema can express that; only a client can.
+//
 // 1.16.0 covers `slice.atomic.egress` as a declaration that travels. The
 // platform stores what arrives and renders it into the slice's NetworkPolicy,
 // so cmd/project sends the mode and the host list on every reconcile that finds
@@ -198,7 +209,7 @@ func driftfileVersionOf(raw []byte) string {
 // `backbone.secrets` — no constraint, no pattern, nothing that changes what
 // validates — which is a PATCH under the schema's own versioning rule and
 // therefore nothing for a client to implement.
-const ImplementedDriftfileFormat = "1.16.0"
+const ImplementedDriftfileFormat = "1.17.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every
 // authenticated request.
