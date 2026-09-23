@@ -2,7 +2,13 @@
 // over the same /ops/* surface the other commands wrap: a navbar, a slices
 // sidebar (TAB to focus), and a brand-coloured Slice/Atomic/Backbone/Canvas
 // main pane for browsing functions, data, and sites without leaving the
-// terminal. (Still reachable as the hidden `drift portal` alias.)
+// terminal.
+//
+// ONE WAY IN, and that is the whole of the naming decision: bare `drift`. There
+// was a `drift portal` alias that opened this same TUI, kept hidden while the
+// primary entrypoint moved — and a second name for one dashboard is what made
+// "which dashboard does Drift have" an open question the moment a second one was
+// designed. The alias is gone; `drift` is the answer.
 //
 // Deliberately framework-free (no bubbletea): alt-screen + raw mode via
 // golang.org/x/term + ANSI, matching the lean toolkit the rest of the CLI uses.
@@ -23,7 +29,6 @@ import (
 	sliceCmd "github.com/ondrift/cloud/cli/cmd/slice"
 	"github.com/ondrift/cloud/cli/common"
 
-	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
 
@@ -36,22 +41,6 @@ const (
 	tabBackbone
 	tabCanvas
 )
-
-// GetCmd returns the `drift portal` command.
-func GetCmd(version string) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:     "portal",
-		Short:   "Interactive dashboard for your slices, functions & data (TUI)",
-		Example: "  drift portal",
-		GroupID: "account",
-		Hidden:  true, // primary entrypoint is bare `drift`; kept as an alias
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return Run(version)
-		},
-	}
-	return cmd
-}
 
 type confirmAction struct {
 	prompt string

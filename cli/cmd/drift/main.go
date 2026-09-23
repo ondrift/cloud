@@ -165,9 +165,6 @@ func newRootCmd(shownVersion string) *cobra.Command {
 
 		// Self-update: reinstall the CLI at latest (or a pinned version)
 		upgrade.GetCmd(),
-
-		// Portal — interactive TUI dashboard over your slices/functions/data
-		portal.GetCmd(version),
 	)
 
 	return rootCmd
