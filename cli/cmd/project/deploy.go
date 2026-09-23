@@ -325,6 +325,13 @@ single slice otherwise.`,
 			if err := applyEgress(m); err != nil {
 				return err
 			}
+			// The tenant's own labels, declared in the Driftfile and reconciled
+			// like every other declaration here. It changes no limit and no
+			// price, which is the only reason a deploy may touch it at all —
+			// see labels.go.
+			if err := applyLabels(m, liveSlice, os.Stdout); err != nil {
+				return err
+			}
 
 			elapsed := time.Since(start).Seconds()
 			fmt.Printf("  %s\n", common.Hint(fmt.Sprintf("Done in %.1fs!", elapsed)))

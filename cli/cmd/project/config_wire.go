@@ -33,6 +33,15 @@ type SliceConfig struct {
 	Canvas   CanvasLimits   `json:"canvas"`
 	Atomic   AtomicLimits   `json:"atomic"`
 	Backbone BackboneLimits `json:"backbone"`
+
+	// Labels are the tenant's own, and they are READ here for the same reason
+	// everything else in this file is: to say what the slice currently carries,
+	// so the reconcile can tell whether the Driftfile differs from it.
+	//
+	// Writing them does not go through this type. labels.go sends a labels-only
+	// patch — a map with one key — rather than encoding a SliceConfig, which is
+	// what keeps this a mirror the CLI only ever decodes into. See the header.
+	Labels map[string]string `json:"labels"`
 }
 
 type CanvasLimits struct {
