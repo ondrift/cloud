@@ -198,8 +198,16 @@ jobs:
       TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
       VERSION: ${{ needs.plan.outputs.cli_version }}
     steps:
+      # THE INSTANCE'S TAG IS PUSHED AS `drift-release`, NOT AS ACTIONS. Tags
+      # here are protected, and Gitea checks a protected tag against the
+      # pusher's user id with no exception for the Actions identity — which is
+      # not a user and cannot be allow-listed. The checkout carries the release
+      # bot's token so the final `git push origin` inherits it. TAP_TOKEN holds
+      # the same bot's token, for the same reason on the tap's protected main.
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
       - uses: actions/setup-go@v5
         with: { go-version-file: cli/go.mod, cache-dependency-path: cli/go.sum }
 
@@ -496,8 +504,11 @@ jobs:
       GH_TOKEN: ${{ secrets.GH_PUBLISH_TOKEN }}
       VERSION: ${{ needs.plan.outputs.sdk_version }}
     steps:
+      # As the CLI job: the instance's tag is pushed as `drift-release`.
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: the publish credential is present
         run: |
