@@ -182,6 +182,12 @@ func driftfileVersionOf(raw []byte) string {
 //
 // Bump it in the release that implements a format change.
 //
+// 1.18.0 covers `backbone.sql[].migrations`, a directory of versioned SQL files.
+// The data this binary carries is the directory's contents: cmd/project/sql.go
+// reads every `.sql` file in it, sends them on the load-schema call beside the
+// schema, requires the slice's migration report, and fails the apply on a
+// refusal. Ordering, validation and the history table belong to the slice.
+//
 // 1.17.0 covers top-level `labels:` — the tenant's own labels on the slice.
 // They live INSIDE the slice's config, so the data this binary has to carry is
 // the reconcile: cmd/project/labels.go compares what the Driftfile declares
@@ -209,7 +215,7 @@ func driftfileVersionOf(raw []byte) string {
 // `backbone.secrets` — no constraint, no pattern, nothing that changes what
 // validates — which is a PATCH under the schema's own versioning rule and
 // therefore nothing for a client to implement.
-const ImplementedDriftfileFormat = "1.17.0"
+const ImplementedDriftfileFormat = "1.18.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every
 // authenticated request.

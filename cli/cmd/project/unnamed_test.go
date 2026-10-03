@@ -2,6 +2,7 @@ package project
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -62,7 +63,7 @@ func TestApplySQL_ReportsADatabaseTheManifestDoesNotName(t *testing.T) {
 		"sql": []any{map[string]any{"name": "orders", "schema": "orders.sql"}},
 	}}, schemaProject(t))
 
-	unnamed, err := applySQL(m)
+	unnamed, err := applySQL(m, io.Discard)
 	if err != nil {
 		t.Fatalf("applySQL: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestApply_ReportsNothingWhenTheManifestNamesEverythingLive(t *testing.T) {
 	}
 	m := manifestRooted(slice, root)
 
-	dbs, err := applySQL(m)
+	dbs, err := applySQL(m, io.Discard)
 	if err != nil {
 		t.Fatalf("applySQL: %v", err)
 	}
