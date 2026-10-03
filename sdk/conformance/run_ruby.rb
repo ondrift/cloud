@@ -104,4 +104,36 @@ rescue StandardError => e
   fail_with("list_all_in_order: #{e.message}")
 end
 
+# -- Filtered NoSQL reads ----------------------------------------------------
+filtered = Drift::Backbone::Nosql.collection('conformance_filter')
+wide = { '_id' => 'wide' }
+9.times { |i| wide["f#{i}"] = 'v' }
+[
+  { '_id' => 'x1', 'a' => '1', 'b' => '1' },
+  { '_id' => 'x2', 'a' => '1', 'b' => '2' },
+  { '_id' => 'x3', 'a' => '2', 'b' => '1' },
+  { '_id' => 'x4', 'a' => '3', 'b' => '2' },
+  wide,
+].each do |doc|
+  filtered.insert(doc)
+rescue StandardError => e
+  fail_with("Insert #{doc['_id']}: #{e.message}")
+end
+begin
+  OUT['list_filter_two_fields'] = filtered.list({ 'a' => '1', 'b' => '2' }).map { |d| d['_id'] }.sort
+rescue StandardError => e
+  fail_with("list with two entries: #{e.message}")
+end
+begin
+  OUT['list_filter_one_field'] = filtered.list({ 'a' => '1' }).map { |d| d['_id'] }.sort
+rescue StandardError => e
+  fail_with("list with one entry: #{e.message}")
+end
+begin
+  nine = (0...9).to_h { |i| ["f#{i}", 'v'] }
+  OUT['list_filter_over_cap'] = filtered.list(nine).map { |d| d['_id'] }.sort
+rescue StandardError
+  OUT['list_filter_over_cap'] = 'error'
+end
+
 emit

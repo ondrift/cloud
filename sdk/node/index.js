@@ -404,6 +404,54 @@ function _localKeyIndex(key) {
   return Number.isInteger(n) ? n : 0;
 }
 
+// The most `field=…&value=…` pairs one filtered read may combine on a slice.
+const MAX_FILTER_PAIRS = 8;
+
+// _localFilterPairs returns every field and value a list query carries, in
+// order, refused where the slice refuses them: unequal numbers of each, more
+// than MAX_FILTER_PAIRS pairs, or an empty field or value among several. One
+// pair or none is not checked, and reads as it always has.
+function _localFilterPairs(qs) {
+  const fields = [];
+  const values = [];
+  for (const pair of (qs || "").split("&")) {
+    if (!pair) continue;
+    const eq = pair.indexOf("=");
+    const k = decodeURIComponent(eq < 0 ? pair : pair.slice(0, eq));
+    const v = decodeURIComponent(eq < 0 ? "" : pair.slice(eq + 1));
+    if (k === "field") fields.push(v);
+    if (k === "value") values.push(v);
+  }
+  if (fields.length <= 1 && values.length <= 1) return [fields, values];
+  if (fields.length !== values.length) {
+    throw new Error(
+      `drift: backbone nosql/list: HTTP 400: a filter pairs each field with a value by position: got ${fields.length} field(s) and ${values.length} value(s)`,
+    );
+  }
+  if (fields.length > MAX_FILTER_PAIRS) {
+    throw new Error(
+      `drift: backbone nosql/list: HTTP 400: a filter combines at most ${MAX_FILTER_PAIRS} fields, got ${fields.length}`,
+    );
+  }
+  if (fields.concat(values).some((s) => !s)) {
+    throw new Error(
+      "drift: backbone nosql/list: HTTP 400: every field and value in a filter must be non-empty",
+    );
+  }
+  return [fields, values];
+}
+
+// _localMatchesEvery reports whether doc's top-level fields equal EVERY pair.
+// No pair, or a single pair with an empty field, filters nothing.
+function _localMatchesEvery(doc, fields, values) {
+  if (fields.length === 0 || (fields.length === 1 && !fields[0])) return true;
+  for (let i = 0; i < fields.length; i++) {
+    const want = i < values.length ? values[i] : "";
+    if (String(doc[fields[i]]) !== want) return false;
+  }
+  return true;
+}
+
 function _callLocal(method, path, body) {
   const [basePath, qs] = path.split("?", 2);
   const query = {};
@@ -433,6 +481,9 @@ function _callLocal(method, path, body) {
   if (basePath === "nosql/list" && method === "GET") {
     const col = query.collection || "default";
     const order = query.order || "";
+    // Every `field=…&value=…` pair, paired by position. Several are ANDed, and
+    // refused on the same grounds the slice refuses them.
+    const [fields, values] = _localFilterPairs(qs);
 
     // The slice refuses an order it does not recognise rather than serving an
     // unordered read under the caller's name for one, and refuses the
@@ -441,7 +492,7 @@ function _callLocal(method, path, body) {
     if (order && order !== "insertion") {
       throw new Error(`drift: backbone nosql/list: HTTP 400: unknown order "${order}"`);
     }
-    if (order === "insertion" && query.field) {
+    if (order === "insertion" && fields.length > 0 && fields[0]) {
       throw new Error(
         "drift: backbone nosql/list: HTTP 400: order=insertion cannot be combined with a field filter",
       );
@@ -474,7 +525,7 @@ function _callLocal(method, path, body) {
     for (const k of keys) {
       if (after && !less(after, k)) continue;
       const doc = docs[k];
-      if (query.field && String(doc[query.field]) !== query.value) continue;
+      if (!_localMatchesEvery(doc, fields, values)) continue;
       results.push(doc);
       if (results.length >= limit) break;
     }
@@ -644,7 +695,13 @@ const nosql = {
     },
     delete: (key) =>
       _call("POST", `nosql/delete?collection=${encodeURIComponent(name)}&key=${encodeURIComponent(key)}`),
-    // Returns ONE page. Pass a limit for any collection that grows: omitting it
+    // Returns ONE page, optionally filtered. Every entry in `filter` must match:
+    // { group: "g1", status: "open" } returns the documents whose `group` is "g1"
+    // AND whose `status` is "open". A filter combines at most 8 fields, each
+    // compared against a top-level field of the document, and every field and
+    // value in a filter of two or more must be non-empty.
+    //
+    // Pass a limit for any collection that grows: omitting it
     // does not mean "everything" — the platform applies its own default of 100
     // documents and returns a short list with nothing to mark it as truncated, so
     // a caller cannot tell "all of them" from "the first hundred". Rows come back

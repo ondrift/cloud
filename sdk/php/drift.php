@@ -314,6 +314,57 @@ function _blob_address(string $bucket, string $key): string {
     return "$bucket/$key";
 }
 
+/** The most `field=…&value=…` pairs one filtered read may combine on a slice. */
+const MAX_FILTER_PAIRS = 8;
+
+/**
+ * Every field and value a list query carries, in order, refused where the slice
+ * refuses them: unequal numbers of each, more than MAX_FILTER_PAIRS pairs, or an
+ * empty field or value among several. One pair or none is not checked, and reads
+ * as it always has.
+ */
+function _local_filter_pairs(string $qs): array {
+    $fields = [];
+    $values = [];
+    foreach (explode('&', $qs) as $pair) {
+        if ($pair === '') continue;
+        $kv = explode('=', $pair, 2);
+        $k = urldecode($kv[0]);
+        $v = urldecode($kv[1] ?? '');
+        if ($k === 'field') $fields[] = $v;
+        if ($k === 'value') $values[] = $v;
+    }
+    if (count($fields) <= 1 && count($values) <= 1) return [$fields, $values];
+    if (count($fields) !== count($values)) {
+        throw new \RuntimeException(sprintf(
+            'drift: backbone nosql/list: HTTP 400: a filter pairs each field with a value by position: got %d field(s) and %d value(s)',
+            count($fields), count($values)));
+    }
+    if (count($fields) > MAX_FILTER_PAIRS) {
+        throw new \RuntimeException(sprintf(
+            'drift: backbone nosql/list: HTTP 400: a filter combines at most %d fields, got %d',
+            MAX_FILTER_PAIRS, count($fields)));
+    }
+    foreach (array_merge($fields, $values) as $s) {
+        if ($s === '') {
+            throw new \RuntimeException('drift: backbone nosql/list: HTTP 400: every field and value in a filter must be non-empty');
+        }
+    }
+    return [$fields, $values];
+}
+
+/**
+ * Whether $doc's top-level fields equal EVERY pair. No pair, or a single pair
+ * with an empty field, filters nothing.
+ */
+function _local_matches_every(array $doc, array $fields, array $values): bool {
+    if (count($fields) === 0 || (count($fields) === 1 && $fields[0] === '')) return true;
+    foreach ($fields as $i => $f) {
+        if ((string)($doc[$f] ?? '') !== ($values[$i] ?? '')) return false;
+    }
+    return true;
+}
+
 function _call_local(string $method, string $path, $body = null) {
     global $_local_store;
     $s = &$_local_store;
@@ -343,8 +394,11 @@ function _call_local(string $method, string $path, $body = null) {
     }
     if ($base_path === 'nosql/list' && $method === 'GET') {
         $col = $query['collection'] ?? 'default';
-        $field = $query['field'] ?? null;
-        $value = $query['value'] ?? null;
+        // Every `field=…&value=…` pair, paired by position. Several are ANDed,
+        // and refused on the same grounds the slice refuses them. parse_str keeps
+        // only the last of a repeated key, so the pairs are read from the path.
+        [$fields, $values] = _local_filter_pairs($parts[1] ?? '');
+        $field = $fields[0] ?? null;
         $order = (string)($query['order'] ?? '');
 
         // The slice refuses an order it does not recognise rather than serving an
@@ -386,7 +440,7 @@ function _call_local(string $method, string $path, $body = null) {
         foreach ($keys as $k) {
             if ($after !== '' && $cmp($k, $after) <= 0) continue;
             $doc = $docs[$k];
-            if ($field !== null && (string)($doc[$field] ?? '') !== $value) continue;
+            if (!_local_matches_every($doc, $fields, $values)) continue;
             $results[] = $doc;
             if (count($results) >= $limit) break;
         }
@@ -868,17 +922,13 @@ class NosqlCollection {
     }
 
     /**
-     * Return documents from the collection, optionally filtered by one field.
+     * Return ONE page of documents, optionally filtered.
      *
-     * Pass a limit for any collection that grows. Omitting it does not mean
-     * "everything" — the platform applies its own default of 100 documents and
-     * returns a short list with nothing marking it truncated, so a caller cannot
-     * tell "all of them" from "the first hundred". Rows come back in key order
-     * rather than newest-first, so a capped read of an append-only log is missing
-     * its most recent entries. The platform clamps the limit to 1000.
-     */
-    /**
-     * Return ONE page of documents, optionally filtered by one field.
+     * Every entry in $filter must match: ['group' => 'g1', 'status' => 'open']
+     * returns the documents whose `group` is "g1" AND whose `status` is "open". A
+     * filter combines at most 8 fields, each compared against a top-level field of
+     * the document, and every field and value in a filter of two or more must be
+     * non-empty.
      *
      * Pass a limit for any collection that grows. Omitting it does not mean
      * "everything" — the platform applies its own default of 100 documents and

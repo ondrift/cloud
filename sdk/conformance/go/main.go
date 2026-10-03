@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 
 	drift "github.com/ondrift/cloud/sdk/go"
 )
@@ -105,7 +106,58 @@ func main() {
 		}
 	}
 
+	// ── Filtered NoSQL reads ────────────────────────────────────────────────
+	filtered := drift.Backbone.NoSQL.Collection("conformance_filter")
+	wide := map[string]any{"_id": "wide"}
+	nine := map[string]string{}
+	for i := 0; i < 9; i++ {
+		wide[fmt.Sprintf("f%d", i)] = "v"
+		nine[fmt.Sprintf("f%d", i)] = "v"
+	}
+	for _, doc := range []map[string]any{
+		{"_id": "x1", "a": "1", "b": "1"},
+		{"_id": "x2", "a": "1", "b": "2"},
+		{"_id": "x3", "a": "2", "b": "1"},
+		{"_id": "x4", "a": "3", "b": "2"},
+		wide,
+	} {
+		if _, err := filtered.Insert(doc); err != nil {
+			fail(out, "Insert %v: %v", doc["_id"], err)
+		}
+	}
+	if rows, err := filtered.List(map[string]string{"a": "1", "b": "2"}); err != nil {
+		fail(out, "List with two entries: %v", err)
+	} else {
+		out["list_filter_two_fields"] = fieldIDs(rows)
+	}
+	if rows, err := filtered.List(map[string]string{"a": "1"}); err != nil {
+		fail(out, "List with one entry: %v", err)
+	} else {
+		out["list_filter_one_field"] = fieldIDs(rows)
+	}
+	if rows, err := filtered.List(nine); err != nil {
+		out["list_filter_over_cap"] = "error"
+	} else {
+		out["list_filter_over_cap"] = fieldIDs(rows)
+	}
+
 	emit(out)
+}
+
+// fieldIDs reads the `_id` of each row, sorted, so a case compares the set.
+func fieldIDs(rows []json.RawMessage) []string {
+	out := make([]string, 0, len(rows))
+	for _, raw := range rows {
+		var doc struct {
+			ID string `json:"_id"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			continue
+		}
+		out = append(out, doc.ID)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // fieldN reads the `n` field out of each row, in the order the rows came back.

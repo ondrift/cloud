@@ -303,6 +303,44 @@ module Drift
     "#{bucket}/#{key}"
   end
 
+  # The most `field=…&value=…` pairs one filtered read may combine on a slice.
+  MAX_FILTER_PAIRS = 8
+
+  # Every field and value a list query carries, in order, refused where the
+  # slice refuses them: unequal numbers of each, more than MAX_FILTER_PAIRS
+  # pairs, or an empty field or value among several. One pair or none is not
+  # checked, and reads as it always has.
+  def self._local_filter_pairs(qs)
+    fields = []
+    values = []
+    (qs || '').split('&').each do |pair|
+      next if pair.empty?
+      k, v = pair.split('=', 2)
+      k = URI.decode_www_form_component(k)
+      v = URI.decode_www_form_component(v || '')
+      fields << v if k == 'field'
+      values << v if k == 'value'
+    end
+    return [fields, values] if fields.length <= 1 && values.length <= 1
+    if fields.length != values.length
+      raise BackboneError, "drift: backbone nosql/list: HTTP 400: a filter pairs each field with a value by position: got #{fields.length} field(s) and #{values.length} value(s)"
+    end
+    if fields.length > MAX_FILTER_PAIRS
+      raise BackboneError, "drift: backbone nosql/list: HTTP 400: a filter combines at most #{MAX_FILTER_PAIRS} fields, got #{fields.length}"
+    end
+    if (fields + values).any?(&:empty?)
+      raise BackboneError, 'drift: backbone nosql/list: HTTP 400: every field and value in a filter must be non-empty'
+    end
+    [fields, values]
+  end
+
+  # Whether doc's top-level fields equal EVERY pair. No pair, or a single pair
+  # with an empty field, filters nothing.
+  def self._local_matches_every(doc, fields, values)
+    return true if fields.empty? || (fields.length == 1 && fields.first.empty?)
+    fields.each_with_index.all? { |f, i| doc[f].to_s == (values[i] || '') }
+  end
+
   def self._call_local(method, path, body = nil)
     s = @local_store
     base_path, qs = path.split('?', 2)
@@ -332,8 +370,10 @@ module Drift
     end
     if base_path == 'nosql/list' && method == 'GET'
       col = query['collection'] || 'default'
-      field = query['field']
-      value = query['value']
+      # Every `field=…&value=…` pair, paired by position. Several are ANDed, and
+      # refused on the same grounds the slice refuses them.
+      fields, values = _local_filter_pairs(qs)
+      field = fields.first
       order = query['order'].to_s
 
       # The slice refuses an order it does not recognise rather than serving an
@@ -367,7 +407,7 @@ module Drift
       docs.keys.sort_by(&sort_key).each do |k|
         next if !after.empty? && (sort_key.call(k) <=> sort_key.call(after)) <= 0
         doc = docs[k]
-        next if field && doc[field].to_s != value
+        next unless _local_matches_every(doc, fields, values)
         results << doc
         break if results.length >= limit
       end
@@ -593,7 +633,13 @@ module Drift
           Drift._call('POST', "nosql/delete?collection=#{URI.encode_www_form_component(@name)}&key=#{URI.encode_www_form_component(key)}")
         end
 
-        # Return ONE page of documents, optionally filtered by one field.
+        # Return ONE page of documents, optionally filtered.
+        #
+        # Every entry in `filter` must match: { 'group' => 'g1', 'status' => 'open' }
+        # returns the documents whose `group` is "g1" AND whose `status` is "open".
+        # A filter combines at most 8 fields, each compared against a top-level
+        # field of the document, and every field and value in a filter of two or
+        # more must be non-empty.
         #
         # Pass a limit for any collection that grows. Omitting it does not mean
         # "everything" — the platform applies its own default of 100 documents and

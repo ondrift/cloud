@@ -473,16 +473,70 @@ fn local_store() -> &'static Mutex<LocalStore> {
     })
 }
 
-fn parse_query(path: &str) -> HashMap<String, String> {
-    let mut params = HashMap::new();
+/// Every `key=value` pair of a path's query, percent-decoded, in order.
+fn query_pairs(path: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
     if let Some(q) = path.split_once('?').map(|(_, q)| q) {
         for pair in q.split('&') {
             if let Some((k, v)) = pair.split_once('=') {
-                params.insert(k.to_string(), v.to_string());
+                pairs.push((percent_decode(k), percent_decode(v)));
             }
         }
     }
-    params
+    pairs
+}
+
+fn parse_query(path: &str) -> HashMap<String, String> {
+    query_pairs(path).into_iter().collect()
+}
+
+/// The most `field=…&value=…` pairs one filtered read may combine on a slice.
+const MAX_FILTER_PAIRS: usize = 8;
+
+/// Every field and value a list path carries, in order, or the refusal a slice
+/// answers for them: unequal numbers of each, more than MAX_FILTER_PAIRS pairs,
+/// or an empty field or value among several. One pair or none is not checked,
+/// and reads as it always has.
+fn local_filter_pairs(path: &str) -> Result<(Vec<String>, Vec<String>), String> {
+    let pairs = query_pairs(path);
+    let fields: Vec<String> = pairs.iter().filter(|(k, _)| k == "field").map(|(_, v)| v.clone()).collect();
+    let values: Vec<String> = pairs.iter().filter(|(k, _)| k == "value").map(|(_, v)| v.clone()).collect();
+    if fields.len() <= 1 && values.len() <= 1 {
+        return Ok((fields, values));
+    }
+    if fields.len() != values.len() {
+        return Err(format!(
+            "a filter pairs each field with a value by position: got {} field(s) and {} value(s)",
+            fields.len(),
+            values.len()
+        ));
+    }
+    if fields.len() > MAX_FILTER_PAIRS {
+        return Err(format!(
+            "a filter combines at most {MAX_FILTER_PAIRS} fields, got {}",
+            fields.len()
+        ));
+    }
+    if fields.iter().chain(values.iter()).any(|s| s.is_empty()) {
+        return Err("every field and value in a filter must be non-empty".to_string());
+    }
+    Ok((fields, values))
+}
+
+/// Whether a document's top-level fields equal EVERY pair. No pair, or a single
+/// pair with an empty field, filters nothing.
+fn local_matches_every(doc: &Value, fields: &[String], values: &[String]) -> bool {
+    if fields.is_empty() || (fields.len() == 1 && fields[0].is_empty()) {
+        return true;
+    }
+    fields.iter().enumerate().all(|(i, f)| {
+        let got = match doc.get(f) {
+            Some(Value::String(s)) => s.clone(),
+            Some(other) => other.to_string(),
+            None => String::new(),
+        };
+        got == values.get(i).map(String::as_str).unwrap_or("")
+    })
 }
 
 fn call_local(_method: &str, path: &str, body: Option<Value>) -> Option<Value> {
@@ -605,8 +659,17 @@ fn call_local(_method: &str, path: &str, body: Option<Value>) -> Option<Value> {
                 .min(LIST_MAX);
             // The field filter is applied here too, so a local run narrows a read
             // the way a slice does instead of answering every filter identically.
-            let field = q.get("field").map(|s| s.as_str()).unwrap_or("");
-            let value = q.get("value").map(|s| s.as_str()).unwrap_or("");
+            // Several pairs are ANDed. A refusal comes back as the `{"error"}`
+            // body a slice's 400 carries, which is what `call_at` hands back for
+            // one, so `list` reads it here exactly as it reads it there.
+            let (fields, values) = match local_filter_pairs(path) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Some(serde_json::json!({
+                        "error": format!("drift: backbone nosql/list: HTTP 400: {e}")
+                    }))
+                }
+            };
             let mut out: Vec<Value> = Vec::new();
             for d in docs {
                 let key = d.get("_key").and_then(|k| k.as_str()).unwrap_or("");
@@ -621,15 +684,8 @@ fn call_local(_method: &str, path: &str, body: Option<Value>) -> Option<Value> {
                         continue;
                     }
                 }
-                if !field.is_empty() {
-                    let got = match d.get(field) {
-                        Some(Value::String(s)) => s.clone(),
-                        Some(other) => other.to_string(),
-                        None => String::new(),
-                    };
-                    if got != value {
-                        continue;
-                    }
+                if !local_matches_every(&d, &fields, &values) {
+                    continue;
                 }
                 out.push(d);
                 if out.len() >= limit {
@@ -830,7 +886,14 @@ pub mod backbone {
                 ), None);
             }
 
-            /// Documents from the collection, optionally filtered by one field.
+            /// Documents from the collection, optionally filtered.
+            ///
+            /// Every entry in `filter` must match: `{"group": "g1", "status":
+            /// "open"}` returns the documents whose `group` is "g1" AND whose
+            /// `status` is "open". A filter combines at most 8 fields, each
+            /// compared against a top-level field of the document, and every
+            /// field and value in a filter of two or more must be non-empty. A
+            /// filter the platform refuses reads as no documents.
             ///
             /// Reads at the platform's own default of 100 documents. For any
             /// collection that grows, use [`list_limited`] instead: a capped read
@@ -2221,6 +2284,66 @@ mod list_paging_tests {
         filter.insert("group_id".to_string(), "g1".to_string());
         let filtered = c.list_all(Some(filter)).expect("filtered list_all");
         assert_eq!(filtered.len(), total, "a filtered read must page too");
+    }
+}
+
+#[cfg(test)]
+mod local_filter_tests {
+    use crate::backbone::nosql;
+    use std::collections::HashMap;
+
+    fn ids(rows: &[serde_json::Value]) -> Vec<String> {
+        let mut out: Vec<String> = rows
+            .iter()
+            .map(|d| d.get("_id").and_then(|v| v.as_str()).unwrap_or("").to_string())
+            .collect();
+        out.sort();
+        out
+    }
+
+    fn filter(pairs: &[(&str, &str)]) -> Option<HashMap<String, String>> {
+        Some(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())
+    }
+
+    // A filter with several entries matches the documents that satisfy ALL of
+    // them, as it does on a slice. Either pair alone matches two of these four
+    // and both together match one, so honouring only one pair answers two. A
+    // HashMap iterates in a random order, which is why a one-pair answer here
+    // also changed from call to call.
+    //
+    // One test, in its own collection, because the local store is process-wide.
+    #[test]
+    fn a_filter_ands_every_entry() {
+        std::env::remove_var("BACKBONE_URL");
+        let c = nosql::collection("filter_and");
+        for (id, a, b) in [("x1", "1", "1"), ("x2", "1", "2"), ("x3", "2", "1"), ("x4", "3", "2")] {
+            c.insert(serde_json::json!({ "_id": id, "a": a, "b": b }));
+        }
+
+        for _ in 0..20 {
+            assert_eq!(ids(&c.list(filter(&[("a", "1"), ("b", "2")]))), vec!["x2"]);
+        }
+
+        // THE CONTROL: one entry reads as it always has.
+        assert_eq!(ids(&c.list(filter(&[("a", "1")]))), vec!["x1", "x2"]);
+
+        // A value the SDK percent-encodes on the way out is compared decoded.
+        c.insert(serde_json::json!({ "_id": "x5", "a": "a b/c", "b": "2" }));
+        assert_eq!(ids(&c.list(filter(&[("a", "a b/c"), ("b", "2")]))), vec!["x5"]);
+
+        // The slice refuses more than eight pairs, and a refusal reads as no rows
+        // here exactly as a 400 does from a slice. The document matches all nine,
+        // so an answer of one row means the cap was not applied.
+        let mut wide = serde_json::json!({ "_id": "wide" });
+        for i in 0..9 {
+            wide[format!("f{i}")] = serde_json::json!("v");
+        }
+        c.insert(wide);
+        let pairs = |n: usize| -> Option<HashMap<String, String>> {
+            Some((0..n).map(|i| (format!("f{i}"), "v".to_string())).collect())
+        };
+        assert_eq!(ids(&c.list(pairs(8))), vec!["wide"], "eight pairs is the cap and is admitted");
+        assert!(c.list(pairs(9)).is_empty(), "nine pairs must be refused");
     }
 }
 

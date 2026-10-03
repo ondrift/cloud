@@ -50,5 +50,20 @@
     "why": "The document either side of the page boundary is where a wrong cursor loses or repeats rows.",
     "expect": [999, 1000, 1001, 1002]
   },
-  "list_all_in_order_last": { "why": "The last document of the last page.", "expect": 1200 }
+  "list_all_in_order_last": { "why": "The last document of the last page.", "expect": 1200 },
+
+  "list_filter_two_fields": {
+    "why": "A filter with two entries returns the documents matching BOTH, as a slice does. Of x1 (a=1,b=1), x2 (a=1,b=2), x3 (a=2,b=1) and x4 (a=3,b=2), only x2 has a=1 AND b=2. An SDK honouring one entry answers two documents — the first entry's pair or the last's — and a handler acting on that touches records it never asked for.",
+    "expect": ["x2"]
+  },
+
+  "list_filter_one_field": {
+    "why": "THE CONTROL for the one above. A single entry reads exactly as it always has: a=1 is x1 and x2. Without it, an SDK that returned x2 for every filter would pass the case above.",
+    "expect": ["x1", "x2"]
+  },
+
+  "list_filter_over_cap": {
+    "why": "A slice refuses a filter of more than 8 entries with a 400, so a local run refuses it too. The document matches all nine entries, so an SDK that applies no cap answers it rather than failing. Rust's list has no error channel and reads any refusal as no rows, the same way it reads a slice's 400; its driver reports that as the error.",
+    "expect": "error"
+  }
 }
