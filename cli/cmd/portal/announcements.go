@@ -1,8 +1,8 @@
 package portal
 
 // The "what's new" strip above the main panel is fed by a hosted JSON file on the
-// public site — the same pattern as the status page (status.go). Posting news is
-// just editing that file; no platform deploy or CLI release is involved.
+// status site (cloud/sites status/announcements.json). Posting news is just
+// editing that file; no platform deploy or CLI release is involved.
 
 import (
 	"encoding/json"

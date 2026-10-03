@@ -16,8 +16,11 @@ package common
 // LIKELY case, and a diagnostic that fails loudly while diagnosing a failure has
 // made the screen worse rather than better.
 //
-// It is deliberately a different host from the API. Asking the thing that just
-// failed whether it is healthy answers nothing.
+// The health comes from the api's own status feed, the one status.ondrift.eu
+// shows. The api composes it from its downstreams' readiness, so a 5xx from an
+// unwell service behind the api is named by it. When the api itself does not
+// answer, neither does the feed, and that ends in silence like every other
+// failure here.
 
 import (
 	"encoding/json"
@@ -26,9 +29,20 @@ import (
 	"time"
 )
 
-// StatusURL is where per-component health is published. A variable so a test can
-// point it at a stub; there is no reason for a user to change it.
-var StatusURL = "https://status.ondrift.eu/api/status"
+// StatusURL overrides where per-component health is read. Empty means the api's
+// feed, from StatusFeedURL. A variable so a test can point it at a stub; there is
+// no reason for a user to change it.
+var StatusURL = ""
+
+// StatusFeedURL is the api's public status feed, GET /ops/status: one row per
+// capability, the rows status.ondrift.eu shows. It follows APIBaseURL, so a local
+// build and DRIFT_API_URL read their own platform's.
+func StatusFeedURL() string {
+	if StatusURL != "" {
+		return StatusURL
+	}
+	return strings.TrimRight(APIBaseURL, "/") + "/ops/status"
+}
 
 // statusTimeout is short on purpose. The user is already waiting on a failed
 // command, and a slow answer here is worse than none.
@@ -46,7 +60,7 @@ type componentStatus struct {
 // when it is available, never to claim health it did not confirm.
 func DegradedComponents() []string {
 	client := &http.Client{Timeout: statusTimeout}
-	resp, err := client.Get(StatusURL)
+	resp, err := client.Get(StatusFeedURL())
 	if err != nil {
 		return nil
 	}

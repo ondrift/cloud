@@ -21,6 +21,25 @@ func withStatusFeed(t *testing.T, status int, body string) {
 	t.Cleanup(func() { StatusURL = prev })
 }
 
+// The feed is the api's own: status.ondrift.eu is plain files and answers no
+// /api/status, so a URL built for that host reads nothing at all.
+func TestStatusFeedURL_IsTheAPIsOwnFeed(t *testing.T) {
+	prevBase, prevURL := APIBaseURL, StatusURL
+	t.Cleanup(func() { APIBaseURL, StatusURL = prevBase, prevURL })
+	StatusURL = ""
+
+	for base, want := range map[string]string{
+		"https://api.ondrift.eu":          "https://api.ondrift.eu/ops/status",
+		"http://api.localhost:30036/":     "http://api.localhost:30036/ops/status",
+		"https://api.staging.example.org": "https://api.staging.example.org/ops/status",
+	} {
+		APIBaseURL = base
+		if got := StatusFeedURL(); got != want {
+			t.Errorf("APIBaseURL %q: got %q, want %q", base, got, want)
+		}
+	}
+}
+
 const feedOK = `[{"name":"API","status":"operational"},{"name":"Routing","status":"operational"}]`
 const feedDegraded = `[{"name":"API","status":"operational"},{"name":"Routing","status":"degraded"}]`
 

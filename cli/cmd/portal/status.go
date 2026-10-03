@@ -1,7 +1,8 @@
 package portal
 
-// Ctrl-S platform status: a centered popup that fetches the public status page
-// (status.ondrift.eu/api/status) and lists each capability with a coloured dot.
+// Ctrl-S platform status: a centered popup that fetches the api's public status
+// feed (GET /ops/status, the rows status.ondrift.eu shows) and lists each
+// capability with a coloured dot.
 // Ctrl-O / o opens the active slice's URL in a browser. Both live here since
 // they're "platform / external" actions rather than tab navigation.
 
@@ -21,7 +22,7 @@ type platformStatus struct {
 	err   string
 }
 
-// statusItem mirrors one capability from GET /api/status.
+// statusItem mirrors one capability from GET /ops/status.
 type statusItem struct {
 	Name   string `json:"name"`
 	Status string `json:"status"` // operational | degraded | down | checking
@@ -52,19 +53,10 @@ func (m *model) openStatus() {
 	m.platform = ps
 }
 
-// fetchPlatformStatus GETs the public status page's JSON, derived from the
-// configured API base (api.ondrift.eu → status.ondrift.eu).
+// fetchPlatformStatus GETs the api's status feed, from the configured API base.
 func fetchPlatformStatus() ([]statusItem, error) {
-	scheme := "http://"
-	if strings.HasPrefix(common.APIBaseURL, "https://") {
-		scheme = "https://"
-	}
-	host := strings.TrimPrefix(common.APIBaseURL, scheme)
-	host = strings.TrimPrefix(host, "api.")
-	url := scheme + "status." + host + "/api/status"
-
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(url) // #nosec G107 -- URL derived from the configured API base
+	resp, err := client.Get(common.StatusFeedURL()) // #nosec G107 -- URL derived from the configured API base
 	if err != nil {
 		return nil, err
 	}
