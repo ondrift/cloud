@@ -1,8 +1,10 @@
 package drift
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -47,6 +49,51 @@ func TestSliceResolveURL(t *testing.T) {
 	}
 }
 
+// Edge.Slice is the spelling a link is declared under, and Slice is its alias:
+// both must read the same DRIFT_LINK_<NAME>_URL and build the same URL.
+func TestEdgeSliceResolvesTheSameLinkAsSlice(t *testing.T) {
+	t.Setenv("DRIFT_LINK_BILLING_API_URL", "http://canvas.drift-slice-alice-billing-api.svc.cluster.local:8000/")
+	want := "http://canvas.drift-slice-alice-billing-api.svc.cluster.local:8000/api/charge"
+
+	viaEdge, err := Edge.Slice("billing-api").resolveURL("/api/charge")
+	if err != nil {
+		t.Fatalf("Edge.Slice resolveURL: %v", err)
+	}
+	viaAlias, err := Slice("billing-api").resolveURL("/api/charge")
+	if err != nil {
+		t.Fatalf("Slice resolveURL: %v", err)
+	}
+	if viaEdge != want || viaAlias != want {
+		t.Errorf("Edge.Slice = %q, Slice = %q; want both %q", viaEdge, viaAlias, want)
+	}
+}
+
+// The not-linked error names the declaration that creates a link, and both
+// spellings say the same thing.
+func TestNotLinkedNamesEdgeLinks(t *testing.T) {
+	want := `drift: slice "billing" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add billing)`
+
+	_, edgeErr := Edge.Slice("billing").Get("/x")
+	_, aliasErr := Slice("billing").Get("/x")
+	if edgeErr == nil || aliasErr == nil {
+		t.Fatalf("an unlinked slice must be an error: Edge.Slice=%v, Slice=%v", edgeErr, aliasErr)
+	}
+	if edgeErr.Error() != want {
+		t.Errorf("Edge.Slice error = %q, want %q", edgeErr.Error(), want)
+	}
+	if aliasErr.Error() != want {
+		t.Errorf("Slice error = %q, want %q", aliasErr.Error(), want)
+	}
+}
+
+// The egress refusal names the key a host is allowed under.
+func TestEgressDeniedNamesEdgeEgressHosts(t *testing.T) {
+	err := &EgressDeniedError{Host: "api.stripe.com", Err: errors.New("connection refused")}
+	if !strings.Contains(err.Error(), "edge.egress.hosts") {
+		t.Errorf("EgressDeniedError = %q, want it to name edge.egress.hosts", err.Error())
+	}
+}
+
 // captureHeaders stands up a peer slice that records what reached it, and links
 // this "slice" to it. Returns the recorded headers after fn has run.
 func captureHeaders(t *testing.T, self string, callerHeaders map[string]string) http.Header {
@@ -80,6 +127,15 @@ func TestSliceRequestIdentityCannotBeOverwritten(t *testing.T) {
 	}
 	if v := got.Get("X-Other"); v != "kept" {
 		t.Errorf("unrelated caller headers must survive: X-Other = %q", v)
+	}
+}
+
+// A caller's header in another letter case is the same header on the wire, so
+// it must not ride along beside the identity and relabel the call.
+func TestSliceRequestIdentityCannotBeOverwrittenInAnyCase(t *testing.T) {
+	got := captureHeaders(t, "billing", map[string]string{"x-drift-slice": "operator"})
+	if v := got.Values("X-Drift-Slice"); len(v) != 1 || v[0] != "billing" {
+		t.Errorf("X-Drift-Slice = %q, want exactly [billing]", v)
 	}
 }
 

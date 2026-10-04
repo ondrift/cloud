@@ -14,8 +14,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"sort"
+	"strings"
 
 	drift "github.com/ondrift/cloud/sdk/go"
 )
@@ -141,7 +144,65 @@ func main() {
 		out["list_filter_over_cap"] = fieldIDs(rows)
 	}
 
+	// ── Edge links ──────────────────────────────────────────────────────────
+	// A loopback peer that echoes the path it was asked for and the identity
+	// header it received, null when the header is absent.
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var slice any
+		if v := r.Header.Values("X-Drift-Slice"); len(v) > 0 {
+			slice = strings.Join(v, ",")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"path": r.URL.Path, "slice": slice})
+	}))
+	defer peer.Close()
+	_ = os.Unsetenv("DRIFT_SLICE")
+	_ = os.Setenv("DRIFT_LINK_BILLING_API_URL", peer.URL+"/base/")
+
+	if e, err := echoed(drift.Edge.Slice("billing-api").Get("/api/events")); err != nil {
+		fail(out, "Edge.Slice Get: %v", err)
+	} else {
+		out["edge_slice_url"] = e["path"]
+		out["slice_identity_absent"] = e["slice"]
+	}
+	if e, err := echoed(drift.Slice("billing-api").Get("/api/events")); err != nil {
+		fail(out, "Slice Get: %v", err)
+	} else {
+		out["slice_url"] = e["path"]
+	}
+
+	_ = os.Setenv("DRIFT_SLICE", "billing")
+	if e, err := echoed(drift.Edge.Slice("billing-api").Request("GET", "/api/events",
+		map[string]string{"X-Drift-Slice": "operator"}, nil)); err != nil {
+		fail(out, "Edge.Slice Request with a caller identity: %v", err)
+	} else {
+		out["slice_identity_kept"] = e["slice"]
+	}
+	_ = os.Unsetenv("DRIFT_SLICE")
+
+	if _, err := drift.Edge.Slice("billing").Get("/x"); err != nil {
+		out["edge_slice_not_linked"] = err.Error()
+	} else {
+		out["edge_slice_not_linked"] = nil
+	}
+	if _, err := drift.Slice("billing").Get("/x"); err != nil {
+		out["slice_not_linked"] = err.Error()
+	} else {
+		out["slice_not_linked"] = nil
+	}
+
 	emit(out)
+}
+
+// echoed decodes what the loopback peer echoed back.
+func echoed(resp *drift.HTTPResponse, err error) (map[string]any, error) {
+	if err != nil {
+		return nil, err
+	}
+	var e map[string]any
+	if err := json.Unmarshal(resp.Body, &e); err != nil {
+		return nil, fmt.Errorf("the peer's reply is not JSON: %w", err)
+	}
+	return e, nil
 }
 
 // fieldIDs reads the `_id` of each row, sorted, so a case compares the set.

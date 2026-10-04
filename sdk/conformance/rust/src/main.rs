@@ -6,8 +6,11 @@
 //! subtly different things, and that is how five SDKs came to disagree with Go
 //! about local blobs without anybody noticing.
 
-use drift_sdk::backbone;
+use drift_sdk::{backbone, edge};
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Write};
+use std::net::TcpListener;
 
 fn main() {
     // No BACKBONE_URL: every case runs against the in-memory local store, which
@@ -120,7 +123,81 @@ fn main() {
         out.insert("list_filter_over_cap".into(), json!(field_ids(&rows)));
     }
 
+    // ── Edge links ──────────────────────────────────────────────────────────
+    let port = match start_peer() {
+        Ok(p) => p,
+        Err(e) => return fail(&mut out, &format!("the loopback peer did not start: {e}")),
+    };
+    std::env::remove_var("DRIFT_SLICE");
+    std::env::set_var("DRIFT_LINK_BILLING_API_URL", format!("http://127.0.0.1:{port}/base/"));
+
+    let e = echoed(edge::slice("billing-api").get("/api/events"));
+    out.insert("edge_slice_url".into(), e.get("path").cloned().unwrap_or(Value::Null));
+    out.insert("slice_identity_absent".into(), e.get("slice").cloned().unwrap_or(Value::Null));
+    let e = echoed(drift_sdk::slice("billing-api").get("/api/events"));
+    out.insert("slice_url".into(), e.get("path").cloned().unwrap_or(Value::Null));
+
+    std::env::set_var("DRIFT_SLICE", "billing");
+    let mut caller = HashMap::new();
+    caller.insert("X-Drift-Slice".to_string(), "operator".to_string());
+    let e = echoed(edge::slice("billing-api").request("GET", "/api/events", Some(caller), None));
+    out.insert("slice_identity_kept".into(), e.get("slice").cloned().unwrap_or(Value::Null));
+    std::env::remove_var("DRIFT_SLICE");
+
+    // `request` has no error channel: a missing link answers (0, message)
+    // before any network I/O, and the message is what the shared case compares.
+    let (_, msg) = edge::slice("billing").get("/x");
+    out.insert("edge_slice_not_linked".into(), json!(msg));
+    let (_, msg) = drift_sdk::slice("billing").get("/x");
+    out.insert("slice_not_linked".into(), json!(msg));
+
     emit(&out);
+}
+
+/// Start a loopback peer that echoes the path it was asked for and the identity
+/// header it received, null when the header is absent. Returns its port.
+fn start_peer() -> std::io::Result<u16> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let Ok(clone) = stream.try_clone() else { continue };
+            let mut reader = BufReader::new(clone);
+            let mut request_line = String::new();
+            if reader.read_line(&mut request_line).is_err() {
+                continue;
+            }
+            let target = request_line.split(' ').nth(1).unwrap_or("");
+            let path = target.split('?').next().unwrap_or("").to_string();
+            let mut slices: Vec<String> = Vec::new();
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
+                    break;
+                }
+                if let Some((k, v)) = line.split_once(':') {
+                    if k.trim().eq_ignore_ascii_case("x-drift-slice") {
+                        slices.push(v.trim().to_string());
+                    }
+                }
+            }
+            let slice = if slices.is_empty() { Value::Null } else { json!(slices.join(",")) };
+            let body = json!({"path": path, "slice": slice}).to_string();
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+        }
+    });
+    Ok(port)
+}
+
+/// What the loopback peer echoed back, or an empty object if the call failed.
+fn echoed((_, body): (u16, String)) -> Value {
+    serde_json::from_str(&body).unwrap_or_else(|_| json!({}))
 }
 
 /// The `_id` of each row, sorted, so a case compares the set.

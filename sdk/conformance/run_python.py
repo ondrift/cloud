@@ -10,6 +10,9 @@ blobs without anybody noticing.
 import json
 import os
 import sys
+import threading
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # No BACKBONE_URL: every case runs against the in-memory local store, which is the
 # loop a developer meets first and the one where the six drifted. Set BEFORE the
@@ -131,6 +134,65 @@ def main():
         out["list_filter_over_cap"] = sorted(d["_id"] for d in filtered.list({f"f{i}": "v" for i in range(9)}))
     except Exception:  # noqa: BLE001
         out["list_filter_over_cap"] = "error"
+
+    # -- Edge links ---------------------------------------------------------
+    # A loopback peer that echoes the path it was asked for and the identity
+    # header it received, null when the header is absent.
+    class Peer(BaseHTTPRequestHandler):
+        def do_GET(self):
+            slices = self.headers.get_all("X-Drift-Slice")
+            body = json.dumps({
+                "path": urllib.parse.urlsplit(self.path).path,
+                "slice": ",".join(slices) if slices else None,
+            }).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, fmt, *args):
+            pass
+
+    peer = HTTPServer(("127.0.0.1", 0), Peer)
+    threading.Thread(target=peer.serve_forever, daemon=True).start()
+    os.environ.pop("DRIFT_SLICE", None)
+    os.environ["DRIFT_LINK_BILLING_API_URL"] = f"http://127.0.0.1:{peer.server_port}/base/"
+
+    def echoed(resp):
+        _status, body = resp
+        return json.loads(body)
+
+    try:
+        e = echoed(drift.edge.slice("billing-api").get("/api/events"))
+        out["edge_slice_url"] = e["path"]
+        out["slice_identity_absent"] = e["slice"]
+    except Exception as e:  # noqa: BLE001
+        fail(f"edge.slice get: {e}")
+    try:
+        out["slice_url"] = echoed(drift.slice("billing-api").get("/api/events"))["path"]
+    except Exception as e:  # noqa: BLE001
+        fail(f"slice get: {e}")
+
+    os.environ["DRIFT_SLICE"] = "billing"
+    try:
+        resp = drift.edge.slice("billing-api").request("GET", "/api/events", headers={"X-Drift-Slice": "operator"})
+        out["slice_identity_kept"] = echoed(resp)["slice"]
+    except Exception as e:  # noqa: BLE001
+        fail(f"edge.slice request with a caller identity: {e}")
+    os.environ.pop("DRIFT_SLICE", None)
+    peer.shutdown()
+
+    try:
+        drift.edge.slice("billing").get("/x")
+        out["edge_slice_not_linked"] = None
+    except Exception as e:  # noqa: BLE001
+        out["edge_slice_not_linked"] = str(e)
+    try:
+        drift.slice("billing").get("/x")
+        out["slice_not_linked"] = None
+    except Exception as e:  # noqa: BLE001
+        out["slice_not_linked"] = str(e)
 
     emit()
 

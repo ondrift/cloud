@@ -4,6 +4,8 @@
  * Provides:
  *   - Backbone helpers: drift.backbone.{secret,cache,nosql,queue,blob,lock,sql,realtime}
  *   - Deed helpers:     drift.deed.{keyauth,jwt,vault,link,pocket}
+ *   - Edge:             drift.edge.slice(name) calls a slice linked under
+ *                       edge.links in the Driftfile.
  *   - log(msg): Writes to stderr (captured by runner).
  *   - httpRequest(): Outbound HTTP from within a function.
  *   - run(handler): the entry point the CLI's generated wrapper calls. You do
@@ -1194,10 +1196,10 @@ const realtime = {
 // account-key-wrapped keyring. Link: multi-device attestation /
 // enrollment / revocation. Pocket: E2EE per-identity app data, JWT-gated.
 //
-// Not to be confused with cross-slice calling (slice(name) / callerSlice,
-// further below) — that's inter-slice networking, a different, still-
-// hypothetical future pillar. deed.link enrolls another DEVICE for the
-// same identity; it has nothing to do with calling another SLICE.
+// Not to be confused with cross-slice calling (edge.slice(name) /
+// callerSlice, further below) — that's inter-slice networking, declared
+// under edge.links in the Driftfile. deed.link enrolls another DEVICE for
+// the same identity; it has nothing to do with calling another SLICE.
 // ================================================================
 
 // ─── KeyAuth (Deed.keyauth) ────────────────────────────────────────────────────
@@ -1307,9 +1309,9 @@ const vault = {
 // the strength of a signature from a device already active in the identity's
 // registry.
 //
-// Not to be confused with cross-slice calling (slice(name)/callerSlice, further
-// below) — this Link enrolls a DEVICE for one identity, it does not call
-// another slice.
+// Not to be confused with cross-slice calling (edge.slice(name)/callerSlice,
+// further below) — this Link enrolls a DEVICE for one identity, it does not
+// call another slice.
 const link = {
   /**
    * Starts a device-linking session for a not-yet-enrolled device's pubkey
@@ -1422,7 +1424,8 @@ const pocket = {
 // ─── Deed — the fourth pillar, a peer of Backbone ───────────────────────────────
 //
 // The single entrypoint for every identity primitive. See the module header
-// comment above for the full rationale and the slice(name) disambiguation.
+// comment above for the full rationale and the edge.slice(name)
+// disambiguation.
 const deed = { keyauth, jwt, vault, link, pocket };
 
 // ─── Backbone — the B of the sacred A·B·C triad ───────────────────────────────
@@ -1433,24 +1436,47 @@ const deed = { keyauth, jwt, vault, link, pocket };
 // Backbone rather than one of its primitives.)
 const backbone = { secret, cache, nosql, queue, blob, lock, sql, realtime };
 
-// ─── Slice-to-slice linking (top-level; inter-slice networking — a different,
-// still-hypothetical future pillar, NOT the same as deed.link device
-// enrollment above) ─────────────────────────────────────────────────────────
+// ─── Edge: slice-to-slice links (inter-slice networking, NOT the same as
+// deed.link device enrollment above) ─────────────────────────────────────────
+//
+// A link is an Edge fact, declared under edge.links in the Driftfile:
+//
+//   edge:
+//     links: [billing, docs]
 
 function _linkEnvName(name) {
   return "DRIFT_LINK_" + name.toUpperCase().replace(/[^A-Z0-9]/g, "_") + "_URL";
 }
 
-// slice(name) returns a client for a slice you're LINKED to (drift slice link).
-// The call travels in-cluster and carries this slice's identity (X-Drift-Slice).
-function slice(name) {
+// _sliceClient returns a client for another slice of the same owner that this
+// slice links to. The call travels in-cluster and carries this slice's identity
+// (X-Drift-Slice) as a label when the runtime supplies one.
+function _sliceClient(name) {
   const resolveURL = (path) => {
     const baseUrl = process.env[_linkEnvName(name)];
-    if (!baseUrl) throw new Error(`drift: not linked to slice "${name}" — run \`drift slice link add ${name}\``);
+    if (!baseUrl) {
+      throw new Error(
+        `drift: slice "${name}" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add ${name})`,
+      );
+    }
     return baseUrl.replace(/\/+$/, "") + "/" + String(path).replace(/^\/+/, "");
   };
-  const request = (method, path, headers, body) =>
-    httpRequest(method, resolveURL(path), Object.assign({ "X-Drift-Slice": process.env.DRIFT_SLICE || "" }, headers || {}), body);
+  // The identity header is attached last, and a caller's own X-Drift-Slice is
+  // dropped in any letter case, so a caller cannot relabel the call. It is
+  // omitted when the runtime supplies no identity: an empty header would assert
+  // an identity of "" rather than none. See callerSlice for why the header is a
+  // label and never evidence.
+  const request = (method, path, headers, body) => {
+    const url = resolveURL(path);
+    const self = process.env.DRIFT_SLICE || "";
+    const h = {};
+    for (const [k, v] of Object.entries(headers || {})) {
+      if (self && k.toLowerCase() === "x-drift-slice") continue;
+      h[k] = v;
+    }
+    if (self) h["X-Drift-Slice"] = self;
+    return httpRequest(method, url, h, body);
+  };
   return {
     request,
     get: (path) => request("GET", path, null, null),
@@ -1458,8 +1484,26 @@ function slice(name) {
   };
 }
 
+// edge is the entrypoint for calling another slice. edge.slice(name) returns a
+// client for a slice linked under edge.links.
+const edge = {
+  slice: _sliceClient,
+};
+
+/**
+ * Returns exactly what drift.edge.slice(name) returns.
+ *
+ * @deprecated Use drift.edge.slice(name). This spelling keeps working, with the
+ * same behaviour.
+ */
+function slice(name) {
+  return _sliceClient(name);
+}
+
 // callerSlice returns the linked slice that called this request, or "" if the
 // request didn't arrive over a slice-to-slice link (case-insensitive header).
+// It reads a header the caller writes, so it is a label for logging and
+// routing and authorises nothing.
 function callerSlice(req) {
   const h = (req && req.headers) || {};
   for (const k of Object.keys(h)) {
@@ -1476,8 +1520,9 @@ function env(key) {
 // ---------------------------------------------------------------------------
 // Exports — single canonical assignment. State primitives live under
 // `backbone` (the sacred triad); identity primitives live under `deed` (the
-// fourth pillar); Atomic entrypoints, utilities, and cross-slice linking
-// (a different, still-hypothetical future pillar) stay top-level.
+// fourth pillar); calls to linked slices live under `edge`; Atomic
+// entrypoints and utilities stay top-level, beside the deprecated top-level
+// `slice` alias.
 // ---------------------------------------------------------------------------
 
 module.exports = {
@@ -1485,6 +1530,7 @@ module.exports = {
   log, httpRequest, env,
   backbone,
   deed,
+  edge,
   slice, callerSlice,
   JWTError,
 };

@@ -154,4 +154,77 @@ try {
     $out['list_filter_over_cap'] = 'error';
 }
 
+// -- Edge links --------------------------------------------------------------
+// A loopback peer that echoes the path it was asked for and the identity header
+// it received, null when the header is absent. PHP serves one request at a time,
+// so the peer is PHP's built-in server in its own process, on a port the OS
+// picks.
+$probe = stream_socket_server('tcp://127.0.0.1:0');
+$port = (int) substr(strrchr(stream_socket_get_name($probe, false), ':'), 1);
+fclose($probe);
+$router = tempnam(sys_get_temp_dir(), 'drift-peer-') . '.php';
+file_put_contents($router, <<<'ROUTER'
+<?php
+header('Content-Type: application/json');
+echo json_encode([
+    'path' => parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH),
+    'slice' => $_SERVER['HTTP_X_DRIFT_SLICE'] ?? null,
+], JSON_UNESCAPED_SLASHES);
+return true;
+ROUTER);
+$peer = proc_open(
+    sprintf('exec %s -S 127.0.0.1:%d %s', escapeshellarg(PHP_BINARY), $port, escapeshellarg($router)),
+    [0 => ['pipe', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
+    $pipes
+);
+$up = false;
+for ($i = 0; $i < 100 && is_resource($peer); $i++) {
+    $s = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.1);
+    if ($s) { fclose($s); $up = true; break; }
+    usleep(50000);
+}
+if (!$up) fail_with('the loopback peer never accepted a connection');
+
+putenv('DRIFT_SLICE');
+putenv("DRIFT_LINK_BILLING_API_URL=http://127.0.0.1:$port/base/");
+$echoed = static fn(array $resp): array => json_decode($resp['body'], true) ?? [];
+
+try {
+    $e = $echoed(\Drift\Edge\slice('billing-api')->get('/api/events'));
+    $out['edge_slice_url'] = $e['path'] ?? null;
+    $out['slice_identity_absent'] = $e['slice'] ?? null;
+} catch (\Throwable $e) {
+    fail_with('Edge\slice get: ' . $e->getMessage());
+}
+try {
+    $out['slice_url'] = $echoed(\Drift\slice('billing-api')->get('/api/events'))['path'] ?? null;
+} catch (\Throwable $e) {
+    fail_with('slice get: ' . $e->getMessage());
+}
+
+putenv('DRIFT_SLICE=billing');
+try {
+    $resp = \Drift\Edge\slice('billing-api')->request('GET', '/api/events', ['X-Drift-Slice' => 'operator']);
+    $out['slice_identity_kept'] = $echoed($resp)['slice'] ?? null;
+} catch (\Throwable $e) {
+    fail_with('Edge\slice request with a caller identity: ' . $e->getMessage());
+}
+putenv('DRIFT_SLICE');
+proc_terminate($peer);
+proc_close($peer);
+@unlink($router);
+
+try {
+    \Drift\Edge\slice('billing')->get('/x');
+    $out['edge_slice_not_linked'] = null;
+} catch (\Throwable $e) {
+    $out['edge_slice_not_linked'] = $e->getMessage();
+}
+try {
+    \Drift\slice('billing')->get('/x');
+    $out['slice_not_linked'] = null;
+} catch (\Throwable $e) {
+    $out['slice_not_linked'] = $e->getMessage();
+}
+
 emit();
