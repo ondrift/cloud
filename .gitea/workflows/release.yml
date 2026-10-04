@@ -129,8 +129,15 @@ jobs:
           # commit, and merging with "delete branch" removes it — so this step
           # died on `fatal: bad object <sha>` and the release was silently not
           # cut, while the merge itself looked perfectly clean.
-          base="${{ github.event.pull_request.base.sha }}"
+          #
+          # AND ITS FIRST PARENT AS THE BASE, not `pull_request.base.sha`: on
+          # the closed event Gitea reports base.sha as the merge commit itself,
+          # so diffing the two compared a commit with itself, found no change,
+          # and released nothing while the run read green. The first parent is
+          # main as it stood before the merge, for a merge commit and a squash
+          # alike, and checkout's fetch-depth 0 holds it.
           head="${{ github.event.pull_request.merge_commit_sha }}"
+          base=$(git rev-parse "${head}^1")
           changed=$(git diff --name-only "$base" "$head")
           echo "$changed" | grep -q '^cli/' && echo "cli=true" >> "$GITHUB_OUTPUT" || echo "cli=false" >> "$GITHUB_OUTPUT"
           echo "$changed" | grep -q '^sdk/' && echo "sdk=true" >> "$GITHUB_OUTPUT" || echo "sdk=false" >> "$GITHUB_OUTPUT"
