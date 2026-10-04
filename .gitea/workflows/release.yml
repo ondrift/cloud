@@ -145,49 +145,14 @@ jobs:
       - id: ver
         name: Compute next versions
         run: |
-          # BOTH LINES STAY ON 0.x FOR THE WHOLE ALPHA, deliberately. This is
-          # the repo where it matters most: `cli` is what people install and
-          # `sdk` is what they import, so a 1.0.0 here is a stability promise
-          # made to someone else — and Go changes module resolution at v1, which
-          # would make `go get` behave differently for every consumer.
-          #
-          # Read the arithmetic with MA=0 and notice that NO bump leaves 0.x:
-          # `major` moves the minor, `minor` moves the minor, `patch` moves the
-          # patch. 1.0.0 is reachable only by cutting a tag by hand.
-          next() {
-            prefix="$1"; bump="$2"
-            last=$(git tag -l "${prefix}/v*" | sed "s|^${prefix}/v||" \
-                   | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
-            [ -z "$last" ] && last="0.0.0"
-            IFS=. read -r MA MI PA <<EOF
-          $last
-          EOF
-            case "$bump" in
-              major) if [ "$MA" -eq 0 ]; then MI=$((MI+1)); PA=0; else MA=$((MA+1)); MI=0; PA=0; fi ;;
-              minor) MI=$((MI+1)); PA=0 ;;
-              patch) PA=$((PA+1)) ;;
-            esac
-            echo "v${MA}.${MI}.${PA}"
-          }
-          # The 0.x invariant, enforced rather than trusted to the arithmetic
-          # above. If someone edits that `MA -eq 0` branch out, the release
-          # FAILS instead of quietly publishing a stability claim.
-          alpha_only() {
-            case "$2" in
-              v0.*) echo "$2" ;;
-              *)
-                echo "::error::refusing to cut ${1}/${2} — both lines stay on 0.x for the alpha."
-                echo "cli is installed and sdk is imported, so a 1.0.0 is a promise made to"
-                echo "someone else, and Go changes module resolution at v1. If leaving the alpha"
-                echo "is the intent, cut the tag by hand and remove this guard in the same change."
-                exit 1 ;;
-            esac
-          }
-
+          # The arithmetic, and the rule that both lines stay on 0.x for the
+          # alpha, live in .gitea/scripts/next-version.sh: the release jobs ask
+          # it again if a concurrent run publishes this version first.
+          set -euo pipefail
           b="${{ steps.plan.outputs.bump }}"
           if [ "$b" != "none" ]; then
-            echo "cli_version=$(alpha_only cli "$(next cli "$b")")" >> "$GITHUB_OUTPUT"
-            echo "sdk_version=$(alpha_only sdk "$(next sdk "$b")")" >> "$GITHUB_OUTPUT"
+            echo "cli_version=$(bash .gitea/scripts/next-version.sh cli "$b")" >> "$GITHUB_OUTPUT"
+            echo "sdk_version=$(bash .gitea/scripts/next-version.sh sdk "$b")" >> "$GITHUB_OUTPUT"
           fi
 
   cli:
@@ -203,7 +168,10 @@ jobs:
       # happens when the secret is SAVED, so a workflow naming one reads as
       # correct right up until the job reports it unset.
       TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
-      VERSION: ${{ needs.plan.outputs.cli_version }}
+      # What the plan job computed. The pre-flight below confirms it, or takes
+      # the next one, and writes VERSION for every step after it.
+      PLANNED_VERSION: ${{ needs.plan.outputs.cli_version }}
+      BUMP: ${{ needs.plan.outputs.bump }}
     steps:
       # THE INSTANCE'S TAG IS PUSHED AS `drift-release`, NOT AS ACTIONS. Tags
       # here are protected, and Gitea checks a protected tag against the
@@ -245,30 +213,54 @@ jobs:
           [ "$code" = "200" ] || { echo "::error::the token cannot read $GH_TAP (HTTP $code) — the formula could not be pushed"; exit 1; }
           echo "✓ the token can see both $GH_REPO and $GH_TAP"
 
-      # ── Refuse a version that already exists ANYWHERE ─────────────────────
-      # A half-published version is the failure worth designing against: the
-      # Gitea tag is written last, so a run that died leaves GitHub tagged and
-      # Gitea not. Re-running would then recompute the same version and collide.
-      # Say so in one sentence instead.
+      # ── The version this run publishes ────────────────────────────────────
+      # Three states, and only one is a reason to stop:
+      #
+      #   FREE on both sides: publish the planned version.
+      #   PUBLISHED on both sides: a concurrent release (two merges minutes
+      #     apart) finished it after this run planned. Its Gitea tag is written
+      #     last, so both tags mean it is complete. This run's merge is not in
+      #     it, so take the next version and say so.
+      #   ON ONE SIDE ONLY: a run that died halfway. Re-running would collide
+      #     or skip a version, so stop and say which side, in one sentence.
+      #
+      # This instance's tags are fetched again first: the checkout is as old as
+      # the run, and the concurrent run's tag arrived after it.
       - name: this version is not already published
         run: |
           set -euo pipefail
-          tag="cli/${VERSION}"
-          code=$(curl -s -o /dev/null -w '%{http_code}' \
-                   -H "Authorization: Bearer $GH_TOKEN" \
-                   "https://api.github.com/repos/$GH_REPO/git/ref/tags/$tag")
-          if [ "$code" = "200" ]; then
-            echo "::error::$tag already exists on $GH_REPO."
-            echo "  Either this release already went out, or a previous run published to GitHub"
-            echo "  and died before tagging Gitea. Compare the two and delete the GitHub tag if"
-            echo "  it is genuinely orphaned — do not bump past it, that silently skips a version."
+          v="$PLANNED_VERSION"
+          for attempt in 1 2 3 4 5; do
+            git fetch -q --force --tags origin
+            tag="cli/${v}"
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+                     -H "Authorization: Bearer $GH_TOKEN" \
+                     "https://api.github.com/repos/$GH_REPO/git/ref/tags/$tag")
+            here=no
+            git rev-parse -q --verify "refs/tags/$tag" >/dev/null && here=yes
+            if [ "$code" != "200" ] && [ "$here" = no ]; then
+              echo "VERSION=$v" >> "$GITHUB_ENV"
+              echo "✓ $tag is free on both sides"
+              exit 0
+            fi
+            if [ "$code" = "200" ] && [ "$here" = yes ]; then
+              next=$(bash .gitea/scripts/next-version.sh cli "$BUMP")
+              echo "::notice::$tag was published by a concurrent release after this run planned it; this release is cli/${next}"
+              v="$next"
+              continue
+            fi
+            if [ "$code" = "200" ]; then
+              echo "::error::$tag exists on $GH_REPO but NOT on this instance."
+              echo "  A previous run published to GitHub and died before tagging Gitea. Compare the"
+              echo "  two and delete the GitHub tag if it is genuinely orphaned; do not bump past"
+              echo "  it, that silently skips a version."
+            else
+              echo "::error::$tag exists on this instance but NOT on GitHub: the reverse of the usual half-state."
+            fi
             exit 1
-          fi
-          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "::error::$tag already exists on this instance but NOT on GitHub — the reverse of the usual half-state."
-            exit 1
-          fi
-          echo "✓ $tag is free on both sides"
+          done
+          echo "::error::five consecutive versions were taken by concurrent releases; stopping rather than guessing."
+          exit 1
 
       - name: Build every platform
         working-directory: cli
@@ -509,7 +501,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GH_PUBLISH_TOKEN }}
-      VERSION: ${{ needs.plan.outputs.sdk_version }}
+      # As the CLI job: the pre-flight confirms the plan or takes the next
+      # version, and writes VERSION for the steps after it.
+      PLANNED_VERSION: ${{ needs.plan.outputs.sdk_version }}
+      BUMP: ${{ needs.plan.outputs.bump }}
     steps:
       # As the CLI job: the instance's tag is pushed as `drift-release`.
       - uses: actions/checkout@v4
@@ -525,15 +520,39 @@ jobs:
                    -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$GH_REPO")
           [ "$code" = "200" ] || { echo "::error::the token cannot read $GH_REPO (HTTP $code)"; exit 1; }
 
+      # The three states the CLI job's pre-flight describes, for the SDK line.
       - name: this version is not already published
         run: |
           set -euo pipefail
-          tag="sdk/${VERSION}"
-          code=$(curl -s -o /dev/null -w '%{http_code}' \
-                   -H "Authorization: Bearer $GH_TOKEN" \
-                   "https://api.github.com/repos/$GH_REPO/git/ref/tags/$tag")
-          [ "$code" = "200" ] && { echo "::error::$tag already exists on $GH_REPO"; exit 1; }
-          echo "✓ $tag is free"
+          v="$PLANNED_VERSION"
+          for attempt in 1 2 3 4 5; do
+            git fetch -q --force --tags origin
+            tag="sdk/${v}"
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+                     -H "Authorization: Bearer $GH_TOKEN" \
+                     "https://api.github.com/repos/$GH_REPO/git/ref/tags/$tag")
+            here=no
+            git rev-parse -q --verify "refs/tags/$tag" >/dev/null && here=yes
+            if [ "$code" != "200" ] && [ "$here" = no ]; then
+              echo "VERSION=$v" >> "$GITHUB_ENV"
+              echo "✓ $tag is free on both sides"
+              exit 0
+            fi
+            if [ "$code" = "200" ] && [ "$here" = yes ]; then
+              next=$(bash .gitea/scripts/next-version.sh sdk "$BUMP")
+              echo "::notice::$tag was published by a concurrent release after this run planned it; this release is sdk/${next}"
+              v="$next"
+              continue
+            fi
+            if [ "$code" = "200" ]; then
+              echo "::error::$tag exists on $GH_REPO but NOT on this instance: a previous run died before tagging here."
+            else
+              echo "::error::$tag exists on this instance but NOT on GitHub: the reverse of the usual half-state."
+            fi
+            exit 1
+          done
+          echo "::error::five consecutive versions were taken by concurrent releases; stopping rather than guessing."
+          exit 1
 
       # No binaries: the SDK is consumed as source by six language toolchains,
       # and the tag is the whole release. Registry publishing (npm, PyPI,
