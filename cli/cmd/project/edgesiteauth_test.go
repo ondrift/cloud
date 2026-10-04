@@ -2,6 +2,9 @@ package project
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"os"
 	"strings"
 	"testing"
 )
@@ -23,27 +26,170 @@ func TestEdgeSiteAuth_AbsentDoesNothing(t *testing.T) {
 	}
 }
 
-// Present, it is refused by name, and the plan says so.
-func TestEdgeSiteAuth_PresentIsRefused(t *testing.T) {
-	m := &Manifest{slice: Node{"edge": map[string]any{"site_auth": map[string]any{
-		"users": []any{map[string]any{"user": "alice", "password": "$SITE_PASS"}},
-	}}}}
-	for name, err := range map[string]error{"preflight": preflightEdgeSiteAuth(m), "apply": applyEdgeSiteAuth(m)} {
-		if err == nil || err.Error() != "edge.site_auth is not supported by this CLI yet" {
-			t.Errorf("%s: err = %v, want the not-supported refusal", name, err)
+// siteAuthFile is a Driftfile gating the site for alice and bob.
+const siteAuthFile = "slice: demo\ncanvas: ./site\nedge:\n  site_auth:\n    realm: Staging\n    users:\n" +
+	"      - user: alice\n        password: $SITE_PASS_ALICE\n" +
+	"      - user: bob\n        password: $SITE_PASS_BOB\n"
+
+// THE WHOLE TRUTH. The live gate lets alice and carol in; the file names alice
+// and bob. What is sent is exactly the file's set, with each password read from
+// the variable it names, so carol is gone and bob is in.
+func TestApply_SiteAuthSetsExactlyTheDeclaredUsers(t *testing.T) {
+	t.Setenv("SITE_PASS_ALICE", "alice-secret")
+	t.Setenv("SITE_PASS_BOB", "bob-secret")
+	var sent []map[string]any
+	rec := stubSliceWithEdge(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ops/slice/auth" {
+			return
+		}
+		if got := r.Header.Get("X-Slice"); got != "demo" {
+			t.Errorf("%s /ops/slice/auth acted on slice %q, want demo", r.Method, got)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"enabled":true,"users":[{"name":"alice"},{"name":"carol"}]}`))
+		case http.MethodPost:
+			if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+				t.Errorf("Content-Type = %q, want application/json", ct)
+			}
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			sent = append(sent, body)
+			_, _ = w.Write([]byte(`{"enabled":true,"realm":"Staging","users":[{"name":"alice"},{"name":"bob"}]}`))
+		}
+	})
+	applyIn(t, siteAuthFile, "site")
+
+	out, err := edgeStdout(t, func() error { return runApply(t) })
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if len(sent) != 1 {
+		t.Fatalf("%d gate writes, want exactly one", len(sent))
+	}
+	got, _ := json.Marshal(sent[0])
+	want := `{"enabled":true,"realm":"Staging","users":[{"name":"alice","password":"alice-secret"},{"name":"bob","password":"bob-secret"}]}`
+	if string(got) != want {
+		t.Errorf("gate write = %s\nwant          %s", got, want)
+	}
+	if n := rec.count("DELETE /ops/slice/auth"); n != 0 {
+		t.Errorf("apply removed the gate %d × on the way to setting it", n)
+	}
+	for _, secret := range []string{"alice-secret", "bob-secret"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("the apply printed a password:\n%s", out)
 		}
 	}
-	var out bytes.Buffer
-	planEdgeSiteAuth(m, &out)
-	if !strings.Contains(out.String(), "edge.site_auth is not supported by this CLI yet") {
-		t.Errorf("the plan did not say the key is unsupported: %q", out.String())
+	if !strings.Contains(out, "carol") {
+		t.Errorf("the apply did not say carol was removed:\n%s", out)
 	}
 }
 
-// The refusal comes before anything reaches the slice, so a gate this CLI
-// cannot apply never leaves a half-applied file live behind it.
-func TestApply_RefusesEdgeSiteAuthBeforeAnyRoute(t *testing.T) {
-	assertApplyRefusesBeforeAnyRoute(t,
-		"slice: demo\ncanvas: ./site\nedge:\n  site_auth:\n    users:\n      - user: alice\n        password: $SITE_PASS\n",
-		"edge.site_auth is not supported by this CLI yet")
+// AN UNSET PASSWORD REFUSES THE FILE BEFORE ANYTHING DEPLOYS. Sending the gate
+// without it is impossible, and sending everything else first would leave the
+// site live behind a gate the file says is there and is not.
+func TestApply_SiteAuthRefusesAnUnsetPasswordBeforeAnyRoute(t *testing.T) {
+	t.Setenv("SITE_PASS_ALICE", "alice-secret")
+	t.Setenv("SITE_PASS_BOB", "")
+	if err := os.Unsetenv("SITE_PASS_BOB"); err != nil {
+		t.Fatal(err)
+	}
+	assertApplyRefusesBeforeAnyRoute(t, siteAuthFile,
+		`edge.site_auth: the password for user "bob" is read from $SITE_PASS_BOB, which is not set. `+
+			`Export it, pass --secret SITE_PASS_BOB=..., or add it to the .env beside the Driftfile`)
+}
+
+// Set and empty is refused the same way: an empty password is no password.
+func TestApply_SiteAuthRefusesAnEmptyPasswordBeforeAnyRoute(t *testing.T) {
+	t.Setenv("SITE_PASS_ALICE", "")
+	t.Setenv("SITE_PASS_BOB", "bob-secret")
+	assertApplyRefusesBeforeAnyRoute(t, siteAuthFile,
+		`edge.site_auth: the password for user "alice" is read from $SITE_PASS_ALICE, which is empty. `+
+			`Export it, pass --secret SITE_PASS_ALICE=..., or add it to the .env beside the Driftfile`)
+}
+
+// A password written out in the file is refused, and the refusal never repeats
+// it: the reader's terminal and CI log are not where it belongs either.
+func TestEdgeSiteAuth_RefusesALiteralWithoutPrintingIt(t *testing.T) {
+	m := &Manifest{slice: Node{"edge": map[string]any{"site_auth": map[string]any{
+		"users": []any{map[string]any{"user": "alice", "password": "hunter2"}},
+	}}}}
+	err := preflightEdgeSiteAuth(m)
+	if err == nil {
+		t.Fatal("a literal password was accepted")
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("the refusal printed the password: %v", err)
+	}
+	if !strings.Contains(err.Error(), `"alice"`) {
+		t.Errorf("the refusal does not name the user: %v", err)
+	}
+}
+
+// Two entries for one user cannot both be the truth, and the platform refuses
+// the write after everything else is live. Refused first, here.
+func TestEdgeSiteAuth_RefusesADuplicateUser(t *testing.T) {
+	t.Setenv("P1", "x")
+	t.Setenv("P2", "y")
+	m := &Manifest{slice: Node{"edge": map[string]any{"site_auth": map[string]any{
+		"users": []any{
+			map[string]any{"user": "alice", "password": "$P1"},
+			map[string]any{"user": "alice", "password": "$P2"},
+		},
+	}}}}
+	err := preflightEdgeSiteAuth(m)
+	if err == nil || err.Error() != `edge.site_auth: user "alice" is declared more than once` {
+		t.Errorf("err = %v, want a refusal naming the repeated user", err)
+	}
+}
+
+// Absent, the gate is left exactly as it is: not read, not written, not
+// removed.
+func TestApply_AbsentSiteAuthCallsNoAuthRoute(t *testing.T) {
+	rec := stubSliceWithEdge(t, func(w http.ResponseWriter, r *http.Request) {})
+	applyIn(t, "slice: demo\ncanvas: ./site\n", "site")
+
+	if err := runApply(t); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	for _, m := range []string{"GET", "POST", "DELETE"} {
+		if n := rec.count(m + " /ops/slice/auth"); n != 0 {
+			t.Errorf("a file with no edge.site_auth issued %d × %s /ops/slice/auth", n, m)
+		}
+	}
+}
+
+// The plan names who would be let in and who would be shut out, never a
+// password, and writes nothing. An unset variable is reported by NAME, because
+// the apply that follows would refuse on it.
+func TestPlan_SiteAuthShowsUsersAndNeverAPassword(t *testing.T) {
+	t.Setenv("SITE_PASS_ALICE", "alice-secret")
+	t.Setenv("SITE_PASS_BOB", "")
+	if err := os.Unsetenv("SITE_PASS_BOB"); err != nil {
+		t.Fatal(err)
+	}
+	rec := stubSliceWithEdge(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ops/slice/auth" && r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"enabled":true,"realm":"Old","users":[{"name":"alice"},{"name":"carol"}]}`))
+		}
+	})
+	applyIn(t, siteAuthFile, "site")
+
+	out, err := edgeStdout(t, func() error { return runPlanCmd(t) })
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	for _, want := range []string{"edge.site_auth", "· alice", "+ bob", "- carol", "Old → Staging", "$SITE_PASS_BOB, which is not set"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the plan does not show %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "alice-secret") {
+		t.Errorf("the plan printed a password:\n%s", out)
+	}
+	for _, m := range []string{"POST", "DELETE"} {
+		if n := rec.count(m + " /ops/slice/auth"); n != 0 {
+			t.Errorf("A PLAN ISSUED %d × %s /ops/slice/auth", n, m)
+		}
+	}
 }
