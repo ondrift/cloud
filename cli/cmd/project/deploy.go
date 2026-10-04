@@ -309,7 +309,7 @@ single slice otherwise.`,
 			if err != nil {
 				return err
 			}
-			unnamedDatabases, err := applySQL(m)
+			unnamedDatabases, err := applySQL(m, os.Stdout)
 			if err != nil {
 				return err
 			}

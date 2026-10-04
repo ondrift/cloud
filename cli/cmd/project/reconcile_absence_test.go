@@ -90,7 +90,7 @@ func TestApplySQL_DoesNotDropAnUnmentionedDatabase(t *testing.T) {
 		"sql": []any{map[string]any{"name": "orders", "schema": "orders.sql"}},
 	}}, root)
 
-	if _, err := applySQL(m); err != nil {
+	if _, err := applySQL(m, io.Discard); err != nil {
 		t.Fatalf("applySQL: %v", err)
 	}
 
@@ -247,7 +247,7 @@ func TestApply_StillCreatesWhatTheManifestNames(t *testing.T) {
 	if _, err := applyAlerts(m); err != nil {
 		t.Fatalf("applyAlerts: %v", err)
 	}
-	if _, err := applySQL(m); err != nil {
+	if _, err := applySQL(m, io.Discard); err != nil {
 		t.Fatalf("applySQL: %v", err)
 	}
 

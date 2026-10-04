@@ -390,6 +390,17 @@ func checkLocalPaths(m *Manifest) ParseErrors {
 		errs = append(errs, validateJSONLSeed(c.Str("slot"), seedPath)...)
 	}
 
+	for i, d := range m.slice.Entries("name", "backbone", "sql") {
+		dir := d.Str("migrations")
+		if dir == "" {
+			continue
+		}
+		p := resolveBaseDir(m, dir)
+		if info, err := os.Stat(p); err != nil || !info.IsDir() {
+			errs = append(errs, fmt.Sprintf("backbone.sql[%d]: %q migrations directory not found at %s", i, d.Str("name"), p))
+		}
+	}
+
 	for k, e := range m.slice.EntryMap("value", "backbone", "cache") {
 		if f := e.Str("file"); f != "" {
 			fp := resolveBaseDir(m, f)
