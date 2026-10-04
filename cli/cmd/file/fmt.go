@@ -46,6 +46,7 @@ var canonicalOrder = []string{
 	"atomic",
 	"backbone",
 	"canvas",
+	"edge",
 	"domains",
 	"environments",
 	"hooks",
@@ -58,6 +59,7 @@ var sectionOrder = map[string][]string{
 	"atomic":   {"function_timeout", "rate_limit", "deploy_history", "egress", "functions"},
 	"backbone": {"secrets", "nosql", "sql", "queues", "blobs", "cache", "realtime"},
 	"canvas":   {"canvas_size", "sites"},
+	"edge":     {"egress", "domains", "rate_limit", "auth", "links", "allow", "hosts"},
 }
 
 func getFmtCmd() *cobra.Command {

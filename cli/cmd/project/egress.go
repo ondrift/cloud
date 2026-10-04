@@ -1,5 +1,5 @@
 // egress.go — Driftfile reconcile of the per-slice outbound egress
-// allowlist. Compares `slice.atomic.egress` from the Driftfile
+// allowlist. Compares `edge.egress` from the Driftfile
 // against the live mode + declared hosts on the slice, and triggers
 // a refresh if anything changed. The operator does the DNS
 // resolution and pushes the rendered IP/port list into the slice's
@@ -79,15 +79,18 @@ func applyEgress(m *Manifest) error {
 // desiredEgress folds the Driftfile's egress block into the
 // (mode, hosts) tuple the rest of this file works in. Default
 // (block absent or mode unset) is "open" with no hosts.
+//
+// One spelling: the key walker has already moved the retired
+// `atomic.egress` onto `edge.egress`.
 func desiredEgress(m *Manifest) (mode string, hosts []string) {
-	if m.Slice().Sub("atomic", "egress") == nil {
+	if !m.Slice().Has("edge", "egress") {
 		return "open", nil
 	}
-	mode = strings.ToLower(strings.TrimSpace(m.Slice().Str("atomic", "egress", "mode")))
+	mode = strings.ToLower(strings.TrimSpace(m.Slice().Str("edge", "egress", "mode")))
 	if mode == "" {
 		mode = "open"
 	}
-	hosts = append(hosts, m.Slice().Strings("atomic", "egress", "hosts")...)
+	hosts = append(hosts, m.Slice().Strings("edge", "egress", "hosts")...)
 	return mode, hosts
 }
 

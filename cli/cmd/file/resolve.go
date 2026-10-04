@@ -90,7 +90,7 @@ func printResolved(m *project.Manifest, env string) {
 		{"log retention", s.Str("log_retention")},
 		{"backup retention", s.Str("backup_retention")},
 		{"function timeout", s.Str("atomic", "function_timeout")},
-		{"rate limit", s.Str("atomic", "rate_limit")},
+		{"rate limit", s.Str("edge", "rate_limit")},
 	}
 	if dh := s.Int("atomic", "deploy_history"); dh != 0 {
 		rows = append(rows, [2]string{"deploy history", fmt.Sprintf("%d", dh)})
@@ -120,7 +120,7 @@ func printResolved(m *project.Manifest, env string) {
 			fmt.Printf("    · %s\n", site.Str("dir"))
 		}
 	}
-	if domains := s.Entries("host", "domains"); len(domains) > 0 {
+	if domains := s.Entries("host", "edge", "domains"); len(domains) > 0 {
 		fmt.Printf("\n  domains (%d)\n", len(domains))
 		for _, d := range domains {
 			suffix := ""

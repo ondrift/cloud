@@ -75,7 +75,11 @@ var (
 // Warn prints the notice once for this old name, and records the deprecation.
 //
 // Safe to call on every invocation: the second call for the same Old is a no-op.
-func (d Deprecation) Warn() {
+func (d Deprecation) Warn() { d.warn(d.Notice()) }
+
+// warn is Warn with the sentence supplied, so a kind of deprecation that words
+// its notice differently still shares the registry and the once-per-Old rule.
+func (d Deprecation) warn(notice string) {
 	registryMu.Lock()
 	found := false
 	for _, existing := range registry {
@@ -92,7 +96,7 @@ func (d Deprecation) Warn() {
 	if _, already := warnedOnce.LoadOrStore(d.Old, true); already {
 		return
 	}
-	fmt.Fprintln(deprecationWarnings, d.Notice())
+	fmt.Fprintln(deprecationWarnings, notice)
 }
 
 // Notice is the line a user sees. Separate from Warn so a test can assert the
@@ -246,6 +250,12 @@ const (
 // The path is also the notice's identity: Warn keys on Deprecation.Old, so one
 // PATH yields one notice however many times it occurs. Prorata declares
 // `memory` nineteen times and hears about it once.
+//
+// For an alias, Deprecation.New is the full path of the key's new home. It may
+// sit under the same parent (`canvas.sites[].route` → `canvas.sites[].path`) or
+// under a different one (`atomic.egress` → `edge.egress`); a move to a different
+// parent addresses no list, because a key inside list elements has no single
+// place to move to.
 type KeyDeprecation struct {
 	Path string
 	Kind KeyKind
@@ -259,6 +269,42 @@ func KeyDeprecationFor(path string, kind KeyKind, d Deprecation) KeyDeprecation 
 		d.Old = path
 	}
 	return KeyDeprecation{Path: path, Kind: kind, Deprecation: d}
+}
+
+// Notice is the line a user sees for a retired key.
+//
+// An ALIAS still takes effect, so its sentence names both spellings and says
+// the old one is going, without a removal condition: the condition is a
+// judgement made when the old spelling stops being written, not a date anyone
+// can plan against. An IGNORED key keeps the general wording, whose Because is
+// what tells the reader where the value went.
+func (k KeyDeprecation) Notice() string {
+	if k.Kind != KeyAlias || k.New == "" {
+		return k.Deprecation.Notice()
+	}
+	notice := fmt.Sprintf("%q is deprecated in favour of %q, and will be removed in a later version.", k.Old, k.New)
+	if k.Because != "" {
+		notice += " " + k.Because
+	}
+	return notice
+}
+
+// Warn prints the key's notice once per process, and records it alongside the
+// command-level deprecations.
+func (k KeyDeprecation) Warn() { k.Deprecation.warn(k.Notice()) }
+
+// WarnBothSpellings says, once per process, that a document states this key
+// under both spellings and which one is used.
+//
+// A document carrying both is contradicting itself. The new spelling is what it
+// means, and dropping the old value without a word would leave its author
+// believing a value is in force that is not.
+func (k KeyDeprecation) WarnBothSpellings() {
+	if _, already := warnedOnce.LoadOrStore("both\x00"+k.Old, true); already {
+		return
+	}
+	fmt.Fprintf(deprecationWarnings, "%q and %q are both set; %q is used and %q is ignored.\n",
+		k.Old, k.New, k.New, k.Old)
 }
 
 // RedirectDeprecationWarnings sends notices somewhere a test can read, and

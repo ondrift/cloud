@@ -108,9 +108,9 @@ func TestApplyAlerts_ReportsAnAlertTheManifestDoesNotName(t *testing.T) {
 func TestApplyDomains_ReportsAHostTheManifestDoesNotName(t *testing.T) {
 	rec := stubAPI(t, liveEverything)
 
-	m := manifestRooted(Node{"name": "demo", "domains": []any{
+	m := manifestRooted(Node{"name": "demo", "edge": map[string]any{"domains": []any{
 		map[string]any{"host": "SHOP.example.com"},
-	}}, t.TempDir())
+	}}}, t.TempDir())
 
 	unnamed, err := applyDomains(m)
 	if err != nil {
@@ -134,10 +134,10 @@ func TestApply_ReportsNothingWhenTheManifestNamesEverythingLive(t *testing.T) {
 	root := schemaProject(t)
 	slice := Node{
 		"name": "demo",
-		"domains": []any{
+		"edge": map[string]any{"domains": []any{
 			map[string]any{"host": "shop.example.com"},
 			map[string]any{"host": "admin.example.com"},
-		},
+		}},
 		"backbone": map[string]any{"sql": []any{
 			map[string]any{"name": "orders", "schema": "orders.sql"},
 			map[string]any{"name": "ledger"},

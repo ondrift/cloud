@@ -2,7 +2,7 @@
 //
 // The mirror of references.go. That file refuses a manifest naming a resource
 // the slice does not have; this one reports a resource the slice has and the
-// manifest does not name. A renamed `sql:` entry, a dropped `domains:` host or
+// manifest does not name. A renamed `sql:` entry, a dropped `edge.domains` host or
 // an alert taken off a function leaves the live resource in place — nothing on
 // the apply path removes one — so without this it is invisible from the
 // terminal that stopped naming it.

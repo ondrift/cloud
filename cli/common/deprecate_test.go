@@ -266,6 +266,65 @@ func TestAliasCommand_PassesFlagsAndArgsThrough(t *testing.T) {
 	}
 }
 
+// The sentence an aliased Driftfile key prints, exactly. It is what a person
+// meets on every apply of an old file, so it is pinned word for word.
+func TestKeyAliasNotice_IsTheDeprecatedInFavourOfSentence(t *testing.T) {
+	k := KeyDeprecationFor("atomic.egress", KeyAlias, Deprecation{New: "edge.egress"})
+	want := `"atomic.egress" is deprecated in favour of "edge.egress", and will be removed in a later version.`
+	if got := k.Notice(); got != want {
+		t.Errorf("alias notice:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// A reason, when an alias has one, follows the sentence rather than replacing it.
+func TestKeyAliasNotice_AppendsItsReason(t *testing.T) {
+	k := KeyDeprecationFor("domains", KeyAlias, Deprecation{New: "edge.domains", Because: "Reachability lives under edge."})
+	want := `"domains" is deprecated in favour of "edge.domains", and will be removed in a later version. Reachability lives under edge.`
+	if got := k.Notice(); got != want {
+		t.Errorf("alias notice with a reason:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// An IGNORED key has no new spelling, so it keeps the general wording and its
+// reason, which is what says where the value went.
+func TestKeyIgnoredNotice_KeepsTheGeneralWording(t *testing.T) {
+	d := Deprecation{RemoveAfter: "the form owns it", Because: "Set it on the form."}
+	k := KeyDeprecationFor("log_retention", KeyIgnored, d)
+	want := `"log_retention" is deprecated and will be removed after the form owns it. Set it on the form.`
+	if got := k.Notice(); got != want {
+		t.Errorf("an ignored key's notice changed:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// The key-level notice shares the once-per-name rule and the registry with the
+// command-level ones.
+func TestKeyWarn_PrintsOnceAndIsListed(t *testing.T) {
+	buf := captureWarnings(t)
+	k := KeyDeprecationFor("atomic.egress", KeyAlias, Deprecation{New: "edge.egress"})
+	k.Warn()
+	k.Warn()
+
+	if n := strings.Count(buf.String(), "in favour of"); n != 1 {
+		t.Errorf("the key notice appeared %d times, want 1:\n%s", n, buf.String())
+	}
+	if got := Deprecations(); len(got) != 1 || got[0].Old != "atomic.egress" {
+		t.Errorf("the key is not in the registry: %+v", got)
+	}
+}
+
+// Both spellings in one document: one line, naming which is used.
+func TestKeyWarnBothSpellings_NamesTheWinnerOnce(t *testing.T) {
+	buf := captureWarnings(t)
+	k := KeyDeprecationFor("atomic.egress", KeyAlias, Deprecation{New: "edge.egress"})
+	k.WarnBothSpellings()
+	k.WarnBothSpellings()
+
+	want := `"atomic.egress" and "edge.egress" are both set; "edge.egress" is used and "atomic.egress" is ignored.` + "\n"
+	if buf.String() != want {
+		t.Errorf("both-spellings notice:\n got: %q\nwant: %q", buf.String(), want)
+	}
+}
+
 // A nested rename — `drift file deploy` becoming `drift file apply` — has to
 // re-enter under the target's FULL path. Prepending the leaf alone would send it
 // to `drift apply`, which does not exist, so the old spelling would fail rather

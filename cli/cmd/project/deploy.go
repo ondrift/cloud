@@ -325,6 +325,20 @@ single slice otherwise.`,
 			if err := applyEgress(m); err != nil {
 				return err
 			}
+			// The rest of `edge`, one reconciler per key, each in its own file.
+			// Links come before hosts: a fronted host names a slice this one
+			// must already link.
+			for _, apply := range []func(*Manifest) error{
+				applyEdgeRateLimit,
+				applyEdgeAuth,
+				applyEdgeLinks,
+				applyEdgeAllow,
+				applyEdgeHosts,
+			} {
+				if err := apply(m); err != nil {
+					return err
+				}
+			}
 			// The tenant's own labels, declared in the Driftfile and reconciled
 			// like every other declaration here. It changes no limit and no
 			// price, which is the only reason a deploy may touch it at all —
@@ -460,12 +474,19 @@ func runPlan(m *Manifest, live *LiveSlice) error {
 		}
 	}
 
-	if domains := m.Slice().Entries("host", "domains"); len(domains) > 0 {
+	if domains := m.Slice().Entries("host", "edge", "domains"); len(domains) > 0 {
 		fmt.Printf("\n  domains (%d)\n", len(domains))
 		for _, d := range domains {
 			fmt.Printf("    %s %s\n", common.Hint("·"), d.Str("host"))
 		}
 	}
+
+	// The rest of `edge`, one section per key, each owned by its own file.
+	planEdgeRateLimit(m, os.Stdout)
+	planEdgeAuth(m, os.Stdout)
+	planEdgeLinks(m, os.Stdout)
+	planEdgeAllow(m, os.Stdout)
+	planEdgeHosts(m, os.Stdout)
 
 	// The reference check, reported rather than enforced: a plan that refused
 	// would stop someone finding out what is missing, which is what they ran it
