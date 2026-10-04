@@ -184,6 +184,24 @@ single slice otherwise.`,
 				}
 			}
 
+			// Same preflight, for the `edge` keys: one this CLI cannot apply
+			// refuses the file here, before anything reaches the slice, rather
+			// than after the rest of it is live. Skipped in --plan, which
+			// reports each of them instead.
+			if !planOnly {
+				for _, preflight := range []func(*Manifest) error{
+					preflightEdgeRateLimit,
+					preflightEdgeSiteAuth,
+					preflightEdgeLinks,
+					preflightEdgeAllow,
+					preflightEdgeHosts,
+				} {
+					if err := preflight(m); err != nil {
+						return err
+					}
+				}
+			}
+
 			// Say once that a flag the caller passed does nothing, before the
 			// run behaves in a way they did not ask for.
 			if cmd.Flags().Changed("no-slice-reconcile") {
@@ -330,7 +348,7 @@ single slice otherwise.`,
 			// must already link.
 			for _, apply := range []func(*Manifest) error{
 				applyEdgeRateLimit,
-				applyEdgeAuth,
+				applyEdgeSiteAuth,
 				applyEdgeLinks,
 				applyEdgeAllow,
 				applyEdgeHosts,
@@ -483,7 +501,7 @@ func runPlan(m *Manifest, live *LiveSlice) error {
 
 	// The rest of `edge`, one section per key, each owned by its own file.
 	planEdgeRateLimit(m, os.Stdout)
-	planEdgeAuth(m, os.Stdout)
+	planEdgeSiteAuth(m, os.Stdout)
 	planEdgeLinks(m, os.Stdout)
 	planEdgeAllow(m, os.Stdout)
 	planEdgeHosts(m, os.Stdout)

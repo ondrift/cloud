@@ -1,7 +1,7 @@
 // edgeallow.go — `edge.allow`, the inbound CIDR allowlist.
 //
-// This CLI does not apply it yet. A file that declares it is refused rather
-// than applied without it: an allowlist the file states and the slice does not
+// This CLI does not apply it yet. A file that declares it is refused before
+// anything is deployed: an allowlist the file states and the slice does not
 // hold leaves the slice open to every client while the file says otherwise.
 package project
 
@@ -12,12 +12,19 @@ import (
 	"github.com/ondrift/cloud/cli/common"
 )
 
-// applyEdgeAllow reconciles `edge.allow`. Absent, it does nothing.
-func applyEdgeAllow(m *Manifest) error {
+// preflightEdgeAllow runs before the first deploy step, so a file this CLI
+// cannot apply in full is refused before any of it is applied.
+func preflightEdgeAllow(m *Manifest) error {
 	if !m.Slice().Has("edge", "allow") {
 		return nil
 	}
 	return fmt.Errorf("edge.allow is not supported by this CLI yet")
+}
+
+// applyEdgeAllow reconciles `edge.allow`. Absent, it does nothing. The
+// preflight has already refused a file that declares it.
+func applyEdgeAllow(m *Manifest) error {
+	return preflightEdgeAllow(m)
 }
 
 // planEdgeAllow is the `--plan` section for `edge.allow`.

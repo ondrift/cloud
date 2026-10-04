@@ -852,6 +852,43 @@ environments:
 	}
 }
 
+// An overlay that restates its functions in the route/method spelling must
+// reach every reader with the composite identity, exactly as the base does.
+// The overlay's list replaces the base's, so without normalising the merged
+// result each function would deploy, book and report under "".
+func TestSelectEnvironment_AnOverlaysFunctionsCarryTheirIdentity(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+slice: hello
+atomic:
+  functions:
+    - { route: ping, method: get, handler: GetPing }
+environments:
+  prod: {}
+  staging:
+    atomic:
+      functions:
+        - { route: pong, method: post, handler: PostPong }
+`)
+
+	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SelectEnvironment("staging", true); err != nil {
+		t.Fatal(err)
+	}
+
+	specs := FunctionSpecs(m)
+	if len(specs) != 1 || specs[0].Name != "post:pong" {
+		names := make([]string, 0, len(specs))
+		for _, s := range specs {
+			names = append(names, s.Name)
+		}
+		t.Errorf("staging functions = %q, want [post:pong]", names)
+	}
+}
+
 // The same defect in its other form: a field the mergers never learned about is
 // silently not overridable. Overrides were applied field by field, so adding a
 // Driftfile field without adding a merge clause left it inheriting the base
