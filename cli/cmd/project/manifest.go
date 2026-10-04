@@ -575,6 +575,13 @@ func (m *Manifest) SelectEnvironment(env string, explicit bool) (string, error) 
 	base := m.Name()
 	m.slice = m.mergeEnvironment(env)
 
+	// The overlay arrives as written, and a list REPLACES the base's. An
+	// overlay restating `atomic.functions` in the route/method spelling would
+	// otherwise reach every reader with no composite identity, so each function
+	// would deploy, book and report as "". The parse normalised the base; the
+	// merged result gets the same pass.
+	normaliseFunctionIdentities(m.slice)
+
 	// The merge re-reads the RAW document, where a `$VAR` secret is still the
 	// placeholder ParseDriftfile resolved. Resolve again — exactly once, on
 	// unresolved values, the same as for a project with no environments. Without

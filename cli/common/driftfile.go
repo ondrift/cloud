@@ -182,6 +182,19 @@ func driftfileVersionOf(raw []byte) string {
 //
 // Bump it in the release that implements a format change.
 //
+// 1.19.0 covers top-level `edge:`, the one home of every fact about how a slice
+// is reached. Three keys moved there, and the old spellings stay legal as
+// ALIASES: cmd/project/deprecatedkeys.go moves `atomic.egress` to `edge.egress`,
+// a top-level `domains` to `edge.domains` and `atomic.rate_limit` to
+// `edge.rate_limit` — at the root and inside every environment overlay — and
+// names each move on stderr, so every reader sees the new spelling alone.
+// `edge.egress` and `edge.domains` are applied as their old spellings were.
+// `edge.rate_limit`, `edge.site_auth`, `edge.links`, `edge.allow` and
+// `edge.hosts` each have a reconciler of their own in cmd/project. A rate limit
+// this binary does not apply is named and left to the slice form, as
+// `atomic.rate_limit` always was; any of the other four refuses the file by
+// name before anything is deployed.
+//
 // 1.18.0 covers `backbone.sql[].migrations`, a directory of versioned SQL files.
 // The data this binary carries is the directory's contents: cmd/project/sql.go
 // reads every `.sql` file in it, sends them on the load-schema call beside the
@@ -215,7 +228,7 @@ func driftfileVersionOf(raw []byte) string {
 // `backbone.secrets` — no constraint, no pattern, nothing that changes what
 // validates — which is a PATCH under the schema's own versioning rule and
 // therefore nothing for a client to implement.
-const ImplementedDriftfileFormat = "1.18.0"
+const ImplementedDriftfileFormat = "1.19.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every
 // authenticated request.

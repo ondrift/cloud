@@ -286,6 +286,39 @@ func applyIn(t *testing.T, body string, dirs ...string) {
 	t.Chdir(dir)
 }
 
+// assertApplyRefusesBeforeAnyRoute applies a Driftfile through the real command
+// against a stub that fails the test on any `/ops/` request, and asserts the
+// apply is refused with exactly `want`.
+//
+// The recorder is the subject, as in the gate tests above: a refusal that
+// arrives after the functions, data and sites are live reads the same as one
+// that arrives first, and only the second leaves the slice as it was.
+//
+// No schema is cached in the stub's HOME and the compiled one is cleared, so the
+// document reaches the preflight whatever schema an earlier test compiled.
+func assertApplyRefusesBeforeAnyRoute(t *testing.T, body, want string) {
+	t.Helper()
+	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/ops/") {
+			t.Errorf("apply called %s %s before refusing the file", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	compiledSchema = nil
+	t.Cleanup(func() { compiledSchema = nil })
+	applyIn(t, body, "site")
+
+	err := runApply(t)
+	if err == nil || err.Error() != want {
+		t.Fatalf("apply returned %v, want the refusal %q", err, want)
+	}
+	for _, hit := range rec.hits {
+		if strings.Contains(hit, " /ops/") {
+			t.Errorf("a route was called before the refusal: %s", hit)
+		}
+	}
+}
+
 // runApply drives the real command, so the flag wiring and the RunE body are
 // both under test rather than a hand-called helper.
 func runApply(t *testing.T) error {

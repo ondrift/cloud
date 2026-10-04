@@ -1,4 +1,4 @@
-// domains.go — Driftfile reconcile of `slice.domains[]`. Adds any
+// domains.go — Driftfile reconcile of `edge.domains[]`. Adds any
 // host that's declared in the manifest but missing on the slice. A
 // host the manifest does not name is left attached and reported
 // instead (see unnamed.go): a project declares the hosts it wants,
@@ -31,7 +31,9 @@ type liveDomain struct {
 // than the cosmetic step of attaching a hostname.
 func applyDomains(m *Manifest) ([]string, error) {
 	declared := map[string]Manifest{}
-	for _, d := range m.Slice().Entries("host", "domains") {
+	// One spelling: the key walker has already moved a top-level `domains`
+	// onto `edge.domains`.
+	for _, d := range m.Slice().Entries("host", "edge", "domains") {
 		host := strings.ToLower(strings.TrimSpace(d.Str("host")))
 		if host == "" {
 			continue

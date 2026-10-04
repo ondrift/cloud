@@ -549,8 +549,10 @@ environments:
 	if m.Name() != "snip" {
 		t.Errorf("prod name = %q, want snip", m.Name())
 	}
-	if m.Slice().Str("atomic", "rate_limit") != "5000/min" || m.Slice().Str("log_retention") != "30d" {
-		t.Errorf("prod values changed: rate=%q retention=%q", m.Slice().Str("atomic", "rate_limit"), m.Slice().Str("log_retention"))
+	// `atomic.rate_limit` is the alias of `edge.rate_limit`, so that is where
+	// every reader finds it — in the base and in each overlay.
+	if m.Slice().Str("edge", "rate_limit") != "5000/min" || m.Slice().Str("log_retention") != "30d" {
+		t.Errorf("prod values changed: rate=%q retention=%q", m.Slice().Str("edge", "rate_limit"), m.Slice().Str("log_retention"))
 	}
 	// The base booking, against which staging's override below is the contrast.
 	if fns := m.Slice().Entries("name", "atomic", "functions"); len(fns) != 1 || fns[0].Str("memory") != "128MB" {
@@ -565,8 +567,8 @@ environments:
 	if m.Name() != "snip-staging" {
 		t.Errorf("staging name = %q, want snip-staging", m.Name())
 	}
-	if m.Slice().Str("atomic", "rate_limit") != "200/min" {
-		t.Errorf("staging atomic overrides not applied: %+v", m.Slice().Sub("atomic"))
+	if m.Slice().Str("edge", "rate_limit") != "200/min" {
+		t.Errorf("staging rate limit override not applied: %+v", m.Slice().Sub("edge"))
 	}
 	if m.Slice().Str("log_retention") != "3d" {
 		t.Errorf("staging overrides not applied: retention=%q", m.Slice().Str("log_retention"))
@@ -577,8 +579,10 @@ environments:
 		fns[0].Str("name") != "get:redirect" || fns[0].Str("memory") != "64MB" {
 		t.Errorf("staging functions = %+v, want [get:redirect booked at 64MB]", fns)
 	}
-	if len(m.Slice().Entries("name", "backbone", "nosql")) != 1 || m.Slice().Entries("name", "backbone", "nosql")[0].Str("name") != "links" || m.Slice().Entries("name", "backbone", "nosql")[0].Str("size") != "50MB" {
-		t.Errorf("staging nosql = %+v, want shared [links] with overridden size 50MB", m.Slice().Entries("name", "backbone", "nosql"))
+	// The overlay writes the retired `name`; the walker reaches overlays too, so
+	// it arrives as `slot`, the one spelling readers use.
+	if nosql := m.Slice().Entries("slot", "backbone", "nosql"); len(nosql) != 1 || nosql[0].Str("slot") != "links" || nosql[0].Str("size") != "50MB" || nosql[0].Has("name") {
+		t.Errorf("staging nosql = %+v, want shared [links] with overridden size 50MB, under `slot`", nosql)
 	}
 
 	// dev → only rate overridden; everything else inherits the base.
@@ -586,8 +590,8 @@ environments:
 	if _, err := m.SelectEnvironment("dev", true); err != nil {
 		t.Fatal(err)
 	}
-	if m.Name() != "snip-dev" || m.Slice().Str("atomic", "rate_limit") != "20/min" {
-		t.Errorf("dev name/rate = %q/%q", m.Name(), m.Slice().Str("atomic", "rate_limit"))
+	if m.Name() != "snip-dev" || m.Slice().Str("edge", "rate_limit") != "20/min" {
+		t.Errorf("dev name/rate = %q/%q", m.Name(), m.Slice().Str("edge", "rate_limit"))
 	}
 	// The overlay names two keys inside `atomic`; the third has to survive it.
 	// An overlay that replaced the section wholesale would zero this.
@@ -813,7 +817,7 @@ func TestSelectEnvironment_OverrideToZeroIsHonoured(t *testing.T) {
 name: hello
 canvas: ./canvas
 atomic:
-  rate_limit: 5000/min
+  function_timeout: 30s
   deploy_history: 5
   functions:
     - { name: "get:ping", handler: GetPing, memory: 32MB }
@@ -842,9 +846,46 @@ environments:
 	}
 	// The control: a sibling the overlay did NOT mention must survive. Without
 	// this, a merge that simply dropped the base would pass the assertion above.
-	if got := m.Slice().Str("atomic", "rate_limit"); got != "5000/min" {
-		t.Errorf("rate_limit = %q, want 5000/min — the overlay replaced the whole "+
+	if got := m.Slice().Str("atomic", "function_timeout"); got != "30s" {
+		t.Errorf("function_timeout = %q, want 30s — the overlay replaced the whole "+
 			"atomic block instead of merging into it", got)
+	}
+}
+
+// An overlay that restates its functions in the route/method spelling must
+// reach every reader with the composite identity, exactly as the base does.
+// The overlay's list replaces the base's, so without normalising the merged
+// result each function would deploy, book and report under "".
+func TestSelectEnvironment_AnOverlaysFunctionsCarryTheirIdentity(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+slice: hello
+atomic:
+  functions:
+    - { route: ping, method: get, handler: GetPing }
+environments:
+  prod: {}
+  staging:
+    atomic:
+      functions:
+        - { route: pong, method: post, handler: PostPong }
+`)
+
+	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SelectEnvironment("staging", true); err != nil {
+		t.Fatal(err)
+	}
+
+	specs := FunctionSpecs(m)
+	if len(specs) != 1 || specs[0].Name != "post:pong" {
+		names := make([]string, 0, len(specs))
+		for _, s := range specs {
+			names = append(names, s.Name)
+		}
+		t.Errorf("staging functions = %q, want [post:pong]", names)
 	}
 }
 

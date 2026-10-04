@@ -181,9 +181,9 @@ func TestApplyDomains_DoesNotRemoveAnUndeclaredHost(t *testing.T) {
 		}
 	})
 
-	m := manifestRooted(Node{"name": "demo", "domains": []any{
+	m := manifestRooted(Node{"name": "demo", "edge": map[string]any{"domains": []any{
 		map[string]any{"host": "shop.example.com"},
-	}}, t.TempDir())
+	}}}, t.TempDir())
 
 	if _, err := applyDomains(m); err != nil {
 		t.Fatalf("applyDomains: %v", err)
@@ -226,8 +226,8 @@ func TestApply_StillCreatesWhatTheManifestNames(t *testing.T) {
 		t.Fatalf("writing the schema file: %v", err)
 	}
 	slice := Node{
-		"name":    "demo",
-		"domains": []any{map[string]any{"host": "shop.example.com"}},
+		"name": "demo",
+		"edge": map[string]any{"domains": []any{map[string]any{"host": "shop.example.com"}}},
 		"backbone": map[string]any{
 			"sql": []any{map[string]any{"name": "orders", "schema": "orders.sql"}},
 		},

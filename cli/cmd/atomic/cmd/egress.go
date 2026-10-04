@@ -10,7 +10,7 @@
 //	          cluster — purely a "did I spell it right" tool.
 //
 // There is intentionally no `add`/`remove`. The Driftfile is the
-// single source of truth — users edit `slice.atomic.egress.hosts`
+// single source of truth — users edit `edge.egress.hosts`
 // and run `drift file apply`. The deploy reconcile path
 // invokes `refresh` automatically when the egress section
 // changes (see cli/cmd/project/deploy.go).
@@ -44,16 +44,15 @@ func Egress() *cobra.Command {
 		GroupID: "operations",
 		Long: `Show or refresh the slice's outbound egress allowlist.
 
-The Driftfile's slice.atomic.egress block is the source of truth:
+The Driftfile's edge.egress block is the source of truth:
 
-  slice:
-    atomic:
-      egress:
-        mode: allowlist          # open | allowlist
-        hosts:
-          - api.stripe.com
-          - hooks.slack.com
-          - smtp.sendgrid.net:587
+  edge:
+    egress:
+      mode: allowlist          # open | allowlist
+      hosts:
+        - api.stripe.com
+        - hooks.slack.com
+        - smtp.sendgrid.net:587
 
 To change the list, edit your Driftfile and run 'drift file apply'.
 This command exists for inspection, ad-hoc refresh, and local pattern
@@ -144,7 +143,7 @@ func getEgressTestCmd() *cobra.Command {
 			match := matchHostAgainstList(target, v.DeclaredHosts)
 			if match == "" {
 				fmt.Printf("✗  %s is NOT on the allowlist.\n", target)
-				fmt.Printf("    Add it to your Driftfile under slice.atomic.egress.hosts and run 'drift file apply'.\n")
+				fmt.Printf("    Add it to your Driftfile under edge.egress.hosts and run 'drift file apply'.\n")
 				return fmt.Errorf("not on allowlist")
 			}
 			fmt.Printf("✔  %s matches %q on the allowlist.\n", target, match)

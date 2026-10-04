@@ -98,6 +98,23 @@ func TestRefreshEgress_RemovingAnAllowlistSaysSoExplicitly(t *testing.T) {
 	}
 }
 
+// The declaration is read from `edge.egress`, where the key walker lands the
+// retired `atomic.egress` too. A reader of the old spelling would see an open
+// slice for every file written either way.
+func TestDesiredEgress_ReadsEdgeEgress(t *testing.T) {
+	m := &Manifest{slice: Node{"edge": map[string]any{"egress": map[string]any{
+		"mode": "Allowlist", "hosts": []any{"api.stripe.com"},
+	}}}}
+	mode, hosts := desiredEgress(m)
+	if mode != "allowlist" || len(hosts) != 1 || hosts[0] != "api.stripe.com" {
+		t.Errorf("desiredEgress = (%q, %v), want (allowlist, [api.stripe.com])", mode, hosts)
+	}
+
+	if mode, hosts := desiredEgress(&Manifest{slice: Node{}}); mode != "open" || hosts != nil {
+		t.Errorf("no edge.egress = (%q, %v), want (open, nil)", mode, hosts)
+	}
+}
+
 // A non-2xx must reach the caller. applyEgress downgrades it to a hint either
 // way, but a refresh that silently reports success would leave the CLI printing
 // "egress allowlist declared" for a call the platform refused.

@@ -55,6 +55,25 @@ var driftfileKeyDeprecations = append([]common.KeyDeprecation{
 		Old: "canvas.sites[].route",
 		New: "canvas.sites[].path",
 	}),
+
+	// `edge` is the one home of every fact about how a slice is reached: what it
+	// may call out to, the hosts it answers on, how fast it may be called. These
+	// three were written elsewhere first, and each MOVES there unchanged.
+	common.KeyDeprecationFor("atomic.egress", common.KeyAlias, common.Deprecation{
+		Old: "atomic.egress",
+		New: "edge.egress",
+	}),
+	common.KeyDeprecationFor("domains", common.KeyAlias, common.Deprecation{
+		Old: "domains",
+		New: "edge.domains",
+	}),
+	// An alias rather than an ignored shape key: `edge.rate_limit` SETS the
+	// slice's requests per minute, within the tier's ceiling, so the value an old
+	// file carries now takes effect.
+	common.KeyDeprecationFor("atomic.rate_limit", common.KeyAlias, common.Deprecation{
+		Old: "atomic.rate_limit",
+		New: "edge.rate_limit",
+	}),
 }, shapeKeys...)
 
 // shapeKeys are the capacity keys the slice form owns.
@@ -77,7 +96,6 @@ var shapeKeys = []common.KeyDeprecation{
 
 	ignoredShapeKey("atomic.atomic_size", "Atomic storage is a slice setting"),
 	ignoredShapeKey("atomic.function_timeout", "The function timeout is a slice setting"),
-	ignoredShapeKey("atomic.rate_limit", "The rate limit is a slice setting"),
 	ignoredShapeKey("atomic.deploy_history", "Deploy history depth is a slice setting"),
 	// A function's booking is the sharpest of these: it is that function's own
 	// admission pool AND what it is billed at, so it is chosen where the slice is
@@ -100,8 +118,8 @@ var shapeKeys = []common.KeyDeprecation{
 	ignoredShapeKey("canvas.canvas_size", "Canvas storage is a slice setting"),
 }
 
-// ignoredShapeKey builds one capacity-key deprecation, so seventeen entries
-// cannot drift into seventeen slightly different sentences.
+// ignoredShapeKey builds one capacity-key deprecation, so the entries cannot
+// drift into as many slightly different sentences.
 //
 // RemoveAfter is a condition rather than a version, matching the house style: a
 // version named in a notice promises a release nobody has planned.
@@ -114,21 +132,41 @@ func ignoredShapeKey(path, because string) common.KeyDeprecation {
 }
 
 // applyKeyDeprecations walks each declared path, warns once per path, and
-// rewrites the aliases in place.
+// rewrites the aliases in place — at the document root and inside every
+// `environments.<env>` overlay.
+//
+// The overlays are walked because they are MERGED onto the base. An overlay left
+// in the old spelling reaches SelectEnvironment beside a base in the new one,
+// the deep merge keeps both, and a reader of the new spelling misses the
+// override. Each overlay is walked as a root of its own, so a move lands inside
+// that overlay, where the merge picks it up.
+//
+// A document with no `environments` key — the resolved slice, which has the
+// siblings removed — walks its root alone.
 func applyKeyDeprecations(doc Node, keys []common.KeyDeprecation) {
-	for _, key := range keys {
-		parent, leaf, ok := splitKeyPath(key.Path)
-		if !ok {
-			continue
+	roots := []Node{doc}
+	for _, env := range doc.Keys("environments") {
+		if overlay, ok := asNode(doc.Sub("environments")[env]); ok {
+			roots = append(roots, overlay)
 		}
-		for _, holder := range holdersAt(doc, parent) {
-			applyKeyTo(holder, leaf, key)
+	}
+	for _, root := range roots {
+		for _, key := range keys {
+			parent, leaf, ok := splitKeyPath(key.Path)
+			if !ok {
+				continue
+			}
+			for _, holder := range holdersAt(root, parent) {
+				applyKeyTo(root, holder, parent, leaf, key)
+			}
 		}
 	}
 }
 
-// applyKeyTo acts on one object that actually carries the retired key.
-func applyKeyTo(holder Node, leaf string, key common.KeyDeprecation) {
+// applyKeyTo acts on one object that actually carries the retired key. root is
+// the document (or overlay) the holder belongs to, which is where a move to a
+// different parent resolves its destination.
+func applyKeyTo(root, holder Node, parent, leaf string, key common.KeyDeprecation) {
 	value, present := holder[leaf]
 	if !present {
 		return
@@ -136,7 +174,7 @@ func applyKeyTo(holder Node, leaf string, key common.KeyDeprecation) {
 
 	// Warn before rewriting, so the notice is about the document the person
 	// wrote rather than the one this pass produced.
-	key.Deprecation.Warn()
+	key.Warn()
 
 	if key.Kind != common.KeyAlias || key.New == "" {
 		// IGNORED: the value has no target here. Left exactly where it is —
@@ -146,24 +184,73 @@ func applyKeyTo(holder Node, leaf string, key common.KeyDeprecation) {
 	}
 
 	// New is a PATH, because that is what the notice has to say — "use
-	// backbone.nosql[].slot" locates the key, "use slot" does not. The holder is
-	// keyed by leaf, so take the leaf off it rather than writing the path as a
-	// key: a nested alias otherwise creates a key literally named
-	// `backbone.nosql[].slot`, which every reader misses and no error reports.
-	_, newLeaf, ok := splitKeyPath(key.New)
+	// backbone.nosql[].slot" locates the key, "use slot" does not. Split it into
+	// the container and the leaf rather than writing the path as a key: a nested
+	// alias otherwise creates a key literally named `backbone.nosql[].slot`,
+	// which every reader misses and no error reports.
+	newParent, newLeaf, ok := splitKeyPath(key.New)
 	if !ok {
 		return
 	}
 
+	// The same parent is a rename inside this holder, which is the only shape
+	// that can address list elements: each element renames its own key.
+	// A different parent is a MOVE, resolved from the root and created where it
+	// is missing — `domains` → `edge.domains` in a file with no `edge:` block.
+	dest := holder
+	if newParent != parent {
+		dest, ok = objectAt(root, newParent)
+		if !ok {
+			// Nowhere to put it: a non-object sits on the destination path, or
+			// the path runs through a list. The schema is what refuses that
+			// document; dropping the value here would only hide it.
+			return
+		}
+	}
+
 	// A document stating BOTH spellings is contradicting itself, and the new one
 	// is what it means. Overwriting it with the retired value would make the
-	// deprecated key win, which is backwards.
-	if _, already := holder[newLeaf]; already {
+	// deprecated key win, which is backwards — and dropping the old value
+	// silently would leave its author believing it is in force.
+	if _, already := dest[newLeaf]; already {
+		key.WarnBothSpellings()
 		delete(holder, leaf)
 		return
 	}
-	holder[newLeaf] = value
+	dest[newLeaf] = value
 	delete(holder, leaf)
+}
+
+// objectAt resolves a dotted path of OBJECTS from root, creating each one that
+// is absent or null, and reports false when a segment holds something else or
+// addresses a list.
+//
+// A list has no single element to move a key into, so `[]` is refused rather
+// than guessed at; TestEveryCrossParentAliasAddressesNoList keeps the registered
+// aliases clear of that shape.
+func objectAt(root Node, path string) (Node, bool) {
+	if path == "" {
+		return root, true
+	}
+	cur := root
+	for _, segment := range strings.Split(path, ".") {
+		if strings.HasSuffix(segment, "[]") {
+			return nil, false
+		}
+		existing, present := cur[segment]
+		if !present || existing == nil {
+			next := Node{}
+			cur[segment] = next
+			cur = next
+			continue
+		}
+		next, ok := asNode(existing)
+		if !ok {
+			return nil, false
+		}
+		cur = next
+	}
+	return cur, true
 }
 
 // splitKeyPath separates a path into the container it addresses and the leaf key
