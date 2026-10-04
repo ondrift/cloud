@@ -74,7 +74,7 @@ func mintStepUpGrant(purpose, why string) (string, error) {
 	fmt.Println(common.Hint("  " + why))
 	password := common.PromptForInputHidden("  Password")
 	if password == "" {
-		return "", fmt.Errorf("a password is needed to download a snapshot")
+		return "", fmt.Errorf("a password is needed to continue")
 	}
 
 	body, err := json.Marshal(map[string]string{"password": password, "purpose": purpose})

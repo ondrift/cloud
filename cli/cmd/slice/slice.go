@@ -23,6 +23,7 @@ func GetCmd() *cobra.Command {
 		getSnapshotCmd(),
 		getDomainCmd(),
 		getLinkCmd(),
+		getTransferCmd(),
 	)
 	return cmd
 }
