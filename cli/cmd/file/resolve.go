@@ -130,6 +130,24 @@ func printResolved(m *project.Manifest, env string) {
 			fmt.Printf("    · %s%s\n", d.Str("host"), suffix)
 		}
 	}
+	// An empty allowlist is still a declaration: it clears the slice's, so it is
+	// printed rather than left out like an absent key.
+	if s.Has("edge", "allow") {
+		cidrs := s.Strings("edge", "allow")
+		fmt.Printf("\n  inbound allowlist (%d)\n", len(cidrs))
+		if len(cidrs) == 0 {
+			fmt.Printf("    %s\n", common.Hint("empty: every address reaches the slice"))
+		}
+		for _, c := range cidrs {
+			fmt.Printf("    · %s\n", c)
+		}
+	}
+	if hosts := s.Entries("host", "edge", "hosts"); len(hosts) > 0 {
+		fmt.Printf("\n  fronted hosts (%d)\n", len(hosts))
+		for _, h := range hosts {
+			fmt.Printf("    · %s → %s\n", h.Str("host"), h.Str("slice"))
+		}
+	}
 
 	// Secrets: names only, never values. Some of them are resolved $ENVREFs by
 	// this point, and a command whose whole job is "print the resolved shape"
