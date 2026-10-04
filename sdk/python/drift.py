@@ -4,6 +4,8 @@ Drift SDK for Python Atomic functions.
 This single-file SDK provides:
   - Backbone helpers: secret, cache, nosql, queue, blob, lock, sql, realtime.
   - Deed helpers: keyauth, jwt, vault, link, pocket.
+  - Edge: edge.slice(name) calls a slice linked under edge.links in the
+    Driftfile.
   - log(msg): Writes to stderr (captured by the runner as function logs).
   - http_request(): Outbound HTTP from within a function.
   - run(handler): the entry point the CLI's generated wrapper calls. You do NOT
@@ -1207,10 +1209,10 @@ backbone = _Backbone()
 # account-key-wrapped keyring. link: multi-device attestation / enrollment /
 # revocation. pocket: E2EE per-identity app data, JWT-gated.
 #
-# Not to be confused with cross-slice calling (drift.slice(name) /
-# caller_slice, further below) — that's inter-slice networking, a different,
-# still-hypothetical future pillar. deed.link enrolls another DEVICE for the
-# same identity; it has nothing to do with calling another SLICE.
+# Not to be confused with cross-slice calling (drift.edge.slice(name) /
+# caller_slice, further below) — that's inter-slice networking, declared under
+# edge.links in the Driftfile. deed.link enrolls another DEVICE for the same
+# identity; it has nothing to do with calling another SLICE.
 # ---------------------------------------------------------------------------
 
 
@@ -1358,7 +1360,7 @@ class _LinkNS:
     strength of a signature from a device already active in the identity's
     registry.
 
-    Not to be confused with cross-slice calling (drift.slice(name) /
+    Not to be confused with cross-slice calling (drift.edge.slice(name) /
     caller_slice, further below) — this Link enrolls a DEVICE for one
     identity, it does not call another slice."""
 
@@ -1595,9 +1597,13 @@ deed = _Deed()
 
 
 # ---------------------------------------------------------------------------
-# Slice-to-slice linking (top-level; inter-slice networking — unrelated to
+# Edge: slice-to-slice links (inter-slice networking — unrelated to
 # deed.link, which enrolls DEVICES for one identity rather than calling
-# another slice)
+# another slice). A link is an Edge fact, declared under edge.links in the
+# Driftfile:
+#
+#   edge:
+#     links: [billing, docs]
 # ---------------------------------------------------------------------------
 
 def _link_env_name(name):
@@ -1612,15 +1618,28 @@ class _SliceClient:
         base = os.environ.get(_link_env_name(self.name))
         if not base:
             raise RuntimeError(
-                f'drift: not linked to slice "{self.name}" — run `drift slice link add {self.name}`'
+                f'drift: slice "{self.name}" is not linked: declare it under edge.links '
+                f"in the Driftfile (or run drift slice link add {self.name})"
             )
         return base.rstrip("/") + "/" + str(path).lstrip("/")
 
     def request(self, method, path, headers=None, body=None):
-        h = {"X-Drift-Slice": os.environ.get("DRIFT_SLICE", "")}
-        if headers:
-            h.update(headers)
-        return http_request(method, self._url(path), headers=h, body=body)
+        """Call the linked slice. The X-Drift-Slice identity header is attached
+        last, and a caller's own X-Drift-Slice is dropped in any letter case, so
+        a caller cannot relabel the call. It is omitted when the runtime
+        supplies no identity: an empty header would assert an identity of ""
+        rather than none. See caller_slice for why the header is a label and
+        never evidence."""
+        url = self._url(path)
+        own = os.environ.get("DRIFT_SLICE", "")
+        h = {}
+        for k, v in (headers or {}).items():
+            if own and k.lower() == "x-drift-slice":
+                continue
+            h[k] = v
+        if own:
+            h["X-Drift-Slice"] = own
+        return http_request(method, url, headers=h, body=body)
 
     def get(self, path):
         return self.request("GET", path)
@@ -1633,14 +1652,32 @@ class _SliceClient:
         )
 
 
+class _Edge:
+    """Edge is the entrypoint for calling another slice of the same owner that
+    this slice links to under edge.links in the Driftfile."""
+
+    def slice(self, name):
+        """A client for a slice linked under edge.links (or added with
+        `drift slice link add <name>`). The call travels in-cluster and
+        carries this slice's identity (X-Drift-Slice) as a label when the
+        runtime supplies one."""
+        return _SliceClient(name)
+
+
+edge = _Edge()
+
+
 def slice(name):
-    """A client for another slice you've LINKED to (`drift slice link`). The
-    call travels in-cluster and carries this slice's identity (X-Drift-Slice)."""
+    """Deprecated: use drift.edge.slice(name), which returns exactly the same
+    client. This spelling keeps working, with the same behaviour."""
     return _SliceClient(name)
 
 
 def caller_slice(req):
-    """The linked slice that called this request, or "" if not via a link."""
+    """The linked slice that called this request, or "" if not via a link.
+
+    It reads a header the caller writes, so it is a label for logging and
+    routing and authorises nothing."""
     headers = (req or {}).get("headers") or {}
     for k, v in headers.items():
         if k.lower() == "x-drift-slice":

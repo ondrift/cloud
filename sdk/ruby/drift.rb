@@ -34,12 +34,14 @@
 #     Drift::Backbone.)
 #   - Drift::Deed — identity, verified. The fourth pillar alongside Atomic /
 #     Backbone / Canvas: KeyAuth, JWT, Vault, Link, Pocket. Not to be confused
-#     with Drift.slice(name) below (inter-slice networking) -- Deed::Link
+#     with Drift::Edge.slice(name) below (inter-slice networking) -- Deed::Link
 #     enrolls another DEVICE for one identity; it has nothing to do with
 #     calling another SLICE.
 #   - Drift.log(msg): Writes to stderr (captured by the runner as function logs).
 #   - Drift.http_request(): Outbound HTTP from within a function.
-#   - Drift.slice(name) / Drift.caller_slice(req): slice-to-slice linking.
+#   - Drift::Edge.slice(name) / Drift.caller_slice(req): slice-to-slice links,
+#     declared under edge.links in the Driftfile. Drift.slice(name) is the
+#     deprecated spelling of Drift::Edge.slice(name).
 #
 # All backbone/deed helpers use only stdlib (net/http) -- zero external
 # dependencies.
@@ -877,7 +879,7 @@ module Drift
   # account-key-wrapped keyring. Link: multi-device attestation / enrollment /
   # revocation. Pocket: E2EE per-identity app data, JWT-gated.
   #
-  # Not to be confused with cross-slice calling (Drift.slice(name) /
+  # Not to be confused with cross-slice calling (Drift::Edge.slice(name) /
   # Drift.caller_slice, further below) -- that's inter-slice networking, an
   # unrelated concept. Deed::Link enrolls another DEVICE for the same
   # identity; it has nothing to do with calling another SLICE.
@@ -995,9 +997,9 @@ module Drift
     # ever added on the strength of a signature from a device already active
     # in the identity's registry.
     #
-    # Not to be confused with Drift.slice(name)/Drift.caller_slice further
-    # below -- this Link enrolls a DEVICE for one identity, it does not call
-    # another slice.
+    # Not to be confused with Drift::Edge.slice(name)/Drift.caller_slice
+    # further below -- this Link enrolls a DEVICE for one identity, it does
+    # not call another slice.
 
     module Link
       # Start a device-linking session for a not-yet-enrolled device's
@@ -1285,13 +1287,18 @@ module Drift
   end
 
   # ---------------------------------------------------------------------------
-  # Slice-to-slice linking (top-level; unrelated to Drift::Deed::Link)
+  # Edge: slice-to-slice links (unrelated to Drift::Deed::Link)
   # ---------------------------------------------------------------------------
   #
   # Not Backbone, and NOT Deed — this is inter-slice networking: one slice
   # calling another slice it's linked to. Drift::Deed::Link (above) is a
   # different thing entirely: it enrolls another DEVICE under the same
   # identity. Same English word, unrelated concepts -- don't conflate them.
+  #
+  # A link is an Edge fact, declared under edge.links in the Driftfile:
+  #
+  #   edge:
+  #     links: [billing, docs]
 
   def self._link_env_name(name)
     'DRIFT_LINK_' + name.upcase.gsub(/[^A-Z0-9]/, '_') + '_URL'
@@ -1305,14 +1312,26 @@ module Drift
     def _url(path)
       base = ENV[Drift._link_env_name(@name)]
       if base.nil? || base.empty?
-        raise "drift: not linked to slice \"#{@name}\" — run `drift slice link add #{@name}`"
+        raise "drift: slice \"#{@name}\" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add #{@name})"
       end
       base.chomp('/') + '/' + path.to_s.sub(%r{\A/}, '')
     end
 
+    # The X-Drift-Slice identity header is attached last, and a caller's own
+    # X-Drift-Slice is dropped in any letter case, so a caller cannot relabel
+    # the call. It is omitted when the runtime supplies no identity: an empty
+    # header would assert an identity of "" rather than none. See caller_slice
+    # for why the header is a label and never evidence.
     def request(method, path, headers: {}, body: nil)
-      h = { 'X-Drift-Slice' => (ENV['DRIFT_SLICE'] || '') }.merge(headers || {})
-      Drift.http_request(method, _url(path), h, body)
+      url = _url(path)
+      own = ENV['DRIFT_SLICE'].to_s
+      h = {}
+      (headers || {}).each do |k, v|
+        next if !own.empty? && k.to_s.downcase == 'x-drift-slice'
+        h[k] = v
+      end
+      h['X-Drift-Slice'] = own unless own.empty?
+      Drift.http_request(method, url, h, body)
     end
 
     def get(path)
@@ -1326,13 +1345,27 @@ module Drift
     end
   end
 
-  # A client for another slice you've LINKED to (`drift slice link`). The call
-  # travels in-cluster and carries this slice's identity (X-Drift-Slice).
-  def self.slice(name)
-    SliceClient.new(name)
+  # Edge is the entrypoint for calling another slice of the same owner that
+  # this slice links to under edge.links in the Driftfile.
+  module Edge
+    # A client for a slice linked under edge.links (or added with
+    # `drift slice link add <name>`). The call travels in-cluster and carries
+    # this slice's identity (X-Drift-Slice) as a label when the runtime
+    # supplies one.
+    def self.slice(name)
+      SliceClient.new(name)
+    end
   end
 
-  # The linked slice that called this request, or "" if not via a link.
+  # Deprecated: use Drift::Edge.slice(name), which returns exactly the same
+  # client. This spelling keeps working, with the same behaviour.
+  def self.slice(name)
+    Edge.slice(name)
+  end
+
+  # The linked slice that called this request, or "" if not via a link. It
+  # reads a header the caller writes, so it is a label for logging and routing
+  # and authorises nothing.
   def self.caller_slice(req)
     headers = (req || {})['headers'] || {}
     headers.each { |k, v| return v if k.to_s.downcase == 'x-drift-slice' }

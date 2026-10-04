@@ -37,9 +37,11 @@
  *     primitives.
  *   - \Drift\log($msg): Writes to stderr (captured by the runner as function logs).
  *   - \Drift\http_request(): Outbound HTTP from within a function.
- *   - \Drift\slice($name) / \Drift\caller_slice($req): slice-to-slice linking
- *     (unrelated to \Drift\Deed\Link, which enrolls a DEVICE for one
- *     identity — not the same thing as calling another SLICE).
+ *   - \Drift\Edge\slice($name) / \Drift\caller_slice($req): slice-to-slice
+ *     links, declared under edge.links in the Driftfile (unrelated to
+ *     \Drift\Deed\Link, which enrolls a DEVICE for one identity — not the
+ *     same thing as calling another SLICE). \Drift\slice($name) is the
+ *     deprecated spelling of \Drift\Edge\slice($name).
  *
  * All backbone helpers use only PHP built-ins -- zero external dependencies.
  */
@@ -728,11 +730,17 @@ function run_ws(callable $handler): void {
 }
 
 // ---------------------------------------------------------------------------
-// Slice-to-slice linking (top-level; the seed of a future "D" pillar)
+// Slice-to-slice links: the client \Drift\Edge\slice() returns
 // ---------------------------------------------------------------------------
 //
-// Not Backbone — this is inter-slice networking, parked at the top level until
-// the fourth pillar lands.
+// Not Backbone — this is inter-slice networking. A link is an Edge fact,
+// declared under edge.links in the Driftfile:
+//
+//   edge:
+//     links: [billing, docs]
+//
+// The entrypoint is \Drift\Edge\slice($name), in the \Drift\Edge namespace
+// below; \Drift\slice($name) is its deprecated alias.
 
 function _link_env_name(string $name): string {
     return 'DRIFT_LINK_' . preg_replace('/[^A-Z0-9]/', '_', strtoupper($name)) . '_URL';
@@ -747,15 +755,29 @@ class SliceClient {
         $base = getenv(_link_env_name($this->name));
         if ($base === false || $base === '') {
             throw new \RuntimeException(
-                "drift: not linked to slice \"{$this->name}\" — run `drift slice link add {$this->name}`"
+                "drift: slice \"{$this->name}\" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add {$this->name})"
             );
         }
         return rtrim($base, '/') . '/' . ltrim($path, '/');
     }
 
+    /**
+     * Call the linked slice. The X-Drift-Slice identity header is attached
+     * last, and a caller's own X-Drift-Slice is dropped in any letter case, so
+     * a caller cannot relabel the call. It is omitted when the runtime supplies
+     * no identity: an empty header would assert an identity of "" rather than
+     * none. See caller_slice() for why the header is a label and never evidence.
+     */
     public function request(string $method, string $path, ?array $headers = null, $body = null): array {
-        $h = array_merge(['X-Drift-Slice' => getenv('DRIFT_SLICE') ?: ''], $headers ?? []);
-        return http_request($method, $this->_url($path), $h, $body);
+        $url = $this->_url($path);
+        $self = getenv('DRIFT_SLICE') ?: '';
+        $h = [];
+        foreach ($headers ?? [] as $k => $v) {
+            if ($self !== '' && strtolower((string) $k) === 'x-drift-slice') continue;
+            $h[$k] = $v;
+        }
+        if ($self !== '') $h['X-Drift-Slice'] = $self;
+        return http_request($method, $url, $h, $body);
     }
 
     public function get(string $path): array {
@@ -770,14 +792,20 @@ class SliceClient {
 }
 
 /**
- * A client for another slice you've LINKED to (`drift slice link`). The call
- * travels in-cluster and carries this slice's identity (X-Drift-Slice).
+ * Returns exactly what \Drift\Edge\slice($name) returns.
+ *
+ * @deprecated Use \Drift\Edge\slice($name). This spelling keeps working, with
+ * the same behaviour.
  */
 function slice(string $name): SliceClient {
     return new SliceClient($name);
 }
 
-/** The linked slice that called this request, or "" if not via a link. */
+/**
+ * The linked slice that called this request, or "" if not via a link. It reads
+ * a header the caller writes, so it is a label for logging and routing and
+ * authorises nothing.
+ */
 function caller_slice(array $req): string {
     $headers = $req['headers'] ?? [];
     foreach ($headers as $k => $v) {
@@ -1271,6 +1299,26 @@ function sql(string $name): SqlDb {
 } // namespace Drift\Backbone
 
 // ===========================================================================
+// Edge — calls to the slices this slice links to. A link is declared under
+// edge.links in the Driftfile; reach a linked slice as
+// \Drift\Edge\slice($name).
+// ===========================================================================
+
+namespace Drift\Edge {
+
+/**
+ * A client for another slice of the same owner that this slice links to under
+ * edge.links in the Driftfile (or added with `drift slice link add <name>`).
+ * The call travels in-cluster and carries this slice's identity
+ * (X-Drift-Slice) as a label when the runtime supplies one.
+ */
+function slice(string $name): \Drift\SliceClient {
+    return new \Drift\SliceClient($name);
+}
+
+} // namespace Drift\Edge
+
+// ===========================================================================
 // Deed — the 4th pillar: identity, verified. A peer of \Drift\Backbone (not
 // one of its primitives), reached as \Drift\Deed\KeyAuth, \Drift\Deed\JWT,
 // \Drift\Deed\Vault, \Drift\Deed\Link, \Drift\Deed\Pocket.
@@ -1280,10 +1328,9 @@ function sql(string $name): SqlDb {
 // account-key-wrapped keyring. Link: multi-device attestation / enrollment /
 // revocation. Pocket: E2EE per-identity app data, JWT-gated.
 //
-// Not to be confused with cross-slice calling (\Drift\slice($name) /
-// \Drift\caller_slice($req), defined above in the top-level \Drift
-// namespace) — that's inter-slice networking, a different, still-
-// hypothetical future pillar. Deed\Link enrolls another DEVICE for the same
+// Not to be confused with cross-slice calling (\Drift\Edge\slice($name) /
+// \Drift\caller_slice($req)) — that's inter-slice networking, declared under
+// edge.links in the Driftfile. Deed\Link enrolls another DEVICE for the same
 // identity; it has nothing to do with calling another SLICE.
 // ===========================================================================
 
@@ -1416,7 +1463,7 @@ class Vault {
 // added on the strength of a signature from a device already active in the
 // identity's registry.
 //
-// Not to be confused with cross-slice calling (\Drift\slice($name) /
+// Not to be confused with cross-slice calling (\Drift\Edge\slice($name) /
 // \Drift\caller_slice($req)) — this Link enrolls a DEVICE for one identity,
 // it does not call another slice.
 

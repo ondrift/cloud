@@ -73,13 +73,20 @@ atomic:
       memory: 32MB
 ```
 
-Everything stateful lives under the **Backbone** namespace — the *B* of the sacred A·B·C triad and the **sole entrypoint** for state. Nothing stateful sits at the top level. Backbone groups secrets, key/value cache, NoSQL documents, queues, blobs, locks, relational `sql(name)`, and realtime channels — all shown per-language below. Identity lives under a separate **Deed** namespace instead — a peer pillar, not a Backbone primitive, reached at its own `DEED_URL` — grouping passwordless **KeyAuth** (Ed25519 device-key auth), general-purpose **JWT** sign/verify, the zero-knowledge **Vault** (recovery store), **Link** (multi-device attestation/enrollment/revocation), and **Pocket** (E2EE per-identity app data). Cross-slice calling (`slice(name)` / `callerSlice(req)`) stays at the top level on purpose: it's inter-slice networking, a different, still-hypothetical future pillar — not Backbone, and not the same thing as Deed's `Link` (which enrolls a device for one identity, not a slice-to-slice call).
+Everything stateful lives under the **Backbone** namespace — the *B* of the sacred A·B·C triad and the **sole entrypoint** for state. Nothing stateful sits at the top level. Backbone groups secrets, key/value cache, NoSQL documents, queues, blobs, locks, relational `sql(name)`, and realtime channels — all shown per-language below. Identity lives under a separate **Deed** namespace instead — a peer pillar, not a Backbone primitive, reached at its own `DEED_URL` — grouping passwordless **KeyAuth** (Ed25519 device-key auth), general-purpose **JWT** sign/verify, the zero-knowledge **Vault** (recovery store), **Link** (multi-device attestation/enrollment/revocation), and **Pocket** (E2EE per-identity app data). Cross-slice calling lives under **Edge**: `edge.slice(name)` calls another slice of the same owner that this slice links to under `edge.links` in the Driftfile. The old top-level `slice(name)` is a deprecated alias that returns the same client, and `callerSlice(req)` stays at the top level. Edge is inter-slice networking — not Backbone, and not the same thing as Deed's `Link` (which enrolls a device for one identity, not a slice-to-slice call).
+
+```yaml
+edge:
+  links: [billing, docs]
+```
+
+A call to a slice that is not linked fails before any network I/O with `drift: slice "billing" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add billing)`. The call carries this slice's identity in `X-Drift-Slice` only when the runtime supplies one, and a caller's own `X-Drift-Slice` never overrides it. `callerSlice(req)` reads that header, which any caller can write, so it is a label for logging and routing and authorises nothing.
 
 ---
 
 ## API Reference
 
-The Backbone and Deed primitives are each identical across languages; every section shows that language's idiomatic form. Reach state through `drift.Backbone` (Go), `drift.backbone` (Python/Node), `Drift::Backbone` (Ruby), `\Drift\Backbone\…` (PHP), `drift_sdk::backbone` (Rust); reach identity through the parallel `Deed` / `deed` / `Drift::Deed` / `\Drift\Deed\…` / `drift_sdk::deed` namespace — never the top level.
+The Backbone and Deed primitives are each identical across languages; every section shows that language's idiomatic form. Reach state through `drift.Backbone` (Go), `drift.backbone` (Python/Node), `Drift::Backbone` (Ruby), `\Drift\Backbone\…` (PHP), `drift_sdk::backbone` (Rust); reach identity through the parallel `Deed` / `deed` / `Drift::Deed` / `\Drift\Deed\…` / `drift_sdk::deed` namespace — never the top level; reach a linked slice through `drift.Edge.Slice` (Go), `drift.edge.slice` (Python/Node), `Drift::Edge.slice` (Ruby), `\Drift\Edge\slice` (PHP), `drift_sdk::edge::slice` (Rust).
 
 ### Go
 
@@ -120,9 +127,10 @@ drift.Deed.Vault.Put(uid, blob); drift.Deed.Vault.Get(uid)                 // ze
 drift.Deed.Link.Begin(pubkey); drift.Deed.Link.Attest(identity, sid, attestingPubkey, sig)
 drift.Deed.Link.Complete(sid); drift.Deed.Link.Revoke(identity, targetPubkey, revokingPubkey, sig)
 drift.Deed.Pocket.Set(token, "k", blob); drift.Deed.Pocket.Get(token, "k")  // every call takes the bearer token explicitly
-// Top-level (NOT Backbone, NOT Deed) — cross-slice networking + utilities:
-drift.Slice("c12").Post("/api/events", body); drift.Slice("c12").Get("/x")  // call a LINKED slice (`drift slice link add c12`); carries X-Drift-Slice
-drift.CallerSlice(req)                                          // name of the linked slice that called you ("" if not via a link)
+// Edge — calls to slices linked under edge.links (drift.Slice is the deprecated alias):
+drift.Edge.Slice("c12").Post("/api/events", body); drift.Edge.Slice("c12").Get("/x")
+// Top-level (NOT Backbone, NOT Deed) — utilities:
+drift.CallerSlice(req)                                          // name of the linked slice that called you ("" if not via a link); a label, never authorisation
 drift.Log("msg"); drift.HTTPRequest("GET", url, nil, nil)      // HTTPRequestWithTimeout to override 30s
 ```
 
@@ -162,8 +170,9 @@ drift.deed.vault.put(uid, blob); drift.deed.vault.get(uid)                     #
 drift.deed.link.begin(pubkey); drift.deed.link.attest(identity, sid, attesting_pubkey, sig)
 drift.deed.link.complete(sid); drift.deed.link.revoke(identity, target_pubkey, revoking_pubkey, sig)
 drift.deed.pocket.set(token, "k", blob); drift.deed.pocket.get(token, "k")     # every call takes the bearer token explicitly
-# Top-level (NOT Backbone, NOT Deed) — cross-slice networking + utilities:
-drift.slice("c12").post("/api/events", body); drift.slice("c12").get("/x")
+# Edge — calls to slices linked under edge.links (drift.slice is the deprecated alias):
+drift.edge.slice("c12").post("/api/events", body); drift.edge.slice("c12").get("/x")
+# Top-level (NOT Backbone, NOT Deed) — utilities:
 drift.caller_slice(req)
 drift.log("msg"); drift.http_request("GET", url, timeout=30)
 ```
@@ -205,8 +214,9 @@ await drift.deed.vault.put(uid, blob); await drift.deed.vault.get(uid);         
 await drift.deed.link.begin(pubkey); await drift.deed.link.attest(identity, sid, attestingPubkey, sig);
 await drift.deed.link.complete(sid); await drift.deed.link.revoke(identity, targetPubkey, revokingPubkey, sig);
 await drift.deed.pocket.set(token, "k", blob); await drift.deed.pocket.get(token, "k");  // every call takes the bearer token explicitly
-// Top-level (NOT Backbone, NOT Deed) — cross-slice networking + utilities:
-await drift.slice("c12").post("/api/events", body); await drift.slice("c12").get("/x");
+// Edge — calls to slices linked under edge.links (drift.slice is the deprecated alias):
+await drift.edge.slice("c12").post("/api/events", body); await drift.edge.slice("c12").get("/x");
+// Top-level (NOT Backbone, NOT Deed) — utilities:
 drift.callerSlice(req);
 drift.log("msg"); await drift.httpRequest("GET", url);                  // { timeoutMs } 5th arg
 ```
@@ -247,8 +257,9 @@ Drift::Deed::Vault.put(uid, blob); Drift::Deed::Vault.get(uid)                 #
 Drift::Deed::Link.begin(pubkey); Drift::Deed::Link.attest(identity, sid, attesting_pubkey, sig)
 Drift::Deed::Link.complete(sid); Drift::Deed::Link.revoke(identity, target_pubkey, revoking_pubkey, sig)
 Drift::Deed::Pocket.set(token, "k", blob); Drift::Deed::Pocket.get(token, "k")  # every call takes the bearer token explicitly
-# Top-level (NOT Backbone, NOT Deed) — cross-slice networking + utilities:
-Drift.slice("c12").post("/api/events", body); Drift.slice("c12").get("/x")
+# Edge — calls to slices linked under edge.links (Drift.slice is the deprecated alias):
+Drift::Edge.slice("c12").post("/api/events", body); Drift::Edge.slice("c12").get("/x")
+# Top-level (NOT Backbone, NOT Deed) — utilities:
 Drift.caller_slice(req)
 Drift.log("msg"); Drift.http_request("GET", url, timeout: 30)
 ```
@@ -293,8 +304,9 @@ $db = \Drift\Backbone\sql('clinic'); $db->query('SELECT …', $args);   // ->exe
 \Drift\Deed\Link::begin($pubkey); \Drift\Deed\Link::attest($identity, $sid, $attestingPubkey, $sig);
 \Drift\Deed\Link::complete($sid); \Drift\Deed\Link::revoke($identity, $targetPubkey, $revokingPubkey, $sig);
 \Drift\Deed\Pocket::set($token, 'k', $blob); \Drift\Deed\Pocket::get($token, 'k');   // list_keys($token) — `list` is a PHP language construct
-// Top-level (NOT Backbone, NOT Deed) — cross-slice networking + utilities:
-\Drift\slice('c12')->post('/api/events', $body); \Drift\slice('c12')->get('/x');
+// Edge — calls to slices linked under edge.links (\Drift\slice is the deprecated alias):
+\Drift\Edge\slice('c12')->post('/api/events', $body); \Drift\Edge\slice('c12')->get('/x');
+// Top-level (NOT Backbone, NOT Deed) — utilities:
 \Drift\caller_slice($req);
 \Drift\log('msg'); \Drift\http_request('GET', $url);
 ```
@@ -344,8 +356,9 @@ vault::put(uid, blob); vault::get(uid);                                // zero-k
 link::begin(&pubkey); link::attest(&identity, &sid, &attesting_pubkey, &sig);
 link::complete(&sid); link::revoke(&identity, &target_pubkey, &revoking_pubkey, &sig);
 pocket::set(&token, "k", blob); pocket::get(&token, "k");              // every call takes the bearer token explicitly
-// Top-level (NOT Backbone, NOT Deed) — cross-slice networking + utilities:
-drift_sdk::slice("c12").post("/api/events", Some(body)); drift_sdk::slice("c12").get("/x");
+// Edge — calls to slices linked under edge.links (drift_sdk::slice is the deprecated alias):
+drift_sdk::edge::slice("c12").post("/api/events", Some(body)); drift_sdk::edge::slice("c12").get("/x");
+// Top-level (NOT Backbone, NOT Deed) — utilities:
 drift_sdk::caller_slice(&req);
 drift_sdk::log("msg"); drift_sdk::http_request("GET", url, None, None);
 ```
@@ -366,4 +379,4 @@ MIT — see [`LICENSE`](LICENSE).
 
 ---
 
-*This is the single source of truth for all six SDKs. Any change to the public API surface of any language MUST update the matching section above in the same change. Last verified 2026-07-15 — all six languages namespaced under `Backbone` (sole entrypoint for state: Secret/NoSQL/Cache/Queue/Blob/Lock/SQL/Realtime) and the parallel `Deed` (identity: KeyAuth/JWT/Vault/Link/Pocket — a peer pillar, not a Backbone primitive), plus top-level slice-link.*
+*This is the single source of truth for all six SDKs. Any change to the public API surface of any language MUST update the matching section above in the same change. Last verified 2026-10-04 — all six languages namespaced under `Backbone` (sole entrypoint for state: Secret/NoSQL/Cache/Queue/Blob/Lock/SQL/Realtime), the parallel `Deed` (identity: KeyAuth/JWT/Vault/Link/Pocket — a peer pillar, not a Backbone primitive), and `Edge` (calls to slices linked under `edge.links`, with the top-level `slice` as a deprecated alias).*

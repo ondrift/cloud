@@ -746,7 +746,8 @@ func callBackboneLocal(method, path string, body any) ([]byte, error) {
 //
 // Nothing stateful lives at the top level — the triad is the namespace
 // for everything under it. (Atomic-side entrypoints like Run live with
-// the runtime; cross-slice calling is the seed of a future "D"; identity
+// the runtime; cross-slice calling lives under Edge, beside the
+// Driftfile's edge.links that declares it; identity
 // — KeyAuth/JWT/Vault/Link/Pocket — lives under Deed, below, a peer of
 // Backbone rather than one of its primitives.)
 // ================================================================
@@ -792,11 +793,10 @@ func (realtimeNS) Channel(name string) RealtimeChannel { return RealtimeChannel{
 // account-key-wrapped keyring. Link: multi-device attestation /
 // enrollment / revocation. Pocket: E2EE per-identity app data, JWT-gated.
 //
-// Not to be confused with cross-slice calling (drift.Slice(name) /
-// CallerSlice, further below) — that's inter-slice networking, a
-// different, still-hypothetical future pillar. Deed.Link enrolls another
-// DEVICE for the same identity; it has nothing to do with calling
-// another SLICE.
+// Not to be confused with cross-slice calling (drift.Edge.Slice(name) /
+// CallerSlice, further below) — that's inter-slice networking, declared
+// under edge.links in the Driftfile. Deed.Link enrolls another DEVICE for
+// the same identity; it has nothing to do with calling another SLICE.
 // ================================================================
 
 type deedNS struct {
@@ -1529,7 +1529,7 @@ func (vaultNS) Get(uid string) (json.RawMessage, error) {
 // device is only ever added on the strength of a signature from a device
 // already active in the identity's registry.
 //
-// Not to be confused with cross-slice calling (Slice(name)/CallerSlice,
+// Not to be confused with cross-slice calling (Edge.Slice(name)/CallerSlice,
 // further below) — this Link enrolls a DEVICE for one identity, it does
 // not call another slice.
 
@@ -1783,18 +1783,36 @@ func callBackboneHTTPAuth(baseURL, method, path, token string, body any) ([]byte
 	return data, nil
 }
 
-// --- Slice-to-slice linking ---
+// --- Edge: slice-to-slice links ---
 
-// Slice returns a client for calling another slice you're LINKED to (e.g. an
-// app slice → your own observability slice). Establish the link first with
-// `drift slice link add <name>` (same-user). The call travels in-cluster — no
-// public hop — and carries this slice's identity so the callee can authorize it
-// (see CallerSlice). Returns an error at call time if no link exists.
+// edgeNS groups what the SDK reaches through the slice's edge: the other
+// slices this one links to.
+type edgeNS struct{}
+
+// Edge is the entrypoint for calling another slice. A link is an Edge fact,
+// declared under edge.links in the Driftfile:
 //
-//	resp, err := drift.Slice("c12").Post("/api/events", batch)
-func Slice(name string) SliceClient { return SliceClient{name: name} }
+//	edge:
+//	  links: [billing, docs]
+var Edge edgeNS
 
-// SliceClient calls a linked slice. Construct it with Slice(name).
+// Slice returns a client for calling another slice of the same owner that this
+// slice links to (e.g. an app slice → your own observability slice). Declare
+// the link under edge.links in the Driftfile, or add it with `drift slice link
+// add <name>`. The call travels in-cluster — no public hop — and carries this
+// slice's identity as a label (see CallerSlice). Returns an error at call time
+// if no link exists.
+//
+//	resp, err := drift.Edge.Slice("c12").Post("/api/events", batch)
+func (edgeNS) Slice(name string) SliceClient { return SliceClient{name: name} }
+
+// Slice returns exactly what Edge.Slice returns.
+//
+// Deprecated: use drift.Edge.Slice. Slice keeps working, with the same
+// behaviour.
+func Slice(name string) SliceClient { return Edge.Slice(name) }
+
+// SliceClient calls a linked slice. Construct it with Edge.Slice(name).
 type SliceClient struct{ name string }
 
 // resolveURL builds the absolute in-cluster URL for path. The platform injects
@@ -1803,7 +1821,7 @@ type SliceClient struct{ name string }
 func (s SliceClient) resolveURL(path string) (string, error) {
 	base := os.Getenv("DRIFT_LINK_" + linkEnvName(s.name) + "_URL")
 	if base == "" {
-		return "", fmt.Errorf("drift: not linked to slice %q — run `drift slice link add %s`", s.name, s.name)
+		return "", fmt.Errorf("drift: slice %q is not linked: declare it under edge.links in the Driftfile (or run drift slice link add %s)", s.name, s.name)
 	}
 	return strings.TrimRight(base, "/") + "/" + strings.TrimPrefix(path, "/"), nil
 }
@@ -1811,11 +1829,11 @@ func (s SliceClient) resolveURL(path string) (string, error) {
 // Request calls the linked slice with a raw body. A non-existent link surfaces
 // as an error before any network I/O.
 //
-// The X-Drift-Slice identity header is attached last, so a caller cannot
-// overwrite it by passing the same key. That is tidiness rather than a security
-// control — see CallerSlice for why the header is not evidence of anything —
-// but handing callers a documented way to relabel themselves was worse than
-// pointless.
+// The X-Drift-Slice identity header is attached last, and a caller's own
+// X-Drift-Slice is dropped in any letter case, so a caller cannot overwrite it
+// by passing the same key. That is tidiness rather than a security control —
+// see CallerSlice for why the header is not evidence of anything — but handing
+// callers a documented way to relabel themselves was worse than pointless.
 //
 // The header is omitted entirely when the runtime does not supply an identity,
 // which is the normal case: DRIFT_SLICE is withheld from functions on purpose,
@@ -1826,11 +1844,15 @@ func (s SliceClient) Request(method, path string, headers map[string]string, bod
 	if err != nil {
 		return nil, err
 	}
+	self := os.Getenv("DRIFT_SLICE")
 	h := map[string]string{}
 	for k, v := range headers {
+		if self != "" && strings.EqualFold(k, "X-Drift-Slice") {
+			continue
+		}
 		h[k] = v
 	}
-	if self := os.Getenv("DRIFT_SLICE"); self != "" {
+	if self != "" {
 		h["X-Drift-Slice"] = self
 	}
 	return HTTPRequest(method, url, h, body)
@@ -2001,7 +2023,7 @@ type EgressDeniedError struct {
 }
 
 func (e *EgressDeniedError) Error() string {
-	return "drift: egress denied for host " + e.Host + " — check your slice.atomic.egress.hosts allowlist (underlying: " + e.Err.Error() + ")"
+	return "drift: egress denied for host " + e.Host + " — check your edge.egress.hosts allowlist (underlying: " + e.Err.Error() + ")"
 }
 
 func (e *EgressDeniedError) Unwrap() error { return e.Err }

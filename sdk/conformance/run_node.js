@@ -143,6 +143,57 @@ async function main() {
     out.list_filter_over_cap = "error";
   }
 
+  // ── Edge links ────────────────────────────────────────────────────────────
+  // A loopback peer that echoes the path it was asked for and the identity
+  // header it received, null when the header is absent.
+  const http = require("http");
+  const peer = http.createServer((req, res) => {
+    const slice = req.headers["x-drift-slice"];
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ path: new URL(req.url, "http://peer").pathname, slice: slice === undefined ? null : slice }));
+  });
+  await new Promise((resolve) => peer.listen(0, "127.0.0.1", resolve));
+  delete process.env.DRIFT_SLICE;
+  process.env.DRIFT_LINK_BILLING_API_URL = `http://127.0.0.1:${peer.address().port}/base/`;
+  const echoed = (resp) => JSON.parse(resp.body.toString("utf8"));
+
+  try {
+    const e = echoed(await drift.edge.slice("billing-api").get("/api/events"));
+    out.edge_slice_url = e.path;
+    out.slice_identity_absent = e.slice;
+  } catch (e) {
+    fail(`edge.slice get: ${e.message}`);
+  }
+  try {
+    out.slice_url = echoed(await drift.slice("billing-api").get("/api/events")).path;
+  } catch (e) {
+    fail(`slice get: ${e.message}`);
+  }
+
+  process.env.DRIFT_SLICE = "billing";
+  try {
+    const resp = await drift.edge.slice("billing-api").request("GET", "/api/events", { "X-Drift-Slice": "operator" }, null);
+    out.slice_identity_kept = echoed(resp).slice;
+  } catch (e) {
+    fail(`edge.slice request with a caller identity: ${e.message}`);
+  }
+  delete process.env.DRIFT_SLICE;
+  peer.closeAllConnections();
+  peer.close();
+
+  try {
+    await drift.edge.slice("billing").get("/x");
+    out.edge_slice_not_linked = null;
+  } catch (e) {
+    out.edge_slice_not_linked = e.message;
+  }
+  try {
+    await drift.slice("billing").get("/x");
+    out.slice_not_linked = null;
+  } catch (e) {
+    out.slice_not_linked = e.message;
+  }
+
   emit();
 }
 

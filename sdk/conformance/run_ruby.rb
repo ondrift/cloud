@@ -136,4 +136,65 @@ rescue StandardError
   OUT['list_filter_over_cap'] = 'error'
 end
 
+# -- Edge links --------------------------------------------------------------
+# A loopback peer that echoes the path it was asked for and the identity header
+# it received, null when the header is absent.
+peer = TCPServer.new('127.0.0.1', 0)
+Thread.new do
+  loop do
+    sock = peer.accept
+    _, target, = sock.gets.to_s.split(' ', 3)
+    slices = []
+    while (line = sock.gets)
+      break if line.strip.empty?
+      k, v = line.split(':', 2)
+      slices << v.strip if k.to_s.strip.downcase == 'x-drift-slice'
+    end
+    body = JSON.generate({ 'path' => target.to_s.split('?', 2).first, 'slice' => slices.empty? ? nil : slices.join(',') })
+    sock.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: #{body.bytesize}\r\nConnection: close\r\n\r\n#{body}")
+    sock.close
+  end
+rescue IOError
+  # The peer was closed once the cases that need it had run.
+end
+ENV.delete('DRIFT_SLICE')
+ENV['DRIFT_LINK_BILLING_API_URL'] = "http://127.0.0.1:#{peer.addr[1]}/base/"
+echoed = ->(resp) { JSON.parse(resp['body']) }
+
+begin
+  e = echoed.call(Drift::Edge.slice('billing-api').get('/api/events'))
+  OUT['edge_slice_url'] = e['path']
+  OUT['slice_identity_absent'] = e['slice']
+rescue StandardError => e
+  fail_with("Edge.slice get: #{e.message}")
+end
+begin
+  OUT['slice_url'] = echoed.call(Drift.slice('billing-api').get('/api/events'))['path']
+rescue StandardError => e
+  fail_with("slice get: #{e.message}")
+end
+
+ENV['DRIFT_SLICE'] = 'billing'
+begin
+  resp = Drift::Edge.slice('billing-api').request('GET', '/api/events', headers: { 'X-Drift-Slice' => 'operator' })
+  OUT['slice_identity_kept'] = echoed.call(resp)['slice']
+rescue StandardError => e
+  fail_with("Edge.slice request with a caller identity: #{e.message}")
+end
+ENV.delete('DRIFT_SLICE')
+peer.close
+
+begin
+  Drift::Edge.slice('billing').get('/x')
+  OUT['edge_slice_not_linked'] = nil
+rescue StandardError => e
+  OUT['edge_slice_not_linked'] = e.message
+end
+begin
+  Drift.slice('billing').get('/x')
+  OUT['slice_not_linked'] = nil
+rescue StandardError => e
+  OUT['slice_not_linked'] = e.message
+end
+
 emit

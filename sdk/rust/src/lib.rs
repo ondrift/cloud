@@ -13,12 +13,14 @@
 //!     KeyAuth mints its own tokens through it), `deed::vault` (an
 //!     account-key-wrapped keyring), `deed::link` (multi-device attestation /
 //!     enrollment / revocation), `deed::pocket` (E2EE per-identity app data,
-//!     JWT-gated). Not to be confused with `slice`/`caller_slice` below —
-//!     that's inter-slice networking; `deed::link` enrolls another DEVICE for
-//!     the same identity, it has nothing to do with calling another SLICE.
+//!     JWT-gated). Not to be confused with `edge::slice`/`caller_slice` below
+//!     — that's inter-slice networking; `deed::link` enrolls another DEVICE
+//!     for the same identity, it has nothing to do with calling another SLICE.
 //!   - log(msg): Writes to stderr (captured by runner).
 //!   - http_request(): Outbound HTTP from within a function.
-//!   - slice(name) / caller_slice(req): slice-to-slice linking.
+//!   - edge::slice(name) / caller_slice(req): slice-to-slice links, declared
+//!     under `edge.links` in the Driftfile. The crate-root slice(name) is the
+//!     deprecated spelling of edge::slice(name).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -1348,11 +1350,10 @@ pub mod backbone {
 // account-key-wrapped keyring. Link: multi-device attestation / enrollment /
 // revocation. Pocket: E2EE per-identity app data, JWT-gated.
 //
-// Not to be confused with slice-to-slice linking (`slice(name)` /
-// `caller_slice`, further below) — that's inter-slice networking, a
-// different, still-hypothetical future pillar. `deed::link` enrolls another
-// DEVICE for the same identity; it has nothing to do with calling another
-// SLICE.
+// Not to be confused with slice-to-slice linking (`edge::slice(name)` /
+// `caller_slice`, further below) — that's inter-slice networking, declared
+// under edge.links in the Driftfile. `deed::link` enrolls another DEVICE for
+// the same identity; it has nothing to do with calling another SLICE.
 // ===========================================================================
 
 pub mod deed {
@@ -1628,7 +1629,7 @@ pub mod deed {
     // a device is only ever added on the strength of a signature from a
     // device already active in the identity's registry.
     //
-    // Not to be confused with slice-to-slice linking (`slice(name)` /
+    // Not to be confused with slice-to-slice linking (`edge::slice(name)` /
     // `caller_slice`, at the crate root) — this Link enrolls a DEVICE for
     // one identity, it does not call another slice.
 
@@ -2149,11 +2150,17 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Slice-to-slice linking (top-level; the seed of a future "D" pillar)
+// Edge: slice-to-slice links
 // ---------------------------------------------------------------------------
 //
-// Not Backbone — this is inter-slice networking, parked at the crate root until
-// the fourth pillar lands.
+// Not Backbone — this is inter-slice networking. A link is an Edge fact,
+// declared under edge.links in the Driftfile:
+//
+//   edge:
+//     links: [billing, docs]
+//
+// The entrypoint is `edge::slice(name)`; the crate-root `slice(name)` is its
+// deprecated alias.
 
 fn link_env_name(name: &str) -> String {
     let mangled: String = name
@@ -2164,14 +2171,32 @@ fn link_env_name(name: &str) -> String {
     format!("DRIFT_LINK_{}_URL", mangled)
 }
 
-/// A client for another slice you've LINKED to (`drift slice link`). The call
-/// travels in-cluster and carries this slice's identity (X-Drift-Slice).
+/// Calls to the slices this slice links to under `edge.links` in the Driftfile.
+pub mod edge {
+    use crate::SliceClient;
+
+    /// A client for another slice of the same owner that this slice links to
+    /// under `edge.links` in the Driftfile (or added with `drift slice link add
+    /// <name>`). The call travels in-cluster and carries this slice's identity
+    /// (X-Drift-Slice) as a label when the runtime supplies one.
+    pub fn slice(name: &str) -> SliceClient {
+        SliceClient { name: name.to_string() }
+    }
+}
+
+/// A client for a linked slice. Construct it with [`edge::slice`].
 pub struct SliceClient {
     name: String,
 }
 
+/// Returns exactly what [`edge::slice`] returns.
+///
+/// **Deprecated:** use `drift_sdk::edge::slice(name)`. This spelling keeps
+/// working, with the same behaviour. It carries no `#[deprecated]` attribute
+/// because that would fail the build of any caller compiling with
+/// `deny(warnings)`.
 pub fn slice(name: &str) -> SliceClient {
-    SliceClient { name: name.to_string() }
+    edge::slice(name)
 }
 
 impl SliceClient {
@@ -2179,7 +2204,7 @@ impl SliceClient {
         let base = std::env::var(link_env_name(&self.name)).unwrap_or_default();
         if base.is_empty() {
             return Err(format!(
-                "drift: not linked to slice \"{}\" — run `drift slice link add {}`",
+                "drift: slice \"{}\" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add {})",
                 self.name, self.name
             ));
         }
@@ -2187,6 +2212,12 @@ impl SliceClient {
     }
 
     /// Issue a request to the linked slice. On (0, msg) the link is missing.
+    ///
+    /// The X-Drift-Slice identity header is attached last, and a caller's own
+    /// X-Drift-Slice is dropped in any letter case, so a caller cannot relabel
+    /// the call. It is omitted when the runtime supplies no identity: an empty
+    /// header would assert an identity of "" rather than none. See
+    /// [`caller_slice`] for why the header is a label and never evidence.
     pub fn request(
         &self,
         method: &str,
@@ -2198,8 +2229,12 @@ impl SliceClient {
             Ok(u) => u,
             Err(e) => return (0, e),
         };
+        let own = std::env::var("DRIFT_SLICE").unwrap_or_default();
         let mut h = headers.unwrap_or_default();
-        h.insert("X-Drift-Slice".to_string(), std::env::var("DRIFT_SLICE").unwrap_or_default());
+        if !own.is_empty() {
+            h.retain(|k, _| !k.eq_ignore_ascii_case("x-drift-slice"));
+            h.insert("X-Drift-Slice".to_string(), own);
+        }
         http_request(method, &url, Some(h), body)
     }
 
@@ -2214,7 +2249,9 @@ impl SliceClient {
     }
 }
 
-/// The linked slice that called this request, or "" if not via a link.
+/// The linked slice that called this request, or "" if not via a link. It reads
+/// a header the caller writes, so it is a label for logging and routing and
+/// authorises nothing.
 pub fn caller_slice(req: &Value) -> String {
     if let Some(headers) = req.get("headers").and_then(|h| h.as_object()) {
         for (k, v) in headers {
@@ -2229,6 +2266,35 @@ pub fn caller_slice(req: &Value) -> String {
 /// An environment variable value ("" if unset).
 pub fn env(key: &str) -> String {
     std::env::var(key).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod edge_tests {
+    // edge::slice is the spelling a link is declared under, and the crate-root
+    // slice is its alias: both must read the same DRIFT_LINK_<NAME>_URL and
+    // build the same URL. Names are unique to these tests because the
+    // environment is process-wide.
+    #[test]
+    fn edge_slice_and_slice_resolve_the_same_link() {
+        std::env::set_var(
+            "DRIFT_LINK_EDGE_TEST_PEER_URL",
+            "http://canvas.drift-slice-alice-edge-test-peer.svc.cluster.local:8000/",
+        );
+        let want =
+            "http://canvas.drift-slice-alice-edge-test-peer.svc.cluster.local:8000/api/charge"
+                .to_string();
+        assert_eq!(crate::edge::slice("edge-test-peer").url("/api/charge"), Ok(want.clone()));
+        assert_eq!(crate::slice("edge-test-peer").url("/api/charge"), Ok(want));
+    }
+
+    // The not-linked answer names the declaration that creates a link, and both
+    // spellings say the same thing, before any network I/O.
+    #[test]
+    fn not_linked_names_edge_links() {
+        let want = "drift: slice \"edge-test-unlinked\" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add edge-test-unlinked)".to_string();
+        assert_eq!(crate::edge::slice("edge-test-unlinked").get("/x"), (0, want.clone()));
+        assert_eq!(crate::slice("edge-test-unlinked").get("/x"), (0, want));
+    }
 }
 
 #[cfg(test)]

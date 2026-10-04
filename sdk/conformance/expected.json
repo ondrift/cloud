@@ -12,7 +12,8 @@
     "",
     "Every case runs against the LOCAL store — no BACKBONE_URL, no running slice —",
     "because that is the loop a developer meets first and the one where the six",
-    "drifted apart."
+    "drifted apart. The edge cases call a loopback peer each driver stands up, which",
+    "echoes the path it was asked for and the X-Drift-Slice header it received."
   ],
 
   "blob_with_bucket": {
@@ -65,5 +66,35 @@
   "list_filter_over_cap": {
     "why": "A slice refuses a filter of more than 8 entries with a 400, so a local run refuses it too. The document matches all nine entries, so an SDK that applies no cap answers it rather than failing. Rust's list has no error channel and reads any refusal as no rows, the same way it reads a slice's 400; its driver reports that as the error.",
     "expect": "error"
+  },
+
+  "edge_slice_url": {
+    "why": "Edge.Slice(name) reaches the slice a link names. The driver links `billing-api` by setting DRIFT_LINK_BILLING_API_URL to a loopback peer under /base/, calls GET /api/events, and reports the path the peer saw. The name's dash becomes an underscore in the variable, and the base path is kept, so a wrong variable or a dropped base both show here.",
+    "expect": "/base/api/events"
+  },
+
+  "slice_url": {
+    "why": "THE CONTROL for the one above, and the alias contract: the deprecated Slice(name) spelling must keep working and reach the same link. An SDK whose Edge spelling read a different variable would pass one of these two and fail the other.",
+    "expect": "/base/api/events"
+  },
+
+  "edge_slice_not_linked": {
+    "why": "A slice with no link refuses before any network I/O, and the refusal names where a link is declared: edge.links in the Driftfile, with the CLI command beside it. The text is the same in all six languages so a developer reads one message whichever SDK they use.",
+    "expect": "drift: slice \"billing\" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add billing)"
+  },
+
+  "slice_not_linked": {
+    "why": "The deprecated spelling refuses with the same message, because it is the same client.",
+    "expect": "drift: slice \"billing\" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add billing)"
+  },
+
+  "slice_identity_absent": {
+    "why": "With no DRIFT_SLICE in the environment, which is the normal case for a function, the call carries NO X-Drift-Slice header. An empty header asserts an identity of \"\" rather than none, and reads as a real answer to anything checking for presence. The peer reports null when the header is absent.",
+    "expect": null
+  },
+
+  "slice_identity_kept": {
+    "why": "With DRIFT_SLICE=billing, a caller passing its own X-Drift-Slice: operator must not relabel the call. The header is a label and authorises nothing either way, but an SDK that lets the caller's copy win, or sends both, hands code a documented way to pose as another slice.",
+    "expect": "billing"
   }
 }
