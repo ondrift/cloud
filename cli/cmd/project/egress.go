@@ -8,8 +8,11 @@
 //
 // Reconcile semantics:
 //
-//   - Driftfile has no egress block (or `mode` is empty / "open"),
-//     and live is also open → no-op.
+//   - Driftfile has no egress block → nothing is read, sent or printed;
+//     the slice keeps the egress posture it has, as every absent `edge`
+//     key does.
+//   - Driftfile's block is open (`mode` is empty or "open"), and live is
+//     also open → no-op.
 //   - Driftfile is open, live is allowlist → POST refresh; operator
 //     re-renders the chart with `mode: open` and the slice goes
 //     back to "any public host."
@@ -34,8 +37,13 @@ type liveEgressView struct {
 	DeclaredHosts []string `json:"declared_hosts"`
 }
 
+// applyEgress sets the slice's egress to the declared posture. Absent, it does
+// nothing.
 func applyEgress(m *Manifest) error {
-	declaredMode, declaredHosts := desiredEgress(m)
+	declaredMode, declaredHosts, declared := desiredEgress(m)
+	if !declared {
+		return nil
+	}
 
 	live, err := fetchLiveEgress()
 	if err != nil {
@@ -77,21 +85,23 @@ func applyEgress(m *Manifest) error {
 }
 
 // desiredEgress folds the Driftfile's egress block into the
-// (mode, hosts) tuple the rest of this file works in. Default
-// (block absent or mode unset) is "open" with no hosts.
+// (mode, hosts) tuple the rest of this file works in, and reports
+// whether the file declares one at all. An absent block declares
+// nothing; a present block with `mode` unset is "open".
 //
 // One spelling: the key walker has already moved the retired
-// `atomic.egress` onto `edge.egress`.
-func desiredEgress(m *Manifest) (mode string, hosts []string) {
+// `atomic.egress` onto `edge.egress`, and the selected environment's
+// overlay is already merged into m.Slice().
+func desiredEgress(m *Manifest) (mode string, hosts []string, declared bool) {
 	if !m.Slice().Has("edge", "egress") {
-		return "open", nil
+		return "", nil, false
 	}
 	mode = strings.ToLower(strings.TrimSpace(m.Slice().Str("edge", "egress", "mode")))
 	if mode == "" {
 		mode = "open"
 	}
 	hosts = append(hosts, m.Slice().Strings("edge", "egress", "hosts")...)
-	return mode, hosts
+	return mode, hosts, true
 }
 
 // egressInSync compares the desired mode + host list against the

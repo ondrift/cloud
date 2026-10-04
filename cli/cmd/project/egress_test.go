@@ -105,13 +105,108 @@ func TestDesiredEgress_ReadsEdgeEgress(t *testing.T) {
 	m := &Manifest{slice: Node{"edge": map[string]any{"egress": map[string]any{
 		"mode": "Allowlist", "hosts": []any{"api.stripe.com"},
 	}}}}
-	mode, hosts := desiredEgress(m)
-	if mode != "allowlist" || len(hosts) != 1 || hosts[0] != "api.stripe.com" {
-		t.Errorf("desiredEgress = (%q, %v), want (allowlist, [api.stripe.com])", mode, hosts)
+	mode, hosts, declared := desiredEgress(m)
+	if !declared || mode != "allowlist" || len(hosts) != 1 || hosts[0] != "api.stripe.com" {
+		t.Errorf("desiredEgress = (%q, %v, %v), want (allowlist, [api.stripe.com], true)", mode, hosts, declared)
 	}
 
-	if mode, hosts := desiredEgress(&Manifest{slice: Node{}}); mode != "open" || hosts != nil {
-		t.Errorf("no edge.egress = (%q, %v), want (open, nil)", mode, hosts)
+	if _, _, declared := desiredEgress(&Manifest{slice: Node{}}); declared {
+		t.Error("no edge.egress was read as a declaration; an absent key leaves the slice's egress as it is")
+	}
+
+	m = &Manifest{slice: Node{"edge": map[string]any{"egress": map[string]any{}}}}
+	if mode, hosts, declared := desiredEgress(m); !declared || mode != "open" || len(hosts) != 0 {
+		t.Errorf("edge.egress with no mode = (%q, %v, %v), want (open, [], true)", mode, hosts, declared)
+	}
+}
+
+// allowlistedSliceStub is a slice that exists, is ready, and holds an egress
+// allowlist, so an apply that moves it back to open is visible as a refresh
+// carrying `"mode":"open"`. It returns the recorder and the refresh bodies.
+func allowlistedSliceStub(t *testing.T) (*recorder, *[]string) {
+	t.Helper()
+	var refreshes []string
+	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ops/slice/get":
+			_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{}}`))
+		case "/ops/slice/status":
+			_, _ = w.Write([]byte(`{"ready":true}`))
+		case "/ops/atomic/egress":
+			_, _ = w.Write([]byte(`{"mode":"allowlist","declared_hosts":["api.stripe.com"]}`))
+		case "/ops/atomic/egress/refresh":
+			b, _ := io.ReadAll(r.Body)
+			refreshes = append(refreshes, string(b))
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	})
+	compiledSchema = nil
+	t.Cleanup(func() { compiledSchema = nil })
+	return rec, &refreshes
+}
+
+// An absent `edge.egress` leaves the slice's egress as it is: the apply neither
+// reads nor refreshes it. A file that does not mention egress must not move an
+// allowlisted slice back to open.
+func TestApplyEgress_AbsentLeavesTheLiveSettingAsItIs(t *testing.T) {
+	for _, m := range []*Manifest{
+		{slice: Node{"slice": "demo"}},
+		edgeManifest(map[string]any{"rate_limit": "600/min"}),
+	} {
+		rec, refreshes := allowlistedSliceStub(t)
+		if err := applyEgress(m); err != nil {
+			t.Fatalf("applyEgress: %v", err)
+		}
+		if len(*refreshes) != 0 {
+			t.Errorf("an absent edge.egress refreshed the slice's egress with %q", *refreshes)
+		}
+		if n := rec.count("GET /ops/atomic/egress"); n != 0 {
+			t.Errorf("an absent edge.egress read the live egress %d time(s)", n)
+		}
+	}
+}
+
+// The same, through the real command: a Driftfile with no egress key, applied
+// to an allowlisted slice, calls no egress route.
+func TestApply_AbsentEgressCallsNoEgressRoute(t *testing.T) {
+	rec, refreshes := allowlistedSliceStub(t)
+	applyIn(t, "slice: demo\nedge:\n  rate_limit: 600/min\n")
+
+	if err := runApply(t); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if rec.count("GET /ops/slice/get") == 0 {
+		t.Fatal("the apply never reached the slice, so this proves nothing")
+	}
+	if len(*refreshes) != 0 {
+		t.Errorf("an absent edge.egress refreshed the slice's egress with %q", *refreshes)
+	}
+	for _, hit := range rec.hits {
+		if strings.Contains(hit, "/ops/atomic/egress") {
+			t.Errorf("an absent edge.egress called %s", hit)
+		}
+	}
+}
+
+// A present `mode: open` is a declaration, and moves an allowlisted slice back
+// to open, under either spelling.
+func TestApply_ADeclaredOpenEgressStillSetsOpen(t *testing.T) {
+	for _, body := range []string{
+		"slice: demo\nedge:\n  egress:\n    mode: open\n",
+		"slice: demo\natomic:\n  egress:\n    mode: open\n",
+		"slice: demo\nedge:\n  egress: {}\n",
+	} {
+		_, refreshes := allowlistedSliceStub(t)
+		applyIn(t, body)
+
+		if err := runApply(t); err != nil {
+			t.Fatalf("apply of %q: %v", body, err)
+		}
+		if len(*refreshes) != 1 || !strings.Contains((*refreshes)[0], `"mode":"open"`) {
+			t.Errorf("apply of %q refreshed with %q, want one refresh to open", body, *refreshes)
+		}
 	}
 }
 
