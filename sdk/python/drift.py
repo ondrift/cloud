@@ -364,6 +364,50 @@ def _local_key_index(key):
         return 0
 
 
+# The most `field=…&value=…` pairs one filtered read may combine on a slice.
+_MAX_FILTER_PAIRS = 8
+
+
+def _local_filter_pairs(path):
+    """Every field and value a list path carries, in order, refused where the
+    slice refuses them: unequal numbers of each, more than _MAX_FILTER_PAIRS
+    pairs, or an empty field or value among several. One pair or none is not
+    checked, and reads as it always has."""
+    qs = path.split("?", 1)[1] if "?" in path else ""
+    pairs = urllib.parse.parse_qsl(qs, keep_blank_values=True)
+    fields = [v for k, v in pairs if k == "field"]
+    values = [v for k, v in pairs if k == "value"]
+    if len(fields) <= 1 and len(values) <= 1:
+        return fields, values
+    if len(fields) != len(values):
+        raise RuntimeError(
+            "drift: backbone nosql/list: HTTP 400: a filter pairs each field with a value "
+            f"by position: got {len(fields)} field(s) and {len(values)} value(s)"
+        )
+    if len(fields) > _MAX_FILTER_PAIRS:
+        raise RuntimeError(
+            f"drift: backbone nosql/list: HTTP 400: a filter combines at most "
+            f"{_MAX_FILTER_PAIRS} fields, got {len(fields)}"
+        )
+    if any(not s for s in fields + values):
+        raise RuntimeError(
+            "drift: backbone nosql/list: HTTP 400: every field and value in a filter must be non-empty"
+        )
+    return fields, values
+
+
+def _local_matches_every(doc, fields, values):
+    """Whether doc's top-level fields equal EVERY pair. No pair, or a single pair
+    with an empty field, filters nothing."""
+    if not fields or (len(fields) == 1 and not fields[0]):
+        return True
+    for i, f in enumerate(fields):
+        want = values[i] if i < len(values) else ""
+        if str(doc.get(f)) != want:
+            return False
+    return True
+
+
 def _blob_address(bucket, key):
     """The ONE address a blob has in the local store.
 
@@ -405,8 +449,10 @@ def _call_local(method, path, body=None):
 
     if base_path == "nosql/list" and method == "GET":
         col = query.get("collection", "default")
-        field = query.get("field")
-        value = query.get("value")
+        # Every `field=…&value=…` pair, paired by position. Several are ANDed,
+        # and refused on the same grounds the slice refuses them.
+        fields, values = _local_filter_pairs(path)
+        field = fields[0] if fields else None
         order = query.get("order") or ""
 
         # The slice refuses an order it does not recognise rather than serving an
@@ -441,7 +487,7 @@ def _call_local(method, path, body=None):
             if after and sort_key(key) <= sort_key(after):
                 continue
             doc = docs[key]
-            if field and str(doc.get(field)) != value:
+            if not _local_matches_every(doc, fields, values):
                 continue
             results.append(doc)
             if len(results) >= limit:
@@ -627,7 +673,13 @@ class _CollectionHandle:
         return _call("POST", f"nosql/delete?collection={urllib.parse.quote(self.name)}&key={urllib.parse.quote(key)}")
 
     def list(self, filter=None, limit=None, after=None):
-        """Return ONE page of documents, optionally filtered by one field.
+        """Return ONE page of documents, optionally filtered.
+
+        Every entry in `filter` must match: {"group": "g1", "status": "open"}
+        returns the documents whose `group` is "g1" AND whose `status` is "open".
+        A filter combines at most 8 fields, each compared against a top-level
+        field of the document, and every field and value in a filter of two or
+        more must be non-empty.
 
         Pass a limit for any collection that grows. Omitting it does not mean
         "everything" — the platform applies its own default of 100 documents and

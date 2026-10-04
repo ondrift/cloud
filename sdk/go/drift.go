@@ -316,8 +316,12 @@ func (m *memBackbone) handle(req BackboneRequest) ([]byte, error) {
 		if col == "" {
 			col = "default"
 		}
-		filterField := query.Get("field")
-		filterValue := query.Get("value")
+		// Every `field=…&value=…` pair, paired by position. Several pairs are
+		// ANDed, and refused on the same grounds the slice refuses them.
+		fields, values := query["field"], query["value"]
+		if err := localFilterRefusal(fields, values); err != nil {
+			return nil, err
+		}
 		order := query.Get("order")
 
 		// The slice refuses an order it does not recognise rather than serving
@@ -327,7 +331,7 @@ func (m *memBackbone) handle(req BackboneRequest) ([]byte, error) {
 		if order != "" && order != "insertion" {
 			return nil, fmt.Errorf("drift: backbone nosql/list: HTTP 400: unknown order %q", order)
 		}
-		if order == "insertion" && filterField != "" {
+		if order == "insertion" && len(fields) > 0 && fields[0] != "" {
 			return nil, fmt.Errorf("drift: backbone nosql/list: HTTP 400: order=insertion cannot be combined with a field filter")
 		}
 
@@ -369,13 +373,8 @@ func (m *memBackbone) handle(req BackboneRequest) ([]byte, error) {
 				continue
 			}
 			doc := docs[k]
-			if filterField != "" {
-				var obj map[string]any
-				json.Unmarshal(doc, &obj) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
-				v := fmt.Sprintf("%v", obj[filterField])
-				if v != filterValue {
-					continue
-				}
+			if !localMatchesEvery(doc, fields, values) {
+				continue
 			}
 			results = append(results, doc)
 			if len(results) >= limit {
@@ -598,6 +597,51 @@ func localKeyIndex(key string) int {
 		return 0
 	}
 	return n
+}
+
+// localMaxFilterPairs is the most pairs one filtered read may combine on a slice.
+const localMaxFilterPairs = 8
+
+// localFilterRefusal refuses a multi-pair filter the slice would refuse: unequal
+// numbers of fields and values, more than localMaxFilterPairs pairs, or an
+// empty field or value among them. One pair or none is not checked here; it
+// reads as it always has.
+func localFilterRefusal(fields, values []string) error {
+	if len(fields) <= 1 && len(values) <= 1 {
+		return nil
+	}
+	if len(fields) != len(values) {
+		return fmt.Errorf("drift: backbone nosql/list: HTTP 400: a filter pairs each field with a value by position: got %d field(s) and %d value(s)", len(fields), len(values))
+	}
+	if len(fields) > localMaxFilterPairs {
+		return fmt.Errorf("drift: backbone nosql/list: HTTP 400: a filter combines at most %d fields, got %d", localMaxFilterPairs, len(fields))
+	}
+	for i := range fields {
+		if fields[i] == "" || values[i] == "" {
+			return fmt.Errorf("drift: backbone nosql/list: HTTP 400: every field and value in a filter must be non-empty")
+		}
+	}
+	return nil
+}
+
+// localMatchesEvery reports whether doc's top-level fields equal EVERY pair.
+// No pair, or a single pair with an empty field, filters nothing.
+func localMatchesEvery(doc json.RawMessage, fields, values []string) bool {
+	if len(fields) == 0 || (len(fields) == 1 && fields[0] == "") {
+		return true
+	}
+	var obj map[string]any
+	json.Unmarshal(doc, &obj) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
+	for i, f := range fields {
+		want := ""
+		if i < len(values) {
+			want = values[i]
+		}
+		if fmt.Sprintf("%v", obj[f]) != want {
+			return false
+		}
+	}
+	return true
 }
 
 func marshalJSON(v any) []byte {
@@ -977,8 +1021,13 @@ func (c collectionHandle) Delete(key string) error {
 	return err
 }
 
-// List returns ONE page of documents from the collection, optionally filtered by
-// one field.
+// List returns ONE page of documents from the collection, optionally filtered.
+//
+// Every entry in filter must match: {"group": "g1", "status": "open"} returns
+// the documents whose `group` is "g1" AND whose `status` is "open". A filter
+// combines at most 8 fields, each compared against a top-level field of the
+// document, and every field and value in a filter of two or more must be
+// non-empty.
 //
 // PASS A LIMIT FOR ANY COLLECTION THAT GROWS. Omitting it does not mean
 // "everything" — the platform applies its own default of 100 documents and

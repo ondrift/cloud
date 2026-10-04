@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "drift-sdk"
-version = "0.3.0"
+version = "0.10.0"
 dependencies = [
  "serde_json",
  "ureq",

@@ -114,4 +114,44 @@ try {
     fail_with('list_all_in_order: ' . $e->getMessage());
 }
 
+// -- Filtered NoSQL reads ----------------------------------------------------
+$filtered = \Drift\Backbone\Nosql::collection('conformance_filter');
+$wide = ['_id' => 'wide'];
+for ($i = 0; $i < 9; $i++) $wide["f$i"] = 'v';
+foreach ([
+    ['_id' => 'x1', 'a' => '1', 'b' => '1'],
+    ['_id' => 'x2', 'a' => '1', 'b' => '2'],
+    ['_id' => 'x3', 'a' => '2', 'b' => '1'],
+    ['_id' => 'x4', 'a' => '3', 'b' => '2'],
+    $wide,
+] as $doc) {
+    try {
+        $filtered->insert($doc);
+    } catch (\Throwable $e) {
+        fail_with("Insert {$doc['_id']}: " . $e->getMessage());
+    }
+}
+$ids_of = static function (array $rows): array {
+    $ids = array_map(fn($d) => $d['_id'], $rows);
+    sort($ids, SORT_STRING);
+    return $ids;
+};
+try {
+    $out['list_filter_two_fields'] = $ids_of($filtered->list(['a' => '1', 'b' => '2']));
+} catch (\Throwable $e) {
+    fail_with('list with two entries: ' . $e->getMessage());
+}
+try {
+    $out['list_filter_one_field'] = $ids_of($filtered->list(['a' => '1']));
+} catch (\Throwable $e) {
+    fail_with('list with one entry: ' . $e->getMessage());
+}
+try {
+    $nine = [];
+    for ($i = 0; $i < 9; $i++) $nine["f$i"] = 'v';
+    $out['list_filter_over_cap'] = $ids_of($filtered->list($nine));
+} catch (\Throwable $e) {
+    $out['list_filter_over_cap'] = 'error';
+}
+
 emit();

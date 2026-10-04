@@ -107,6 +107,42 @@ async function main() {
     fail(`listAllInOrder: ${e.message}`);
   }
 
+  // ── Filtered NoSQL reads ──────────────────────────────────────────────────
+  const filtered = drift.backbone.nosql.collection("conformance_filter");
+  const wide = { _id: "wide" };
+  for (let i = 0; i < 9; i++) wide[`f${i}`] = "v";
+  for (const doc of [
+    { _id: "x1", a: "1", b: "1" },
+    { _id: "x2", a: "1", b: "2" },
+    { _id: "x3", a: "2", b: "1" },
+    { _id: "x4", a: "3", b: "2" },
+    wide,
+  ]) {
+    try {
+      await filtered.insert(doc);
+    } catch (e) {
+      fail(`Insert ${doc._id}: ${e.message}`);
+    }
+  }
+  const idsOf = (rows) => rows.map((d) => d._id).sort();
+  try {
+    out.list_filter_two_fields = idsOf(await filtered.list({ a: "1", b: "2" }));
+  } catch (e) {
+    fail(`list with two entries: ${e.message}`);
+  }
+  try {
+    out.list_filter_one_field = idsOf(await filtered.list({ a: "1" }));
+  } catch (e) {
+    fail(`list with one entry: ${e.message}`);
+  }
+  try {
+    const nine = {};
+    for (let i = 0; i < 9; i++) nine[`f${i}`] = "v";
+    out.list_filter_over_cap = idsOf(await filtered.list(nine));
+  } catch {
+    out.list_filter_over_cap = "error";
+  }
+
   emit();
 }
 

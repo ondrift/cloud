@@ -88,7 +88,49 @@ fn main() {
         Err(e) => return fail(&mut out, &format!("list_all_in_order: {e}")),
     }
 
+    // ── Filtered NoSQL reads ────────────────────────────────────────────────
+    let filtered = backbone::nosql::collection("conformance_filter");
+    let mut wide = json!({"_id": "wide"});
+    for i in 0..9 {
+        wide[format!("f{i}")] = json!("v");
+    }
+    for doc in [
+        json!({"_id": "x1", "a": "1", "b": "1"}),
+        json!({"_id": "x2", "a": "1", "b": "2"}),
+        json!({"_id": "x3", "a": "2", "b": "1"}),
+        json!({"_id": "x4", "a": "3", "b": "2"}),
+        wide,
+    ] {
+        filtered.insert(doc);
+    }
+    let filter = |pairs: Vec<(String, String)>| Some(pairs.into_iter().collect());
+    let two = filter(vec![("a".into(), "1".into()), ("b".into(), "2".into())]);
+    out.insert("list_filter_two_fields".into(), json!(field_ids(&filtered.list(two))));
+    let one = filter(vec![("a".into(), "1".into())]);
+    out.insert("list_filter_one_field".into(), json!(field_ids(&filtered.list(one))));
+
+    // `list` has no error channel: a refusal reads as no rows, as a slice's 400
+    // does. The document matches all nine entries, so no rows IS the refusal
+    // here, and it is reported as the shared case spells one.
+    let nine = filter((0..9).map(|i| (format!("f{i}"), "v".to_string())).collect());
+    let rows = filtered.list(nine);
+    if rows.is_empty() {
+        out.insert("list_filter_over_cap".into(), json!("error"));
+    } else {
+        out.insert("list_filter_over_cap".into(), json!(field_ids(&rows)));
+    }
+
     emit(&out);
+}
+
+/// The `_id` of each row, sorted, so a case compares the set.
+fn field_ids(rows: &[Value]) -> Vec<String> {
+    let mut ids: Vec<String> = rows
+        .iter()
+        .filter_map(|d| d.get("_id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .collect();
+    ids.sort();
+    ids
 }
 
 /// The `n` field of each row, in the order the rows came back.

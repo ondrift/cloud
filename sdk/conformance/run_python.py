@@ -103,6 +103,35 @@ def main():
     except Exception as e:  # noqa: BLE001
         fail(f"list_all_in_order: {e}")
 
+    # -- Filtered NoSQL reads -----------------------------------------------
+    filtered = drift.backbone.nosql.collection("conformance_filter")
+    wide = {"_id": "wide"}
+    for i in range(9):
+        wide[f"f{i}"] = "v"
+    for doc in [
+        {"_id": "x1", "a": "1", "b": "1"},
+        {"_id": "x2", "a": "1", "b": "2"},
+        {"_id": "x3", "a": "2", "b": "1"},
+        {"_id": "x4", "a": "3", "b": "2"},
+        wide,
+    ]:
+        try:
+            filtered.insert(doc)
+        except Exception as e:  # noqa: BLE001
+            fail(f"Insert {doc['_id']}: {e}")
+    try:
+        out["list_filter_two_fields"] = sorted(d["_id"] for d in filtered.list({"a": "1", "b": "2"}))
+    except Exception as e:  # noqa: BLE001
+        fail(f"list with two entries: {e}")
+    try:
+        out["list_filter_one_field"] = sorted(d["_id"] for d in filtered.list({"a": "1"}))
+    except Exception as e:  # noqa: BLE001
+        fail(f"list with one entry: {e}")
+    try:
+        out["list_filter_over_cap"] = sorted(d["_id"] for d in filtered.list({f"f{i}": "v" for i in range(9)}))
+    except Exception:  # noqa: BLE001
+        out["list_filter_over_cap"] = "error"
+
     emit()
 
 
