@@ -1,0 +1,45 @@
+# Shop: the storefront and its API.
+
+edge:
+  # Hostnames come first in this file, because they are what people ask about.
+  domains:
+    - host: shop.example.com
+    - host: www.shop.example.com
+  # Payments only; nothing else leaves the slice.
+  egress: &payments
+    mode: allowlist
+    hosts:
+      - api.stripe.com
+  rate_limit: 600/min # across the whole slice
+
+atomic:
+  functions:
+    - route: ping # health check
+      method: get
+      handler: GetPing
+      memory: 16MB
+    - route: orders
+      method: post
+      handler: PostOrders
+      memory: 64MB
+
+backbone:
+  nosql:
+    - slot: orders
+      size: 1GB
+      ttl: 720h
+
+environments:
+  staging:
+    atomic: {}
+    edge:
+      rate_limit: 60/min
+      egress: *payments
+  prod: {}
+
+slice: shop
+
+canvas:
+  sites:
+    - dir: ./site
+      path: /

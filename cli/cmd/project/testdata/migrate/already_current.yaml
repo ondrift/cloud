@@ -1,0 +1,21 @@
+# Already in the current spelling.
+slice: shop
+
+atomic:
+  functions:
+    - route: ping
+      method: get
+      handler: GetPing
+
+edge:
+  egress:
+    mode: allowlist
+    hosts: [api.stripe.com]
+  domains:
+    - host: shop.example.com
+  rate_limit: 600/min
+
+environments:
+  staging:
+    edge:
+      rate_limit: 60/min

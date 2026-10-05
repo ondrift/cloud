@@ -1,0 +1,10 @@
+slice: shop
+edge:
+  allow:
+    - 203.0.113.0/24
+atomic:
+  rate_limit: 600/min  # burst-friendly
+  functions:
+    - route: ping
+      method: get
+      handler: GetPing

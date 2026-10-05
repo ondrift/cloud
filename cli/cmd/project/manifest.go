@@ -155,45 +155,10 @@ func ParseDriftfile(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	// Expand ${VAR} placeholders against the process environment before
-	// YAML parsing — the env-aware Driftfile feature. ${VAR} is the
-	// staging/prod overlay primitive: typically `slice.name: ${ENV}-myapp`
-	// resolved by `drift file apply --env=prod` setting ENV=prod.
-	// Distinct from `$VAR` (no braces) which is the secret-envref shape
-	// in slice.backbone.secrets — that path runs later, on already-parsed
-	// values, and is unaffected by this substitution.
-	expanded, err := substituteBraceVars(data)
-	if err != nil {
-		return nil, fmt.Errorf("Driftfile: %w", err)
-	}
-	data = expanded
-
-	var raw yaml.Node
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("invalid YAML: %w", err)
-	}
-
-	// Rewrite the documented short forms into their canonical maps. This is a
-	// TRANSFORMATION, not a rule: it changes shape and never decides legality,
-	// which is why it can run before the only thing that does.
-	if err := expandShorthands(&raw); err != nil {
-		return nil, fmt.Errorf("Driftfile: %w", err)
-	}
-
 	var m Manifest
 	m.baseDir = filepath.Dir(path)
-
-	// The document, which is what the platform defines and therefore what gets
-	// validated.
-	if err := raw.Decode(&m.doc); err != nil {
-		return nil, fmt.Errorf("Driftfile: %w", err)
-	}
-
-	// ONE validation, and it is the only one (#CLI-STANDARDUSAGE-ERF1CV). The
-	// platform defines the format; nothing here gets a second opinion on whether
-	// a document is legal.
-	if errs := validateAgainstSchema(m.doc); len(errs) > 0 {
-		return nil, errs
+	if m.doc, err = decodeValidated(data); err != nil {
+		return nil, err
 	}
 
 	// The resource shape is the document root minus the three siblings that are
@@ -259,6 +224,61 @@ func ParseDriftfile(path string) (*Manifest, error) {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// decodeValidated is the half of ParseDriftfile that reads the TEXT: placeholders
+// substituted, the YAML decoded, the short forms expanded, and the result
+// validated against the platform's schema. Nothing after it touches the bytes.
+func decodeValidated(data []byte) (Node, error) {
+	// Expand ${VAR} placeholders against the process environment before
+	// YAML parsing — the env-aware Driftfile feature. ${VAR} is the
+	// staging/prod overlay primitive: typically `slice.name: ${ENV}-myapp`
+	// resolved by `drift file apply --env=prod` setting ENV=prod.
+	// Distinct from `$VAR` (no braces) which is the secret-envref shape
+	// in slice.backbone.secrets — that path runs later, on already-parsed
+	// values, and is unaffected by this substitution.
+	expanded, err := substituteBraceVars(data)
+	if err != nil {
+		return nil, fmt.Errorf("Driftfile: %w", err)
+	}
+
+	var raw yaml.Node
+	if err := yaml.Unmarshal(expanded, &raw); err != nil {
+		return nil, fmt.Errorf("invalid YAML: %w", err)
+	}
+
+	// Rewrite the documented short forms into their canonical maps. This is a
+	// TRANSFORMATION, not a rule: it changes shape and never decides legality,
+	// which is why it can run before the only thing that does.
+	if err := expandShorthands(&raw); err != nil {
+		return nil, fmt.Errorf("Driftfile: %w", err)
+	}
+
+	// The document, which is what the platform defines and therefore what gets
+	// validated.
+	var doc Node
+	if err := raw.Decode(&doc); err != nil {
+		return nil, fmt.Errorf("Driftfile: %w", err)
+	}
+
+	// ONE validation, and it is the only one. The platform defines the format;
+	// nothing here gets a second opinion on whether a document is legal.
+	if errs := validateAgainstSchema(doc); len(errs) > 0 {
+		return nil, errs
+	}
+	return doc, nil
+}
+
+// ValidateDriftfileSource validates Driftfile text against the platform's schema
+// exactly as ParseDriftfile does, without the passes that ask this machine's
+// filesystem or environment about the values. `drift file migrate` checks both
+// the file it was given and the file it writes with it.
+//
+// Like ParseDriftfile it validates nothing when no schema is cached; a caller
+// that must not claim a pass it cannot stand behind asks SchemaAvailable first.
+func ValidateDriftfileSource(data []byte) error {
+	_, err := decodeValidated(data)
+	return err
 }
 
 // checkHardcodedSecrets reports every `backbone.secrets:` entry written as a

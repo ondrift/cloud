@@ -1,0 +1,17 @@
+slice: shop
+
+atomic:
+  functions:
+    - route: ping
+      method: get
+      handler: GetPing
+
+edge:
+  # Outbound calls go to Stripe only.
+  egress:
+    mode: allowlist
+    hosts:
+      - api.stripe.com # payments
+
+backbone:
+  queues: [orders]
