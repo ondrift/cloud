@@ -116,6 +116,9 @@ type BackboneNoSQLLimits struct {
 
 type BackboneQueuesLimits struct {
 	MaxDepthEach int
+	// Queues carries each declared queue's own depth in messages, keyed by queue
+	// name. A depth and not bytes, so a declared queue adds nothing to the bill.
+	Queues map[string]int `json:"queues"`
 }
 
 type BackboneLocksLimits struct {

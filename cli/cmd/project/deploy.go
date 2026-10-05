@@ -280,7 +280,13 @@ single slice otherwise.`,
 			// slice was sold. A fetch failure is STATED rather than swallowed —
 			// the best-effort silence that suits skip-unchanged would be a false
 			// all-clear here.
-			if deployedFns, derr := atomic_cmd.DeployedFunctions(); derr != nil {
+			//
+			// The list outlives this check: the idle-slot report at the end reads
+			// it to tell a slot nothing serves from one another project's
+			// function holds. Nil after a failure, which that report reads as
+			// "not known".
+			deployedFns, derr := atomic_cmd.DeployedFunctions()
+			if derr != nil {
 				fmt.Printf("  %s couldn't check for functions the Driftfile no longer names: %v\n",
 					common.Hint("·"), derr)
 			} else {
@@ -374,6 +380,22 @@ single slice otherwise.`,
 				Domains:     unnamedDomains,
 				CanvasSites: unnamedSites,
 			}, os.Stdout)
+
+			// The other direction: what the slice declares, and is billed for,
+			// that this file does not name. A report and never a question; see
+			// idle.go.
+			//
+			// The slice is read AGAIN rather than taken from liveSlice. The
+			// reconcile above may have re-pointed idle slots to the names this
+			// file uses, and the copy read before it would report a slot under
+			// the name it no longer has. A failed read is stated, never an
+			// all-clear, and changes nothing about the run's outcome.
+			if after, ferr := FetchLiveSlice(m.Name()); ferr != nil {
+				fmt.Printf("  %s couldn't check for slots the slice declares and the Driftfile does not name: %v\n",
+					common.Hint("·"), ferr)
+			} else {
+				ReportIdleDeclarations(m, after, deployedFns, os.Stdout)
+			}
 
 			// post_deploy hooks run against the now-live slice (typically a
 			// smoke test). A failure leaves the slice deployed — it's already
@@ -513,8 +535,17 @@ func runPlan(m *Manifest, live *LiveSlice) error {
 	// THE READ-ONLY HALF. This called ReconcileSliceReferences' predecessor,
 	// which renames idle slots — so `--plan` and `drift file simulate` performed
 	// a real resize on the live slice and then printed "nothing was deployed".
+	//
+	// The idle report follows it ONLY when nothing is missing. A miss means
+	// the apply would either re-point idle slots to make room or refuse, so the
+	// slots unnamed now are not the ones unnamed after it, and listing them
+	// would describe a slice the apply does not leave behind. What the slice
+	// serves is not read here: that list is asked of the ACTIVE slice, which a
+	// plan does not set, so the slots are reported as unnamed rather than idle.
 	if rerr := CheckSliceReferences(m, live); rerr != nil {
 		fmt.Printf("\n  %s %v\n", common.Hint("!"), rerr)
+	} else {
+		ReportIdleDeclarations(m, live, nil, os.Stdout)
 	}
 
 	fmt.Printf("\n  %s\n", common.Hint("nothing was deployed — drop --plan to apply"))
