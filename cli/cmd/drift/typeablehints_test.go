@@ -29,6 +29,9 @@ var typeableHints = map[string][]string{
 	// command — caught by the flow suite (IDN-104), not by this test, because
 	// the text was inlined where nothing could ask about it.
 	"the not-logged-in error (DRIFT-1011)": common.NotLoggedInHints,
+	// Every apply of a Driftfile in a retired spelling ends its notice on this
+	// clause, so it is the most-printed pointer to a command the CLI has.
+	"the deprecation notice on drift file apply": {common.MigrateHint},
 }
 
 func TestPrintedHintsNameRealCommands(t *testing.T) {

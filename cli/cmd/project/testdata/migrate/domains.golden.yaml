@@ -1,0 +1,13 @@
+slice: shop
+atomic:
+  functions:
+    - route: ping
+      method: get
+      handler: GetPing
+edge:
+  # Hostnames, each verified by a TXT record.
+  domains:
+  - host: shop.example.com
+  - host: example.com
+    wildcard: true
+canvas: ./site

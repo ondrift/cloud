@@ -118,6 +118,21 @@ var shapeKeys = []common.KeyDeprecation{
 	ignoredShapeKey("canvas.canvas_size", "Canvas storage is a slice setting"),
 }
 
+// keyNotices is who hears about what the walker meets. A person hears through
+// the shared once-per-name notices; `drift file migrate` runs the same walk
+// silently, as the reference for what the file means, and only counts what it
+// would have said.
+type keyNotices struct {
+	retired       func(common.KeyDeprecation)
+	bothSpellings func(common.KeyDeprecation)
+}
+
+// toThePerson is the notices `drift file apply` prints.
+var toThePerson = keyNotices{
+	retired:       common.KeyDeprecation.Warn,
+	bothSpellings: common.KeyDeprecation.WarnBothSpellings,
+}
+
 // ignoredShapeKey builds one capacity-key deprecation, so the entries cannot
 // drift into as many slightly different sentences.
 //
@@ -127,7 +142,7 @@ func ignoredShapeKey(path, because string) common.KeyDeprecation {
 	return common.KeyDeprecationFor(path, common.KeyIgnored, common.Deprecation{
 		Old:         path,
 		RemoveAfter: "every live slice's shape is owned by the slice form",
-		Because:     because + ", chosen on the form `drift slice resize` draws — this file does not set it, and the value here is ignored.",
+		Because:     because + ", chosen on the form `drift slice resize` draws; this file does not set it, and the value here is ignored.",
 	})
 }
 
@@ -144,29 +159,41 @@ func ignoredShapeKey(path, because string) common.KeyDeprecation {
 // A document with no `environments` key — the resolved slice, which has the
 // siblings removed — walks its root alone.
 func applyKeyDeprecations(doc Node, keys []common.KeyDeprecation) {
-	roots := []Node{doc}
-	for _, env := range doc.Keys("environments") {
-		if overlay, ok := asNode(doc.Sub("environments")[env]); ok {
-			roots = append(roots, overlay)
-		}
-	}
-	for _, root := range roots {
+	walkKeyDeprecations(doc, keys, toThePerson)
+}
+
+// walkKeyDeprecations is applyKeyDeprecations with the listener chosen by the
+// caller, so one walk serves both the notices and migrate's silent reference.
+func walkKeyDeprecations(doc Node, keys []common.KeyDeprecation, tell keyNotices) {
+	for _, root := range documentRoots(doc) {
 		for _, key := range keys {
 			parent, leaf, ok := splitKeyPath(key.Path)
 			if !ok {
 				continue
 			}
 			for _, holder := range holdersAt(root, parent) {
-				applyKeyTo(root, holder, parent, leaf, key)
+				applyKeyTo(root, holder, parent, leaf, key, tell)
 			}
 		}
 	}
 }
 
+// documentRoots is the document itself followed by every `environments.<env>`
+// overlay that is an object: each is a root of its own for the walkers.
+func documentRoots(doc Node) []Node {
+	roots := []Node{doc}
+	for _, env := range doc.Keys("environments") {
+		if overlay, ok := asNode(doc.Sub("environments")[env]); ok {
+			roots = append(roots, overlay)
+		}
+	}
+	return roots
+}
+
 // applyKeyTo acts on one object that actually carries the retired key. root is
 // the document (or overlay) the holder belongs to, which is where a move to a
 // different parent resolves its destination.
-func applyKeyTo(root, holder Node, parent, leaf string, key common.KeyDeprecation) {
+func applyKeyTo(root, holder Node, parent, leaf string, key common.KeyDeprecation, tell keyNotices) {
 	value, present := holder[leaf]
 	if !present {
 		return
@@ -174,7 +201,7 @@ func applyKeyTo(root, holder Node, parent, leaf string, key common.KeyDeprecatio
 
 	// Warn before rewriting, so the notice is about the document the person
 	// wrote rather than the one this pass produced.
-	key.Warn()
+	tell.retired(key)
 
 	if key.Kind != common.KeyAlias || key.New == "" {
 		// IGNORED: the value has no target here. Left exactly where it is —
@@ -213,7 +240,7 @@ func applyKeyTo(root, holder Node, parent, leaf string, key common.KeyDeprecatio
 	// deprecated key win, which is backwards — and dropping the old value
 	// silently would leave its author believing it is in force.
 	if _, already := dest[newLeaf]; already {
-		key.WarnBothSpellings()
+		tell.bothSpellings(key)
 		delete(holder, leaf)
 		return
 	}

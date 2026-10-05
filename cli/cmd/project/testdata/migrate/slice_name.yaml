@@ -1,0 +1,8 @@
+# The slice this file applies to.
+name: shop # created with drift slice create
+
+atomic:
+  functions:
+    - route: ping
+      method: get
+      handler: GetPing

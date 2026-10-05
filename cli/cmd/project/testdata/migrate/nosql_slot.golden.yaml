@@ -1,0 +1,16 @@
+slice: shop
+atomic:
+  functions:
+    - route: ping
+      method: get
+      handler: GetPing
+backbone:
+  nosql:
+    # Sessions expire after a day.
+    - slot: sessions # the slot the slice holds
+      size: 64MB
+      ttl: 24h
+    - ttl: 1h
+      slot: carts
+      size: 16MB
+    - slot: orders

@@ -271,18 +271,25 @@ func KeyDeprecationFor(path string, kind KeyKind, d Deprecation) KeyDeprecation 
 	return KeyDeprecation{Path: path, Kind: kind, Deprecation: d}
 }
 
+// MigrateHint is the clause every notice about a key `drift file migrate` can
+// rewrite ends on, so the person reading it has the command that fixes the file
+// rather than a list of edits to make by hand.
+const MigrateHint = "run `drift file migrate` to update this file"
+
 // Notice is the line a user sees for a retired key.
 //
 // An ALIAS still takes effect, so its sentence names both spellings and says
 // the old one is going, without a removal condition: the condition is a
 // judgement made when the old spelling stops being written, not a date anyone
-// can plan against. An IGNORED key keeps the general wording, whose Because is
-// what tells the reader where the value went.
+// can plan against. It names MigrateHint, because an alias is exactly what
+// `drift file migrate` rewrites. An IGNORED key keeps the general wording,
+// whose Because is what tells the reader where the value went; migrate cannot
+// move it, so the hint would send them to a command that changes nothing.
 func (k KeyDeprecation) Notice() string {
 	if k.Kind != KeyAlias || k.New == "" {
 		return k.Deprecation.Notice()
 	}
-	notice := fmt.Sprintf("%q is deprecated in favour of %q, and will be removed in a later version.", k.Old, k.New)
+	notice := fmt.Sprintf("%q is deprecated in favour of %q, and will be removed in a later version; %s.", k.Old, k.New, MigrateHint)
 	if k.Because != "" {
 		notice += " " + k.Because
 	}

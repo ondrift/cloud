@@ -1,0 +1,12 @@
+slice: shop
+atomic:
+  functions:
+    - name: post:auth/challenge   # the login step
+      handler: PostChallenge
+      memory: 32MB
+    - {name: get:groups/:id, handler: GetGroup, memory: 16MB}
+    - handler: Orders
+      name: "queue:orders"
+      memory: 16MB
+backbone:
+  queues: [orders]

@@ -39,8 +39,9 @@ import (
 //
 // No RemoveAfter: naming a version promises a release nobody has planned.
 var nameDeprecation = common.Deprecation{
-	Old: "atomic.functions[].name",
-	New: "atomic.functions[].route + atomic.functions[].method",
+	Old:     "atomic.functions[].name",
+	New:     "atomic.functions[].route + atomic.functions[].method",
+	Because: common.CapitalizeFirst(common.MigrateHint) + ".",
 }
 
 // normaliseFunctionIdentities gives every function entry both spellings,
@@ -50,6 +51,12 @@ var nameDeprecation = common.Deprecation{
 // reaching here has either the pair or the retired string, and the pair's method
 // is one of the eight the enum admits.
 func normaliseFunctionIdentities(doc Node) {
+	normaliseIdentities(doc, nameDeprecation.Warn)
+}
+
+// normaliseIdentities is normaliseFunctionIdentities with the notice chosen by
+// the caller, so `drift file migrate` can run the same normalisation silently.
+func normaliseIdentities(doc Node, retired func()) {
 	for _, fn := range doc.Nodes("atomic", "functions") {
 		route, method := fn.Str("route"), fn.Str("method")
 
@@ -65,7 +72,7 @@ func normaliseFunctionIdentities(doc Node) {
 		if name == "" {
 			continue
 		}
-		nameDeprecation.Warn()
+		retired()
 
 		// Split on the FIRST colon, the same cut FunctionSpec.Wire makes, so a
 		// route carrying colons of its own — `get:groups/:id` — keeps them.

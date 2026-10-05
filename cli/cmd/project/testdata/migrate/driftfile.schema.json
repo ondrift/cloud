@@ -1,0 +1,1039 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://api.ondrift.eu/driftfile/schema",
+  "$comment": "AUTHORITATIVE Driftfile JSON Schema — the single definition of the format. Embedded in the api binary and served from https://api.ondrift.eu/driftfile/schema. This document replaced a separate prose spec (driftfile-spec.md) on 2026-07-28: documentation lives HERE, in `description` (user-facing, rendered on hover by any YAML LSP), `default` (what omission means), `examples`, and `$comment` (notes for whoever edits the schema). A doc that ships beside the schema is a doc that drifts from it. || VERSIONING: `version` below is the format's own semver. MAJOR = a field removed, renamed or retyped, so an older client cannot read a file written for it; MINOR = a new optional field, which older clients round-trip untouched; PATCH = documentation only. Bump it in the same change that alters the schema — the api serves this number and clients compare it against the one they implement. || DURING THE CLOSED ALPHA THE MAJOR RULE IS SUSPENDED, DELIBERATELY: breaking changes ride MINOR bumps until Drift leaves alpha, because the format is still being found and burning majors on it would leave the number meaningless by the time anyone outside depends on it. 1.2.0 removed fields and made others required and is therefore breaking under the rule above. The cost is explicit rather than hidden, and a client carries it in two rungs rather than one. A MAJOR difference is the only one it REFUSES on, so during alpha no client is ever grounded by a format break. It is WARNED instead: a client holds the version it implements, compares it against this one when it lints or applies a Driftfile, and says so whenever this document is ahead in MINOR — which is the rung every alpha-era break rides. A client that ignores the warning fails to validate a file it cannot express, as before. That is acceptable while the users are counted on one hand and reachable directly; it stops being acceptable the moment they are not, and the first post-alpha format change takes the major it is owed. || WHAT LIVES HERE: the GRAMMAR (which keys exist, their shape, their fixed defaults) and, deliberately, the BOUNDS a client must apply before it can reach the platform — the memory range encoded in `atomicEntry.memory`'s pattern, and the compiled floor and interpreted-language set beside it. Those are here so a booking outside them is refused by `drift file lint` on the laptop rather than by the api after a deploy has been confirmed and uploaded, which is most of what serving the format is for. A bound here is a COPY, never the authority: `tier` enforces the range and the compiled floor, the slice's deploy branch owns the interpreted set, and tests assert the copies still agree (driftfile_test.go for the two memory bounds, the operator's routes tests for the language set) rather than trusting them to be edited together. Add a bound here only with the test that pins it to its owner. A `default` must be a fixed property of the format, and a value no client could act on offline has no reason to be in this document at all.",
+  "version": "1.19.0",
+  "x-drift": {
+    "$comment": "BOUNDS THE PLATFORM ENFORCES, published so a client can apply them before it can reach the api. They live at the ROOT because they describe the platform rather than any key of a document — hanging them off `atomicEntry.properties.memory` tied them to the lifetime of one property, and a client reading them had to know where a booking happened to be written down. || Each is a COPY, never the authority: `tier.MinCompiledFunctionMemoryBytes` enforces the floor and the slice's deploy branch owns the interpreted set, with driftfile_test.go asserting these values still equal theirs. A client carrying either rule privately would be a second definition that drifts. || Neither can be a `pattern`: a pattern constrains the DOCUMENT, and nothing in a document says what language a function is written in — that is detected from the source beside the Driftfile, which only the client can see. || Keyed on the INTERPRETED four rather than the compiled ones because that is the stable side; the wire value for a compiled language is a known-moving target, so an unrecognised language is treated as compiled. A client that does not know these keys ignores them, and the api still refuses the deploy.",
+    "compiled-minimum": "16MB",
+    "interpreted-languages": [
+      "node",
+      "php",
+      "python",
+      "ruby"
+    ]
+  },
+  "title": "Driftfile",
+  "description": "The Drift deploy manifest — the YAML file that IS your project.\n\nOne file, at the project root, named `Driftfile` (or `driftfile.yaml`). The resource shape sits at the top level (`slice` plus `atomic`/`backbone`/`canvas`/`edge`), with optional `environments` for per-environment overrides, `hooks` for local pre/post-deploy commands, and `tests` for `drift project test`. Ships with `drift project deploy [environment]`.\n\nAlmost everything has a default, so three lines is a running site:\n\n    name: my-project\n    canvas:\n      sites: [./site]\n\nThe exception is Atomic. A function states its trigger, the callable that serves it, and the memory it books — there is no default for the memory, because a reservation nobody chose is one nobody can be held to, and the slice admits work against exactly this figure:\n\n    name: my-project\n    atomic:\n      functions:\n        - name: post:webhook\n          handler: Webhook\n          memory: 32MB\n        - name: get:report\n          handler: Report\n          memory: 256MB\n          auth: apikey\n\nEach function's memory is its own pool: its concurrent invocations together stay inside it, so booking more buys both headroom per call and more calls at once. It is also what that function is billed at.\n\nWhat can reach the slice, and what it can reach, is declared in one place: `edge` (hostnames, the site-auth gate, the rate limit, an address allowlist, egress, links to your other slices, and the hosts one slice fronts for another).\n\nWhat the Driftfile deliberately does NOT declare: secrets values (use `drift backbone secret set`), anything about the machine it runs on, or replica counts. You declare the shape of your application; the platform decides how to run it.",
+  "type": "object",
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "required": [
+        "slice"
+      ]
+    },
+    {
+      "required": [
+        "name"
+      ]
+    }
+  ],
+  "properties": {
+    "slice": {
+      "type": "string",
+      "description": "The slice this file is applied to — a reference to a slice `drift slice create` already made, not a name this file mints. 1-32 lowercase letters/numbers/hyphens, no leading/trailing hyphen. prod/production (and a single-environment project) apply to this bare name; other environments apply to <slice>-<env>, which must already exist.",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+      "examples": [
+        "prorata",
+        "my-app"
+      ],
+      "$comment": "The identity is a REFERENCE because `drift slice create` and `drift slice resize` own a slice's shape and this file owns what runs on it. `name` is the retired spelling of the same key, kept parsing and rewritten to this one by the client, so `required` is an anyOf over the two — draft-07 has no other way to say \"one of these\", and dropping `name` from `properties` would make every existing Driftfile an error on the next api deploy with no notice."
+    },
+    "name": {
+      "type": "string",
+      "deprecated": true,
+      "description": "DEPRECATED — write `slice` instead. The slice this file is applied to. Still parsed, and rewritten to `slice` by the client, so an existing Driftfile keeps applying unchanged.",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+    },
+    "labels": {
+      "type": "object",
+      "description": "Your own labels for this slice — `team: backend`, `env: staging`, `client: bakkerij & zn.`. They are how you organise your own slices, and they are yours: `drift slice list` shows them, a snapshot carries them, and a restore puts them back, so they survive a download-and-restore round trip like the rest of your data.\n\nValues are free text. These are NOT Kubernetes labels and are never written into the cluster, so spaces, punctuation and accents are all fine.",
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 256
+      },
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,62}$"
+      },
+      "maxProperties": 32,
+      "examples": [
+        {
+          "client": "bakkerij & zn.",
+          "env": "staging",
+          "team": "backend"
+        }
+      ],
+      "$comment": "THE TENANT'S HALF of two deliberately separate namespaces. The platform's own commercial attribution — origin, engagement, partner — lives on the control plane's slice record and is NOT expressible here, which is the point: a key the tenant can write is a key with two writers, and `drift slice snapshot download` would hand them our CRM fields inside their own archive. See models.Slice.Attribution, whose `json:\"-\"` is what enforces the other half. || Bounded rather than open: 32 keys, 256 bytes a value, and a key charset that stays legible in a listing. The bound is here so `drift file lint` refuses an unreasonable document on the laptop; it is a COPY of nothing — no platform limit exists for these, because they cost nothing to store and are never indexed. || The value charset is deliberately UNCONSTRAINED. Pushing these into k8s metadata would force a 63-character DNS-safe subset onto text a person wrote about their own project, which is why they are stored on the slice record and nowhere else."
+    },
+    "log_retention": {
+      "type": "string",
+      "description": "How long Atomic invocation logs are kept before purge (duration: s/m/h/d). Omitted = platform/envelope default.",
+      "pattern": "^[0-9]+[smhd]$"
+    },
+    "backup_retention": {
+      "type": "string",
+      "description": "How long Backbone backup snapshots are retained (duration: s/m/h/d). Omitted = platform/envelope default.",
+      "pattern": "^[0-9]+[smhd]$"
+    },
+    "atomic": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/atomicSection"
+        },
+        {
+          "required": [
+            "functions"
+          ]
+        }
+      ],
+      "description": "Serverless (Atomic) section: the functions this slice runs, each with the memory it books, plus slice-wide runtime limits.",
+      "$comment": "Was a oneOf accepting either a bare list of names or this object, and the list form expanded to { functions: [...] }. Removed in 1.2.0 along with per-function memory becoming mandatory: a shorthand that omits the one field every function must declare cannot be sugar for the long form, and two accepted shapes for one section is the sort of cleverness that makes a manifest feel like magic. One shape, stated in full."
+    },
+    "backbone": {
+      "$ref": "#/definitions/backboneSection",
+      "description": "Data-layer (Backbone) section: NoSQL collections, SQL databases, queues, cache, secrets, blobs, realtime, locks, plus their limits."
+    },
+    "canvas": {
+      "description": "Static-site hosting (Canvas) section. Short forms: a bare directory string or a bare list of directories expand to { sites: [...] }.",
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Short form: a directory path, sugar for { sites: [<path>] } mounted at /."
+        },
+        {
+          "type": "array",
+          "description": "Short form: a list of directory paths, sugar for { sites: [...] }.",
+          "items": {
+            "$ref": "#/definitions/canvasEntry"
+          }
+        },
+        {
+          "$ref": "#/definitions/canvasSection"
+        }
+      ]
+    },
+    "domains": {
+      "type": "array",
+      "deprecated": true,
+      "description": "DEPRECATED — write `edge.domains` instead. Custom hostnames the slice answers on. Still parsed, and moved to `edge.domains` by the client, so an existing Driftfile keeps applying unchanged.",
+      "items": {
+        "$ref": "#/definitions/domainEntry"
+      }
+    },
+    "edge": {
+      "$ref": "#/definitions/edgeSection",
+      "description": "Edge: what can reach this slice, and what it can reach. Inbound hostnames, the site-auth gate, the rate limit and an address allowlist; outbound egress; links to your other slices, and the hosts this slice fronts for them. Every key is optional, and an absent key leaves that part of the slice as it is."
+    },
+    "environments": {
+      "description": "Per-environment deploy targets. `drift project deploy <env>` merges the chosen environment's overrides onto the base shape (scalars replace; resource lists replace only when re-declared; the resource set is otherwise shared) and derives the slice name. Short form: a bare list of environment names, each inheriting the base unchanged.",
+      "oneOf": [
+        {
+          "type": "array",
+          "description": "Short form: bare list of environment names, each inheriting the base shape unchanged.",
+          "items": {
+            "type": "string",
+            "description": "Environment name; same identifier shape as a project name.",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+          }
+        },
+        {
+          "type": "object",
+          "description": "Map of environment name to a partial-slice override block.",
+          "additionalProperties": {
+            "$ref": "#/definitions/environmentOverride"
+          }
+        }
+      ]
+    },
+    "hooks": {
+      "$ref": "#/definitions/hooks",
+      "description": "Local shell commands run around a deploy (pre_deploy before, post_deploy after). Lifecycle commands, not a CI pipeline."
+    },
+    "tests": {
+      "$ref": "#/definitions/tests",
+      "description": "e2e commands `drift project test` runs against a locally-running instance of the project. Not a CI pipeline."
+    }
+  },
+  "definitions": {
+    "environmentOverride": {
+      "type": "object",
+      "description": "One environment's overrides. The same sections as the base, all optional; scalar config knobs replace the base, resource lists replace only when re-declared. It does not name a slice: prod/production apply to the bare `slice`, and every other environment applies to `<slice>-<env>`, which must ALREADY exist as a slice `drift slice create` made.",
+      "additionalProperties": false,
+      "properties": {
+        "log_retention": {
+          "type": "string",
+          "pattern": "^[0-9]+[smhd]$",
+          "description": "Override: how long Atomic invocation logs are kept (duration: s/m/h/d)."
+        },
+        "backup_retention": {
+          "type": "string",
+          "pattern": "^[0-9]+[smhd]$",
+          "description": "Override: how long Backbone backup snapshots are retained (duration: s/m/h/d)."
+        },
+        "atomic": {
+          "$ref": "#/definitions/atomicSection",
+          "description": "Atomic overrides for this environment. Declares the whole section, functions included: an override that restated only some limits would leave the environment's function list and its bookings ambiguous."
+        },
+        "backbone": {
+          "$ref": "#/definitions/backboneSection",
+          "description": "Backbone overrides for this environment."
+        },
+        "canvas": {
+          "description": "Canvas overrides for this environment. Short forms: a bare directory string or a list of directories.",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/canvasEntry"
+              }
+            },
+            {
+              "$ref": "#/definitions/canvasSection"
+            }
+          ]
+        },
+        "domains": {
+          "type": "array",
+          "deprecated": true,
+          "items": {
+            "$ref": "#/definitions/domainEntry"
+          },
+          "description": "DEPRECATED — write `edge.domains` instead. Override: custom hostnames for this environment (replaces the base list)."
+        },
+        "edge": {
+          "$ref": "#/definitions/edgeSection",
+          "description": "Edge overrides for this environment: each key replaces the base's when declared."
+        }
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "description": "Local lifecycle commands run by the CLI around a deploy, in order, via the shell, from the project root; a non-zero exit aborts. Not a CI engine.",
+      "additionalProperties": false,
+      "properties": {
+        "pre_deploy": {
+          "type": "array",
+          "description": "Commands run BEFORE anything ships (typically a build/lint). Run before the manifest is fully validated, so a build may produce artifacts (e.g. a canvas dist dir) the deploy then checks.",
+          "items": {
+            "type": "string",
+            "description": "A shell command run from the project root."
+          }
+        },
+        "post_deploy": {
+          "type": "array",
+          "description": "Commands run AFTER the slice is live (typically a smoke test). A failure leaves the slice deployed but exits non-zero.",
+          "items": {
+            "type": "string",
+            "description": "A shell command run from the project root."
+          }
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "description": "e2e commands run by `drift project test` against a real, locally-running instance of the project (same instance `drift project run` starts). Not a CI engine.",
+      "additionalProperties": false,
+      "properties": {
+        "e2e": {
+          "type": "array",
+          "description": "Commands run AFTER the local instance is up and confirmed healthy. The instance's local URL rides in as DRIFT_TEST_URL. First non-zero exit fails the run; the instance is always torn down afterward.",
+          "items": {
+            "type": "string",
+            "description": "A shell command run from the project root."
+          }
+        }
+      }
+    },
+    "atomicSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "Memory is declared per function in `functions` and is mandatory there; this section carries no slice-wide figure. One figure for every function cannot express a 32MB webhook beside a 256MB report generator without paying the larger for both, and a reservation that appears by default is one nobody chose. Note what the per-function form costs to reproduce: a slice that declares nothing keeps ONE shared pool at its slice-wide booking (slice/src/atomic/budget.rs, Pools), and that shape is now reachable only by slices predating this section — a measurement taken against it cannot be rebuilt from a manifest. || `functions` is required where a slice DECLARES its shape (the top-level `atomic`), and optional in an environment override, which is a partial: an override that had to restate every function to change one rate limit would make the common case the expensive one, and duplicate the list that the base already owns.",
+      "properties": {
+        "atomic_size": {
+          "type": "string",
+          "description": "Total disk across all deployed functions in the slice — their code and vendored dependencies, which in practice is the dependency tree (size: KB/MB/GB). A deploy that would exceed it is refused. Omitted = platform default.",
+          "pattern": "^[0-9]+(KB|MB|GB)$"
+        },
+        "function_timeout": {
+          "type": "string",
+          "description": "Max wall-clock runtime per invocation before it is killed (duration: s/m/h, no days). Omitted = platform default.",
+          "pattern": "^[0-9]+[smh]$"
+        },
+        "rate_limit": {
+          "type": "string",
+          "deprecated": true,
+          "description": "DEPRECATED — write `edge.rate_limit` instead. Still parsed, and moved to `edge.rate_limit` by the client.",
+          "pattern": "^[0-9]+/(s|min|h)$"
+        },
+        "deploy_history": {
+          "type": "integer",
+          "description": "Past deploys kept per function for rollback (drift atomic rollback). Must be >= 0; only applied when > 0 (0 = platform default).",
+          "minimum": 0,
+          "default": 0
+        },
+        "functions": {
+          "type": "array",
+          "description": "Every Atomic function this slice runs, each declaring its trigger, the callable that serves it, the memory it books, and how it is guarded. Required, and never inferred: the slice admits work against what a function booked, so a function the manifest does not name is a function the platform cannot size, price, or run.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/atomicEntry"
+          },
+          "$comment": "Was optional and auto-discovered by scanning atomic/* for @atomic annotations. Discovery decided both the surface and, through the slice-wide default, the memory — so a function could appear in production having declared neither. This list is the whole declaration: what the slice exposes, what guards it, and what it is contracted to run."
+        },
+        "egress": {
+          "$ref": "#/definitions/egressSection",
+          "deprecated": true,
+          "description": "DEPRECATED — write `edge.egress` instead. Still parsed, and moved to `edge.egress` by the client, so an existing Driftfile keeps applying unchanged."
+        }
+      }
+    },
+    "atomicEntry": {
+      "type": "object",
+      "description": "One Atomic function: its trigger, the callable that serves it, how much memory it books, and how it is guarded.",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "route",
+                "method",
+                "handler"
+              ]
+            },
+            {
+              "required": [
+                "name",
+                "memory",
+                "handler"
+              ]
+            }
+          ]
+        },
+        {
+          "if": {
+            "required": [
+              "method"
+            ],
+            "properties": {
+              "method": {
+                "const": "queue"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "route": {
+                "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "An entry is always an object, never a bare name: a bare name cannot carry the mandatory memory reservation, which would leave a function's booking invisible in the manifest that declares it. || TWO SPELLINGS OF ONE IDENTITY. `route` + `method` is the current one; `name: post:auth/challenge` is the retired one, kept parsing and normalised by the client into the same pair. `required` is an `anyOf` rather than a flat list because a draft-07 entry cannot say \"one of these two sets\" any other way, and dropping `name` from `properties` would make every existing Driftfile an error on the next api deploy with no notice. || THE QUEUE GRAMMAR IS NARROWER THAN THE HTTP ONE AND THE `if`/`then` IS WHAT KEEPS IT SO. The retired `name` pattern carried two alternatives: the HTTP half `[a-z0-9][a-z0-9/:_-]{0,62}` and the tighter queue half `[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?` — no slash, no underscore, no colon, 32 characters. `route` carries the HTTP half so that no route legal under `name` becomes illegal, and the conditional restores the queue half when `method` is `queue`. Without it `{route: orders/new, method: queue}` and `{route: a_b, method: queue}` would both be accepted, and `queue:orders/new` never was. The `if` requires `method` so it cannot fire on an entry written in the retired spelling. || THIS ENTRY IS THE WHOLE DECLARATION — `handler`, `auth`, `stream` and `secrets` all live here, so a function's trigger and its route have exactly one owner. Splitting them between this list and an annotation above the callable gives one fact two owners with nothing reconciling them: the element deploy path ships what the annotation says while the memory pool is keyed on what the manifest says, so a function deploys under a name that has booked nothing.",
+      "properties": {
+        "route": {
+          "type": "string",
+          "description": "The path this function answers on, without a leading slash — `auth/challenge`, `groups/:id`, `ping`. With `method: queue` it is the Backbone queue the slice invokes the function from instead, and the grammar narrows accordingly: a queue name carries no slash, no underscore and no colon.",
+          "pattern": "^[a-z0-9][a-z0-9/:_-]{0,62}$",
+          "examples": [
+            "ping",
+            "auth/challenge",
+            "groups/:id",
+            "orders"
+          ],
+          "$comment": "The pattern is the HTTP half of the retired `name` pattern, unchanged, so no route that was legal as `method:route` becomes illegal written this way. The queue half is applied by the conditional in `allOf` rather than here, because which grammar binds depends on `method` and a `pattern` cannot read a sibling."
+        },
+        "method": {
+          "type": "string",
+          "description": "How the function is reached. Seven HTTP verbs, or `queue` for a function the slice invokes from a Backbone queue instead of an HTTP request.",
+          "enum": [
+            "get",
+            "post",
+            "put",
+            "patch",
+            "delete",
+            "head",
+            "options",
+            "queue"
+          ],
+          "examples": [
+            "get",
+            "post",
+            "queue"
+          ],
+          "$comment": "LOWERCASE ONLY, and the enum is what enforces it: the runtime composes its booking key as lower(method) + \":\" + route and looks it up exactly, so `GET` stored verbatim names a pool no invocation reaches. || EIGHT VALUES, NOT FIVE. Trimming to get/post/put/patch/delete would delete every queue-triggered function from the format and drop two verbs the retired `name` pattern accepts — `head` and `options`. `queue` is a synthetic method the slice already books under, not an HTTP verb."
+        },
+        "name": {
+          "type": "string",
+          "deprecated": true,
+          "description": "DEPRECATED — write `route` and `method` instead. The function's identity as `method:route` (`post:auth/challenge`, `get:groups/:id`) or `queue:<queue-name>`. Still parsed, and split into the pair by the client, so an existing Driftfile keeps deploying unchanged.",
+          "pattern": "^((get|post|put|patch|delete|head|options):[a-z0-9][a-z0-9/:_-]{0,62}|queue:[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?)$",
+          "examples": [
+            "get:ping",
+            "post:auth/challenge",
+            "get:groups/:id",
+            "queue:orders"
+          ],
+          "$comment": "Was a bare `[a-z0-9-]` slug, which could not express 13 of the 19 functions in the platform's own flagship test workload the moment declaring them became mandatory — anything with a path segment or a route parameter was unwriteable. The runtime registers a function under its route (ops/deploy.rs) and keys its memory pool on the same string, so a name that cannot hold a route cannot bind to a pool. || The `queue:` form exists because that same rule left queue-triggered functions unnameable: the slice books them under `queue:<name>` (admission::booking_key with the synthetic `queue` method), so a manifest that could not write that prefix could not book them, and every queue handler ran against a pool nobody declared. The queue-name half matches queueEntry's own pattern."
+        },
+        "handler": {
+          "type": "string",
+          "description": "The callable in your source that serves this function — `PostUsers`, `handle_order`, `createBoard`. Looked for in the function's element directory, in the language that directory is written in, so two elements may each have a `handler`. Exported/public where the language distinguishes: a capital first letter in Go, `pub fn` in Rust, a named `function` rather than an arrow assigned to a const in Node.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,62}[?!]?$",
+          "examples": [
+            "PostUsers",
+            "handle_order",
+            "createBoard"
+          ],
+          "$comment": "Required, and deliberately not inferred from `name`. A route is lowercase-and-slashes and a callable is not, so any derivation would be a per-language guess (`post:users` → PostUsers in Go, post_users in Python, postUsers in Node) that is wrong the first time someone names a function after what it does rather than after its route. The trailing `[?!]` admits Ruby predicate and bang methods, which its sentinel pattern already accepts."
+        },
+        "memory": {
+          "type": "string",
+          "description": "Memory this function books, from 8MB to 256MB — 16MB to 256MB in a compiled language (Go, Rust). It is the function's own pool: its concurrent invocations together stay inside it, so booking more buys both headroom per call and more calls at once. It is also what this function is billed at, per MiB — so book what it costs rather than what looks safe, and measure it with `drift project benchmark` or a deployed slice's GET /sizing. No default: every function states what it needs.",
+          "pattern": "^([89]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-6])MB$",
+          "$comment": "The pattern encodes the RANGE, not just the shape, so a booking outside it is refused by `drift file lint` offline instead of by the api on deploy. It must agree with tier.MinFunctionMemoryBytes/MaxFunctionMemoryBytes, which is the enforcing owner — driftfile_test.go asserts the two accept exactly the same set rather than trusting them to be edited together. GB is deliberately absent: the ceiling is 256MB, so no GB value could ever be legal, and offering the unit only invites a Driftfile the api then refuses. Multiples of 8 are NOT required — that grid is what GET /sizing recommends, and forcing it would round a function measured at 20MB up to 24 and bill for memory nobody asked for.",
+          "examples": [
+            "8MB",
+            "32MB",
+            "64MB",
+            "256MB"
+          ]
+        },
+        "dir": {
+          "type": "string",
+          "description": "Source directory holding this function's callable, relative to the Driftfile. Defaults to the element's directory: ./atomic for the default element, ./atomic/<element> for a named one.",
+          "default": "./atomic/<element>",
+          "$comment": "Defaulted to ./atomic/<name> while a name was a bare slug. A name is a route now — it holds `:` and `/` — so deriving a directory from it asks the filesystem for a path nobody wrote, and the one-folder-per-function layout it assumed is not the one most projects use. The element owns the directory; this key overrides it for the odd function that lives elsewhere."
+        },
+        "element": {
+          "type": "string",
+          "description": "Element (sub-app) this function belongs to: a folder under ./atomic holding one language's flat source files and that language's single dependency manifest. ONE LANGUAGE PER ELEMENT. A second language is a second element, with its own folder and its own manifest, because an element has exactly one manifest slot and two languages cannot share it. `drift atomic new` refuses the mix and names --element as the way out. Omitted = the default element, the flat source files directly under ./atomic.",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+          "default": "default"
+        },
+        "auth": {
+          "type": "string",
+          "description": "The gate in front of this function. `none` answers every caller; `apikey` demands a key this slice issued. Setting a key on the route forces `apikey` whatever this says — the key is the stronger statement.",
+          "enum": [
+            "none",
+            "apikey"
+          ],
+          "default": "none",
+          "$comment": "Enumerated rather than free text. As an annotation this was any string, and an unrecognised one deployed happily and then answered 403 to every caller — a function that looked deployed and served nobody. An enum refuses it in `drift file lint`, offline, before anything ships. It also puts every gate in the slice on one page: an auth downgrade is now a one-line diff in the manifest instead of a comment edit in a source file nobody re-reads."
+        },
+        "stream": {
+          "type": "string",
+          "description": "Hold the connection open instead of buffering one response: `sse` for Server-Sent Events, `ws` for WebSocket. Omitted = an ordinary buffered response.",
+          "enum": [
+            "sse",
+            "ws"
+          ]
+        },
+        "response": {
+          "type": "string",
+          "description": "The shape this function's replies take on the wire. `envelope` wraps your payload as `{status, message, payload}`, which is what the SDKs expect and the default. `json` writes your payload as the WHOLE body, for an endpoint whose body a third party parses — a webhook receiver, an OAuth or OIDC endpoint. `raw` writes it as bytes, base64-decoded, for a body that is not text at all; set your own Content-Type with it.",
+          "enum": [
+            "envelope",
+            "json",
+            "raw"
+          ],
+          "default": "envelope",
+          "$comment": "Declared rather than inferred from Content-Type, because `application/json` means two different things: it is the envelope's own type AND the exact type an OAuth token endpoint must answer with (RFC 6749). A header cannot separate those, so anything guessing from one gets a real case wrong. Enumerated for the same reason `auth` is — an unrecognised value is refused by `drift file lint`, offline, instead of deploying happily and answering in the wrong shape."
+        },
+        "env": {
+          "type": "object",
+          "description": "Plain configuration for this function, injected into its environment verbatim and read the way any process reads its environment (os.environ, process.env, os.Getenv). Use it for anything that is NOT a credential: a base URL, a bucket name, a region, a feature flag. SEPARATE FROM `secrets` on purpose — `secrets:` is meant to be readable as an isolation boundary, and that reading only holds while the list carries credentials. VALUES HERE ARE VALUES IN GIT: nothing can tell a credential from a config string, so put secrets in `secrets:`.",
+          "propertyNames": {
+            "$comment": "NEGATION IS `not`, NOT A LOOKAHEAD. This was one pattern using `(?!…)`, and Go's regexp is RE2, which has no lookahead — so the pattern failed to compile, which failed the WHOLE schema, which made every client fall back to \"this machine has no copy of the Driftfile format\". `drift file lint` then validated nothing and `drift file apply` refused outright. A regex feature that only some engines have is not a safe thing to put in a document six languages read; JSON Schema's own composition works everywhere.",
+            "allOf": [
+              {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              },
+              {
+                "not": {
+                  "pattern": "^(?i:DRIFT_)"
+                }
+              },
+              {
+                "not": {
+                  "pattern": "^(?i:BACKBONE_URL|DEED_URL|PATH|HOME|TMPDIR|PYTHONPATH|NODE_PATH|GOMEMLIMIT|GOFLAGS|LD_PRELOAD|LD_LIBRARY_PATH)$"
+                }
+              }
+            ]
+          },
+          "additionalProperties": {
+            "type": "string"
+          },
+          "examples": [
+            {
+              "OPERATOR_URL": "http://operator.drift-core.svc.cluster.local:8000"
+            },
+            {
+              "STRIPE_API_BASE": "https://api.stripe.com",
+              "FEATURE_NEW_CHECKOUT": "true"
+            }
+          ],
+          "$comment": "hurdles/011. Before this, `secrets:` was the ONLY per-function injection channel, so an in-cluster address was declared beside the token that authenticates to it — which spends the one property `secrets:` was supposed to advertise. The reserved names in propertyNames are refused HERE for a good message and refused AGAIN in the runtime (atomic::protocol::is_reserved_env), because a schema check runs on the caller's machine over a file the caller wrote: it is the right place for help and the wrong place for a boundary. Setting BACKBONE_URL or DEED_URL would point every SDK call in the function at another listener, carrying that function's own secrets in the request bodies."
+        },
+        "secrets": {
+          "type": "array",
+          "description": "The Backbone secrets this function may read. The runner fetches exactly these at invocation and injects them; a secret this list does not name is unreachable from this function even though the slice holds it. Read them through the SDK rather than the environment — the persistent Python and Node language servers receive them in the request envelope, where no environment variable exists. For configuration that is NOT a credential, use `env:` — see hurdles/011.",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "examples": [
+            [
+              "STRIPE_KEY"
+            ],
+            [
+              "SMTP_HOST",
+              "SMTP_PASSWORD"
+            ]
+          ],
+          "$comment": "Which secrets a function may read is policy, and policy belongs in the document that is reviewed at deploy rather than in a comment any contributor can widen. The slice-wide values still live in backbone.secrets; this is the per-function allowlist over them."
+        },
+        "cron": {
+          "type": "string",
+          "description": "5-field POSIX cron expression to run this function on a schedule, IN ADDITION to its own trigger — an HTTP function with a cron stays callable over HTTP. Parser checks for exactly five whitespace-separated tokens; the scheduler validates the grammar.",
+          "pattern": "^\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+$"
+        },
+        "alerts": {
+          "type": "array",
+          "description": "Per-function alerts. v1: 'errors' trigger only, 'webhook' notify only. Schema-only today.",
+          "items": {
+            "$ref": "#/definitions/alertEntry"
+          }
+        }
+      }
+    },
+    "alertEntry": {
+      "type": "object",
+      "description": "One alert on a function. Threshold + window define when it fires; notify is the destination.",
+      "additionalProperties": false,
+      "properties": {
+        "on": {
+          "type": "string",
+          "description": "Alert trigger condition. v1 supports only 'errors'.",
+          "enum": [
+            "errors"
+          ],
+          "default": "errors"
+        },
+        "threshold": {
+          "type": "integer",
+          "description": "Count of error events within the window that fires the alert (count).",
+          "minimum": 0,
+          "default": 1
+        },
+        "window": {
+          "type": "string",
+          "description": "Evaluation window over which the threshold is counted (duration, e.g. 5m; minimum 60s).",
+          "pattern": "^[0-9]+[smh]$"
+        },
+        "notify": {
+          "type": "string",
+          "description": "Alert destination. v1: 'webhook=https://...' (e.g. a Slack incoming webhook)."
+        }
+      }
+    },
+    "egressSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "Outbound posture: 'open' allows any public host; 'allowlist' denies egress not listed in hosts.",
+          "enum": [
+            "open",
+            "allowlist"
+          ],
+          "default": "open"
+        },
+        "hosts": {
+          "type": "array",
+          "description": "Allowed outbound hostnames when mode=allowlist. Format 'host' or 'host:port' (default port 443). Concrete hostnames only: a wildcard cannot be resolved to an address, so it cannot become a rule.",
+          "items": {
+            "type": "string",
+            "description": "An allowlisted host, e.g. api.stripe.com, smtp.sendgrid.net:587.",
+            "pattern": "^[^*]+$",
+            "$comment": "The pattern excludes '*' anywhere, and this field used to advertise the opposite: the description offered '*.amazonaws.com' as an example while the operator's resolver skipped any '*.' entry with a log line nobody reads. That combination would have produced an enforced allowlist silently missing a host the tenant declared. RE2-safe by construction - a negated character class, no lookahead - because one pattern Go cannot compile makes the CLI validate nothing at all."
+          }
+        }
+      }
+    },
+    "edgeSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "THE ONE HOME OF EVERY REACHABILITY FACT. Atomic is compute, Backbone data, Canvas sites, Deed identity, and Edge networking, in both directions. Three keys arrived here from elsewhere and their old spellings still parse, moved here by the client with a deprecation notice: `atomic.egress`, top-level `domains`, `atomic.rate_limit`. The rest had no declaration at all before this section: the site-auth gate and links were commands only, and the address allowlist and fronting did not exist. || Deed answers \"who are you\" and Edge \"what can reach what\": `site_auth` declares THAT a request must be gated; verifying the credential is Deed's. Content-Security-Policy is deliberately not here: it is a property of a served document that a browser enforces, and Edge's rules are the ones Drift enforces itself. || Each key is applied by its own route, so an absent key changes nothing, and a present one is the whole truth for that fact: `links` removes a live link the list does not name.",
+      "properties": {
+        "egress": {
+          "$ref": "#/definitions/egressSection",
+          "description": "Outbound network posture for the slice. Enforced: the platform resolves the declared hosts and renders them into this slice's egress rules on deploy. Private RFC-1918, link-local and CGNAT ranges are blocked in both modes, by a rule the cluster applies."
+        },
+        "domains": {
+          "type": "array",
+          "description": "Custom hostnames the slice answers on, beyond the default <user>-<slice>.ondrift.eu. Each is proved yours by a DNS TXT record before it routes, and is released with the slice.",
+          "items": {
+            "$ref": "#/definitions/domainEntry"
+          }
+        },
+        "rate_limit": {
+          "type": "string",
+          "description": "Max requests across the whole slice per window; excess returns 429 (rate: /s, /min, /h). Applied as requests per minute, and refused above your slice's tier ceiling. Omitted = what the slice has now.",
+          "pattern": "^[0-9]+/(s|min|h)$",
+          "examples": [
+            "600/min",
+            "10/s"
+          ]
+        },
+        "site_auth": {
+          "type": "object",
+          "description": "A password gate in front of the slice's Canvas sites (HTTP Basic). Only Canvas paths are gated: /api and /trigger carry their own credentials and are never asked for this one. Passwords are never written here: each names an environment variable that `drift file apply` reads, so nothing secret lands in your repository.",
+          "additionalProperties": false,
+          "required": [
+            "users"
+          ],
+          "properties": {
+            "realm": {
+              "type": "string",
+              "description": "The name a browser shows in its password prompt.",
+              "maxLength": 64
+            },
+            "users": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "user",
+                  "password"
+                ],
+                "properties": {
+                  "user": {
+                    "type": "string",
+                    "description": "The username a visitor types.",
+                    "pattern": "^[^:\\s]{1,64}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "An environment variable REFERENCE, e.g. $SITE_PASS: `drift file apply` reads that variable. A literal password is refused, because it would be committed with the file.",
+                    "pattern": "^\\$[A-Z_][A-Z0-9_]*$",
+                    "examples": [
+                      "$SITE_PASS"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "links": {
+          "type": "array",
+          "description": "Your other slices this one may call (drift.Edge.Slice(name) in a function) and front (`hosts`). Each must be a slice you own. When this key is present it is the whole list: `drift file apply` adds the links it names and removes the ones it does not. Absent, links are left as they are.",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "description": "A slice name you own.",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+          }
+        },
+        "allow": {
+          "type": "array",
+          "description": "Inbound address allowlist, as CIDRs (203.0.113.0/24, 2001:db8::/32). When it names any, only those addresses reach the slice; anyone else gets 403 with code EDGE-ALLOW, never a 404. Absent or empty admits everyone, as every slice does today.",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "description": "An IPv4 or IPv6 CIDR.",
+            "pattern": "^(([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}|[0-9A-Fa-f:]*:[0-9A-Fa-f:]*/[0-9]{1,3})$"
+          }
+        },
+        "hosts": {
+          "type": "array",
+          "description": "Hosts this slice fronts for slices it links: a request for `host` is served by `slice`. Each host must be a verified custom domain of THIS slice, and each slice must be in `links`; the link is the authority, so removing it stops the host routing.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "host",
+              "slice"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "A custom domain this slice owns, e.g. admin.example.com."
+              },
+              "slice": {
+                "type": "string",
+                "description": "The linked slice that serves it.",
+                "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "backboneSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "blob_max_size": {
+          "type": "string",
+          "description": "Maximum size of a single blob/object (size: KB/MB/GB). A free safety quota, not a price driver. Omitted = platform default.",
+          "pattern": "^[0-9]+(KB|MB|GB)$"
+        },
+        "blob_max_count": {
+          "type": "integer",
+          "description": "Maximum number of blobs the slice can store. A free safety quota, not a price driver (each bucket's own `size` in backbone.blobs[] is the billing driver, charged per GiB). Only applied when > 0 (0 = platform default).",
+          "minimum": 0,
+          "default": 0
+        },
+        "queue_max_depth": {
+          "type": "integer",
+          "description": "Maximum messages held in a single queue before producers are throttled. Must be >= 0; only applied when > 0 (0 = platform default).",
+          "minimum": 0,
+          "default": 0
+        },
+        "secret_max_size": {
+          "type": "string",
+          "description": "Maximum size of a single secret value (size: KB/MB/GB). Omitted = platform default (~1KB).",
+          "pattern": "^[0-9]+(KB|MB|GB)$"
+        },
+        "locks": {
+          "type": "integer",
+          "description": "Max concurrent Backbone distributed locks held at once (the drift.Lock primitive). Must be >= 0; only applied when > 0. Included/unpriced.",
+          "minimum": 0,
+          "default": 0
+        },
+        "realtime_connections": {
+          "type": "integer",
+          "description": "Peak simultaneous live Realtime WebSocket connections across the slice; billed in 50-connection blocks. Must be >= 0; 0 or omitted disables Realtime.",
+          "minimum": 0,
+          "default": 0
+        },
+        "nosql": {
+          "type": "array",
+          "description": "NoSQL document collections to create. Each element is a long-form map with slot/seed/ttl/unique.",
+          "items": {
+            "$ref": "#/definitions/nosqlEntry"
+          }
+        },
+        "sql": {
+          "type": "array",
+          "description": "Per-slice SQLite databases (each becomes one .db file, reached via drift.SQL(\"name\")). Each element is a long-form map with name/size/schema/migrations/seed.",
+          "items": {
+            "$ref": "#/definitions/sqlEntry"
+          }
+        },
+        "blobs": {
+          "type": "array",
+          "description": "Named buckets in the per-slice blob store. Each element is a long-form map with name/size.",
+          "items": {
+            "$ref": "#/definitions/blobEntry"
+          }
+        },
+        "queues": {
+          "type": "array",
+          "description": "FIFO queues to create (no seeding). Each element is a bare name string or a long-form map with name. Pushing to a queue can trigger a function automatically.",
+          "items": {
+            "$ref": "#/definitions/queueEntry"
+          }
+        },
+        "cache": {
+          "type": "object",
+          "description": "Named cache entries (map keyed by cache key) pre-warmed at deploy. Short form '<key>: <path>' is always a file path; long form is { file | value, ttl }.",
+          "additionalProperties": {
+            "$ref": "#/definitions/cacheEntry"
+          }
+        },
+        "secrets": {
+          "type": "object",
+          "description": "Map of secret KEY to value. Write the value as an unquoted $NAME reference, resolved at deploy time from (highest first) the shell environment, a --secret KEY=value flag, or the sibling .env file. A hardcoded literal is also accepted and is used as-is — but the Driftfile is in your repository, so a literal here is a credential in git, and the CLI says so on every parse. If the value is not secret, put it in env: instead: secrets: is what tells a reviewer which functions gained privilege, and that reading only holds while it carries credentials. Quote a value to force a literal that starts with $.",
+          "additionalProperties": {
+            "type": "string",
+            "description": "Secret value: a bare $ENVREF resolved at deploy time from (highest first) the environment, a --secret KEY=value flag, or the .env file next to the Driftfile. A hardcoded literal is accepted and is a value committed to your repository."
+          }
+        }
+      }
+    },
+    "queueEntry": {
+      "description": "A FIFO queue: a bare name string, or a long-form map whose only key is name. Queues have no per-item size — they are bounded slice-wide by backbone.queue_max_depth — so the map form carries nothing else today. It exists so per-queue options (visibility timeout, max-receives) can be added later without breaking existing manifests; until they are implemented, any other key is rejected rather than silently ignored.",
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Queue name; must match the Drift identifier shape.",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Queue name; must match the Drift identifier shape.",
+              "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+            }
+          }
+        }
+      ]
+    },
+    "nosqlEntry": {
+      "description": "A NoSQL collection the manifest seeds or expires. Written as `slot:` — a reference to a collection the slice already holds, since `drift slice create` and `drift slice resize` own what a slice contains and how big it is. The retired form is `name` plus a mandatory `size`, and it still parses.",
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "slot"
+          ]
+        },
+        {
+          "required": [
+            "name",
+            "size"
+          ]
+        }
+      ],
+      "$comment": "The retired branch keeps `size` REQUIRED rather than deprecating it here. In that spelling size was both the billing driver and the enforced quota with no slice-wide default, so an entry written that way without it was never legal and making it optional now would accept a document the platform cannot price. Retiring `size` belongs with the rest of the shape keys. || `ttl` survives both spellings deliberately: it is a document-expiry BEHAVIOUR rather than a capacity purchase, neither `drift slice create` nor `drift slice resize` has a field for it, and dropping it would turn every TTL'd collection into kept-forever with nothing reporting the change.",
+      "properties": {
+        "slot": {
+          "type": "string",
+          "description": "The collection this entry seeds or expires — a reference to a collection the slice already holds, not one this file creates. Must match the Drift identifier shape.",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+          "examples": [
+            "sessions",
+            "ops"
+          ],
+          "$comment": "A `slot` on its own is a complete entry. A manifest legitimately references a collection it neither seeds nor expires, and requiring `seed` or `ttl` beside it would make the reference form unwriteable."
+        },
+        "name": {
+          "type": "string",
+          "deprecated": true,
+          "description": "DEPRECATED — write `slot` instead. Still parsed, and rewritten to `slot` by the client, so an existing Driftfile keeps applying unchanged.",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+        },
+        "size": {
+          "type": "string",
+          "description": "This collection's own storage quota (size: KB/MB/GB) — the billing driver and the enforced limit. A write that would push the collection past this size is rejected with 413. Required.",
+          "pattern": "^[0-9]+(KB|MB|GB)$"
+        },
+        "seed": {
+          "type": "string",
+          "description": "Path to a JSONL seed file (one JSON doc per line, each with a non-empty _id), upserted by _id on deploy (idempotent). Relative to the Driftfile."
+        },
+        "ttl": {
+          "type": "string",
+          "description": "How long a document lives after its last write before the platform deletes it (duration: s/m/h/d). Resets on every write — only genuinely stale, untouched documents are reaped. Omitted = kept forever. Applies per-collection, not per-document.",
+          "pattern": "^[0-9]+[smhd]$"
+        },
+        "unique": {
+          "type": "array",
+          "description": "Fields whose values must be unique within this collection. A write carrying a value another document already holds in one of these fields is rejected with 409, by the platform, inside the same transaction as the write — so it is a constraint rather than a check you could have raced. Use it for an email, a username, an external reference. A document that OMITS one of these fields is written: absence is not a value, so this does not make the field required. Authoritative: removing a field from this list and redeploying stops enforcing it.",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,254}$"
+          },
+          "examples": [
+            [
+              "email"
+            ],
+            [
+              "email",
+              "handle"
+            ]
+          ],
+          "$comment": "hurdles/021. Before this the store had no way to declare a constraint, so a tenant registering users by email implemented it as read-then-write — a race that passes every test they write and fails under two concurrent requests. It rides `ttl`'s path rather than the quota envelope's for the reason stated in this definition's own $comment: it is a BEHAVIOUR of the collection, not a capacity purchase, so the Driftfile owns it and neither `drift slice create` nor `drift slice resize` has a field for it. The slice stores it in the same marker record as the TTL and enforces it under the write lock, inside the write transaction — anywhere further out and it would be a suggestion."
+        }
+      }
+    },
+    "sqlEntry": {
+      "description": "A SQL (SQLite) database this project builds in: a long-form map naming a database the slice already holds, with an optional schema, migrations directory and seed, which a deploy takes in that order: the schema every time, each migration once, the seed while the database holds no data. `drift slice create` and `drift slice resize` own the database set and its sizes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Database identifier and SDK lookup key (drift.SQL(\"name\")); becomes the .db filename. 1-64 chars, lowercase alphanumeric plus _ and - in the interior.",
+          "pattern": "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$"
+        },
+        "size": {
+          "type": "string",
+          "description": "DEPRECATED and ignored — a database's storage quota is a slice setting, chosen with `drift slice create` or `drift slice resize`. Still accepted so an existing Driftfile keeps applying unchanged; nothing reads it.",
+          "pattern": "^[0-9]+(KB|MB|GB)$"
+        },
+        "schema": {
+          "type": "string",
+          "description": "Path to a SQL file of idempotent DDL (CREATE TABLE IF NOT EXISTS ...), applied on every deploy, before `migrations`. Relative to the Driftfile."
+        },
+        "migrations": {
+          "type": "string",
+          "description": "Path to a directory of versioned migrations, relative to the Driftfile. Each file is named `<number>_<name>.sql` (`0001_create_users.sql`, `0002_add_email.sql`) and is applied ONCE, on the first deploy that sees it, in numeric order, after `schema` and before `seed`. Each runs in its own transaction and is recorded in the database's `_drift_migrations` table.\n\nRules: numbers are compared as numbers (`10_` runs after `9_`), gaps are fine, and two files with one number are refused. A NEW file numbered below one already applied is refused. An applied file whose contents changed is refused (line endings excepted) — put the change in a new migration instead. A migration that fails is rolled back, the ones after it are not attempted, and the deploy fails naming the file. Do not write BEGIN/COMMIT in a migration: it already runs in a transaction.",
+          "examples": [
+            "./migrations"
+          ],
+          "$comment": "The client sends the directory's .sql files on the same load-schema call as `schema` ({db, schema, migrations: [{name, sql}]}); the slice owns ordering, validation and the record (backbone/sql.rs `migrate`). The slice answers a call that carries `migrations`, even an empty list, with a JSON report, and a call without it with the bare 204 it always gave — so a client can tell a slice that applies migrations from one that would ignore the field. The history table is part of the database, so the portable dump carries it and a restored database does not re-run anything."
+        },
+        "seed": {
+          "type": "string",
+          "description": "Path to a SQL file run after `schema` and `migrations` while the database holds no data yet: when it has no tables, or its first table by name (the migration history excepted) is empty. Relative to the Driftfile."
+        }
+      }
+    },
+    "blobEntry": {
+      "description": "A bucket this project writes to. It references a bucket the slice already holds — `drift slice create` and `drift slice resize` own the bucket set and its sizes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Bucket name; must match the Drift identifier shape.",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+        },
+        "size": {
+          "type": "string",
+          "description": "DEPRECATED and ignored — a bucket's storage quota is a slice setting, chosen with `drift slice create` or `drift slice resize`. Still accepted so an existing Driftfile keeps applying unchanged; nothing reads it.",
+          "pattern": "^[0-9]+(KB|MB|GB)$"
+        }
+      }
+    },
+    "cacheEntry": {
+      "description": "A cache entry's seed source: a bare string (file path), or a long-form map with file/value/ttl (exactly one of file or value required).",
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Short form: a file path whose contents become the cached value (relative to the Driftfile)."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "Path to a file whose contents become the cached value (relative to the Driftfile). One of file or value is required."
+            },
+            "value": {
+              "type": "string",
+              "description": "Inline literal value to pre-warm the cache entry with. One of file or value is required."
+            },
+            "ttl": {
+              "type": "integer",
+              "description": "Time-to-live in seconds, after which the entry expires (seconds). 0 or omitted = never expires.",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "file"
+              ]
+            },
+            {
+              "required": [
+                "value"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "canvasSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "canvas_size": {
+          "type": "string",
+          "description": "Total storage across all Canvas sites in the slice (size: KB/MB/GB). Omitted = platform default.",
+          "pattern": "^[0-9]+(KB|MB|GB)$"
+        },
+        "sites": {
+          "type": "array",
+          "description": "Static sites to host. Each element is a bare directory path (mounted at /) or a long-form map with dir/route.",
+          "items": {
+            "$ref": "#/definitions/canvasEntry"
+          }
+        }
+      }
+    },
+    "canvasEntry": {
+      "description": "A static site: a bare directory path string (mounted at /), or a long-form map with dir/path.",
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Bare directory of static assets (relative to the Driftfile); mounted at /."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "dir"
+          ],
+          "properties": {
+            "dir": {
+              "type": "string",
+              "description": "Directory of static assets to serve (relative to the Driftfile). Must exist."
+            },
+            "path": {
+              "type": "string",
+              "description": "URL sub-path the site mounts at. Defaults to / when omitted.",
+              "default": "/",
+              "examples": [
+                "/",
+                "/admin"
+              ],
+              "$comment": "The slug the slice lays a site out under is derived from this, so two sites resolving to one value would overwrite each other. The client refuses an EMPTY value rather than reading it as the root, and refuses a document in which two sites share a slug — before the first upload, because the site being replaced is gone by the time an upload reports it."
+            },
+            "route": {
+              "type": "string",
+              "deprecated": true,
+              "description": "DEPRECATED — write `path` instead. Still parsed, and rewritten to `path` by the client, so an existing Driftfile keeps applying unchanged.",
+              "default": "/"
+            }
+          }
+        }
+      ]
+    },
+    "domainEntry": {
+      "type": "object",
+      "description": "One custom hostname for the slice.",
+      "additionalProperties": false,
+      "required": [
+        "host"
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Custom hostname the slice should answer on (e.g. forms.gemeente.example)."
+        },
+        "verify": {
+          "type": "string",
+          "description": "Ownership-proof method. v1 supports only 'dns-txt' (also the default).",
+          "enum": [
+            "dns-txt"
+          ],
+          "default": "dns-txt"
+        },
+        "wildcard": {
+          "type": "boolean",
+          "description": "Route every subdomain of host (isrand.imprente.com, alice.imprente.com, ...) to this same slice. The app on the slice owns any further per-subdomain multitenancy. Routing only — each subdomain still gets its own on-demand TLS certificate, not a wildcard cert.",
+          "default": false
+        }
+      }
+    }
+  }
+}

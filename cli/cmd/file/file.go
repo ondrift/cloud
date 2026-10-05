@@ -34,19 +34,19 @@ import (
 // One noun, because the Driftfile IS the project: the resources and their sizes
 // are the whole declaration, so `project` and `file` addressed the same thing
 // under two names and cost a user the choice between them. The offline verbs
-// (lint, fmt, explain, new) and the ones that reach a slice (apply, simulate,
-// run, test, benchmark, stop, logs) live together for that reason.
+// (lint, fmt, migrate, explain, new) and the ones that reach a slice (apply,
+// simulate, run, test, benchmark, stop, logs) live together for that reason.
 //
 // `drift project` still resolves to this group, deprecated — see main.go.
 func GetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "file",
 		Short:   "Work on a Driftfile — lint it, apply it, run what it declares",
-		Long:    "Everything a Driftfile does: lint, format, explain and scaffold offline; apply, simulate, run, test, benchmark, stop and tail against a slice.",
+		Long:    "Everything a Driftfile does: lint, format, migrate, explain and scaffold offline; apply, simulate, run, test, benchmark, stop and tail against a slice.",
 		Example: "  drift file lint\n  drift file apply\n  drift file simulate\n  drift file logs",
 		GroupID: "project",
 	}
-	cmd.AddCommand(getLintCmd(), getExplainCmd(), getResolveCmd(), getFmtCmd(), getNewCmd())
+	cmd.AddCommand(getLintCmd(), getExplainCmd(), getResolveCmd(), getFmtCmd(), getMigrateCmd(), getNewCmd())
 	cmd.AddCommand(project.Verbs()...)
 
 	// The two verbs that changed spelling in the move. Each keeps working and

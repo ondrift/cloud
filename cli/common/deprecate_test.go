@@ -267,10 +267,12 @@ func TestAliasCommand_PassesFlagsAndArgsThrough(t *testing.T) {
 }
 
 // The sentence an aliased Driftfile key prints, exactly. It is what a person
-// meets on every apply of an old file, so it is pinned word for word.
+// meets on every apply of an old file, so it is pinned word for word, including
+// the command that rewrites the file.
 func TestKeyAliasNotice_IsTheDeprecatedInFavourOfSentence(t *testing.T) {
 	k := KeyDeprecationFor("atomic.egress", KeyAlias, Deprecation{New: "edge.egress"})
-	want := `"atomic.egress" is deprecated in favour of "edge.egress", and will be removed in a later version.`
+	want := `"atomic.egress" is deprecated in favour of "edge.egress", and will be removed in a later version; ` +
+		"run `drift file migrate` to update this file."
 	if got := k.Notice(); got != want {
 		t.Errorf("alias notice:\n got: %s\nwant: %s", got, want)
 	}
@@ -279,14 +281,17 @@ func TestKeyAliasNotice_IsTheDeprecatedInFavourOfSentence(t *testing.T) {
 // A reason, when an alias has one, follows the sentence rather than replacing it.
 func TestKeyAliasNotice_AppendsItsReason(t *testing.T) {
 	k := KeyDeprecationFor("domains", KeyAlias, Deprecation{New: "edge.domains", Because: "Reachability lives under edge."})
-	want := `"domains" is deprecated in favour of "edge.domains", and will be removed in a later version. Reachability lives under edge.`
+	want := `"domains" is deprecated in favour of "edge.domains", and will be removed in a later version; ` +
+		"run `drift file migrate` to update this file. Reachability lives under edge."
 	if got := k.Notice(); got != want {
 		t.Errorf("alias notice with a reason:\n got: %s\nwant: %s", got, want)
 	}
 }
 
 // An IGNORED key has no new spelling, so it keeps the general wording and its
-// reason, which is what says where the value went.
+// reason, which is what says where the value went. It does not name `drift file
+// migrate`: migrate cannot move a key with no target, and pointing at it would
+// send the reader to a command that changes nothing.
 func TestKeyIgnoredNotice_KeepsTheGeneralWording(t *testing.T) {
 	d := Deprecation{RemoveAfter: "the form owns it", Because: "Set it on the form."}
 	k := KeyDeprecationFor("log_retention", KeyIgnored, d)

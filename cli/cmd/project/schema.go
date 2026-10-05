@@ -24,6 +24,7 @@ package project
 // pattern and format rules the schema's own `pattern` keywords already encode.
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,7 +52,15 @@ var ErrNoSchema = errors.New(
 
 // compiledSchema caches the compiled schema for the process. Compiling is the
 // expensive half and a single `project deploy` validates more than once.
-var compiledSchema *jsonschema.Schema
+//
+// compiledFrom is the document it was compiled from. The cache answers only
+// while the file on disk still holds those bytes, so a process that sees the
+// file change, or a test that points HOME at another copy, validates against
+// what is there rather than against whichever copy was read first.
+var (
+	compiledSchema *jsonschema.Schema
+	compiledFrom   []byte
+)
 
 // validateAgainstSchema checks the shorthand-expanded document against the
 // platform's schema and returns one error per violation, in document order.
@@ -92,12 +101,12 @@ func validateAgainstSchema(doc map[string]any) ParseErrors {
 // the file was corrupted, and pretending the format is unknown would turn that
 // into a confusing pass.
 func loadSchema() (*jsonschema.Schema, error) {
-	if compiledSchema != nil {
-		return compiledSchema, nil
-	}
 	raw, rerr := common.LocalDriftfileSchema()
 	if rerr != nil {
 		return nil, nil // never fetched; the caller decides whether that is fatal
+	}
+	if compiledSchema != nil && bytes.Equal(raw, compiledFrom) {
+		return compiledSchema, nil
 	}
 	var doc any
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -112,7 +121,7 @@ func loadSchema() (*jsonschema.Schema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the cached Driftfile schema could not be compiled: %w", err)
 	}
-	compiledSchema = sch
+	compiledSchema, compiledFrom = sch, raw
 	return sch, nil
 }
 

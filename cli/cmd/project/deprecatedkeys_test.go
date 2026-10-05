@@ -217,7 +217,8 @@ func TestAMovedAliasPrintsTheDeprecationSentence(t *testing.T) {
 
 	got := walkFor(t, doc, []common.KeyDeprecation{alias("atomic.egress", "edge.egress")})
 
-	want := `"atomic.egress" is deprecated in favour of "edge.egress", and will be removed in a later version.` + "\n"
+	want := `"atomic.egress" is deprecated in favour of "edge.egress", and will be removed in a later version; ` +
+		"run `drift file migrate` to update this file.\n"
 	if got != want {
 		t.Errorf("notice:\n got: %q\nwant: %q", got, want)
 	}
@@ -420,9 +421,9 @@ func TestAnOldDriftfileLandsUnderEdge(t *testing.T) {
 		t.Errorf("domains did not land on edge.domains: %v", s)
 	}
 	for _, line := range []string{
-		`"atomic.egress" is deprecated in favour of "edge.egress", and will be removed in a later version.`,
-		`"domains" is deprecated in favour of "edge.domains", and will be removed in a later version.`,
-		`"atomic.rate_limit" is deprecated in favour of "edge.rate_limit", and will be removed in a later version.`,
+		`"atomic.egress" is deprecated in favour of "edge.egress", and will be removed in a later version; ` + common.MigrateHint + ".",
+		`"domains" is deprecated in favour of "edge.domains", and will be removed in a later version; ` + common.MigrateHint + ".",
+		`"atomic.rate_limit" is deprecated in favour of "edge.rate_limit", and will be removed in a later version; ` + common.MigrateHint + ".",
 	} {
 		if !strings.Contains(out.String(), line) {
 			t.Errorf("missing notice %q in:\n%s", line, out.String())
