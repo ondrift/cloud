@@ -1,6 +1,7 @@
 package project
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,6 +230,121 @@ func TestFunctionSpecs_CarryDeclaredEnv(t *testing.T) {
 	}
 	if len(ping.Secrets) != 0 {
 		t.Errorf("get:ping declares no secrets, got %v — a config key is not a credential", ping.Secrets)
+	}
+}
+
+// --- concurrency --------------------------------------------------------------
+
+// concurrencyDriftfile declares `concurrency` on a top-level Pulse and on a
+// Pulse inside an element, and leaves it out of a third.
+const concurrencyDriftfile = `
+slice: demo
+atomic:
+  pulses:
+    - route: users
+      method: post
+      handler: PostUsers
+      concurrency: 16
+    - route: ping
+      method: get
+      handler: GetPing
+  elements:
+    - name: billing
+      pulses:
+        - route: invoices
+          method: post
+          handler: PostInvoices
+          concurrency: 4
+`
+
+// withFormatSchema validates against the schema this binary implements, the
+// frozen copy of the platform's.
+func withFormatSchema(t *testing.T) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "migrate", "driftfile.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withSchema(t, string(raw))
+}
+
+// `concurrency` reaches FunctionSpec from a top-level Pulse and from one
+// flattened out of an element, and a Pulse that declares none reads 0.
+func TestFunctionSpecs_CarryDeclaredConcurrency(t *testing.T) {
+	withFormatSchema(t)
+	root := demoProject(t, concurrencyDriftfile)
+	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
+	if err != nil {
+		t.Fatalf("ParseDriftfile: %v", err)
+	}
+	got := map[string]int{}
+	for _, s := range FunctionSpecs(m) {
+		got[s.Name] = s.Concurrency
+	}
+	for name, want := range map[string]int{"post:users": 16, "post:invoices": 4, "get:ping": 0} {
+		if c, ok := got[name]; !ok || c != want {
+			t.Errorf("%s concurrency = %d (declared: %v), want %d; all: %v", name, c, ok, want, got)
+		}
+	}
+	if _, err := atomic_cmd.BuildElements(FunctionSpecs(m)); err != nil {
+		t.Errorf("Go Pulses at 16 and 4 were refused: %v", err)
+	}
+}
+
+// A Python element's Pulse with `concurrency: 4` passes the schema, which
+// cannot see the language, and is refused before anything builds, naming the
+// rule; the error is one `drift file apply` reports before deploying anything.
+func TestFunctionSpecs_ConcurrencyOnAPythonPulseIsRefusedBeforeBuilding(t *testing.T) {
+	withFormatSchema(t)
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "Driftfile"), `
+slice: demo
+atomic:
+  elements:
+    - name: py
+      pulses:
+        - route: rpc
+          method: post
+          handler: post_rpc
+          concurrency: 4
+`)
+	mustWrite(t, filepath.Join(root, "atomic", "py", "api.py"), "def post_rpc(body, req):\n    return {}\n")
+	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
+	if err != nil {
+		t.Fatalf("ParseDriftfile: %v", err)
+	}
+	_, err = atomic_cmd.BuildElements(FunctionSpecs(m))
+	if !errors.Is(err, atomic_cmd.ErrConcurrency) {
+		t.Fatalf("want the concurrency refusal, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "post:rpc") || !strings.Contains(err.Error(), "a concurrent Pulse runs Go in this release") {
+		t.Errorf("the refusal must name the pulse and the rule: %v", err)
+	}
+}
+
+// The schema this binary implements refuses what it can see: a concurrency on
+// a stream, above the maximum, or of the wrong type.
+func TestParseDriftfile_TheSchemaRefusesAConcurrencyItCanSee(t *testing.T) {
+	withFormatSchema(t)
+	pulse := func(entry string) string {
+		return "\nslice: demo\natomic:\n  pulses:\n    - route: ping\n      method: get\n      handler: GetPing\n      " + entry + "\n"
+	}
+	// The control: the same Pulse at 16 is accepted, so a refusal below is
+	// about the value and not the fixture.
+	if _, err := ParseDriftfile(filepath.Join(demoProject(t, pulse("concurrency: 16")), "Driftfile")); err != nil {
+		t.Fatalf("a Pulse at concurrency 16 was refused: %v", err)
+	}
+	for name, entry := range map[string]string{
+		"with a stream":     "stream: sse\n      concurrency: 2",
+		"above the maximum": "concurrency: 65",
+		"zero":              "concurrency: 0",
+		"a string":          `concurrency: "16"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseDriftfile(filepath.Join(demoProject(t, pulse(entry)), "Driftfile")); err == nil {
+				t.Errorf("a Pulse declaring %s was accepted", entry)
+			}
+		})
 	}
 }
 

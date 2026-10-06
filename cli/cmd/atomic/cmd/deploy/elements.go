@@ -73,6 +73,11 @@ type FunctionSpec struct {
 	// channel, so an in-cluster address was declared beside the token that
 	// authenticates to it.
 	Env map[string]string
+	// Concurrency is how many calls one process of this Pulse may serve at
+	// once, as declared; 0 means the Driftfile left it out, which is 1. Above 1
+	// only a buffered Go Pulse reached over HTTP may declare it (see
+	// refuseConcurrency), and it reaches the operator and the digest only then.
+	Concurrency int
 }
 
 // FieldMethod is the method a Field's slot is booked and deployed under. No
@@ -138,6 +143,70 @@ func refuseNonGoField(spec FunctionSpec, lang string) error {
 // that refusal from any other build failure and report it before anything is
 // deployed.
 var ErrFieldLanguage = errors.New("a Field runs Go in this release")
+
+// MaxPulseConcurrency is the most calls one process of a Pulse may serve at
+// once. The platform's tier.MaxPulseConcurrency is the authority and the
+// Driftfile schema's `concurrency.maximum` its published copy; this is the
+// copy the refusal below states, and a test pins it to the schema.
+const MaxPulseConcurrency = 64
+
+// ErrConcurrency is the rule refuseConcurrency applies, so a caller can tell
+// that refusal from any other build failure and report it before anything is
+// deployed.
+var ErrConcurrency = errors.New("a declared concurrency this release cannot honour")
+
+// concurrencyRefusal carries the operator's own words for a refused
+// concurrency and answers errors.Is(err, ErrConcurrency).
+type concurrencyRefusal struct{ text string }
+
+func (r concurrencyRefusal) Error() string        { return r.text }
+func (r concurrencyRefusal) Is(target error) bool { return target == ErrConcurrency }
+
+// validatePulseConcurrency is the operator's tier.ValidatePulseConcurrency,
+// rule for rule and word for word, so a Driftfile is refused here, before
+// anything builds, with the text the operator's 400 would carry. n is the
+// declared value; 0 means it was not declared, which is 1.
+func validatePulseConcurrency(method, language, stream string, n int) error {
+	if n < 0 || n > MaxPulseConcurrency {
+		return concurrencyRefusal{fmt.Sprintf("concurrency %d is not usable: it must be between 1 and %d", n, MaxPulseConcurrency)}
+	}
+	if n <= 1 {
+		return nil
+	}
+	if language != "go" {
+		return concurrencyRefusal{fmt.Sprintf("concurrency %d needs a Go Pulse: a concurrent Pulse runs Go in this release, "+
+			"and this one is built as %q. Set concurrency to 1, or move the handler into a Go element",
+			n, language)}
+	}
+	if stream != "" {
+		return concurrencyRefusal{fmt.Sprintf("concurrency %d cannot be combined with stream %q: a concurrent Pulse serves "+
+			"buffered requests in this release. Set concurrency to 1, or drop the stream", n, stream)}
+	}
+	switch {
+	case method == FieldMethod:
+		return concurrencyRefusal{fmt.Sprintf("concurrency %d cannot be declared on a Field: a Field is one process by definition", n)}
+	case method == QueueMethod:
+		return concurrencyRefusal{fmt.Sprintf("concurrency %d cannot be combined with method queue: a queue Pulse is invoked "+
+			"one call at a time by its trigger. Set concurrency to 1", n)}
+	case !IsSlotMethod(method):
+		return concurrencyRefusal{fmt.Sprintf("concurrency %d needs an HTTP method, got %q", n, method)}
+	}
+	return nil
+}
+
+// refuseConcurrency applies validatePulseConcurrency to one declared slot
+// whose element is written in lang, naming the slot.
+func refuseConcurrency(spec FunctionSpec, lang string) error {
+	method, _ := spec.Wire()
+	language := lang
+	if atomic_common.IsGo(lang) {
+		language = "go"
+	}
+	if err := validatePulseConcurrency(method, language, spec.Stream, spec.Concurrency); err != nil {
+		return fmt.Errorf("%s %q: %w", slotNoun(spec), spec.Name, err)
+	}
+	return nil
+}
 
 // Wire splits the declared name into the (method, name) pair the operator and
 // the slice speak.
@@ -244,6 +313,9 @@ func BuildElements(specs []FunctionSpec) ([]Element, error) {
 			if ferr := refuseNonGoField(s, lang); ferr != nil {
 				return nil, fmt.Errorf("element %q: %w", name, ferr)
 			}
+			if cerr := refuseConcurrency(s, lang); cerr != nil {
+				return nil, fmt.Errorf("element %q: %w", name, cerr)
+			}
 			c, cerr := atomic_common.FindCallable(dir, s.Handler)
 			if cerr != nil {
 				return nil, fmt.Errorf("%s %q: %w", slotNoun(s), s.Name, cerr)
@@ -349,11 +421,11 @@ func DeployGoElement(el Element, digest string, out io.Writer) error {
 		return nil
 	}
 
-	stageDir, err := buildGoElementStage(el.Dir, el.Name)
+	stage, err := buildGoElementStage(el.Dir, el.Name)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(stageDir) // #nosec G104
+	defer os.RemoveAll(stage.dir) // #nosec G104
 
 	// One user-source archive for the element's package, shared by its
 	// functions (they all compile from the same source).
@@ -368,8 +440,7 @@ func DeployGoElement(el Element, digest string, out io.Writer) error {
 	// entrypoint). The parallel builds below then only re-link, and a
 	// package-wide compile error surfaces here once rather than N times across
 	// the workers.
-	warmMethod, _ := el.Funcs[0].Spec.Wire()
-	if _, warmDir, werr := buildGoEntrypointIsolated(stageDir, el.Funcs[0].Spec.Handler, warmMethod, "warm"); werr != nil {
+	if _, warmDir, werr := buildGoEntrypointIsolated(stage, goEntryOf(el.Funcs[0].Spec), "warm"); werr != nil {
 		return fmt.Errorf("element %q failed to compile: %w", el.Name, werr)
 	} else {
 		os.RemoveAll(warmDir) // #nosec G104
@@ -379,7 +450,7 @@ func DeployGoElement(el Element, digest string, out io.Writer) error {
 	// the warmed module + build caches, so this is N parallel links + uploads.
 	deployOne := func(f ElementFunc) error {
 		method, name := f.Spec.Wire()
-		bin, fnDir, berr := buildGoEntrypointIsolated(stageDir, f.Spec.Handler, method,
+		bin, fnDir, berr := buildGoEntrypointIsolated(stage, goEntryOf(f.Spec),
 			safeTmpName(el.Name+"-"+f.Spec.Handler))
 		if berr != nil {
 			return berr
@@ -390,9 +461,10 @@ func DeployGoElement(el Element, digest string, out io.Writer) error {
 		return sendSourceToOperator(FuncArtifact{
 			Name: name, Method: method, Language: "go", Auth: f.Spec.Auth,
 			Element: el.Name, Stream: f.Spec.Stream, Response: f.Spec.Response,
-			Secrets:  f.Spec.Secrets,
-			Env:      f.Spec.Env,
-			Triggers: triggersFor(f), Digest: DeployDigest(digest, f.Spec),
+			Secrets:     f.Spec.Secrets,
+			Env:         f.Spec.Env,
+			Concurrency: f.Spec.Concurrency,
+			Triggers:    triggersFor(f), Digest: DeployDigest(digest, f.Spec),
 			SourcePath: bin, UserSourcePath: userSrc,
 		})
 	}

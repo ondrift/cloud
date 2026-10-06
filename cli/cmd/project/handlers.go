@@ -59,6 +59,9 @@ func FunctionSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
 			Response: fn.Str("response"),
 			Secrets:  fn.Strings("secrets"),
 			Env:      fn.StrMap("env"),
+			// Read from every Pulse, top level or flattened out of an element;
+			// absent reads 0, which means 1.
+			Concurrency: fn.Int("concurrency"),
 		})
 	}
 	return specs

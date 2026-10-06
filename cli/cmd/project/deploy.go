@@ -180,11 +180,12 @@ single slice otherwise.`,
 			// missing handler or a mixed-language element with the message built
 			// for it, and pre-empting that would report the wrong cause.
 			//
-			// A Field written in anything but Go IS reported here: BuildElements
-			// refuses it before anything is built, and that refusal is the
-			// message, so it is returned rather than left to applyAtomic.
+			// A Field written in anything but Go, and a concurrency the Pulse
+			// cannot have, ARE reported here: BuildElements refuses each before
+			// anything is built, and that refusal is the message, so it is
+			// returned rather than left to applyAtomic.
 			els, berr := atomic_cmd.BuildElements(AtomicSpecs(m))
-			if errors.Is(berr, atomic_cmd.ErrFieldLanguage) {
+			if errors.Is(berr, atomic_cmd.ErrFieldLanguage) || errors.Is(berr, atomic_cmd.ErrConcurrency) {
 				return berr
 			}
 			if berr == nil {
