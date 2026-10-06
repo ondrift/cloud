@@ -39,32 +39,37 @@ func concurrencyElement(t *testing.T, lang string, handlers ...string) string {
 	return dir
 }
 
-// Above 1 a Pulse must be Go, buffered and reached over HTTP. Each refusal
-// happens in BuildElements, before anything is staged or built, carries the
-// operator's own 400 text, and names the Pulse.
+// A concurrent Pulse, declared either way, must be Go, buffered and reached
+// over HTTP. Each refusal happens in BuildElements, before anything is staged
+// or built, carries the operator's own 400 text naming the declaration as it
+// was written, and names the Pulse.
 func TestBuildElements_RefusesAConcurrencyTheSliceCannotHonour(t *testing.T) {
 	for name, tc := range map[string]struct {
 		lang string
 		spec FunctionSpec
 		want string
 	}{
-		"a Python pulse": {"python", FunctionSpec{Name: "post:rpc", Handler: "post_rpc", Concurrency: 4},
-			`concurrency 4 needs a Go Pulse: a concurrent Pulse runs Go in this release, and this one is built as "python". ` +
-				`Set concurrency to 1, or move the handler into a Go element`},
-		"a streaming pulse": {"go", FunctionSpec{Name: "get:events", Handler: "GetEvents", Stream: "sse", Concurrency: 2},
-			`concurrency 2 cannot be combined with stream "sse": a concurrent Pulse serves buffered requests in this release. ` +
-				`Set concurrency to 1, or drop the stream`},
-		"a queue pulse": {"go", FunctionSpec{Name: "queue:orders", Handler: "HandleOrder", Concurrency: 8},
-			`concurrency 8 cannot be combined with method queue: a queue Pulse is invoked one call at a time by its trigger. ` +
-				`Set concurrency to 1`},
-		"above the maximum": {"go", FunctionSpec{Name: "post:rpc", Handler: "PostRPC", Concurrency: 65},
+		"a Python pulse": {"python", FunctionSpec{Name: "post:rpc", Handler: "post_rpc", Concurrent: true},
+			`concurrent: true needs a Go Pulse: a concurrent Pulse runs Go in this release, and this one is built as "python". ` +
+				`Set concurrent to false, or move the handler into a Go element`},
+		"a streaming pulse": {"go", FunctionSpec{Name: "get:events", Handler: "GetEvents", Stream: "sse", Concurrent: true},
+			`concurrent: true cannot be combined with stream "sse": a concurrent Pulse serves buffered requests in this release. ` +
+				`Set concurrent to false, or drop the stream`},
+		"a queue pulse": {"go", FunctionSpec{Name: "queue:orders", Handler: "HandleOrder", Concurrent: true},
+			`concurrent: true cannot be combined with method queue: a queue Pulse is invoked one call at a time by its trigger. ` +
+				`Set concurrent to false`},
+		"a Python pulse, the deprecated spelling": {"python", FunctionSpec{Name: "post:rpc", Handler: "post_rpc", Concurrency: 4},
+			`concurrency: 4 needs a Go Pulse: a concurrent Pulse runs Go in this release`},
+		"a queue pulse, the deprecated spelling": {"go", FunctionSpec{Name: "queue:orders", Handler: "HandleOrder", Concurrency: 8},
+			`concurrency: 8 cannot be combined with method queue`},
+		"above the deprecated maximum": {"go", FunctionSpec{Name: "post:rpc", Handler: "PostRPC", Concurrency: 65},
 			`concurrency 65 is not usable: it must be between 1 and 64`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			tc.spec.Dir = concurrencyElement(t, tc.lang, tc.spec.Handler)
 			_, err := BuildElements([]FunctionSpec{tc.spec})
 			if err == nil {
-				t.Fatalf("%s with concurrency %d was accepted", tc.spec.Name, tc.spec.Concurrency)
+				t.Fatalf("%s declared concurrent (%+v) was accepted", tc.spec.Name, tc.spec)
 			}
 			if !errors.Is(err, ErrConcurrency) {
 				t.Errorf("the refusal does not answer errors.Is(err, ErrConcurrency), so `drift file apply` "+
@@ -80,19 +85,22 @@ func TestBuildElements_RefusesAConcurrencyTheSliceCannotHonour(t *testing.T) {
 	}
 }
 
-// The controls: a concurrent buffered Go Pulse over HTTP builds, and so does
-// every Pulse that declares none or 1, whatever its language, stream or method.
+// The controls: a concurrent buffered Go Pulse over HTTP builds in either
+// spelling, and so does every Pulse that is not concurrent, whatever its
+// language, stream or method.
 func TestBuildElements_AcceptsEveryConcurrencyTheSliceHonours(t *testing.T) {
 	for name, tc := range map[string]struct {
 		lang string
 		spec FunctionSpec
 	}{
-		"Go at 16":           {"go", FunctionSpec{Name: "post:rpc", Handler: "PostRPC", Concurrency: 16}},
-		"Go at the maximum":  {"go", FunctionSpec{Name: "get:rpc", Handler: "GetRPC", Concurrency: MaxPulseConcurrency}},
-		"Python undeclared":  {"python", FunctionSpec{Name: "post:rpc", Handler: "post_rpc"}},
-		"Python at 1":        {"python", FunctionSpec{Name: "post:rpc", Handler: "post_rpc", Concurrency: 1}},
-		"a stream at 1":      {"go", FunctionSpec{Name: "get:events", Handler: "GetEvents", Stream: "ws", Concurrency: 1}},
-		"a queue undeclared": {"go", FunctionSpec{Name: "queue:orders", Handler: "HandleOrder"}},
+		"Go, concurrent":          {"go", FunctionSpec{Name: "post:rpc", Handler: "PostRPC", Concurrent: true}},
+		"Go, the deprecated 16":   {"go", FunctionSpec{Name: "post:rpc", Handler: "PostRPC", Concurrency: 16}},
+		"Go at the old maximum":   {"go", FunctionSpec{Name: "get:rpc", Handler: "GetRPC", Concurrency: MaxPulseConcurrency}},
+		"Python undeclared":       {"python", FunctionSpec{Name: "post:rpc", Handler: "post_rpc"}},
+		"Python at 1":             {"python", FunctionSpec{Name: "post:rpc", Handler: "post_rpc", Concurrency: 1}},
+		"a stream at 1":           {"go", FunctionSpec{Name: "get:events", Handler: "GetEvents", Stream: "ws", Concurrency: 1}},
+		"a queue undeclared":      {"go", FunctionSpec{Name: "queue:orders", Handler: "HandleOrder"}},
+		"a stream not concurrent": {"go", FunctionSpec{Name: "get:events", Handler: "GetEvents", Stream: "sse"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			tc.spec.Dir = concurrencyElement(t, tc.lang, tc.spec.Handler)
@@ -103,9 +111,10 @@ func TestBuildElements_AcceptsEveryConcurrencyTheSliceHonours(t *testing.T) {
 	}
 }
 
-// The CLI's bound is a copy of the platform's, published in the schema. The
-// frozen copy of the schema this CLI implements is byte-identical to the one
-// the platform serves, so pinning to it pins to the platform.
+// The CLI's bound on the deprecated count is a copy of the platform's,
+// published in the schema. The frozen copy of the schema this CLI implements is
+// byte-identical to the one the platform serves, so pinning to it pins to the
+// platform; and it carries `concurrent`, a boolean, beside the count.
 func TestMaxPulseConcurrencyIsTheSchemasMaximum(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "project", "testdata", "migrate", "driftfile.schema.json"))
 	if err != nil {
@@ -115,9 +124,13 @@ func TestMaxPulseConcurrencyIsTheSchemasMaximum(t *testing.T) {
 		Definitions struct {
 			AtomicEntry struct {
 				Properties struct {
+					Concurrent struct {
+						Type string `json:"type"`
+					} `json:"concurrent"`
 					Concurrency struct {
-						Maximum int `json:"maximum"`
-						Minimum int `json:"minimum"`
+						Maximum    int  `json:"maximum"`
+						Minimum    int  `json:"minimum"`
+						Deprecated bool `json:"deprecated"`
 					} `json:"concurrency"`
 				} `json:"properties"`
 			} `json:"atomicEntry"`
@@ -129,6 +142,12 @@ func TestMaxPulseConcurrencyIsTheSchemasMaximum(t *testing.T) {
 	c := doc.Definitions.AtomicEntry.Properties.Concurrency
 	if c.Maximum != MaxPulseConcurrency || c.Minimum != 1 {
 		t.Errorf("the schema bounds concurrency to %d..%d, this CLI to 1..%d", c.Minimum, c.Maximum, MaxPulseConcurrency)
+	}
+	if !c.Deprecated {
+		t.Error("the schema this CLI implements does not mark concurrency deprecated")
+	}
+	if got := doc.Definitions.AtomicEntry.Properties.Concurrent.Type; got != "boolean" {
+		t.Errorf("the schema this CLI implements has concurrent as %q, want a boolean", got)
 	}
 }
 
@@ -196,26 +215,32 @@ func placedMetadata(t *testing.T, a FuncArtifact) map[string]any {
 	return meta
 }
 
-// Both sinks carry `concurrency` above 1 and omit it otherwise, so a Pulse
-// that declares none is sent exactly the metadata it always was.
-func TestSinks_CarryConcurrencyOnlyAboveOne(t *testing.T) {
+// Both sinks carry `concurrent: true` for a concurrent Pulse and omit it
+// otherwise, so a Pulse that is not concurrent is sent exactly the metadata it
+// always was. Neither ever sends a count: the slice decides the number.
+func TestSinks_CarryConcurrentOnlyWhenTrue(t *testing.T) {
 	for name, sink := range map[string]func(*testing.T, FuncArtifact) map[string]any{
 		"operatorSink":  sentMetadata,
 		"localSlotSink": placedMetadata,
 	} {
 		t.Run(name, func(t *testing.T) {
 			art := FuncArtifact{Name: "rpc", Method: "post", Language: "go", Element: "evm"}
-			for _, n := range []int{0, 1} {
-				art.Concurrency = n
-				if meta := sink(t, art); meta["protocol"] != "loop" {
-					t.Fatalf("concurrency %d: not the Pulse metadata this test means: %v", n, meta)
-				} else if v, present := meta["concurrency"]; present {
-					t.Errorf("concurrency %d was sent as %v; a Pulse declaring none must carry no key", n, v)
+			meta := sink(t, art)
+			if meta["protocol"] != "loop" {
+				t.Fatalf("not the Pulse metadata this test means: %v", meta)
+			}
+			for _, key := range []string{"concurrent", "concurrency"} {
+				if v, present := meta[key]; present {
+					t.Errorf("a Pulse that is not concurrent was sent %s = %v", key, v)
 				}
 			}
-			art.Concurrency = 16
-			if got := sink(t, art)["concurrency"]; got != float64(16) {
-				t.Errorf("concurrency 16 was sent as %v (%T), want the integer 16", got, got)
+			art.Concurrent = true
+			meta = sink(t, art)
+			if got := meta["concurrent"]; got != true {
+				t.Errorf("a concurrent Pulse was sent concurrent = %v (%T), want true", got, got)
+			}
+			if v, present := meta["concurrency"]; present {
+				t.Errorf("a concurrent Pulse was sent a count, %v: the slice decides the number", v)
 			}
 		})
 	}
@@ -224,8 +249,8 @@ func TestSinks_CarryConcurrencyOnlyAboveOne(t *testing.T) {
 // --- the digest --------------------------------------------------------------
 
 // Digests taken from the code before `concurrency` existed. A declaration that
-// does not declare it, or declares 1, must hash exactly as it did, or every
-// function deployed so far redeploys on the next apply.
+// is not concurrent must hash exactly as it did, or every function deployed so
+// far redeploys on the next apply.
 var goldenDeclarationDigests = []struct {
 	spec FunctionSpec
 	want string
@@ -256,18 +281,23 @@ func TestDeclarationDigest_IsUnchangedForEveryExistingDeclaration(t *testing.T) 
 	}
 }
 
-// And a concurrency above 1 moves it, as does any change between two of them,
-// so declaring or changing one is never skipped as unchanged.
-func TestDeclarationDigest_MovesWithAConcurrencyAboveOne(t *testing.T) {
+// Declaring a Pulse concurrent moves its digest, so the change is never
+// skipped as unchanged; and the deprecated count hashes as `concurrent: true`
+// whatever its number, because the number is neither sent nor used.
+func TestDeclarationDigest_MovesWhenAPulseIsDeclaredConcurrent(t *testing.T) {
 	base := FunctionSpec{Name: "post:rpc", Handler: "PostRPC"}
-	seen := map[string]int{DeclarationDigest(base): 1}
-	for _, n := range []int{2, 4, 16, 64} {
+	concurrent := base
+	concurrent.Concurrent = true
+	want := DeclarationDigest(concurrent)
+	if want == DeclarationDigest(base) {
+		t.Fatal("declaring the Pulse concurrent leaves its digest unchanged: the change would be skipped")
+	}
+	for _, n := range []int{2, 16, 64} {
 		spec := base
 		spec.Concurrency = n
-		d := DeclarationDigest(spec)
-		if prev, dup := seen[d]; dup {
-			t.Errorf("concurrency %d hashes like concurrency %d: the change would be skipped as unchanged", n, prev)
+		if got := DeclarationDigest(spec); got != want {
+			t.Errorf("concurrency %d hashes %s, concurrent: true hashes %s: the same declaration would "+
+				"redeploy when its spelling changes", n, got, want)
 		}
-		seen[d] = n
 	}
 }

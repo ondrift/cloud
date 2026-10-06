@@ -37,7 +37,7 @@ var withGenmain = goSDK{version: "v0.99.0", genmain: true}
 
 // --- which template ----------------------------------------------------------
 
-// Every buffered Pulse is served through genmain, at any concurrency and with
+// Every buffered Pulse is served through genmain, concurrent or not and with
 // or without a context; a stream keeps the native template, whose stdout is the
 // stream; and an SDK that predates genmain gets the native template for what it
 // can serve and a refusal, before anything compiles, for what it cannot.
@@ -50,18 +50,18 @@ func TestPulseMainTemplate_ChoosesByStreamSDKAndShape(t *testing.T) {
 		want     string // the template, or "" for a refusal
 		refusal  string
 	}{
-		"post at 1":                {goEntry{method: "post"}, false, withGenmain, defaultMuxServerPost, ""},
-		"post at 16":               {goEntry{method: "post", concurrency: 16}, false, withGenmain, defaultMuxServerPost, ""},
-		"post with ctx at 1":       {goEntry{method: "post"}, true, withGenmain, defaultMuxServerPost, ""},
-		"get with ctx at 16":       {goEntry{method: "get", concurrency: 16}, true, withGenmain, defaultMuxServerGet, ""},
-		"queue":                    {goEntry{method: QueueMethod}, false, withGenmain, defaultMuxServerPost, ""},
-		"a stream":                 {goEntry{method: "get", stream: "sse"}, false, withGenmain, defaultNativeServerGet, ""},
-		"a stream with ctx":        {goEntry{name: "get:events", method: "get", stream: "sse"}, true, withGenmain, "", "streams its reply"},
-		"old SDK at 1":             {goEntry{method: "post"}, false, old, defaultNativeServerPost, ""},
-		"old SDK, get":             {goEntry{method: "get"}, false, old, defaultNativeServerGet, ""},
-		"old SDK at 16":            {goEntry{name: "post:rpc", method: "post", concurrency: 16}, false, old, "", "(v0.9.0) predates concurrent Pulses"},
-		"old SDK with ctx":         {goEntry{name: "post:rpc", method: "post"}, true, old, "", "(v0.9.0) predates handlers"},
-		"no SDK resolved, ctx, 16": {goEntry{name: "post:rpc", method: "post", concurrency: 16}, true, goSDK{}, "", "this build resolved predates"},
+		"post":                             {goEntry{method: "post"}, false, withGenmain, defaultMuxServerPost, ""},
+		"post, concurrent":                 {goEntry{method: "post", concurrent: true}, false, withGenmain, defaultMuxServerPost, ""},
+		"post with ctx":                    {goEntry{method: "post"}, true, withGenmain, defaultMuxServerPost, ""},
+		"get with ctx, concurrent":         {goEntry{method: "get", concurrent: true}, true, withGenmain, defaultMuxServerGet, ""},
+		"queue":                            {goEntry{method: QueueMethod}, false, withGenmain, defaultMuxServerPost, ""},
+		"a stream":                         {goEntry{method: "get", stream: "sse"}, false, withGenmain, defaultNativeServerGet, ""},
+		"a stream with ctx":                {goEntry{name: "get:events", method: "get", stream: "sse"}, true, withGenmain, "", "streams its reply"},
+		"old SDK":                          {goEntry{method: "post"}, false, old, defaultNativeServerPost, ""},
+		"old SDK, get":                     {goEntry{method: "get"}, false, old, defaultNativeServerGet, ""},
+		"old SDK, concurrent":              {goEntry{name: "post:rpc", method: "post", concurrent: true}, false, old, "", "(v0.9.0) predates concurrent Pulses"},
+		"old SDK with ctx":                 {goEntry{name: "post:rpc", method: "post"}, true, old, "", "(v0.9.0) predates handlers"},
+		"no SDK resolved, ctx, concurrent": {goEntry{name: "post:rpc", method: "post", concurrent: true}, true, goSDK{}, "", "this build resolved predates"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := pulseMainTemplate(tc.e, tc.takesCtx, tc.sdk)
@@ -242,9 +242,9 @@ type renderedMain struct {
 // handler shape it can call.
 var everyRenderedMain = []renderedMain{
 	{"mux-post", goEntry{handler: "PostProbe", method: "post"}, withGenmain},
-	{"mux-post-ctx", goEntry{handler: "PostProbeCtx", method: "post", concurrency: 16}, withGenmain},
+	{"mux-post-ctx", goEntry{handler: "PostProbeCtx", method: "post", concurrent: true}, withGenmain},
 	{"mux-get", goEntry{handler: "GetProbe", method: "get"}, withGenmain},
-	{"mux-get-ctx", goEntry{handler: "GetProbeCtx", method: "get", concurrency: 16}, withGenmain},
+	{"mux-get-ctx", goEntry{handler: "GetProbeCtx", method: "get", concurrent: true}, withGenmain},
 	{"native-post", goEntry{handler: "PostProbe", method: "post"}, goSDK{}},
 	{"native-get", goEntry{handler: "GetProbe", method: "get"}, goSDK{}},
 	{"native-stream", goEntry{handler: "GetProbe", method: "get", stream: "sse"}, withGenmain},

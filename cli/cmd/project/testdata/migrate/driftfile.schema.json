@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://api.ondrift.eu/driftfile/schema",
   "$comment": "AUTHORITATIVE Driftfile JSON Schema — the single definition of the format. Embedded in the api binary and served from https://api.ondrift.eu/driftfile/schema. This document replaced a separate prose spec (driftfile-spec.md) on 2026-07-28: documentation lives HERE, in `description` (user-facing, rendered on hover by any YAML LSP), `default` (what omission means), `examples`, and `$comment` (notes for whoever edits the schema). A doc that ships beside the schema is a doc that drifts from it. || VERSIONING: `version` below is the format's own semver. MAJOR = a field removed, renamed or retyped, so an older client cannot read a file written for it; MINOR = a new optional field, which older clients round-trip untouched; PATCH = documentation only. Bump it in the same change that alters the schema — the api serves this number and clients compare it against the one they implement. || DURING THE CLOSED ALPHA THE MAJOR RULE IS SUSPENDED, DELIBERATELY: breaking changes ride MINOR bumps until Drift leaves alpha, because the format is still being found and burning majors on it would leave the number meaningless by the time anyone outside depends on it. 1.2.0 removed fields and made others required and is therefore breaking under the rule above. The cost is explicit rather than hidden, and a client carries it in two rungs rather than one. A MAJOR difference is the only one it REFUSES on, so during alpha no client is ever grounded by a format break. It is WARNED instead: a client holds the version it implements, compares it against this one when it lints or applies a Driftfile, and says so whenever this document is ahead in MINOR — which is the rung every alpha-era break rides. A client that ignores the warning fails to validate a file it cannot express, as before. That is acceptable while the users are counted on one hand and reachable directly; it stops being acceptable the moment they are not, and the first post-alpha format change takes the major it is owed. || WHAT LIVES HERE: the GRAMMAR (which keys exist, their shape, their fixed defaults) and, deliberately, the BOUNDS a client must apply before it can reach the platform — the memory range encoded in `atomicEntry.memory`'s pattern, and the compiled floor and interpreted-language set beside it. Those are here so a booking outside them is refused by `drift file lint` on the laptop rather than by the api after a deploy has been confirmed and uploaded, which is most of what serving the format is for. A bound here is a COPY, never the authority: `tier` enforces the range and the compiled floor, the slice's deploy branch owns the interpreted set, and tests assert the copies still agree (driftfile_test.go for the two memory bounds, the operator's routes tests for the language set) rather than trusting them to be edited together. Add a bound here only with the test that pins it to its owner. A `default` must be a fixed property of the format, and a value no client could act on offline has no reason to be in this document at all.",
-  "version": "1.22.0",
+  "version": "1.23.0",
   "x-drift": {
     "$comment": "BOUNDS THE PLATFORM ENFORCES, published so a client can apply them before it can reach the api. They live at the ROOT because they describe the platform rather than any key of a document — hanging them off `atomicEntry.properties.memory` tied them to the lifetime of one property, and a client reading them had to know where a booking happened to be written down. || Each is a COPY, never the authority: `tier.MinCompiledFunctionMemoryBytes` enforces the floor and the slice's deploy branch owns the interpreted set, with driftfile_test.go asserting these values still equal theirs. A client carrying either rule privately would be a second definition that drifts. || Neither can be a `pattern`: a pattern constrains the DOCUMENT, and nothing in a document says what language a function is written in — that is detected from the source beside the Driftfile, which only the client can see. || Keyed on the INTERPRETED four rather than the compiled ones because that is the stable side; the wire value for a compiled language is a known-moving target, so an unrecognised language is treated as compiled. A client that does not know these keys ignores them, and the api still refuses the deploy.",
     "compiled-minimum": "16MB",
@@ -409,6 +409,9 @@
           },
           "then": {
             "properties": {
+              "concurrent": {
+                "const": false
+              },
               "concurrency": {
                 "const": 1
               }
@@ -428,6 +431,9 @@
           },
           "then": {
             "properties": {
+              "concurrent": {
+                "const": false
+              },
               "concurrency": {
                 "const": 1
               }
@@ -548,17 +554,23 @@
           "default": "envelope",
           "$comment": "Declared rather than inferred from Content-Type, because `application/json` means two different things: it is the envelope's own type AND the exact type an OAuth token endpoint must answer with (RFC 6749). A header cannot separate those, so anything guessing from one gets a real case wrong. Enumerated for the same reason `auth` is — an unrecognised value is refused by `drift file lint`, offline, instead of deploying happily and answering in the wrong shape."
         },
+        "concurrent": {
+          "type": "boolean",
+          "description": "Whether this Pulse's handler is safe to run in parallel. `false`, the default, is one call per process at a time. `true` lets one warm process serve many of its calls together: it pays its runtime's memory once and each call in flight books only what it adds, so a burst is answered without queueing inside the same booking. How many run at once is the slice's to decide, from what it measures: what the booking fits, and whether more calls at once still answer more calls per second or only make each one slower. Go only in this release, and not with `stream` or `method: queue`. Calls of this Pulse then share one process: package variables, caches and goroutines your handler leaves behind are visible to the other calls in flight; the memory one call holds is memory the others cannot use; and a crash, an `os.Exit` or a panic in a goroutine you started fails every call in flight. Each call still has its own request. A handler that wants to stop when its time is up takes a `context.Context` as its first parameter, `func Name(ctx context.Context, body T, req drift.Request)`, and the context is cancelled then. A call that needs scratch files makes its own directory with `os.MkdirTemp(\"\", ...)`: the process's temporary directory is private to it, but shared by every call it serves. Other Pulses, Fields and slices stay isolated exactly as before. Set it only for a handler that is safe to run concurrently; `go test -race` is the check.",
+          "default": false,
+          "examples": [
+            true
+          ],
+          "$comment": "A declaration of SAFETY, which only the author can make: a data race shows in neither memory nor latency, so the slice cannot learn it. The NUMBER is the slice's: memory admission already holds every call to its measured increment, and a latency loop finds how many calls still add throughput (src/slice/src/atomic/muxlimit.rs). || `stream` and `method: queue` are refused by the two conditionals in `allOf`, which pin this to false: the slice multiplexes buffered HTTP calls only, and a queue Pulse's trigger invokes it one-shot, so either would be a declaration nothing honours. The language rule (Go only) cannot be a schema rule, because nothing in a document says what language a handler is written in; the client and the operator enforce it. || A Pulse's key only. A Field is one process by definition and an element is a source layout, so neither takes it, and additionalProperties:false refuses it on both. || No tier gate: every preset may declare it, and it prices nothing."
+        },
         "concurrency": {
           "type": "integer",
-          "description": "How many calls of this Pulse one process may serve at once. 1, the default, is one call per process at a time, as every Pulse has run until now. Above 1, a warm process serves up to this many calls together: it pays its runtime's memory once and each call in flight books only what it adds, so a burst is answered without queueing inside the same booking. Go only in this release, and not with `stream` or `method: queue`. Calls of this Pulse then share one process: package variables, caches and goroutines your handler leaves behind are visible to the other calls in flight; the memory one call holds is memory the others cannot use; and a crash, an `os.Exit` or a panic in a goroutine you started fails every call in flight. Each call still has its own request. A handler that wants to stop when its time is up takes a `context.Context` as its first parameter, `func Name(ctx context.Context, body T, req drift.Request)`, and the context is cancelled then. A call that needs scratch files makes its own directory with `os.MkdirTemp(\"\", ...)`: the process's temporary directory is private to it, but shared by every call it serves. Other Pulses, Fields and slices stay isolated exactly as before. Raise it only for a handler that is safe to run concurrently; `go test -race` is the check.",
+          "deprecated": true,
+          "description": "DEPRECATED: write `concurrent: true` instead. The slice decides how many calls run at once. Still accepted: above 1 it reads as `concurrent: true`, and 1 reads as `false`; the number itself is not used.",
           "minimum": 1,
           "maximum": 64,
           "default": 1,
-          "examples": [
-            1,
-            16
-          ],
-          "$comment": "The bound is a COPY: tier.MaxPulseConcurrency is the authority and the operator enforces it on every deploy, and driftfile_test.go pins the two. Why 64: each call in flight holds one slice handoff thread and books at least 512 KiB, so 64 calls is 32 MiB of floor alone; past that one process's stdout pipe and one garbage collector are the bottleneck, and a second process is the better shape. || `stream` and `method: queue` are refused by the two conditionals in `allOf`, which pin this to 1: the slice multiplexes buffered HTTP calls only, and a queue Pulse's trigger invokes it one-shot, so either would be a declaration nothing honours. The language rule (Go only) cannot be a schema rule, because nothing in a document says what language a handler is written in; the client and the operator enforce it. || A Pulse's key only. A Field is one process by definition and an element is a source layout, so neither takes it, and additionalProperties:false refuses it on both. || No tier gate: every preset may declare it, and it prices nothing."
+          "$comment": "Kept in `properties` because draft-07 with additionalProperties:false has two outcomes, legal or error: dropping it would make every Driftfile written for 1.22.0 an error on the next api deploy, with no notice. The bound is unchanged so the same documents validate: tier.MaxPulseConcurrency is its authority, the operator enforces it, and driftfile_test.go pins the two. The slice's worker ceiling (protocol::MAX_CONCURRENCY) is the same 64, and a slice test pins it to this maximum."
         },
         "env": {
           "type": "object",

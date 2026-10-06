@@ -195,6 +195,10 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	normaliseFunctionIdentities(m.doc)
 	normaliseFunctionIdentities(m.slice)
 
+	// The deprecated `concurrency: N`, said once: the slice decides the number,
+	// and FunctionSpec reads the count as `concurrent` above 1.
+	warnDeprecatedConcurrency(m.slice, concurrencyDeprecation.Warn)
+
 	// Two slots on one booking key, or a Field named like a Pulse route,
 	// anywhere in the slice. Refused here, before anything is built.
 	if err := checkSlotIdentities(m.slice); err != nil {
