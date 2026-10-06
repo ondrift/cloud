@@ -365,19 +365,28 @@ func (r *devRunner) buildAndRun() error {
 	}
 }
 
-func (r *devRunner) runInterpreted(interpreter, entryPoint string) error {
-	r.stopProcess()
-
+// processEnv is the environment every language's function process starts
+// with: this one's, the project's .env, the port, and the Driftfile's declared
+// queues for the SDK's in-process store to create before its first queue call.
+func (r *devRunner) processEnv() []string {
 	envs, _ := readDotEnv(filepath.Join(r.srcDir, ".env"))
 	runEnv := os.Environ()
 	runEnv = append(runEnv, envs...)
 	runEnv = append(runEnv, fmt.Sprintf("PORT=%d", r.port))
+	if q := atomic_cmd.DeclaredQueuesEnv(); q != "" {
+		runEnv = append(runEnv, q)
+	}
+	return runEnv
+}
+
+func (r *devRunner) runInterpreted(interpreter, entryPoint string) error {
+	r.stopProcess()
 
 	cmd := exec.Command(interpreter, entryPoint) // #nosec G204 — controlled interpreter + entry point
 	cmd.Dir = r.workDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = runEnv
+	cmd.Env = r.processEnv()
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start %s: %w", interpreter, err)

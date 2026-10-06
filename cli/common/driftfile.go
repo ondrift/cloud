@@ -71,6 +71,12 @@ func RefreshDriftfileSchema() {
 	driftfileRefreshOnce.Do(refreshDriftfileSchema)
 }
 
+// ResetDriftfileSchemaRefresh lets the next RefreshDriftfileSchema attempt the
+// refresh again, for a test that needs more than one attempt in its process.
+func ResetDriftfileSchemaRefresh() {
+	driftfileRefreshOnce = sync.Once{}
+}
+
 func refreshDriftfileSchema() {
 	req, err := http.NewRequest(http.MethodGet, APIBaseURL+"/driftfile/schema", nil)
 	if err != nil {
@@ -303,7 +309,19 @@ func semverPart(v string, i int) int {
 // an error when the two are too far apart for the parse below to mean anything.
 //
 // The one call a command makes before it parses a Driftfile.
+//
+// A held schema OLDER than the format this binary implements is refreshed
+// first, once, because it is the one skew a refresh can cure: the cache is only
+// as new as the last command that reached the platform, so a binary upgraded
+// since then validates against a format it has outgrown and refuses every key
+// added in between. The refresh is the same conditional request every online
+// command makes, attempted only when the cache is known to be behind, so an
+// offline lint of a current cache still touches no network; offline, it fails
+// fast and the warning below says what to run.
 func ReportDriftfileFormatSkew(w io.Writer) error {
+	if driftfileSchemaBehind(ImplementedDriftfileFormat, DriftfileSchemaVersion()) {
+		RefreshDriftfileSchema()
+	}
 	warning, err := driftfileFormatSkew(ImplementedDriftfileFormat, DriftfileSchemaVersion())
 	if err != nil {
 		return err
@@ -316,18 +334,18 @@ func ReportDriftfileFormatSkew(w io.Writer) error {
 
 // driftfileFormatSkew grades one pair of versions.
 //
-// Two rungs, because there are two different situations and one rung can only
-// ever serve one of them:
+// Three rungs, because there are three different situations:
 //
 //   - the served MAJOR is ahead — keys have been renamed, retyped or removed, so
 //     this binary would misread a file written for that format. It refuses, and
 //     every error the parse could have printed would have described the symptom.
 //   - the served MINOR is ahead inside the same major — this binary is behind but
 //     can still parse, so it says so and carries on.
-//
-// Both are one-directional. A client AHEAD of the platform understands
-// everything the platform can express, and grounding it would refuse a working
-// client for no reason.
+//   - the held schema is BEHIND the format this binary implements. The binary
+//     understands everything that schema can express, so nothing is refused; but
+//     the document is validated against that schema, and a key added since is
+//     refused as "not allowed" with nothing naming the cause. It says so, names
+//     both versions and what refreshes the schema, and carries on.
 //
 // A served version that does not parse grades as 0 and therefore says nothing.
 // A machine holding no schema, or a corrupted one, has a remedy of its own, and
@@ -352,5 +370,27 @@ func driftfileFormatSkew(implemented, served string) (string, error) {
 			implemented, served), nil
 	}
 
+	if driftfileSchemaBehind(implemented, served) {
+		return fmt.Sprintf(
+			"This drift implements Driftfile format %s, and the schema on this machine is format %s.\n"+
+				"The file is validated against %s, so a key added since then is refused below as not allowed.\n"+
+				"Refresh the schema by running any command that reaches the platform, such as `drift slice list`, "+
+				"then run this again. If the platform still serves %s after that, it does not accept those keys yet.",
+			implemented, served, served, served), nil
+	}
+
 	return "", nil
+}
+
+// driftfileSchemaBehind reports whether the served version is older than the
+// implemented one, in the major or in the minor. A served version that does not
+// parse is never behind: a machine holding no schema, or a corrupted one, has a
+// remedy of its own.
+func driftfileSchemaBehind(implemented, served string) bool {
+	servedMajor, implementedMajor := DriftfileMajor(served), DriftfileMajor(implemented)
+	if servedMajor == 0 {
+		return false
+	}
+	return servedMajor < implementedMajor ||
+		(servedMajor == implementedMajor && driftfileMinor(served) < driftfileMinor(implemented))
 }

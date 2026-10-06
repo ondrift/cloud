@@ -118,40 +118,44 @@ func resizeFromFile(name, path string, billingMonths, ackCents int, confirm stri
 		return nil
 	}
 
-	switch {
-	case refusal == nil:
+	if refusal == nil {
 		return fmt.Errorf("the platform refused the resize and said nothing about why")
+	}
 
-	case refusal.PriceChange != nil:
-		// The platform quotes the real figure. Naming BOTH is the point: a
-		// caller who passed a number that no longer matches needs to see what it
-		// has become before agreeing again, which is what the form's row does.
-		if ackCents >= 0 {
-			return fmt.Errorf(
-				"this resize costs %s a month, not the %s you acknowledged — the price moved, "+
-					"or the shape is not the one you priced.\n"+
-					"  Re-run with --acknowledge-monthly-cents %d once you have checked it",
-				euros(refusal.PriceChange.NewMonthlyCents), euros(ackCents),
-				refusal.PriceChange.NewMonthlyCents)
-		}
-		return fmt.Errorf(
-			"this resize changes what the slice costs, from %s to %s a month.\n"+
-				"  Re-run with --acknowledge-monthly-cents %d to agree to it",
-			euros(refusal.PriceChange.CurrentMonthlyCents),
-			euros(refusal.PriceChange.NewMonthlyCents),
-			refusal.PriceChange.NewMonthlyCents)
-
-	case refusal.ConfirmationRequired != nil:
-		// What it would DESTROY, listed. A confirmation flag with nothing to
-		// read is a rubber stamp, and the form's whole value here is the list.
+	// THE QUESTIONS, BOTH WHEN BOTH ARE ASKED. The platform puts the price and
+	// the removal in one refusal, and a caller answering by flags needs both on
+	// the first run, not one now and the other after re-running.
+	if refusal.asksPrice() || refusal.asksRemoval() {
 		var b strings.Builder
-		fmt.Fprintf(&b, "this resize takes something away from slice '%s':\n", name)
-		for _, d := range refusal.ConfirmationRequired.Destroys {
-			fmt.Fprintf(&b, "    %s\n", describeDestroy(d))
+		var rerun []string
+		if refusal.asksPrice() {
+			cents := refusal.PriceChange.NewMonthlyCents
+			// The platform quotes the real figure. Naming BOTH is the point: a
+			// caller who passed a number that no longer matches needs to see what
+			// it has become before agreeing again, which is what the form's row
+			// does.
+			if ackCents >= 0 {
+				fmt.Fprintf(&b, "this resize costs %s a month, not the %s you acknowledged — the price moved, "+
+					"or the shape is not the one you priced.\n", euros(cents), euros(ackCents))
+			} else {
+				fmt.Fprintf(&b, "%s\n", lowerFirst(refusal.priceLine()))
+			}
+			rerun = append(rerun, fmt.Sprintf("--acknowledge-monthly-cents %d", cents))
 		}
-		fmt.Fprintf(&b, "  Re-run with --confirm %s to say you mean it", name)
+		if refusal.asksRemoval() {
+			// What it would DESTROY, listed. A confirmation flag with nothing to
+			// read is a rubber stamp, and the form's whole value here is the list.
+			fmt.Fprintf(&b, "this resize takes something away from slice '%s':\n", name)
+			for _, d := range refusal.ConfirmationRequired.Destroys {
+				fmt.Fprintf(&b, "    %s\n", describeDestroy(d))
+			}
+			rerun = append(rerun, "--confirm "+refusal.ConfirmationRequired.ConfirmSliceName)
+		}
+		fmt.Fprintf(&b, "  Re-run with %s once you have checked it", strings.Join(rerun, " "))
 		return fmt.Errorf("%s", b.String())
+	}
 
+	switch {
 	case len(refusal.Violations) > 0:
 		// A limit below what the slice is already using. Not answerable by any
 		// flag: the shape has to change, or the usage does.
@@ -168,13 +172,31 @@ func resizeFromFile(name, path string, billingMonths, ackCents int, confirm stri
 	}
 }
 
+// lowerFirst lowercases a sentence's first letter, for a line that continues an
+// error message.
+func lowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToLower(s[:1]) + s[1:]
+}
+
 // describeDestroy renders one entry of the platform's `destroys` list.
 //
-// The keys are whatever the operator chose to send, so this prints what is there
-// in a stable order rather than naming fields that may not exist. A destroy the
-// CLI could not describe would otherwise print as an empty line, which reads as
-// "nothing" beside a warning that something is being removed.
+// The operator's row is {resource, current, wanted, destroys}, and all four are
+// printed: the resource alone says what goes but not what is lost with it. Any
+// other shape prints what is there in a stable order rather than naming fields
+// that may not exist. A destroy the CLI could not describe would otherwise print
+// as an empty line, which reads as "nothing" beside a warning that something is
+// being removed.
 func describeDestroy(d map[string]string) string {
+	if d["resource"] != "" && (d["current"] != "" || d["wanted"] != "") {
+		line := fmt.Sprintf("%s: %s → %s", d["resource"], d["current"], d["wanted"])
+		if d["destroys"] != "" {
+			line += " (" + d["destroys"] + ")"
+		}
+		return line
+	}
 	for _, k := range []string{"resource", "name", "kind", "detail"} {
 		if v, ok := d[k]; ok && v != "" {
 			if k == "resource" {

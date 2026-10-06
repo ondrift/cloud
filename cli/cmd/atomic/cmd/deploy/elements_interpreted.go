@@ -11,6 +11,7 @@ package atomic_cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +38,10 @@ var interpretedLangs = map[string]interpretedLang{
 // DeployInterpretedElement builds and deploys every function in a non-Go
 // (interpreted) element. Dependencies are installed once; each function then
 // gets its own wrapper + archive.
-func DeployInterpretedElement(el Element, digest string, quiet bool) error {
+//
+// out receives one line per slot as it is shipped; nil writes nothing. See
+// DeployGoElement for why it is the caller's writer.
+func DeployInterpretedElement(el Element, digest string, out io.Writer) error {
 	lg, ok := interpretedLangs[el.Lang]
 	if !ok {
 		return fmt.Errorf("multi-function %s elements aren't built yet (element %q); "+
@@ -119,13 +123,13 @@ func DeployInterpretedElement(el Element, digest string, quiet bool) error {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("%s: %w", f.MethodPath(), serr)
 			}
-			if !quiet {
-				fmt.Printf("    %s %s\n", common.Cross(), f.MethodPath())
+			if out != nil {
+				fmt.Fprintf(out, "    %s %s\n", common.Cross(), f.MethodPath())
 			}
 			continue
 		}
-		if !quiet {
-			fmt.Printf("    %s %s\n", common.Check(), f.MethodPath())
+		if out != nil {
+			fmt.Fprintf(out, "    %s %s\n", common.Check(), f.MethodPath())
 		}
 	}
 	return firstErr

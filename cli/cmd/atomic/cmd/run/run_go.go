@@ -56,18 +56,12 @@ func (r *devRunner) buildAndRunGo() error {
 	// Stop any existing process
 	r.stopProcess()
 
-	// Load .env (from source) into environment for the run if present in annotation
-	envs, _ := readDotEnv(filepath.Join(r.srcDir, ".env"))
-	runEnv := os.Environ()
-	runEnv = append(runEnv, envs...)
-	runEnv = append(runEnv, fmt.Sprintf("PORT=%d", r.port))
-
 	// Start the process
 	cmd := exec.Command(filepath.Join(r.workDir, "app")) // #nosec G204 — path is a controlled temp workspace
 	cmd.Dir = r.workDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = runEnv
+	cmd.Env = r.processEnv()
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start app: %w", err)

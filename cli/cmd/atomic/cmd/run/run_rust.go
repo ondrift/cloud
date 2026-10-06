@@ -65,17 +65,12 @@ func (r *devRunner) buildAndRunRust() error {
 
 	r.stopProcess()
 
-	envs, _ := readDotEnv(filepath.Join(r.srcDir, ".env"))
-	runEnv := os.Environ()
-	runEnv = append(runEnv, envs...)
-	runEnv = append(runEnv, fmt.Sprintf("PORT=%d", r.port))
-
 	binaryPath := filepath.Join(r.workDir, "target", "release", "atomic-function")
 	cmd := exec.Command(binaryPath) // #nosec G204 — controlled temp workspace
 	cmd.Dir = r.workDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = runEnv
+	cmd.Env = r.processEnv()
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start app: %w", err)

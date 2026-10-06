@@ -19,6 +19,7 @@ package file
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -139,12 +140,18 @@ func getLintCmd() *cobra.Command {
 			// could print a description of the symptom — a list of keys the
 			// document is not allowed to carry — with nothing naming the cause.
 			//
-			// No network, which is the whole charter of this command: the
-			// comparison is against the cached copy, refreshed by whatever online
-			// command ran last. That is what a CI gate has to hand, and saying
-			// something about it beats the silence of validating against a format
-			// the platform has replaced.
-			if err := common.ReportDriftfileFormatSkew(os.Stderr); err != nil {
+			// The comparison is against the cached copy, refreshed by whatever
+			// online command ran last. A copy OLDER than the format this binary
+			// implements is the one case that reaches the network: it is refreshed
+			// once, because every key added since would otherwise be refused with
+			// nothing naming the cause, and offline the warning says what to run.
+			// A current copy is linted with no network at all, which is what a CI
+			// gate has to hand.
+			var stderr io.Writer = os.Stderr
+			if cmd != nil {
+				stderr = cmd.ErrOrStderr()
+			}
+			if err := common.ReportDriftfileFormatSkew(stderr); err != nil {
 				return err
 			}
 

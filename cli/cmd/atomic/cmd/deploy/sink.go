@@ -94,14 +94,18 @@ func StageElementsLocally(elements []Element, runnerDir string, quiet bool) erro
 	// Staging dirs come from stageTempDir(), which allocates somewhere the Docker
 	// VM can actually bind-mount; no TMPDIR juggling is needed here.
 
+	var report io.Writer = os.Stdout
+	if quiet {
+		report = nil
+	}
 	for _, el := range elements {
 		digest, _ := ElementDigest(el.Dir, el.Name)
 		var err error
 		switch {
 		case el.Lang == "go":
-			err = DeployGoElement(el, digest, quiet)
+			err = DeployGoElement(el, digest, report)
 		case el.Lang == "python" || el.Lang == "node" || el.Lang == "ruby" || el.Lang == "php":
-			err = DeployInterpretedElement(el, digest, quiet)
+			err = DeployInterpretedElement(el, digest, report)
 		case len(el.Funcs) == 1:
 			err = DeployFunction(el.Funcs[0].Spec, quiet)
 		default:

@@ -17,9 +17,11 @@ package atomic_cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -77,6 +79,20 @@ type FunctionSpec struct {
 // HTTP request can carry it, so nothing routes to a Field: the slice's
 // supervisor starts it, and the registry never matches it to a call.
 const FieldMethod = "field"
+
+// QueueMethod is the method a Pulse a queue triggers is booked and deployed
+// under, `queue:<queue>`. Like FieldMethod, no HTTP request can carry it.
+const QueueMethod = "queue"
+
+// SlotMethods is every method a slot can be booked under: the HTTP methods a
+// Pulse answers, QueueMethod and FieldMethod. The Driftfile's `method` enum is
+// the first eight; a Field's method comes from the section it is declared in.
+var SlotMethods = []string{"get", "post", "put", "patch", "delete", "head", "options", QueueMethod, FieldMethod}
+
+// IsSlotMethod reports whether m, in any case, is one of SlotMethods.
+func IsSlotMethod(m string) bool {
+	return slices.Contains(SlotMethods, strings.ToLower(m))
+}
 
 // FieldKey is a Field's booking key, `field:<name>`: the string the slice books
 // it under, the name a FunctionSpec carries for it, and what the reference
@@ -323,7 +339,12 @@ func triggersFor(f ElementFunc) []TriggerSpec {
 // then compiled to its own binary (reusing the warm build cache) and sent to
 // the operator. digest is the element's content fingerprint, recorded against
 // every function so an unchanged element is skippable next deploy.
-func DeployGoElement(el Element, digest string, quiet bool) error {
+//
+// out receives one line per slot, in the element's order, after every slot has
+// been attempted; nil writes nothing. The caller's writer rather than stdout,
+// because `drift file apply` buffers each section and prints it under its own
+// heading: a line written straight to stdout lands above that heading.
+func DeployGoElement(el Element, digest string, out io.Writer) error {
 	if len(el.Funcs) == 0 {
 		return nil
 	}
@@ -399,11 +420,11 @@ func DeployGoElement(el Element, digest string, quiet bool) error {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("%s: %w", f.MethodPath(), results[i])
 			}
-			if !quiet {
-				fmt.Printf("    %s %s\n", common.Cross(), f.MethodPath())
+			if out != nil {
+				fmt.Fprintf(out, "    %s %s\n", common.Cross(), f.MethodPath())
 			}
-		case !quiet:
-			fmt.Printf("    %s %s\n", common.Check(), f.MethodPath())
+		case out != nil:
+			fmt.Fprintf(out, "    %s %s\n", common.Check(), f.MethodPath())
 		}
 	}
 	return firstErr

@@ -293,6 +293,12 @@ func FunctionSpecsInDir(dir string) ([]atomic_cmd.FunctionSpec, error) {
 	// function this command is not shipping.
 	atomic_cmd.SetDeclaredSchedules(declaredSchedules(m))
 
+	// The declared queues, for `drift atomic run`: the function runs against
+	// the SDK's in-process store, which creates them so a declared queue nothing
+	// has pushed to reads empty there as it does on a slice. See queues.go in
+	// the deploy package.
+	atomic_cmd.SetDeclaredQueues(DeclaredQueues(m))
+
 	want, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", dir, err)

@@ -29,6 +29,20 @@ import (
 	"strings"
 )
 
+// DeclaredQueues is the names of the queues this document declares under
+// `backbone.queues`, in document order. It is the one reading of that list:
+// apply creates these on the slice, and the local runs create them in their
+// local Backbone, so the two agree on which queues exist before anything runs.
+func DeclaredQueues(m *Manifest) []string {
+	var out []string
+	for _, q := range m.Slice().Entries("name", "backbone", "queues") {
+		if name := strings.TrimSpace(q.Str("name")); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // checkQueueReferences reports every queue-triggered function whose queue the
 // document does not declare.
 //
@@ -37,10 +51,8 @@ import (
 // `route` + `method` into the one composite the rest of the CLI speaks.
 func checkQueueReferences(m *Manifest) []string {
 	declared := map[string]bool{}
-	for _, q := range m.Slice().Entries("name", "backbone", "queues") {
-		if name := strings.TrimSpace(q.Str("name")); name != "" {
-			declared[name] = true
-		}
+	for _, name := range DeclaredQueues(m) {
+		declared[name] = true
 	}
 
 	missing := map[string][]string{}

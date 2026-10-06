@@ -90,18 +90,18 @@ func applySQL(m *Manifest, out io.Writer) ([]string, error) {
 			}
 		} else if entry.Str("schema") != "" {
 			if err := uploadSchema(m, name, entry.Str("schema")); err != nil {
-				fmt.Fprintf(out, "  %s sql %s schema: %v\n", common.Hint("·"), name, err)
+				fmt.Fprintf(out, "    %s sql %s schema: %v\n", common.Hint("·"), name, err)
 				continue
 			}
-			fmt.Fprintf(out, "  %s sql schema applied: %s ← %s\n",
+			fmt.Fprintf(out, "    %s sql schema applied: %s ← %s\n",
 				common.Check(), name, entry.Str("schema"))
 		}
 		if entry.Str("seed") != "" {
 			if err := uploadSeed(m, name, entry.Str("seed")); err != nil {
-				fmt.Fprintf(out, "  %s sql %s seed: %v\n", common.Hint("·"), name, err)
+				fmt.Fprintf(out, "    %s sql %s seed: %v\n", common.Hint("·"), name, err)
 				continue
 			}
-			fmt.Fprintf(out, "  %s sql seed applied (if empty): %s ← %s\n",
+			fmt.Fprintf(out, "    %s sql seed applied (if empty): %s ← %s\n",
 				common.Check(), name, entry.Str("seed"))
 		}
 	}
@@ -220,16 +220,16 @@ func applyMigrations(m *Manifest, name string, entry Node, out io.Writer) error 
 	}
 
 	if entry.Str("schema") != "" {
-		fmt.Fprintf(out, "  %s sql schema applied: %s ← %s\n",
+		fmt.Fprintf(out, "    %s sql schema applied: %s ← %s\n",
 			common.Check(), name, entry.Str("schema"))
 	}
 	applied := report.Migrations.Applied
 	switch len(applied) {
 	case 0:
-		fmt.Fprintf(out, "  %s sql migrations: %s ← %s %s\n", common.Check(), name, dir,
+		fmt.Fprintf(out, "    %s sql migrations: %s ← %s %s\n", common.Check(), name, dir,
 			common.Hint(fmt.Sprintf("(nothing new, %d already applied)", report.Migrations.AlreadyApplied)))
 	default:
-		fmt.Fprintf(out, "  %s sql migrations applied: %s ← %s %s\n", common.Check(), name,
+		fmt.Fprintf(out, "    %s sql migrations applied: %s ← %s %s\n", common.Check(), name,
 			strings.Join(applied, ", "),
 			common.Hint(fmt.Sprintf("(%d already applied)", report.Migrations.AlreadyApplied)))
 	}

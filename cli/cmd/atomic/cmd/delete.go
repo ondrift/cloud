@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	deploy "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
@@ -28,16 +29,15 @@ import (
 // parameter is spelled `users/:id` in some grammars, and a blob key can carry
 // one — so splitting on any colon would mangle a name that was correct. An
 // unrecognised prefix is left alone and travels as the route it is.
+//
+// The known methods are deploy.SlotMethods: every HTTP method, `queue` and
+// `field`, read from the one list the deploy path books slots under.
 func splitBookingKey(name string) (route, method string, split bool) {
 	prefix, rest, found := strings.Cut(name, ":")
-	if !found || rest == "" {
+	if !found || rest == "" || !deploy.IsSlotMethod(prefix) {
 		return name, "", false
 	}
-	switch strings.ToLower(prefix) {
-	case "get", "post", "put", "patch", "delete", "head", "options", "field":
-		return rest, strings.ToLower(prefix), true
-	}
-	return name, "", false
+	return rest, strings.ToLower(prefix), true
 }
 
 func Delete() *cobra.Command {
@@ -48,12 +48,14 @@ func Delete() *cobra.Command {
 		Long: "Takes either form of the name:\n\n" +
 			"  drift atomic delete get:users     the booking key, as the Driftfile declares it\n" +
 			"  drift atomic delete users --method get\n" +
+			"  drift atomic delete queue:orders     a pulse a queue triggers\n" +
 			"  drift atomic delete field:sequencer\n\n" +
-			"A route containing a colon that is not an HTTP method or `field` is left\n" +
-			"alone, so a path like `users/:id` still means itself.",
+			"A route containing a colon that is not an HTTP method, `queue` or `field`\n" +
+			"is left alone, so a path like `users/:id` still means itself.",
 		Example: "  drift atomic delete send-email\n" +
 			"  drift atomic delete get:groups/id\n" +
 			"  drift atomic delete users --method get\n" +
+			"  drift atomic delete queue:orders\n" +
 			"  drift atomic delete field:sequencer",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(1),
@@ -104,6 +106,6 @@ func Delete() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path, or `field` for a field")
+	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path; queue for a pulse a queue triggers; field for a field")
 	return cmd
 }
