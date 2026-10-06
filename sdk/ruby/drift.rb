@@ -1392,6 +1392,14 @@ module Drift
   #
   # SqlDb/SqlTx are implementation classes — reach them through Backbone.sql.
 
+  # The `args` every statement sends: always a JSON array. A default parameter
+  # covers an omitted argument and not an explicit nil, which would go out as
+  # `"args":null`, and a slice that reads args as a list refuses that whole body
+  # as invalid JSON.
+  def self._sql_args(args)
+    args.nil? ? [] : args
+  end
+
   class SqlDb
     def initialize(name)
       @name = name
@@ -1399,7 +1407,7 @@ module Drift
 
     def query(sql, args = [])
       resp = Drift._call('POST', 'sql/query',
-                         { 'db' => @name, 'sql' => sql, 'args' => args }) || {}
+                         { 'db' => @name, 'sql' => sql, 'args' => Drift._sql_args(args) }) || {}
       cols = resp['columns'] || []
       rows = resp['rows'] || []
       rows.map { |r| cols.zip(r).to_h }
@@ -1407,7 +1415,7 @@ module Drift
 
     def execute(sql, args = [])
       Drift._call('POST', 'sql/execute',
-                  { 'db' => @name, 'sql' => sql, 'args' => args }) || {}
+                  { 'db' => @name, 'sql' => sql, 'args' => Drift._sql_args(args) }) || {}
     end
 
     def begin
@@ -1440,7 +1448,7 @@ module Drift
 
     def query(sql, args = [])
       resp = Drift._call('POST', 'sql/query',
-                         { 'db' => @db, 'sql' => sql, 'args' => args, 'tx' => @token }) || {}
+                         { 'db' => @db, 'sql' => sql, 'args' => Drift._sql_args(args), 'tx' => @token }) || {}
       cols = resp['columns'] || []
       rows = resp['rows'] || []
       rows.map { |r| cols.zip(r).to_h }
@@ -1448,7 +1456,7 @@ module Drift
 
     def execute(sql, args = [])
       Drift._call('POST', 'sql/execute',
-                  { 'db' => @db, 'sql' => sql, 'args' => args, 'tx' => @token }) || {}
+                  { 'db' => @db, 'sql' => sql, 'args' => Drift._sql_args(args), 'tx' => @token }) || {}
     end
 
     def commit

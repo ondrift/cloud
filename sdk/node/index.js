@@ -1100,6 +1100,14 @@ function runWS(handler) {
 //   });
 //
 
+// _sqlArgs is the `args` every statement sends: always a JSON array. A default
+// parameter covers an omitted argument and not an explicit null, which would
+// go out as `"args":null`, and a slice that reads args as a list refuses that
+// whole body as invalid JSON.
+function _sqlArgs(args) {
+  return args == null ? [] : args;
+}
+
 function _sqlRows(resp) {
   const cols = (resp && resp.columns) || [];
   const rows = (resp && resp.rows) || [];
@@ -1124,11 +1132,11 @@ function _sqlRows(resp) {
 //      exact bug `_call`'s own comment was added to fix for everyone else.
 function sql(name) {
   return {
-    async query(sqlText, args = []) {
-      return _sqlRows(await _call('POST', 'sql/query', { db: name, sql: sqlText, args }));
+    async query(sqlText, args) {
+      return _sqlRows(await _call('POST', 'sql/query', { db: name, sql: sqlText, args: _sqlArgs(args) }));
     },
-    async execute(sqlText, args = []) {
-      return (await _call('POST', 'sql/execute', { db: name, sql: sqlText, args })) || {};
+    async execute(sqlText, args) {
+      return (await _call('POST', 'sql/execute', { db: name, sql: sqlText, args: _sqlArgs(args) })) || {};
     },
     async begin() {
       const { tx } = (await _call('POST', 'sql/begin', { db: name })) || {};
@@ -1150,11 +1158,11 @@ function sql(name) {
 
 function _sqlTx(db, token) {
   return {
-    async query(sqlText, args = []) {
-      return _sqlRows(await _call('POST', 'sql/query', { db, sql: sqlText, args, tx: token }));
+    async query(sqlText, args) {
+      return _sqlRows(await _call('POST', 'sql/query', { db, sql: sqlText, args: _sqlArgs(args), tx: token }));
     },
-    async execute(sqlText, args = []) {
-      return (await _call('POST', 'sql/execute', { db, sql: sqlText, args, tx: token })) || {};
+    async execute(sqlText, args) {
+      return (await _call('POST', 'sql/execute', { db, sql: sqlText, args: _sqlArgs(args), tx: token })) || {};
     },
     async commit() {
       await _call('POST', 'sql/commit', { tx: token });
