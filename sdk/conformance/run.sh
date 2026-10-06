@@ -4,6 +4,19 @@
 #
 #   bash sdk/conformance/run.sh            every language whose toolchain is here
 #   bash sdk/conformance/run.sh node ruby  just those
+#   bash sdk/conformance/run.sh --slice http://127.0.0.1:8000
+#                                          the queue_ cases, against a slice
+#
+# ── --slice: THE QUEUE CASES AGAINST A REAL SLICE ───────────────────────────
+#
+# The slice is the authority on the queue wire, and a local store agreeing with
+# itself proves nothing about it. --slice hands each driver a slice's Backbone
+# URL as DRIFT_CONFORMANCE_BACKBONE_URL; the driver then runs the queue_ cases
+# against it and nothing else, and they are checked against the same
+# expectations the local store meets. A standalone slice is enough:
+#
+#   BACKBONE_DATA_DIR=$(mktemp -d) <the slice binary> &
+#   bash sdk/conformance/run.sh --slice http://127.0.0.1:8000
 #
 # Drift ships six SDKs so a customer can build in the language their team
 # already uses, and that promise is worth exactly as much as the weakest one.
@@ -29,13 +42,25 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SDK="$(cd "$HERE/.." && pwd)"
 
 strict=0
+slice=""
 langs=()
-for arg in "$@"; do
-	case "$arg" in
+while [ $# -gt 0 ]; do
+	case "$1" in
 	--strict) strict=1 ;;
-	*) langs+=("$arg") ;;
+	--slice)
+		[ $# -ge 2 ] || { echo "--slice needs the slice's Backbone URL"; exit 2; }
+		slice="$2"
+		shift
+		;;
+	*) langs+=("$1") ;;
 	esac
+	shift
 done
+only=()
+if [ -n "$slice" ]; then
+	export DRIFT_CONFORMANCE_BACKBONE_URL="$slice"
+	only=(--only queue_)
+fi
 [ ${#langs[@]} -eq 0 ] && langs=(go node python ruby php rust)
 
 pass=0
@@ -68,7 +93,11 @@ drive() {
 }
 
 echo
-echo "── SDK conformance: the same cases, six languages ──"
+if [ -n "$slice" ]; then
+	echo "── SDK conformance: the queue cases, against the slice at $slice ──"
+else
+	echo "── SDK conformance: the same cases, six languages ──"
+fi
 echo
 
 for lang in "${langs[@]}"; do
@@ -79,7 +108,7 @@ for lang in "${langs[@]}"; do
 		skipped_names="$skipped_names $lang"
 		continue
 	fi
-	if drive "$lang" 2>/dev/null | python3 "$HERE/check.py" "$lang"; then
+	if drive "$lang" 2>/dev/null | python3 "$HERE/check.py" "$lang" "${only[@]}"; then
 		pass=$((pass + 1))
 	else
 		fail=$((fail + 1))

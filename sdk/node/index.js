@@ -454,6 +454,30 @@ function _localMatchesEvery(doc, fields, values) {
   return true;
 }
 
+// The slice's rule for a single-segment resource name such as a queue: an
+// alphanumeric first byte, then alphanumerics and `. _ -`, at most 255 bytes.
+function _localValidName(s) {
+  return typeof s === "string" && Buffer.byteLength(s) <= 255 && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(s);
+}
+
+// DRIFT_DECLARED_QUEUES names the queues the project's Driftfile declares,
+// comma-separated. The CLI sets it for a local run; the local store creates
+// each one, empty, before answering a queue call, as `drift file apply` creates
+// them on a slice before anything runs. A queue it does not name still has to
+// be pushed to before it exists.
+function _ensureDeclaredQueues() {
+  for (const raw of (process.env.DRIFT_DECLARED_QUEUES || "").split(",")) {
+    const name = raw.trim();
+    if (_localValidName(name) && !_store.queues[name]) _store.queues[name] = { msgs: [], nextId: 0 };
+  }
+}
+
+// The slice's message timestamp: RFC 3339 in UTC with nine fractional digits.
+// A Date holds milliseconds, so the last six are zero.
+function _queueTimestamp() {
+  return new Date().toISOString().replace(/\.(\d{3})Z$/, ".$1000000Z");
+}
+
 function _callLocal(method, path, body) {
   const [basePath, qs] = path.split("?", 2);
   const query = {};
@@ -552,17 +576,40 @@ function _callLocal(method, path, body) {
   }
 
   // Queue
+  //
+  // Answered as a slice answers, refusals included: a push names its queue in
+  // the body and must carry an object; a pop, a peek and a length name it in the
+  // query string and nowhere else; a queue nothing was ever pushed to is a 404.
+  if (basePath.startsWith("queue/")) _ensureDeclaredQueues();
   if (basePath === "queue/push" && method === "POST") {
-    const name = (body && body.queue) || "";
-    if (!_store.queues[name]) _store.queues[name] = [];
-    _store.queues[name].push(body && body.body);
-    return null;
+    const name = body && body.queue;
+    if (name !== undefined && typeof name !== "string") {
+      throw new Error("drift: backbone queue/push: HTTP 400: invalid JSON");
+    }
+    const msg = body && body.body;
+    if (!name || msg === null || typeof msg !== "object" || Array.isArray(msg)) {
+      throw new Error("drift: backbone queue/push: HTTP 400: queue and body required");
+    }
+    if (!_localValidName(name)) throw new Error("drift: backbone queue/push: HTTP 400: invalid queue name");
+    if (!_store.queues[name]) _store.queues[name] = { msgs: [], nextId: 0 };
+    const q = _store.queues[name];
+    const id = String(q.nextId++);
+    q.msgs.push({ id, body: JSON.parse(JSON.stringify(msg)), timestamp: _queueTimestamp() });
+    return { id };
   }
-  if (basePath === "queue/pop" && method === "POST") {
-    const name = (body && body.queue) || "";
-    const q = _store.queues[name] || [];
-    if (q.length === 0) return null;
-    return q.shift();
+  const queueRead =
+    (basePath === "queue/pop" && method === "POST") ||
+    (basePath === "queue/peek" && method === "GET") ||
+    (basePath === "queue/len" && method === "GET");
+  if (queueRead) {
+    const name = query.queue || "";
+    if (!name) throw new Error(`drift: backbone ${basePath}: HTTP 400: queue query param required`);
+    if (!_localValidName(name)) throw new Error(`drift: backbone ${basePath}: HTTP 400: invalid queue name`);
+    const q = _store.queues[name];
+    if (!q) throw new Error(`drift: backbone ${basePath}: HTTP 404: queue ${name} not found`);
+    if (basePath === "queue/len") return { length: q.msgs.length };
+    if (q.msgs.length === 0) return null;
+    return basePath === "queue/pop" ? q.msgs.shift() : q.msgs[0];
   }
 
   // Blob
@@ -816,10 +863,42 @@ const nosql = {
 // Queue
 // ---------------------------------------------------------------------------
 
+// The slice takes a push's queue name in the JSON body, and a pop's, a peek's
+// and a length's in the query string and nowhere else. A pop or a peek answers
+// with the message's envelope ({id, body, timestamp}); the caller gets the body
+// it pushed, or null when the queue is empty. A queue nothing was ever pushed to
+// does not exist, and every read of it throws.
 function queue(name) {
+  const at = (path) => `${path}?queue=${encodeURIComponent(name)}`;
+  const head = async (method, path) => {
+    const msg = await _call(method, at(path));
+    if (msg === null) return null;
+    if (typeof msg !== "object" || !("body" in msg)) {
+      throw new Error(`drift: queue ${name}: the ${path} reply is not a message: ${JSON.stringify(msg)}`);
+    }
+    return msg.body;
+  };
   return {
-    push: (body) => _call("POST", "queue/push", { queue: name, body }),
-    pop: () => _call("POST", "queue/pop", { queue: name }),
+    // body must be a plain object; the slice refuses anything else. Resolves to
+    // the id the slice gave the message.
+    push: async (body) => {
+      const reply = await _call("POST", "queue/push", { queue: name, body });
+      if (!reply || typeof reply.id !== "string" || reply.id === "") {
+        throw new Error(
+          `drift: queue ${name}: the push may have succeeded, but its reply carries no id: ${JSON.stringify(reply)}`,
+        );
+      }
+      return reply.id;
+    },
+    pop: () => head("POST", "queue/pop"),
+    peek: () => head("GET", "queue/peek"),
+    len: async () => {
+      const reply = await _call("GET", at("queue/len"));
+      if (!reply || typeof reply.length !== "number") {
+        throw new Error(`drift: queue ${name}: the length reply is unreadable: ${JSON.stringify(reply)}`);
+      }
+      return reply.length;
+    },
   };
 }
 

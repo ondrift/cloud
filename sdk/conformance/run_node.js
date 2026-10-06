@@ -9,7 +9,12 @@
 // No BACKBONE_URL: every case runs against the in-memory local store, which is
 // the loop a developer meets first and the one where the six drifted. Set
 // BEFORE the require, because the SDK caches the value on first read.
-process.env.BACKBONE_URL = "";
+//
+// DRIFT_CONFORMANCE_BACKBONE_URL names a running slice's Backbone instead, and
+// runs the queue cases against it alone: the slice is the authority on the
+// queue wire, and the local store is held to what it answers.
+const SLICE = process.env.DRIFT_CONFORMANCE_BACKBONE_URL || "";
+process.env.BACKBONE_URL = SLICE;
 
 const drift = require("../node/index.js");
 
@@ -27,7 +32,68 @@ function fail(message) {
   process.exit(0); // check.py turns the reported error into the failure
 }
 
+// queueCases drives every queue call once. The names carry the time, so a run
+// against a slice, whose queues outlive the run, never meets an earlier run's.
+async function queueCases() {
+  const stamp = `${Date.now()}${process.pid}`;
+  const q = drift.backbone.queue(`conformance-node-${stamp}`);
+  const absent = drift.backbone.queue(`conformance-absent-node-${stamp}`);
+  const attempt = async (fn, read) => {
+    try {
+      return read(await fn());
+    } catch {
+      return "error";
+    }
+  };
+  const body = (msg) => (msg === null || msg === undefined ? null : msg.n);
+  const length = (n) => n;
+  const refused = () => null;
+
+  out.queue_pop_never_pushed = await attempt(() => absent.pop(), body);
+  try {
+    await absent.pop();
+    out.queue_error_carries_the_refusal = false;
+  } catch (e) {
+    out.queue_error_carries_the_refusal = e.message.includes("HTTP 404") && e.message.includes("not found");
+  }
+  out.queue_len_never_pushed = await attempt(() => absent.len(), length);
+  out.queue_push_not_an_object = await attempt(() => q.push("a bare string"), refused);
+  out.queue_push_bad_name = await attempt(() => drift.backbone.queue("-flag").push({ n: 0 }), refused);
+  out.queue_push_ids = [];
+  for (let n = 1; n <= 3; n++) {
+    try {
+      out.queue_push_ids.push(await q.push({ n }));
+    } catch (e) {
+      fail(`queue.push ${n}: ${e.message}`);
+    }
+  }
+  out.queue_len_after_push = await attempt(() => q.len(), length);
+  out.queue_peek = await attempt(() => q.peek(), body);
+  out.queue_len_after_peek = await attempt(() => q.len(), length);
+  const popped = [];
+  for (let i = 0; i < 3; i++) popped.push(await attempt(() => q.pop(), body));
+  out.queue_pop_in_order = popped;
+  out.queue_pop_empty = await attempt(() => q.pop(), body);
+  out.queue_peek_empty = await attempt(() => q.peek(), body);
+  out.queue_len_after_pop = await attempt(() => q.len(), length);
+}
+
 async function main() {
+  await queueCases();
+  if (SLICE) {
+    emit();
+    return;
+  }
+
+  // A declared queue, named the way the CLI names it for a local run.
+  process.env.DRIFT_DECLARED_QUEUES = "conformance-declared";
+  try {
+    const msg = await drift.backbone.queue("conformance-declared").pop();
+    out.declared_queue_pop_empty = msg === null ? null : msg;
+  } catch {
+    out.declared_queue_pop_empty = "error";
+  }
+
   const blob = drift.backbone.blob;
 
   // ── Blob ──────────────────────────────────────────────────────────────────

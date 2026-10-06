@@ -240,15 +240,27 @@ jobs:
         run: |
           set -o pipefail
           go test ./... 2>&1 | tee /tmp/sdk-test.log
-      # The one test that needs a REAL server rather than the local store.
+      # A loopback server rather than the local store.
       #
-      # sdk/conformance runs every case against the in-memory store, so a defect
-      # that is correct locally and wrong on the wire is invisible to it — which
-      # is exactly what PHP's missing status check was. This stands up a loopback
-      # HTTP server and asks what `_call` does with a 404.
+      # sdk/conformance runs its cases against the in-memory store, and only its
+      # queue cases against a slice, so a defect that is correct locally and wrong
+      # on the wire is invisible to the rest — which is exactly what PHP's missing
+      # status check was. This stands up a loopback HTTP server and asks what
+      # `_call` does with a 404.
       - name: php — a non-2xx is an error, not a value
         working-directory: sdk
         run: php php/status_test.php
+      # The same question of Python's transport, which raised an HTTPError with
+      # no body and lost the slice's words.
+      - name: python — a refusal carries the slice's words, and push returns the id
+        working-directory: sdk
+        run: python3 python/status_test.py
+      # Rust's own tests, the queue wire test among them, which stands up a
+      # loopback server that answers the queue routes as a slice does.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: rust — cargo test
+        working-directory: sdk/rust
+        run: cargo test
       # A slice refuses `"args":null` as invalid JSON, and an explicit null or
       # nil reached the wire in Node and Ruby. Go's half of this is in its own
       # tests above; Python, PHP and Rust cannot send null by construction.
@@ -358,6 +370,48 @@ jobs:
         run: |
           set -o pipefail
           bash conformance/run.sh --strict 2>&1 | tee /tmp/conformance.log
+
+      # THE QUEUE CASES AGAINST A REAL SLICE. The slice is the authority on the
+      # queue wire, and a local store agreeing with itself proves nothing about
+      # it: every SDK's pop worked locally and never once on a slice.
+      #
+      # The slice comes from the published runner image, the one `drift file
+      # run` starts, rather than from a build: building it here needs the
+      # platform's source and a Rust release build on every PR. The image is
+      # FROM scratch with the slice at /app, a static binary, so it is copied
+      # out and run IN this job's container. That keeps the slice on
+      # 127.0.0.1 beside the drivers: a container the job started would run on
+      # the HOST's daemon, publish its port on the host, and need the host's
+      # address and a published port reachable from outside to be reached.
+      #
+      # Started and used in ONE step, so nothing depends on a background
+      # process outliving the step that started it. The image digest is printed
+      # so a red run names the slice it ran against.
+      - name: conformance — queue cases against a standalone slice
+        working-directory: sdk
+        run: |
+          set -euo pipefail
+          image=ondrift/runner:latest
+          docker pull -q "$image"
+          docker image inspect --format 'slice image {{index .RepoDigests 0}}' "$image"
+          c=$(docker create "$image")
+          docker cp "$c:/app" /tmp/slice
+          docker rm "$c" >/dev/null
+          data=$(mktemp -d)
+          BACKBONE_DATA_DIR="$data" /tmp/slice >/tmp/slice.log 2>&1 &
+          slice=$!
+          trap 'kill $slice 2>/dev/null || true' EXIT
+          up=0
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then up=1; break; fi
+            sleep 0.5
+          done
+          if [ "$up" -ne 1 ]; then
+            echo "::error::the standalone slice never answered /health"
+            cat /tmp/slice.log
+            exit 1
+          fi
+          bash conformance/run.sh --strict --slice http://127.0.0.1:8000 2>&1 | tee -a /tmp/conformance.log
       - name: summary
         if: always()
         run: |

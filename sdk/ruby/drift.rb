@@ -203,11 +203,13 @@ module Drift
 
   # Raises Drift::BackboneError on any non-2xx response -- shared by _call
   # and _call_raw (see BackboneError's doc comment above for why).
+  # The message names the status AND carries the slice's own words, as every
+  # SDK's does: a caller can tell a missing queue from any other failure.
   def self._check_backbone_status!(code, resp_body, path)
     return unless code && code >= 400
     msg = resp_body.to_s.strip
-    msg = "HTTP #{code}" if msg.empty?
-    raise BackboneError, "drift: backbone #{path}: #{msg}"
+    raise BackboneError, "drift: backbone #{path}: HTTP #{code}" if msg.empty?
+    raise BackboneError, "drift: backbone #{path}: HTTP #{code}: #{msg}"
   end
 
   def self._call(method, path, body = nil)
@@ -343,6 +345,28 @@ module Drift
     fields.each_with_index.all? { |f, i| doc[f].to_s == (values[i] || '') }
   end
 
+  # The slice's rule for a single-segment resource name such as a queue: an
+  # alphanumeric first byte, then alphanumerics and `. _ -`, at most 255 bytes.
+  def self._local_valid_name?(s)
+    s.bytesize.between?(1, 255) && s.match?(/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/)
+  end
+
+  # Create, empty, every queue DRIFT_DECLARED_QUEUES names that the local store
+  # does not hold yet. The CLI sets it for a local run from the Driftfile's
+  # declared queues, as `drift file apply` creates them on a slice before
+  # anything runs. A queue it does not name still has to be pushed to first.
+  def self._ensure_declared_queues
+    ENV.fetch('DRIFT_DECLARED_QUEUES', '').split(',').map(&:strip).each do |name|
+      next unless _local_valid_name?(name)
+      @local_store['queues'][name] ||= { 'msgs' => [], 'next_id' => 0 }
+    end
+  end
+
+  # The slice's message timestamp: RFC 3339 in UTC with nine fractional digits.
+  def self._queue_timestamp
+    Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%9NZ')
+  end
+
   def self._call_local(method, path, body = nil)
     s = @local_store
     base_path, qs = path.split('?', 2)
@@ -434,17 +458,36 @@ module Drift
     end
 
     # Queue
+    #
+    # Answered as a slice answers, refusals included: a push names its queue in
+    # the body and must carry an object; a pop, a peek and a length name it in
+    # the query string and nowhere else; a queue nothing was ever pushed to is a
+    # 404. The message goes through JSON on the way in, as it does on the wire,
+    # so a symbol key comes back a string here as it does from a slice.
+    _ensure_declared_queues if base_path.start_with?('queue/')
     if base_path == 'queue/push' && method == 'POST'
       name = (body || {})['queue'] || ''
-      s['queues'][name] ||= []
-      s['queues'][name] << (body || {})['body']
-      return nil
+      raise BackboneError, 'drift: backbone queue/push: HTTP 400: invalid JSON' unless name.is_a?(String)
+      msg = JSON.parse(JSON.generate([(body || {})['body']])).first
+      if name.empty? || !msg.is_a?(Hash)
+        raise BackboneError, 'drift: backbone queue/push: HTTP 400: queue and body required'
+      end
+      raise BackboneError, 'drift: backbone queue/push: HTTP 400: invalid queue name' unless _local_valid_name?(name)
+      q = (s['queues'][name] ||= { 'msgs' => [], 'next_id' => 0 })
+      id = q['next_id'].to_s
+      q['next_id'] += 1
+      q['msgs'] << { 'id' => id, 'body' => msg, 'timestamp' => _queue_timestamp }
+      return { 'id' => id }
     end
-    if base_path == 'queue/pop' && method == 'POST'
-      name = (body || {})['queue'] || ''
-      q = s['queues'][name] || []
-      return nil if q.empty?
-      return q.shift
+    if [%w[POST queue/pop], %w[GET queue/peek], %w[GET queue/len]].include?([method, base_path])
+      name = query['queue'] || ''
+      raise BackboneError, "drift: backbone #{base_path}: HTTP 400: queue query param required" if name.empty?
+      raise BackboneError, "drift: backbone #{base_path}: HTTP 400: invalid queue name" unless _local_valid_name?(name)
+      q = s['queues'][name]
+      raise BackboneError, "drift: backbone #{base_path}: HTTP 404: queue #{name} not found" if q.nil?
+      return { 'length' => q['msgs'].length } if base_path == 'queue/len'
+      return nil if q['msgs'].empty?
+      return base_path == 'queue/pop' ? q['msgs'].shift : q['msgs'].first
     end
 
     # Blob
@@ -768,17 +811,59 @@ module Drift
       QueueHandle.new(name)
     end
 
+    # The slice takes a push's queue name in the JSON body, and a pop's, a
+    # peek's and a length's in the query string and nowhere else. A pop or a
+    # peek answers with the message's envelope ({id, body, timestamp}); the
+    # caller gets the body it pushed, or nil when the queue is empty. A queue
+    # nothing was ever pushed to does not exist, and every read of it raises.
     class QueueHandle
       def initialize(name)
         @name = name
       end
 
+      # body must be a Hash; the slice refuses anything else. Returns the id the
+      # slice gave the message.
       def push(body)
-        Drift._call('POST', 'queue/push', { 'queue' => @name, 'body' => body })
+        reply = Drift._call('POST', 'queue/push', { 'queue' => @name, 'body' => body })
+        id = reply.is_a?(Hash) ? reply['id'] : nil
+        unless id.is_a?(String) && !id.empty?
+          raise BackboneError, "drift: queue #{@name}: the push may have succeeded, but its reply carries no id: #{reply.inspect}"
+        end
+        id
       end
 
+      # Remove the message at the head of the queue and return its body.
       def pop
-        Drift._call('POST', 'queue/pop', { 'queue' => @name })
+        head('POST', 'queue/pop')
+      end
+
+      # The body of the message at the head, left in place.
+      def peek
+        head('GET', 'queue/peek')
+      end
+
+      # How many messages are waiting.
+      def len
+        reply = Drift._call('GET', at('queue/len'))
+        unless reply.is_a?(Hash) && reply['length'].is_a?(Integer)
+          raise BackboneError, "drift: queue #{@name}: the length reply is unreadable: #{reply.inspect}"
+        end
+        reply['length']
+      end
+
+      private
+
+      def at(path)
+        "#{path}?queue=#{URI.encode_www_form_component(@name)}"
+      end
+
+      def head(method, path)
+        msg = Drift._call(method, at(path))
+        return nil if msg.nil?
+        unless msg.is_a?(Hash) && msg.key?('body')
+          raise BackboneError, "drift: queue #{@name}: the #{path} reply is not a message: #{msg.inspect}"
+        end
+        msg['body']
       end
     end
 

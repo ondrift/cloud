@@ -13,11 +13,36 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 
 fn main() {
+    let mut out = Map::new();
+
+    // DRIFT_CONFORMANCE_BACKBONE_URL names a running slice's Backbone, and runs
+    // the queue cases against it alone: the slice is the authority on the queue
+    // wire, and the local store is held to what it answers.
+    let slice = std::env::var("DRIFT_CONFORMANCE_BACKBONE_URL").unwrap_or_default();
+    if !slice.is_empty() {
+        std::env::set_var("BACKBONE_URL", slice);
+        if let Err(e) = queue_cases(&mut out) {
+            return fail(&mut out, &e);
+        }
+        return emit(&out);
+    }
+
     // No BACKBONE_URL: every case runs against the in-memory local store, which
     // is the loop a developer meets first and the one where the six drifted.
     std::env::set_var("BACKBONE_URL", "");
 
-    let mut out = Map::new();
+    if let Err(e) = queue_cases(&mut out) {
+        return fail(&mut out, &e);
+    }
+
+    // A declared queue, named the way the CLI names it for a local run.
+    std::env::set_var("DRIFT_DECLARED_QUEUES", "conformance-declared");
+    let declared = match backbone::queue("conformance-declared").try_pop() {
+        Ok(None) => Value::Null,
+        Ok(Some(msg)) => msg,
+        Err(_) => json!("error"),
+    };
+    out.insert("declared_queue_pop_empty".into(), declared);
 
     // ── Blob ────────────────────────────────────────────────────────────────
     backbone::blob::put("uploads/greeting.txt", b"hello, slice", Some("text/plain"));
@@ -152,6 +177,52 @@ fn main() {
     out.insert("slice_not_linked".into(), json!(msg));
 
     emit(&out);
+}
+
+/// Every queue call once. The names carry the time, so a run against a slice,
+/// whose queues outlive the run, never meets an earlier run's.
+fn queue_cases(out: &mut Map<String, Value>) -> Result<(), String> {
+    let stamp = format!(
+        "{}{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default(),
+        std::process::id()
+    );
+    let q = backbone::queue(&format!("conformance-rust-{stamp}"));
+    let absent = backbone::queue(&format!("conformance-absent-rust-{stamp}"));
+    let body = |r: Result<Option<Value>, String>| match r {
+        Err(_) => json!("error"),
+        Ok(None) => Value::Null,
+        Ok(Some(msg)) => msg.get("n").cloned().unwrap_or(msg),
+    };
+    let length = |r: Result<usize, String>| r.map(|n| json!(n)).unwrap_or(json!("error"));
+    let refused = |r: Result<String, String>| r.map(|_| Value::Null).unwrap_or(json!("error"));
+
+    out.insert("queue_pop_never_pushed".into(), body(absent.try_pop()));
+    let carries = match absent.try_pop() {
+        Err(e) => e.contains("HTTP 404") && e.contains("not found"),
+        Ok(_) => false,
+    };
+    out.insert("queue_error_carries_the_refusal".into(), json!(carries));
+    out.insert("queue_len_never_pushed".into(), length(absent.len()));
+    out.insert("queue_push_not_an_object".into(), refused(q.try_push(json!("a bare string"))));
+    out.insert("queue_push_bad_name".into(), refused(backbone::queue("-flag").try_push(json!({"n": 0}))));
+    let mut ids = Vec::new();
+    for n in 1..=3 {
+        ids.push(q.try_push(json!({"n": n})).map_err(|e| format!("queue.try_push {n}: {e}"))?);
+    }
+    out.insert("queue_push_ids".into(), json!(ids));
+    out.insert("queue_len_after_push".into(), length(q.len()));
+    out.insert("queue_peek".into(), body(q.peek()));
+    out.insert("queue_len_after_peek".into(), length(q.len()));
+    let popped: Vec<Value> = (0..3).map(|_| body(q.try_pop())).collect();
+    out.insert("queue_pop_in_order".into(), json!(popped));
+    out.insert("queue_pop_empty".into(), body(q.try_pop()));
+    out.insert("queue_peek_empty".into(), body(q.peek()));
+    out.insert("queue_len_after_pop".into(), length(q.len()));
+    Ok(())
 }
 
 /// Start a loopback peer that echoes the path it was asked for and the identity

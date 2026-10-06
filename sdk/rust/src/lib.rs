@@ -391,6 +391,42 @@ fn call_at(base: &str, method: &str, path: &str, body: Option<Value>) -> Option<
     }
 }
 
+// The queue's transport, which keeps what `call` drops: whether the slice
+// refused. Ok(None) is a 204 or an empty body, Ok(Some) a 2xx body, and Err a
+// refusal or a call that never arrived. Local dev answers from `local_queue`,
+// which answers as a slice does, refusals included.
+fn queue_call(method: &str, path: &str, body: Option<Value>) -> Result<Option<Value>, String> {
+    let base = get_backbone_url();
+    if base.is_empty() {
+        return local_queue(method, path, body);
+    }
+    let url = format!("{}/{}", base, path);
+    let result = match body {
+        Some(b) => ureq::request(method, &url)
+            .set("Content-Type", "application/json")
+            .send_string(&serde_json::to_string(&b).unwrap_or_default()),
+        None => ureq::request(method, &url).call(),
+    };
+    let base_path = path.split('?').next().unwrap_or(path);
+    match result {
+        Ok(resp) => {
+            if resp.status() == 204 {
+                return Ok(None);
+            }
+            let text = resp.into_string().unwrap_or_default();
+            if text.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(serde_json::from_str(&text).unwrap_or(Value::String(text))))
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let text = resp.into_string().unwrap_or_default();
+            Err(format!("drift: backbone {base_path}: HTTP {code}: {}", text.trim()))
+        }
+        Err(e) => Err(format!("drift: backbone {base_path}: {e}")),
+    }
+}
+
 // `jwt`'s transport: same forgiving None-on-miss convention as `call`, but
 // against Deed's own base URL (DEED_URL) since /jwt/* moved off Backbone's
 // listener along with the rest of Deed. Falls back to `call_local` in local
@@ -452,7 +488,7 @@ struct LocalStore {
     secrets: HashMap<String, String>,
     cache: HashMap<String, Value>,
     nosql: HashMap<String, Vec<Value>>,    // collection -> docs
-    queues: HashMap<String, Vec<Value>>,
+    queues: HashMap<String, LocalQueue>,
     // bucket/key -> the bytes themselves. BYTES, not Value: a blob is binary,
     // and holding it as JSON meant every round trip through this store had to
     // agree on an encoding as well as on a key. The address is the same pair the
@@ -472,6 +508,122 @@ fn local_store() -> &'static Mutex<LocalStore> {
             blobs: HashMap::new(),
             locks: HashMap::new(),
         })
+    })
+}
+
+/// One of a slice's queues, mirrored: its live messages in order, each the
+/// envelope a slice answers with, and the counter their ids come from. A slice
+/// numbers each queue's messages from "0" and never reuses an id.
+#[derive(Default)]
+struct LocalQueue {
+    msgs: Vec<Value>,
+    next_id: u64,
+}
+
+/// The slice's rule for a single-segment resource name such as a queue: an
+/// alphanumeric first byte, then alphanumerics and `. _ -`, at most 255 bytes.
+fn local_valid_name(s: &str) -> bool {
+    let b = s.as_bytes();
+    !b.is_empty()
+        && b.len() <= 255
+        && b[0].is_ascii_alphanumeric()
+        && b.iter().all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+}
+
+/// The slice's message timestamp: RFC 3339 in UTC with all nine fractional
+/// digits.
+fn rfc3339_nanos(t: std::time::SystemTime) -> String {
+    let d = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let secs = d.as_secs() as i64;
+    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    // The civil date from a count of days since the Unix epoch, by Howard
+    // Hinnant's days-to-civil algorithm.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + if month <= 2 { 1 } else { 0 };
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:09}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60,
+        d.subsec_nanos()
+    )
+}
+
+/// The queue routes, answered as a slice answers them: a push names its queue in
+/// the body and must carry an object; a pop, a peek and a length name it in the
+/// query string and nowhere else; a missing or malformed name is a 400, and a
+/// queue nothing was ever pushed to is a 404.
+fn local_queue(method: &str, path: &str, body: Option<Value>) -> Result<Option<Value>, String> {
+    let base_path = path.split('?').next().unwrap_or(path);
+    let refuse = |code: u16, msg: &str| Err(format!("drift: backbone {base_path}: HTTP {code}: {msg}"));
+    let mut store = local_store().lock().map_err(|_| "drift: the local store is poisoned".to_string())?;
+
+    // DRIFT_DECLARED_QUEUES names the queues the project's Driftfile declares,
+    // comma-separated. The CLI sets it for a local run, and each one exists,
+    // empty, before any queue call is answered, as `drift file apply` creates
+    // them on a slice before anything runs. A queue it does not name still has
+    // to be pushed to before it exists.
+    for name in std::env::var("DRIFT_DECLARED_QUEUES").unwrap_or_default().split(',') {
+        let name = name.trim();
+        if local_valid_name(name) {
+            store.queues.entry(name.to_string()).or_default();
+        }
+    }
+
+    if (method, base_path) == ("POST", "queue/push") {
+        let b = body.unwrap_or(Value::Null);
+        let name = match b.get("queue") {
+            None => "",
+            Some(Value::String(s)) => s.as_str(),
+            Some(_) => return refuse(400, "invalid JSON"),
+        };
+        let msg = b.get("body").cloned().unwrap_or(Value::Null);
+        if name.is_empty() || !msg.is_object() {
+            return refuse(400, "queue and body required");
+        }
+        if !local_valid_name(name) {
+            return refuse(400, "invalid queue name");
+        }
+        let q = store.queues.entry(name.to_string()).or_default();
+        let id = q.next_id.to_string();
+        q.next_id += 1;
+        q.msgs.push(serde_json::json!({
+            "id": id,
+            "body": msg,
+            "timestamp": rfc3339_nanos(std::time::SystemTime::now()),
+        }));
+        return Ok(Some(serde_json::json!({ "id": id })));
+    }
+
+    let read = matches!(
+        (method, base_path),
+        ("POST", "queue/pop") | ("GET", "queue/peek") | ("GET", "queue/len")
+    );
+    if !read {
+        return refuse(404, "not found");
+    }
+    let name = parse_query(path).remove("queue").unwrap_or_default();
+    if name.is_empty() {
+        return refuse(400, "queue query param required");
+    }
+    if !local_valid_name(&name) {
+        return refuse(400, "invalid queue name");
+    }
+    let Some(q) = store.queues.get_mut(&name) else {
+        return refuse(404, &format!("queue {name} not found"));
+    };
+    Ok(match base_path {
+        "queue/len" => Some(serde_json::json!({ "length": q.msgs.len() })),
+        _ if q.msgs.is_empty() => None,
+        "queue/pop" => Some(q.msgs.remove(0)),
+        _ => Some(q.msgs[0].clone()),
     })
 }
 
@@ -701,22 +853,10 @@ fn call_local(_method: &str, path: &str, body: Option<Value>) -> Option<Value> {
             store.nosql.remove(coll);
             None
         }
-        // Queues
-        "queue/push" => {
-            let b = body?;
-            let name = b.get("queue")?.as_str()?.to_string();
-            let msg = b.get("body")?.clone();
-            store.queues.entry(name).or_default().push(msg);
-            None
-        }
-        "queue/pop" => {
-            let b = body?;
-            let name = b.get("queue")?.as_str()?.to_string();
-            let q = store.queues.get_mut(&name)?;
-            if q.is_empty() { return None; }
-            Some(q.remove(0))
-        }
-        // Blobs are NOT dispatched here. They carry bytes rather than JSON and
+        // Queues are NOT dispatched here: `queue_call` sends them to
+        // `local_queue`, which reports a refusal, as this dispatch cannot.
+        //
+        // Blobs are NOT dispatched here either. They carry bytes rather than JSON and
         // are served by blob::put / blob::get against store.blobs directly.
         //
         // The arms that used to sit here keyed on a `name` query parameter, which
@@ -1107,13 +1247,83 @@ pub mod backbone {
         QueueHandle { name: name.to_string() }
     }
 
+    // The slice takes a push's queue name in the JSON body, and a pop's, a
+    // peek's and a length's in the query string and nowhere else. The `try_`
+    // methods, `peek` and `len` report a refusal as an error; `push` and `pop`
+    // keep the forgiving shape they have always had.
     impl QueueHandle {
-        pub fn push(&self, body: Value) {
-            call("POST", "queue/push", Some(serde_json::json!({"queue": self.name, "body": body})));
+        /// Append `body`, which must be a JSON object, creating the queue on
+        /// first use, and return the id the slice gave the message. `None`
+        /// when the push was refused; `try_push` says why.
+        pub fn push(&self, body: Value) -> Option<String> {
+            self.try_push(body).ok()
         }
 
+        /// Append `body`, which must be a JSON object, creating the queue on
+        /// first use, and return the id the slice gave the message.
+        pub fn try_push(&self, body: Value) -> Result<String, String> {
+            let reply = queue_call("POST", "queue/push", Some(serde_json::json!({"queue": self.name, "body": body})))?;
+            match reply.as_ref().and_then(|r| r.get("id")).and_then(|id| id.as_str()) {
+                Some(id) if !id.is_empty() => Ok(id.to_string()),
+                // The message may well have been queued; an empty id would
+                // invite a retry that queues it twice.
+                _ => Err(format!(
+                    "drift: queue {:?}: the push may have succeeded, but its reply carries no id: {reply:?}",
+                    self.name
+                )),
+            }
+        }
+
+        /// The body of the message at the head of the queue, removed. `None`
+        /// when the queue is empty and also when the call failed; `try_pop`
+        /// tells the two apart.
         pub fn pop(&self) -> Option<Value> {
-            call("POST", "queue/pop", Some(serde_json::json!({"queue": self.name})))
+            self.try_pop().ok().flatten()
+        }
+
+        /// The body of the message at the head of the queue, removed. `Ok(None)`
+        /// when the queue is empty; an error when nothing was ever pushed to it,
+        /// because on a slice it does not exist.
+        pub fn try_pop(&self) -> Result<Option<Value>, String> {
+            self.head("POST", "queue/pop")
+        }
+
+        /// The body of the message at the head of the queue, left in place, with
+        /// the same answers as `try_pop`.
+        pub fn peek(&self) -> Result<Option<Value>, String> {
+            self.head("GET", "queue/peek")
+        }
+
+        /// How many messages are waiting. An error when nothing was ever pushed
+        /// to the queue, as for `try_pop`.
+        pub fn len(&self) -> Result<usize, String> {
+            let path = format!("queue/len?queue={}", percent_encode(&self.name));
+            match queue_call("GET", &path, None)? {
+                Some(v) => v
+                    .get("length")
+                    .and_then(|n| n.as_u64())
+                    .map(|n| n as usize)
+                    .ok_or_else(|| format!("drift: queue {:?}: the length reply is unreadable: {v}", self.name)),
+                None => Err(format!("drift: queue {:?}: the length reply is empty", self.name)),
+            }
+        }
+
+        /// Whether no message is waiting, with the same errors as `len`.
+        pub fn is_empty(&self) -> Result<bool, String> {
+            self.len().map(|n| n == 0)
+        }
+
+        /// A pop or a peek: the slice answers with the message's envelope
+        /// ({id, body, timestamp}), of which the caller wants the body.
+        fn head(&self, method: &str, path: &str) -> Result<Option<Value>, String> {
+            let path = format!("{path}?queue={}", percent_encode(&self.name));
+            match queue_call(method, &path, None)? {
+                None => Ok(None),
+                Some(msg) => match msg.get("body") {
+                    Some(body) => Ok(Some(body.clone())),
+                    None => Err(format!("drift: queue {:?}: the reply is not a message: {msg}", self.name)),
+                },
+            }
         }
     }
 

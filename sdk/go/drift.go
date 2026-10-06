@@ -138,7 +138,7 @@ type memBackbone struct {
 	mu      sync.Mutex
 	nosql   map[string]map[string]json.RawMessage
 	cache   map[string]json.RawMessage
-	queues  map[string][]json.RawMessage
+	queues  map[string]*localQueue
 	blobs   map[string][]byte
 	locks   map[string]localLock
 	secrets map[string]string
@@ -153,6 +153,85 @@ type memBackbone struct {
 type localLock struct {
 	token   string
 	expires time.Time
+}
+
+// localQueue mirrors one of a slice's queues: its live messages in order, and
+// the counter their ids come from. A slice numbers each queue's messages from
+// "0" and never reuses an id, so the local store does the same.
+type localQueue struct {
+	msgs   []queueMessage
+	nextID int
+}
+
+// queueMessage is the envelope a slice answers a pop or a peek with, and the
+// shape the local store holds a message in so that it answers identically.
+type queueMessage struct {
+	ID        string          `json:"id"`
+	Body      json.RawMessage `json:"body"`
+	Timestamp string          `json:"timestamp"`
+}
+
+// queueTimestamp is the slice's message timestamp: RFC 3339 in UTC with all
+// nine fractional digits, which Go's RFC3339Nano would trim.
+const queueTimestamp = "2006-01-02T15:04:05.000000000Z07:00"
+
+// localValidName is the slice's rule for a single-segment resource name such as
+// a queue: an alphanumeric first byte, then alphanumerics and `. _ -`, at most
+// 255 bytes.
+func localValidName(s string) bool {
+	if s == "" || len(s) > 255 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		alnum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+		if i == 0 && !alnum {
+			return false
+		}
+		if !alnum && c != '.' && c != '_' && c != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// declaredQueuesEnv names the queues the project's Driftfile declares,
+// comma-separated. The CLI sets it for a local run; the local store creates
+// each one before answering a queue call, as `drift file apply` creates them
+// on a slice before anything runs. A queue it does not name still has to be
+// pushed to before it exists.
+const declaredQueuesEnv = "DRIFT_DECLARED_QUEUES"
+
+// ensureDeclaredQueues creates every declared queue the store does not hold
+// yet, empty. A queue already holding messages is left as it is.
+func (m *memBackbone) ensureDeclaredQueues() {
+	for _, name := range strings.Split(os.Getenv(declaredQueuesEnv), ",") {
+		name = strings.TrimSpace(name)
+		if !localValidName(name) {
+			continue
+		}
+		if _, ok := m.queues[name]; !ok {
+			m.queues[name] = &localQueue{}
+		}
+	}
+}
+
+// localQueueRead answers a pop, a peek or a length exactly as a slice does: the
+// queue is named in the query string and nowhere else, a name that is missing or
+// malformed is a 400, and a queue nothing has ever been pushed to is a 404.
+func (m *memBackbone) localQueueRead(path string, query url.Values) (*localQueue, error) {
+	name := query.Get("queue")
+	if name == "" {
+		return nil, fmt.Errorf("drift: backbone %s: HTTP 400: queue query param required", path)
+	}
+	if !localValidName(name) {
+		return nil, fmt.Errorf("drift: backbone %s: HTTP 400: invalid queue name", path)
+	}
+	q, ok := m.queues[name]
+	if !ok {
+		return nil, fmt.Errorf("drift: backbone %s: HTTP 404: queue %s not found", path, name)
+	}
+	return q, nil
 }
 
 // The slice's own lock TTL floor, applied when a caller passes none.
@@ -172,7 +251,7 @@ const (
 var localBackbone = &memBackbone{
 	nosql:   make(map[string]map[string]json.RawMessage),
 	cache:   make(map[string]json.RawMessage),
-	queues:  make(map[string][]json.RawMessage),
+	queues:  make(map[string]*localQueue),
 	blobs:   make(map[string][]byte),
 	locks:   make(map[string]localLock),
 	secrets: make(map[string]string),
@@ -214,6 +293,10 @@ func (m *memBackbone) handle(req BackboneRequest) ([]byte, error) {
 	if i := strings.IndexByte(path, '?'); i >= 0 {
 		query, _ = url.ParseQuery(path[i+1:])
 		path = path[:i]
+	}
+
+	if strings.HasPrefix(path, "queue/") {
+		m.ensureDeclaredQueues()
 	}
 
 	switch {
@@ -416,27 +499,65 @@ func (m *memBackbone) handle(req BackboneRequest) ([]byte, error) {
 		return nil, nil
 
 	// --- Queue ---
+	//
+	// Every case answers what the slice answers, refusals included. A push names
+	// its queue in the JSON body and must carry an object; a pop, a peek and a
+	// length name it in the query string and nowhere else. A store that read the
+	// name from wherever a caller happened to put it hid an SDK whose Pop never
+	// once worked on a slice.
 	case path == "queue/push" && method == "POST":
-		var body map[string]any
-		json.Unmarshal(req.Body, &body) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
-		name, _ := body["queue"].(string)
-		msg, _ := json.Marshal(body["body"])
-		m.queues[name] = append(m.queues[name], msg)
-		return nil, nil
-
-	// An empty queue is an empty answer, not a failure. Pop's contract is
-	// "nothing was waiting", which callers branch on.
-	case path == "queue/pop" && method == "POST":
-		var body map[string]any
-		json.Unmarshal(req.Body, &body) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
-		name, _ := body["queue"].(string)
-		q := m.queues[name]
-		if len(q) == 0 {
-			return nil, nil
+		var body struct {
+			Queue string          `json:"queue"`
+			Body  json.RawMessage `json:"body"`
 		}
-		msg := q[0]
-		m.queues[name] = q[1:]
-		return msg, nil
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return nil, fmt.Errorf("drift: backbone queue/push: HTTP 400: invalid JSON")
+		}
+		var obj map[string]json.RawMessage
+		if body.Queue == "" || json.Unmarshal(body.Body, &obj) != nil || obj == nil {
+			return nil, fmt.Errorf("drift: backbone queue/push: HTTP 400: queue and body required")
+		}
+		if !localValidName(body.Queue) {
+			return nil, fmt.Errorf("drift: backbone queue/push: HTTP 400: invalid queue name")
+		}
+		q, ok := m.queues[body.Queue]
+		if !ok {
+			q = &localQueue{}
+			m.queues[body.Queue] = q
+		}
+		id := strconv.Itoa(q.nextID)
+		q.nextID++
+		q.msgs = append(q.msgs, queueMessage{
+			ID:        id,
+			Body:      append(json.RawMessage(nil), body.Body...),
+			Timestamp: time.Now().UTC().Format(queueTimestamp),
+		})
+		return marshalJSON(map[string]string{"id": id}), nil
+
+	// An empty queue is an empty answer, not a failure: the slice's 204, which
+	// callers branch on as "nothing was waiting".
+	case path == "queue/pop" && method == "POST":
+		q, err := m.localQueueRead(path, query)
+		if err != nil || len(q.msgs) == 0 {
+			return nil, err
+		}
+		msg := q.msgs[0]
+		q.msgs = q.msgs[1:]
+		return marshalJSON(msg), nil
+
+	case path == "queue/peek" && method == "GET":
+		q, err := m.localQueueRead(path, query)
+		if err != nil || len(q.msgs) == 0 {
+			return nil, err
+		}
+		return marshalJSON(q.msgs[0]), nil
+
+	case path == "queue/len" && method == "GET":
+		q, err := m.localQueueRead(path, query)
+		if err != nil {
+			return nil, err
+		}
+		return marshalJSON(map[string]int{"length": len(q.msgs)}), nil
 
 	// --- Blob ---
 	//
@@ -1218,18 +1339,70 @@ func (c collectionHandle) Drop() error {
 
 type queueHandle struct{ name string }
 
-func (q queueHandle) Push(body any) error {
-	_, err := callBackbone("POST", "queue/push", map[string]any{
+// Push appends body to the queue, creating the queue on first use, and returns
+// the id the slice gave the message. body must marshal to a JSON object; the
+// slice refuses anything else.
+func (q queueHandle) Push(body any) (string, error) {
+	resp, err := callBackbone("POST", "queue/push", map[string]any{
 		"queue": q.name,
 		"body":  body,
 	})
-	return err
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	// A reply with no id is not a silent "": the message may well have been
+	// queued, and a caller retrying on an empty id would queue it twice.
+	if err := json.Unmarshal(resp, &out); err != nil || out.ID == "" {
+		return "", fmt.Errorf("drift: queue %q: the push may have succeeded, but its reply carries no id: %q", q.name, resp)
+	}
+	return out.ID, nil
 }
 
+// Pop removes the message at the head of the queue and returns the body it was
+// pushed with. An empty queue returns (nil, nil). A queue nothing has ever been
+// pushed to is an error, because on a slice it does not exist.
 func (q queueHandle) Pop() (json.RawMessage, error) {
-	return callBackbone("POST", "queue/pop", map[string]any{
-		"queue": q.name,
-	})
+	return q.head("POST", "queue/pop")
+}
+
+// Peek returns the body of the message at the head of the queue without
+// removing it, with the same answers as Pop.
+func (q queueHandle) Peek() (json.RawMessage, error) {
+	return q.head("GET", "queue/peek")
+}
+
+// Len returns how many messages are waiting in the queue. A queue nothing has
+// ever been pushed to is an error, as it is for Pop.
+func (q queueHandle) Len() (int, error) {
+	resp, err := callBackbone("GET", "queue/len?queue="+url.QueryEscape(q.name), nil)
+	if err != nil {
+		return 0, err
+	}
+	var out struct {
+		Length *int `json:"length"`
+	}
+	if err := json.Unmarshal(resp, &out); err != nil || out.Length == nil {
+		return 0, fmt.Errorf("drift: queue %q: the length reply is unreadable: %q", q.name, resp)
+	}
+	return *out.Length, nil
+}
+
+// head reads the message at the head of the queue through a pop or a peek. The
+// slice takes the queue's name in the query string only, and answers with the
+// message's envelope, of which the caller wants the body.
+func (q queueHandle) head(method, path string) (json.RawMessage, error) {
+	resp, err := callBackbone(method, path+"?queue="+url.QueryEscape(q.name), nil)
+	if err != nil || resp == nil {
+		return nil, err
+	}
+	var msg queueMessage
+	if err := json.Unmarshal(resp, &msg); err != nil || msg.Body == nil {
+		return nil, fmt.Errorf("drift: queue %q: the %s reply is not a message: %q", q.name, path, resp)
+	}
+	return msg.Body, nil
 }
 
 // --- Blob ---

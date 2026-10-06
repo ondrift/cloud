@@ -257,10 +257,12 @@ function _call(string $method, string $path, $body = null) {
     // and Ruby has `_check_backbone_status!`. `_call_raw` IN THIS FILE already
     // checked (`$status >= 200 && $status < 300`), which is what makes this an
     // oversight rather than a decision.
+    //
+    // The message names the status AND carries the slice's own words, as every
+    // SDK's does, so a caller can tell a missing queue from any other failure.
     if ($status >= 400) {
         $msg = trim((string) $result);
-        if ($msg === '') $msg = "HTTP $status";
-        throw new BackboneError("drift: backbone $path: $msg");
+        throw new BackboneError("drift: backbone $path: HTTP $status" . ($msg === '' ? '' : ": $msg"));
     }
 
     if ($status === 204 || $result === null || $result === '') return null;
@@ -367,6 +369,36 @@ function _local_matches_every(array $doc, array $fields, array $values): bool {
     return true;
 }
 
+/**
+ * The slice's rule for a single-segment resource name such as a queue: an
+ * alphanumeric first byte, then alphanumerics and `. _ -`, at most 255 bytes.
+ */
+function _local_valid_name(string $s): bool {
+    return strlen($s) >= 1 && strlen($s) <= 255 && preg_match('/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/', $s) === 1;
+}
+
+/**
+ * Create, empty, every queue DRIFT_DECLARED_QUEUES names that the local store
+ * does not hold yet. The CLI sets it for a local run from the Driftfile's
+ * declared queues, as `drift file apply` creates them on a slice before
+ * anything runs. A queue it does not name still has to be pushed to first.
+ */
+function _ensure_declared_queues(): void {
+    global $_local_store;
+    foreach (explode(',', (string) getenv('DRIFT_DECLARED_QUEUES')) as $name) {
+        $name = trim($name);
+        if ($name !== '' && _local_valid_name($name) && !isset($_local_store['queues'][$name])) {
+            $_local_store['queues'][$name] = ['msgs' => [], 'next_id' => 0];
+        }
+    }
+}
+
+/** The slice's message timestamp: RFC 3339 in UTC with nine fractional digits. */
+function _queue_timestamp(): string {
+    [$usec, $sec] = explode(' ', microtime());
+    return gmdate('Y-m-d\TH:i:s', (int) $sec) . sprintf('.%09dZ', (int) floor((float) $usec * 1e6) * 1000);
+}
+
 function _call_local(string $method, string $path, $body = null) {
     global $_local_store;
     $s = &$_local_store;
@@ -467,16 +499,39 @@ function _call_local(string $method, string $path, $body = null) {
     }
 
     // Queue
+    //
+    // Answered as a slice answers, refusals included: a push names its queue in
+    // the body and must carry an object; a pop, a peek and a length name it in
+    // the query string and nowhere else; a queue nothing was ever pushed to is a
+    // 404. The message is judged by the JSON it encodes to, as the slice judges
+    // it: an associative array is an object, and a list or an empty array is not.
+    if (str_starts_with($base_path, 'queue/')) _ensure_declared_queues();
     if ($base_path === 'queue/push' && $method === 'POST') {
         $name = ($body ?? [])['queue'] ?? '';
-        if (!isset($s['queues'][$name])) $s['queues'][$name] = [];
-        $s['queues'][$name][] = ($body ?? [])['body'] ?? null;
-        return null;
+        if (!is_string($name)) throw new BackboneError('drift: backbone queue/push: HTTP 400: invalid JSON');
+        $encoded = json_encode(($body ?? [])['body'] ?? null);
+        if ($name === '' || !is_string($encoded) || $encoded[0] !== '{') {
+            throw new BackboneError('drift: backbone queue/push: HTTP 400: queue and body required');
+        }
+        if (!_local_valid_name($name)) throw new BackboneError('drift: backbone queue/push: HTTP 400: invalid queue name');
+        if (!isset($s['queues'][$name])) $s['queues'][$name] = ['msgs' => [], 'next_id' => 0];
+        $id = (string) $s['queues'][$name]['next_id']++;
+        $s['queues'][$name]['msgs'][] = [
+            'id' => $id,
+            'body' => json_decode($encoded, true),
+            'timestamp' => _queue_timestamp(),
+        ];
+        return ['id' => $id];
     }
-    if ($base_path === 'queue/pop' && $method === 'POST') {
-        $name = ($body ?? [])['queue'] ?? '';
-        if (empty($s['queues'][$name])) return null;
-        return array_shift($s['queues'][$name]);
+    if (in_array([$method, $base_path], [['POST', 'queue/pop'], ['GET', 'queue/peek'], ['GET', 'queue/len']], true)) {
+        $name = (string) ($query['queue'] ?? '');
+        if ($name === '') throw new BackboneError("drift: backbone $base_path: HTTP 400: queue query param required");
+        if (!_local_valid_name($name)) throw new BackboneError("drift: backbone $base_path: HTTP 400: invalid queue name");
+        if (!isset($s['queues'][$name])) throw new BackboneError("drift: backbone $base_path: HTTP 404: queue $name not found");
+        $msgs = &$s['queues'][$name]['msgs'];
+        if ($base_path === 'queue/len') return ['length' => count($msgs)];
+        if (count($msgs) === 0) return null;
+        return $base_path === 'queue/pop' ? array_shift($msgs) : $msgs[0];
     }
 
     // Blob
@@ -1098,17 +1153,63 @@ function queue(string $name): QueueHandle {
     return new QueueHandle($name);
 }
 
+/**
+ * A Backbone queue.
+ *
+ * The slice takes a push's queue name in the JSON body, and a pop's, a peek's
+ * and a length's in the query string and nowhere else. A pop or a peek answers
+ * with the message's envelope ({id, body, timestamp}); the caller gets the body
+ * it pushed, or null when the queue is empty. A queue nothing was ever pushed to
+ * does not exist, and every read of it throws.
+ */
 class QueueHandle {
     private string $name;
 
     public function __construct(string $name) { $this->name = $name; }
 
-    public function push($body): void {
-        _call('POST', 'queue/push', ['queue' => $this->name, 'body' => $body]);
+    /**
+     * $body must encode to a JSON object; the slice refuses anything else.
+     * Returns the id the slice gave the message.
+     */
+    public function push($body): string {
+        $reply = _call('POST', 'queue/push', ['queue' => $this->name, 'body' => $body]);
+        $id = is_array($reply) ? ($reply['id'] ?? null) : null;
+        if (!is_string($id) || $id === '') {
+            throw new \Drift\BackboneError("drift: queue {$this->name}: the push may have succeeded, but its reply carries no id: " . json_encode($reply));
+        }
+        return $id;
     }
 
+    /** Remove the message at the head of the queue and return its body. */
     public function pop() {
-        return _call('POST', 'queue/pop', ['queue' => $this->name]);
+        return $this->head('POST', 'queue/pop');
+    }
+
+    /** The body of the message at the head, left in place. */
+    public function peek() {
+        return $this->head('GET', 'queue/peek');
+    }
+
+    /** How many messages are waiting. */
+    public function len(): int {
+        $reply = _call('GET', $this->at('queue/len'));
+        if (!is_array($reply) || !is_int($reply['length'] ?? null)) {
+            throw new \Drift\BackboneError("drift: queue {$this->name}: the length reply is unreadable: " . json_encode($reply));
+        }
+        return $reply['length'];
+    }
+
+    private function at(string $path): string {
+        return $path . '?queue=' . rawurlencode($this->name);
+    }
+
+    private function head(string $method, string $path) {
+        $msg = _call($method, $this->at($path));
+        if ($msg === null) return null;
+        if (!is_array($msg) || !array_key_exists('body', $msg)) {
+            throw new \Drift\BackboneError("drift: queue {$this->name}: the $path reply is not a message: " . json_encode($msg));
+        }
+        return $msg['body'];
     }
 }
 

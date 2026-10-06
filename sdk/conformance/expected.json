@@ -13,8 +13,80 @@
     "Every case runs against the LOCAL store — no BACKBONE_URL, no running slice —",
     "because that is the loop a developer meets first and the one where the six",
     "drifted apart. The edge cases call a loopback peer each driver stands up, which",
-    "echoes the path it was asked for and the X-Drift-Slice header it received."
+    "echoes the path it was asked for and the X-Drift-Slice header it received.",
+    "",
+    "The queue_ cases ALSO run against a real slice: `run.sh --slice <backbone url>`",
+    "hands each driver the slice's Backbone and checks the queue_ cases alone. The",
+    "slice is the authority on the queue wire, so the same expectations hold the",
+    "local store to what the slice answers."
   ],
+
+  "declared_queue_pop_empty": {
+    "why": "A queue the Driftfile declares exists before anything runs: `drift file apply` creates it on a slice, and the CLI names it in DRIFT_DECLARED_QUEUES for a local run. The driver declares conformance-declared that way and pops it without pushing: it is empty, not missing. A Field polling its queue from its first tick otherwise works on a slice and fails on a laptop. Local only: on a slice, declaring is apply's job. queue_pop_never_pushed is the control.",
+    "expect": null
+  },
+
+  "queue_pop_never_pushed": {
+    "why": "A queue nothing was ever pushed to does not exist on a slice, which answers 404. A local store that called it empty let a consumer polling a misspelled queue wait forever on a laptop and fail only once deployed.",
+    "expect": "error"
+  },
+
+  "queue_error_carries_the_refusal": {
+    "why": "A refused call's error carries the status and the slice's own words. The driver pops a queue that does not exist and reports whether the error says `HTTP 404` and `not found`. Python's error dropped the slice's text, and Ruby's and PHP's dropped the status, so a caller could not tell a missing queue from any other failure without a debugger.",
+    "expect": true
+  },
+
+  "queue_push_ids": {
+    "why": "Push returns the id the slice gave the message, which a slice numbers from \"0\" per queue. Go, Python, PHP and Rust discarded it, and Node and Ruby returned the whole reply object, so no two SDKs handed the caller the same thing.",
+    "expect": ["0", "1", "2"]
+  },
+
+  "queue_len_never_pushed": {
+    "why": "The length of a queue that does not exist is the same 404, not a zero that reads as an idle queue.",
+    "expect": "error"
+  },
+
+  "queue_push_not_an_object": {
+    "why": "A slice refuses a message body that is not a JSON object with a 400. A local store that accepted a bare string let code pass on a laptop that every slice refuses.",
+    "expect": "error"
+  },
+
+  "queue_push_bad_name": {
+    "why": "A queue name must start with a letter or digit, because it becomes a directory on the slice. `-flag` is refused there, so it is refused locally.",
+    "expect": "error"
+  },
+
+  "queue_len_after_push": {
+    "why": "Three pushes make three waiting messages.",
+    "expect": 3
+  },
+
+  "queue_peek": {
+    "why": "Peek reads the head without removing it. Before this, no SDK had a Peek, although the slice has always served one.",
+    "expect": 1
+  },
+
+  "queue_len_after_peek": {
+    "why": "THE CONTROL for peek: a peek that removed the message would read as a correct peek above and show up here as 2.",
+    "expect": 3
+  },
+
+  "queue_pop_in_order": {
+    "why": "Pop returns the body each message was pushed with, first in first out. Every SDK named the queue in a pop's JSON body, which the slice never reads, so on a slice every pop was refused with 400 'queue query param required' and only the local store ever answered.",
+    "expect": [1, 2, 3]
+  },
+
+  "queue_pop_empty": {
+    "why": "An empty queue answers 204, which every SDK returns as its own empty value rather than an error: callers branch on 'nothing was waiting'.",
+    "expect": null
+  },
+
+  "queue_peek_empty": { "why": "The same empty answer for a peek.", "expect": null },
+
+  "queue_len_after_pop": {
+    "why": "The queue is empty and still exists, so its length is 0 rather than the 404 of a queue that never did.",
+    "expect": 0
+  },
 
   "blob_with_bucket": {
     "why": "Put then Get must return the bytes. The failure shape being guarded against is a Put that reports success and a Get that returns empty with no error — indistinguishable from 'I stored an empty value'.",
