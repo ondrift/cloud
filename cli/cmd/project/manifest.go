@@ -187,6 +187,12 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	normaliseFunctionIdentities(m.doc)
 	normaliseFunctionIdentities(m.slice)
 
+	// A Field may not share its name with a Pulse's route: the slice keys logs
+	// and metrics by that bare name. Refused here, before anything is built.
+	if err := checkFieldPulseNames(m.slice); err != nil {
+		return nil, err
+	}
+
 	// The one class of check the schema CANNOT own: whether the paths a valid
 	// document names actually exist on THIS machine. A schema describes the
 	// document; only the laptop knows if `atomic/get-menu/` is there. This is not
@@ -379,14 +385,25 @@ func checkLocalPaths(m *Manifest) ParseErrors {
 	// holds `/` and `:`, and the layout it assumes — one folder per function —
 	// is not the one most projects use. Without a `dir`, the directory comes
 	// from the function's element, which is checked when the element is built.
-	for i, fn := range m.slice.Entries("name", "atomic", "functions") {
-		declared := fn.Str("dir")
-		if declared == "" {
-			continue // the element owns the directory; nothing to check here
-		}
-		dir := resolveBaseDir(m, declared)
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			errs = append(errs, fmt.Sprintf("atomic.functions[%d]: function %q declares dir %s, which is not a directory", i, fn.Str("name"), dir))
+	//
+	// A Field's `dir` is the same question, asked of `atomic.fields`.
+	for _, list := range []struct {
+		key, noun string
+		entries   []Node
+	}{
+		{pulsesKey, "pulse", PulseEntries(m.slice)},
+		{fieldsKey, "field", FieldEntries(m.slice)},
+	} {
+		for i, fn := range list.entries {
+			declared := fn.Str("dir")
+			if declared == "" {
+				continue // the element owns the directory; nothing to check here
+			}
+			dir := resolveBaseDir(m, declared)
+			if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+				errs = append(errs, fmt.Sprintf("atomic.%s[%d]: %s %q declares dir %s, which is not a directory",
+					list.key, i, list.noun, fn.Str("name"), dir))
+			}
 		}
 	}
 
@@ -601,6 +618,12 @@ func (m *Manifest) SelectEnvironment(env string, explicit bool) (string, error) 
 	// would deploy, book and report as "". The parse normalised the base; the
 	// merged result gets the same pass.
 	normaliseFunctionIdentities(m.slice)
+
+	// The overlay can introduce a Field or a Pulse, so the merged result is
+	// checked again for a Field sharing a Pulse's name.
+	if err := checkFieldPulseNames(m.slice); err != nil {
+		return "", err
+	}
 
 	// The merge re-reads the RAW document, where a `$VAR` secret is still the
 	// placeholder ParseDriftfile resolved. Resolve again — exactly once, on

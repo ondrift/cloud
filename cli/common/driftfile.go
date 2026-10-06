@@ -182,6 +182,17 @@ func driftfileVersionOf(raw []byte) string {
 //
 // Bump it in the release that implements a format change.
 //
+// 1.20.0 covers Atomic's two kinds of work. `atomic.pulses` is what
+// `atomic.functions` was, one call and one result, and the old key stays legal
+// as an ALIAS: cmd/project/deprecatedkeys.go renames it in place, at the root and
+// inside every environment overlay, so every reader sees `pulses` alone, and
+// `drift file migrate` rewrites it. `atomic.fields` is new: a long-running
+// worker the slice keeps exactly one of, written in Go in this release. Each
+// Field is built from its element with its own entry point
+// (default/field_native.txt), refused before building when its element is not Go,
+// and uploaded as the slot `field:<name>` with no triggers, so it is booked,
+// referenced, reported idle and skipped when unchanged exactly as a Pulse is.
+//
 // 1.19.0 covers top-level `edge:`, the one home of every fact about how a slice
 // is reached. Three keys moved there, and the old spellings stay legal as
 // ALIASES: cmd/project/deprecatedkeys.go moves `atomic.egress` to `edge.egress`,
@@ -228,7 +239,7 @@ func driftfileVersionOf(raw []byte) string {
 // `backbone.secrets` — no constraint, no pattern, nothing that changes what
 // validates — which is a PATCH under the schema's own versioning rule and
 // therefore nothing for a client to implement.
-const ImplementedDriftfileFormat = "1.19.0"
+const ImplementedDriftfileFormat = "1.20.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every
 // authenticated request.

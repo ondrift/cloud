@@ -1,8 +1,8 @@
 package project
 
-// functionidentity.go — one identity for a function, however it was spelled.
+// functionidentity.go — one identity for a Pulse, however it was spelled.
 //
-// A function declares `route` and `method`. The retired spelling is a single
+// A Pulse declares `route` and `method`. The retired spelling is a single
 // `name: post:auth/challenge`, and it keeps parsing.
 //
 // # Why this normalises instead of the readers being repointed
@@ -39,17 +39,21 @@ import (
 //
 // No RemoveAfter: naming a version promises a release nobody has planned.
 var nameDeprecation = common.Deprecation{
-	Old:     "atomic.functions[].name",
-	New:     "atomic.functions[].route + atomic.functions[].method",
+	Old:     functionNamePath,
+	New:     "atomic.pulses[].route + atomic.pulses[].method",
 	Because: common.CapitalizeFirst(common.MigrateHint) + ".",
 }
 
-// normaliseFunctionIdentities gives every function entry both spellings,
-// agreeing with each other.
+// normaliseFunctionIdentities gives every Pulse entry both spellings, agreeing
+// with each other.
 //
-// Runs after schema validation, so it only ever sees a legal document: an entry
-// reaching here has either the pair or the retired string, and the pair's method
-// is one of the eight the enum admits.
+// Runs after schema validation and after the key walker, so it only ever sees a
+// legal document with `atomic.functions` already renamed to `atomic.pulses`: an
+// entry reaching here has either the pair or the retired string, and the pair's
+// method is one of the eight the enum admits.
+//
+// A Field needs nothing here. Its identity is its `name`, which is already the
+// one string the slot is booked under once FieldSpecs prefixes it.
 func normaliseFunctionIdentities(doc Node) {
 	normaliseIdentities(doc, nameDeprecation.Warn)
 }
@@ -57,7 +61,7 @@ func normaliseFunctionIdentities(doc Node) {
 // normaliseIdentities is normaliseFunctionIdentities with the notice chosen by
 // the caller, so `drift file migrate` can run the same normalisation silently.
 func normaliseIdentities(doc Node, retired func()) {
-	for _, fn := range doc.Nodes("atomic", "functions") {
+	for _, fn := range doc.Nodes("atomic", pulsesKey) {
 		route, method := fn.Str("route"), fn.Str("method")
 
 		// The current spelling wins when a document carries both. Writing both

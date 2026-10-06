@@ -1,5 +1,5 @@
-// schedules.go — resolving `atomic.functions[].cron` into what the deploy
-// artifact carries.
+// schedules.go — resolving `atomic.pulses[].cron` into what the deploy
+// artifact carries. Only a Pulse is scheduled; a Field runs all the time.
 //
 // The Driftfile field was documented with worked examples and never read by any
 // deploy code; `translate.go` called it "vestigial" while the spec called it the
@@ -25,7 +25,7 @@ import (
 // trigger on it. TestTheScheduleKeyIsTheKeyTheDeployLooksUp is the seam.
 func declaredSchedules(m *Manifest) map[string]string {
 	out := map[string]string{}
-	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+	for _, fn := range PulseEntries(m.Slice()) {
 		if fn.Str("cron") != "" && fn.Str("name") != "" {
 			out[fn.Str("name")] = fn.Str("cron")
 		}
@@ -37,7 +37,7 @@ func declaredSchedules(m *Manifest) map[string]string {
 // for the deploy summary.
 func ScheduledFunctionNames(m *Manifest) []string {
 	var names []string
-	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+	for _, fn := range PulseEntries(m.Slice()) {
 		if fn.Str("cron") != "" && fn.Str("name") != "" {
 			names = append(names, fn.Str("name"))
 		}

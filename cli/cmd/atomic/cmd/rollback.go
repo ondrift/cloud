@@ -15,9 +15,9 @@ import (
 func Rollback() *cobra.Command {
 	var method string
 	cmd := &cobra.Command{
-		Use:     "rollback <function-name> <position>",
-		Short:   "Roll back a function to a previous deployment (see drift atomic history)",
-		Example: "  drift atomic rollback send-email 2\n  drift atomic rollback users 2 --method get",
+		Use:     "rollback <name> <position>",
+		Short:   "Roll back a pulse or field to a previous deployment (see drift atomic history)",
+		Example: "  drift atomic rollback send-email 2\n  drift atomic rollback users 2 --method get\n  drift atomic rollback sequencer 1 --method field",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -42,11 +42,11 @@ func Rollback() *cobra.Command {
 			)
 			if err != nil {
 				s.Stop()
-				return common.TransportError("roll back function", err)
+				return common.TransportError("roll back", err)
 			}
 			defer resp.Body.Close()
 
-			body, err := common.CheckResponse(resp, "roll back function")
+			body, err := common.CheckResponse(resp, "roll back")
 			s.Stop()
 			if err != nil {
 				return err
@@ -61,7 +61,7 @@ func Rollback() *cobra.Command {
 			}
 			_ = json.Unmarshal(body, &result)
 
-			fmt.Printf("Function %s rolled back to %s deploy from %s.\n",
+			fmt.Printf("%s rolled back to the %s deploy from %s.\n",
 				common.Highlight(function),
 				result.Language,
 				result.DeployedAt,
@@ -69,6 +69,6 @@ func Rollback() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path")
+	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path, or `field` for a field")
 	return cmd
 }

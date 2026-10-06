@@ -119,6 +119,10 @@ func StageElementsLocally(elements []Element, runnerDir string, quiet bool) erro
 // slice expects: the entry point (native binary → `app`; interpreted tar.gz →
 // extracted app.<ext> + deps) plus metadata.json. The dir name is irrelevant to
 // the boot-scan (it reads metadata.json), so a sanitised, unique name is fine.
+//
+// A Field is placed like any native slot: its binary is `app`, and its
+// metadata says `method: field`, which is what the runner's supervisor starts
+// at boot. So `drift file run` runs Fields exactly as a slice does.
 func localSlotSink(runnerDir string) SlotSink {
 	return func(a FuncArtifact) error {
 		lang := a.Language
@@ -159,7 +163,7 @@ func localSlotSink(runnerDir string) SlotSink {
 		meta := map[string]any{
 			"name": a.Name, "method": a.Method, "auth": a.Auth,
 			"element": a.Element, "language": lang, "stream": a.Stream,
-			"secrets": secrets, "protocol": invocationProtocol(lang),
+			"secrets": secrets, "protocol": slotProtocol(a.Method, lang),
 			"response": a.Response,
 		}
 		if len(a.Env) > 0 {

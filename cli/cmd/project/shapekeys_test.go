@@ -35,7 +35,9 @@ func TestShapeKeys_AnnouncedOncePerPathHoweverManyOccurrences(t *testing.T) {
 
 	parseShape(t, body)
 
-	if n := strings.Count(notices.String(), "atomic.functions[].memory"); n != 1 {
+	// Written under the retired `functions`: the list is renamed first, so the
+	// booking is announced under the key it is read at.
+	if n := strings.Count(notices.String(), "atomic.pulses[].memory"); n != 1 {
 		t.Errorf("three declared bookings produced %d notices, want 1", n)
 	}
 	if n := strings.Count(notices.String(), "backbone.nosql[].size"); n != 1 {

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://api.ondrift.eu/driftfile/schema",
   "$comment": "AUTHORITATIVE Driftfile JSON Schema — the single definition of the format. Embedded in the api binary and served from https://api.ondrift.eu/driftfile/schema. This document replaced a separate prose spec (driftfile-spec.md) on 2026-07-28: documentation lives HERE, in `description` (user-facing, rendered on hover by any YAML LSP), `default` (what omission means), `examples`, and `$comment` (notes for whoever edits the schema). A doc that ships beside the schema is a doc that drifts from it. || VERSIONING: `version` below is the format's own semver. MAJOR = a field removed, renamed or retyped, so an older client cannot read a file written for it; MINOR = a new optional field, which older clients round-trip untouched; PATCH = documentation only. Bump it in the same change that alters the schema — the api serves this number and clients compare it against the one they implement. || DURING THE CLOSED ALPHA THE MAJOR RULE IS SUSPENDED, DELIBERATELY: breaking changes ride MINOR bumps until Drift leaves alpha, because the format is still being found and burning majors on it would leave the number meaningless by the time anyone outside depends on it. 1.2.0 removed fields and made others required and is therefore breaking under the rule above. The cost is explicit rather than hidden, and a client carries it in two rungs rather than one. A MAJOR difference is the only one it REFUSES on, so during alpha no client is ever grounded by a format break. It is WARNED instead: a client holds the version it implements, compares it against this one when it lints or applies a Driftfile, and says so whenever this document is ahead in MINOR — which is the rung every alpha-era break rides. A client that ignores the warning fails to validate a file it cannot express, as before. That is acceptable while the users are counted on one hand and reachable directly; it stops being acceptable the moment they are not, and the first post-alpha format change takes the major it is owed. || WHAT LIVES HERE: the GRAMMAR (which keys exist, their shape, their fixed defaults) and, deliberately, the BOUNDS a client must apply before it can reach the platform — the memory range encoded in `atomicEntry.memory`'s pattern, and the compiled floor and interpreted-language set beside it. Those are here so a booking outside them is refused by `drift file lint` on the laptop rather than by the api after a deploy has been confirmed and uploaded, which is most of what serving the format is for. A bound here is a COPY, never the authority: `tier` enforces the range and the compiled floor, the slice's deploy branch owns the interpreted set, and tests assert the copies still agree (driftfile_test.go for the two memory bounds, the operator's routes tests for the language set) rather than trusting them to be edited together. Add a bound here only with the test that pins it to its owner. A `default` must be a fixed property of the format, and a value no client could act on offline has no reason to be in this document at all.",
-  "version": "1.19.0",
+  "version": "1.20.0",
   "x-drift": {
     "$comment": "BOUNDS THE PLATFORM ENFORCES, published so a client can apply them before it can reach the api. They live at the ROOT because they describe the platform rather than any key of a document — hanging them off `atomicEntry.properties.memory` tied them to the lifetime of one property, and a client reading them had to know where a booking happened to be written down. || Each is a COPY, never the authority: `tier.MinCompiledFunctionMemoryBytes` enforces the floor and the slice's deploy branch owns the interpreted set, with driftfile_test.go asserting these values still equal theirs. A client carrying either rule privately would be a second definition that drifts. || Neither can be a `pattern`: a pattern constrains the DOCUMENT, and nothing in a document says what language a function is written in — that is detected from the source beside the Driftfile, which only the client can see. || Keyed on the INTERPRETED four rather than the compiled ones because that is the stable side; the wire value for a compiled language is a known-moving target, so an unrecognised language is treated as compiled. A client that does not know these keys ignores them, and the api still refuses the deploy.",
     "compiled-minimum": "16MB",
@@ -14,7 +14,7 @@
     ]
   },
   "title": "Driftfile",
-  "description": "The Drift deploy manifest — the YAML file that IS your project.\n\nOne file, at the project root, named `Driftfile` (or `driftfile.yaml`). The resource shape sits at the top level (`slice` plus `atomic`/`backbone`/`canvas`/`edge`), with optional `environments` for per-environment overrides, `hooks` for local pre/post-deploy commands, and `tests` for `drift project test`. Ships with `drift project deploy [environment]`.\n\nAlmost everything has a default, so three lines is a running site:\n\n    name: my-project\n    canvas:\n      sites: [./site]\n\nThe exception is Atomic. A function states its trigger, the callable that serves it, and the memory it books — there is no default for the memory, because a reservation nobody chose is one nobody can be held to, and the slice admits work against exactly this figure:\n\n    name: my-project\n    atomic:\n      functions:\n        - name: post:webhook\n          handler: Webhook\n          memory: 32MB\n        - name: get:report\n          handler: Report\n          memory: 256MB\n          auth: apikey\n\nEach function's memory is its own pool: its concurrent invocations together stay inside it, so booking more buys both headroom per call and more calls at once. It is also what that function is billed at.\n\nWhat can reach the slice, and what it can reach, is declared in one place: `edge` (hostnames, the site-auth gate, the rate limit, an address allowlist, egress, links to your other slices, and the hosts one slice fronts for another).\n\nWhat the Driftfile deliberately does NOT declare: secrets values (use `drift backbone secret set`), anything about the machine it runs on, or replica counts. You declare the shape of your application; the platform decides how to run it.",
+  "description": "The Drift deploy manifest — the YAML file that IS your project.\n\nOne file, at the project root, named `Driftfile` (or `driftfile.yaml`). The resource shape sits at the top level (`slice` plus `atomic`/`backbone`/`canvas`/`edge`), with optional `environments` for per-environment overrides, `hooks` for local pre/post-deploy commands, and `tests` for `drift project test`. Ships with `drift project deploy [environment]`.\n\nAlmost everything has a default, so three lines is a running site:\n\n    name: my-project\n    canvas:\n      sites: [./site]\n\nThe exception is Atomic. A Pulse (Atomic's function: one call, one result) states its trigger, the callable that serves it, and the memory it books — there is no default for the memory, because a reservation nobody chose is one nobody can be held to, and the slice admits work against exactly this figure:\n\n    name: my-project\n    atomic:\n      pulses:\n        - name: post:webhook\n          handler: Webhook\n          memory: 32MB\n        - name: get:report\n          handler: Report\n          memory: 256MB\n          auth: apikey\n\nEach function's memory is its own pool: its concurrent invocations together stay inside it, so booking more buys both headroom per call and more calls at once. It is also what that function is billed at.\n\nWhat can reach the slice, and what it can reach, is declared in one place: `edge` (hostnames, the site-auth gate, the rate limit, an address allowlist, egress, links to your other slices, and the hosts one slice fronts for another).\n\nWhat the Driftfile deliberately does NOT declare: secrets values (use `drift backbone secret set`), anything about the machine it runs on, or replica counts. You declare the shape of your application; the platform decides how to run it.",
   "type": "object",
   "additionalProperties": false,
   "anyOf": [
@@ -82,13 +82,27 @@
           "$ref": "#/definitions/atomicSection"
         },
         {
-          "required": [
-            "functions"
+          "anyOf": [
+            {
+              "required": [
+                "pulses"
+              ]
+            },
+            {
+              "required": [
+                "functions"
+              ]
+            },
+            {
+              "required": [
+                "fields"
+              ]
+            }
           ]
         }
       ],
-      "description": "Serverless (Atomic) section: the functions this slice runs, each with the memory it books, plus slice-wide runtime limits.",
-      "$comment": "Was a oneOf accepting either a bare list of names or this object, and the list form expanded to { functions: [...] }. Removed in 1.2.0 along with per-function memory becoming mandatory: a shorthand that omits the one field every function must declare cannot be sugar for the long form, and two accepted shapes for one section is the sort of cleverness that makes a manifest feel like magic. One shape, stated in full."
+      "description": "Serverless (Atomic) section: the Pulses and Fields this slice runs, each with the memory it books, plus slice-wide runtime limits. A Pulse is Atomic's function: one call, one result. A Field is a long-running worker the slice keeps running.",
+      "$comment": "Was a oneOf accepting either a bare list of names or this object, and the list form expanded to { functions: [...] }. Removed in 1.2.0 along with per-function memory becoming mandatory: a shorthand that omits the one field every function must declare cannot be sugar for the long form, and two accepted shapes for one section is the sort of cleverness that makes a manifest feel like magic. One shape, stated in full. || The section declares at least one of `pulses`, `functions` (the retired spelling of `pulses`) or `fields`, as an anyOf because draft-07 has no other way to say \"one of these\": a slice running only Fields declares no Pulse, and requiring one would make that slice unwriteable."
     },
     "backbone": {
       "$ref": "#/definitions/backboneSection",
@@ -173,7 +187,7 @@
         },
         "atomic": {
           "$ref": "#/definitions/atomicSection",
-          "description": "Atomic overrides for this environment. Declares the whole section, functions included: an override that restated only some limits would leave the environment's function list and its bookings ambiguous."
+          "description": "Atomic overrides for this environment. Declares the whole section, Pulses and Fields included: an override that restated only some limits would leave the environment's Pulse and Field lists and their bookings ambiguous."
         },
         "backbone": {
           "$ref": "#/definitions/backboneSection",
@@ -251,7 +265,7 @@
     "atomicSection": {
       "type": "object",
       "additionalProperties": false,
-      "$comment": "Memory is declared per function in `functions` and is mandatory there; this section carries no slice-wide figure. One figure for every function cannot express a 32MB webhook beside a 256MB report generator without paying the larger for both, and a reservation that appears by default is one nobody chose. Note what the per-function form costs to reproduce: a slice that declares nothing keeps ONE shared pool at its slice-wide booking (slice/src/atomic/budget.rs, Pools), and that shape is now reachable only by slices predating this section — a measurement taken against it cannot be rebuilt from a manifest. || `functions` is required where a slice DECLARES its shape (the top-level `atomic`), and optional in an environment override, which is a partial: an override that had to restate every function to change one rate limit would make the common case the expensive one, and duplicate the list that the base already owns.",
+      "$comment": "Memory is declared per function in `functions` and is mandatory there; this section carries no slice-wide figure. One figure for every function cannot express a 32MB webhook beside a 256MB report generator without paying the larger for both, and a reservation that appears by default is one nobody chose. Note what the per-function form costs to reproduce: a slice that declares nothing keeps ONE shared pool at its slice-wide booking (slice/src/atomic/budget.rs, Pools), and that shape is now reachable only by slices predating this section — a measurement taken against it cannot be rebuilt from a manifest. || `functions` is required where a slice DECLARES its shape (the top-level `atomic`), and optional in an environment override, which is a partial: an override that had to restate every function to change one rate limit would make the common case the expensive one, and duplicate the list that the base already owns. || `pulses` is the current name of `functions`, with the same item schema; `functions` keeps parsing and the client rewrites it to `pulses`. The top-level `atomic` requires at least one of `pulses`, `functions` or `fields`. || A Field is a slot like a Pulse: its booking key is `field:<name>` and it is sold, priced and pooled under that key, so nothing below `fields` carries a trigger.",
       "properties": {
         "atomic_size": {
           "type": "string",
@@ -275,14 +289,33 @@
           "minimum": 0,
           "default": 0
         },
-        "functions": {
+        "pulses": {
           "type": "array",
-          "description": "Every Atomic function this slice runs, each declaring its trigger, the callable that serves it, the memory it books, and how it is guarded. Required, and never inferred: the slice admits work against what a function booked, so a function the manifest does not name is a function the platform cannot size, price, or run.",
+          "description": "Every Pulse this slice runs. A Pulse is Atomic's function: one call, one result. Each declares its trigger, the callable that serves it, the memory it books, and how it is guarded. Never inferred: the slice admits work against what a Pulse booked, so a Pulse the manifest does not name is one the platform cannot size, price, or run.",
           "minItems": 1,
           "items": {
             "$ref": "#/definitions/atomicEntry"
           },
-          "$comment": "Was optional and auto-discovered by scanning atomic/* for @atomic annotations. Discovery decided both the surface and, through the slice-wide default, the memory — so a function could appear in production having declared neither. This list is the whole declaration: what the slice exposes, what guards it, and what it is contracted to run."
+          "$comment": "The current spelling of `functions`, with the identical item schema, so a list moves from one key to the other unchanged. Was optional and auto-discovered by scanning atomic/* for @atomic annotations. Discovery decided both the surface and, through the slice-wide default, the memory, so a function could appear in production having declared neither. This list is the whole declaration: what the slice exposes, what guards it, and what it is contracted to run."
+        },
+        "functions": {
+          "type": "array",
+          "deprecated": true,
+          "description": "DEPRECATED: write `pulses` instead. Every Atomic function this slice runs, each declaring its trigger, the callable that serves it, the memory it books, and how it is guarded. Still parsed, and rewritten to `pulses` by `drift file migrate`, so an existing Driftfile keeps applying unchanged.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/atomicEntry"
+          },
+          "$comment": "Kept in `properties` because draft-07 with additionalProperties:false has two outcomes, legal or error: dropping it would make every existing Driftfile an error on the next api deploy, with no notice."
+        },
+        "fields": {
+          "type": "array",
+          "description": "Every Field this slice runs. A Field is a long-running worker: the slice keeps exactly one process per Field running, starts it at boot and on every deploy, restarts it with backoff when it exits, and pauses it after a crash loop. It reaches Backbone and egress the way a Pulse does and never listens for requests. Fields run Go in this release.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/fieldEntry"
+          },
+          "$comment": "Names are unique across this list, and JSON Schema cannot say so: `uniqueItems` compares whole entries, so two entries naming one Field with different memory would both pass it. The client refuses the duplicate, and the platform refuses a config declaring one booking key twice (tier.ValidateFunctionIdentities). A Field name may NOT equal any Pulse route: the booking keys `field:<name>` and `<method>:<route>` differ, but the slice keys logs, metrics, alerts and triggers by the bare name, so the two would share them. JSON Schema cannot compare across lists either, so the client and tier.ValidateFieldNames refuse it."
         },
         "egress": {
           "$ref": "#/definitions/egressSection",
@@ -509,6 +542,77 @@
           "items": {
             "$ref": "#/definitions/alertEntry"
           }
+        }
+      }
+    },
+    "fieldEntry": {
+      "type": "object",
+      "description": "One Field: the long-running worker the slice keeps running, the callable it runs, and the memory it books.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "handler",
+        "memory"
+      ],
+      "$comment": "Every property but `name` is atomicEntry's own, reached by $ref, so the handler grammar, the memory range and the env reservation have one owner and a Field cannot drift from a Pulse on any of them. Wrapped in allOf so each can carry a description of its own: draft-07 ignores siblings of a bare $ref. || Nothing else belongs here. A Field is not reached by a request, so it has no route, method, auth, stream or response; it is always running, so it has no cron; and alerts key on invocation errors, which a Field does not produce.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The Field's name: what `drift atomic fields` and `drift atomic logs` call it. Lowercase letters, digits and hyphens, starting with a letter, up to 63 characters. Its booking key is `field:<name>`. It may not equal any Pulse's route (or queue name): the two would share logs and metrics, so the platform refuses the pair.",
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "examples": [
+            "sequencer",
+            "mail-sender"
+          ],
+          "$comment": "tier.ValidateBookingKey holds the same grammar for method `field`, and fields_test.go asserts the two accept the same names."
+        },
+        "handler": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/atomicEntry/properties/handler"
+            }
+          ],
+          "description": "The callable the Field runs, `func Name(ctx context.Context) error` in Go. The context is cancelled when the slice stops the Field; returning nil after that is a clean stop."
+        },
+        "memory": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/atomicEntry/properties/memory"
+            }
+          ],
+          "description": "Memory this Field books for as long as it runs, from 16MB to 256MB: a Field is compiled (Go), so the compiled floor applies. It is the Field's own pool and what it is billed at, per MiB. A Field that grows past it is stopped and restarted."
+        },
+        "element": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/atomicEntry/properties/element"
+            }
+          ],
+          "description": "Element (sub-app) this Field's source belongs to, as for a Pulse. Its language must be Go. Omitted = the default element, the flat source files directly under ./atomic."
+        },
+        "dir": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/atomicEntry/properties/dir"
+            }
+          ],
+          "description": "Source directory holding this Field's callable, relative to the Driftfile. Defaults to the element's directory."
+        },
+        "secrets": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/atomicEntry/properties/secrets"
+            }
+          ],
+          "description": "The Backbone secrets this Field may read, injected into its environment when it starts."
+        },
+        "env": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/atomicEntry/properties/env"
+            }
+          ],
+          "description": "Plain configuration for this Field, injected into its environment verbatim. Not for credentials: those go in `secrets:`."
         }
       }
     },

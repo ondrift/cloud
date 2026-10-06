@@ -14,7 +14,7 @@ import (
 func Trigger() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "trigger",
-		Short:   "Manage event triggers for atomic functions",
+		Short:   "Manage event triggers for pulses",
 		Example: "  drift atomic trigger list\n  drift atomic trigger register queue order-processor --queue orders --target http://localhost:8080\n  drift atomic trigger register schedule nightly-sync --cron \"0 0 * * *\" --target http://localhost:8080\n  drift atomic trigger unregister order-processor",
 		GroupID: "operations",
 	}
@@ -85,7 +85,7 @@ func triggerRegisterQueueCmd() *cobra.Command {
 	var pollMS, maxRetry int
 	cmd := &cobra.Command{
 		Use:     "queue <name>",
-		Short:   "Register a queue trigger — polls a Backbone queue and invokes a function on each message",
+		Short:   "Register a queue trigger: polls a Backbone queue and invokes a pulse on each message",
 		Example: "  drift atomic trigger register queue order-processor --queue orders --target http://localhost:8080\n  drift atomic trigger register queue email-sender --queue emails --target http://localhost:8080 --poll-ms 250 --max-retry 5",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

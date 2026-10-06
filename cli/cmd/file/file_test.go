@@ -37,6 +37,9 @@ func TestSchemaMustBePresentOrTheScaffoldTestsProveNothing(t *testing.T) {
 // again, the user's first command after `drift file new` is a validation error,
 // which is the failure this command exists to prevent.
 func TestNew_ScaffoldPassesTheRealParser(t *testing.T) {
+	// The format this binary implements, which the scaffold is written in;
+	// a machine whose cache predates `pulses` would refuse it for that alone.
+	withServedSchema(t)
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "site"), 0o755); err != nil {
 		t.Fatal(err)
@@ -70,6 +73,7 @@ func TestNew_ScaffoldPassesTheRealParser(t *testing.T) {
 // mention every key it explains, so a string match for "memory" is green on a
 // file that only documents it and red on one that merely describes it.
 func TestNew_ScaffoldUsesTheCurrentGrammar(t *testing.T) {
+	withServedSchema(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Driftfile")
 	if err := os.WriteFile(path, []byte(starterDriftfile("demo", "")), 0o600); err != nil {
@@ -79,7 +83,7 @@ func TestNew_ScaffoldUsesTheCurrentGrammar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fns := m.Slice().Nodes("atomic", "functions")
+	fns := project.PulseEntries(m.Slice())
 	if len(fns) == 0 {
 		t.Fatal("the scaffold declares no functions — `functions: []` is valid and " +
 			"teaches nothing; a first edit should be changing a real entry")
@@ -105,6 +109,7 @@ func TestNew_ScaffoldUsesTheCurrentGrammar(t *testing.T) {
 		Slice  string `yaml:"slice"`
 		Name   string `yaml:"name"`
 		Atomic struct {
+			Pulses    []map[string]any `yaml:"pulses"`
 			Functions []map[string]any `yaml:"functions"`
 		} `yaml:"atomic"`
 	}
@@ -118,7 +123,13 @@ func TestNew_ScaffoldUsesTheCurrentGrammar(t *testing.T) {
 	if doc.Name != "" {
 		t.Errorf("the scaffold still writes the retired top-level `name: %q`", doc.Name)
 	}
-	for i, fn := range doc.Atomic.Functions {
+	if doc.Atomic.Functions != nil {
+		t.Error("the scaffold writes the retired `atomic.functions`; the list is `atomic.pulses`")
+	}
+	if len(doc.Atomic.Pulses) == 0 {
+		t.Error("the scaffold declares no `atomic.pulses`")
+	}
+	for i, fn := range doc.Atomic.Pulses {
 		if fn["route"] == nil || fn["method"] == nil {
 			t.Errorf("scaffolded function %d declares no route/method pair — that is the "+
 				"current identity, and `name: get:hello` is the retired one", i)

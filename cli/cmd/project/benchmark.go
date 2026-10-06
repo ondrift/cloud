@@ -75,14 +75,15 @@ func getBenchmarkCmd() *cobra.Command {
 	var apply, write bool
 	cmd := &cobra.Command{
 		Use:   "benchmark",
-		Short: "Measure what each Atomic function costs, and what it should book",
+		Short: "Measure what each pulse and field costs, and what it should book",
 		Long: strings.TrimSpace(`
-Report what each Atomic function has actually cost in memory, and the size it
+Report what each pulse and field has actually cost in memory, and the size it
 should book.
 
-The numbers come from the deployed slice's own measurements of real traffic: it
-weighs every invocation and keeps the high-water mark per function. A function
-nobody has called yet says so, rather than reporting a confidently small number.
+The numbers come from the deployed slice's own measurements: it weighs every
+pulse invocation and samples every running field, and keeps the high-water mark
+per slot. A pulse nobody has called yet says so, rather than reporting a
+confidently small number.
 
 A booking is part of a slice's shape, which the resize form owns. --apply opens
 that form with the measured recommendations already filled in, so the price and
@@ -267,20 +268,12 @@ func benchmarkFromSlice(m *Manifest) ([]sizingRow, error) {
 	return rows, nil
 }
 
-// declaredMemory maps each declared function to the memory it books.
+// declaredMemory maps each declared Pulse and Field to the memory it books.
 //
-// Keyed by the name in the Driftfile, which is the same `method:route` the slice
-// books and reports under — the two agreeing is what lets a row be matched at
-// all. They have not always agreed.
-func declaredMemory(m *Manifest) map[string]string {
-	out := map[string]string{}
-	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
-		if name := fn.Str("name"); name != "" {
-			out[name] = fn.Str("memory")
-		}
-	}
-	return out
-}
+// Keyed by the booking key, which is the same `method:route` (or `field:<name>`)
+// the slice books and reports under — the two agreeing is what lets a row be
+// matched at all. They have not always agreed.
+func declaredMemory(m *Manifest) map[string]string { return declaredBookings(m) }
 
 // renderSizing prints the table.
 //

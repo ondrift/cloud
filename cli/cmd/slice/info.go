@@ -14,8 +14,10 @@ package slice
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
+	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd"
 	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
@@ -111,12 +113,13 @@ func getInfoCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "info",
 		Short: "Show what the active slice is doing right now",
-		Long: "What the slice's scheduler is currently holding and refusing: per function\n" +
-			"the memory booked and the memory in use, plus the slice-wide ceiling every\n" +
+		Long: "What the slice's scheduler is currently holding and refusing: per pulse and\n" +
+			"field the memory booked and the memory in use, plus the slice-wide ceiling every\n" +
 			"invocation shares, how many are running, how many workers are parked, and\n" +
-			"what has been stopped for overrunning its booking.\n\n" +
+			"what has been stopped for overrunning its booking. Then each field: whether it\n" +
+			"is running, for how long, and how often it has been restarted.\n\n" +
 			"Read this when something is slow. `drift file benchmark` answers the other\n" +
-			"question — what a function has cost and what it should therefore book.",
+			"question: what a pulse or field has cost and what it should therefore book.",
 		Example: "  drift slice info",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -143,17 +146,38 @@ func getInfoCmd() *cobra.Command {
 
 			if len(s.Pools) == 0 {
 				// Not an error and not an empty slice: a slice with no
-				// registered functions has no pools, which is a different fact
-				// from a slice whose pools could not be read.
-				fmt.Printf("\n  no functions deployed\n")
-				return nil
+				// registered pulses or fields has no pools, which is a different
+				// fact from a slice whose pools could not be read.
+				fmt.Printf("\n  no pulses or fields deployed\n")
+			} else {
+				fmt.Printf("\n  pools\n")
+				for _, p := range s.Pools {
+					fmt.Printf("    %-28s %s\n", poolLabel(p.Function), heldLabel(p.CommittedBytes, p.BookedBytes))
+				}
 			}
 
-			fmt.Printf("\n  pools\n")
-			for _, p := range s.Pools {
-				fmt.Printf("    %-28s %s\n", poolLabel(p.Function), heldLabel(p.CommittedBytes, p.BookedBytes))
-			}
+			// The fields, after the pools they hold: a field's pool shows what
+			// it is holding, and this shows whether it is running at all.
+			fields, ferr := atomic_cmd.FetchFields()
+			printFieldsSection(cmd.OutOrStdout(), fields, ferr)
 			return nil
 		},
+	}
+}
+
+// printFieldsSection is the fields part of `drift slice info`: one line per
+// field, or one line saying they could not be read. A slice with no fields
+// prints nothing here, as it has nothing to say about them.
+func printFieldsSection(w io.Writer, fields []atomic_cmd.FieldStatus, err error) {
+	if err != nil {
+		fmt.Fprintf(w, "\n  fields         couldn't be read: %v\n", err)
+		return
+	}
+	if len(fields) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "\n  fields\n")
+	for _, f := range fields {
+		fmt.Fprintf(w, "    %-28s %s\n", f.Name, atomic_cmd.FieldSummary(f))
 	}
 }

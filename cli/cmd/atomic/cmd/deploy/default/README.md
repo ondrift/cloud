@@ -27,7 +27,8 @@ runner's JSON wire protocol to user code live here.
 | File | Purpose |
 |---|---|
 | `server_get.txt` / `server_post.txt` | Local-dev Go server template (used by `drift atomic run`) — binds an HTTP listener for testing. |
-| `server_get_native.txt` / `server_post_native.txt` | Deploy-time Go `main.go` template (reads the request off stdin, calls the user's handler, writes the envelope to stdout). |
+| `server_get_native.txt` / `server_post_native.txt` | Deploy-time Go `main.go` template for a Pulse (reads the request off stdin, calls the user's handler, writes the envelope to stdout). |
+| `field_native.txt` | Deploy-time Go `main.go` template for a Field. Reads nothing, calls `{{FUNC}}(ctx)` with a context cancelled on SIGTERM or SIGINT, and exits 0 when the handler returns nil (or the cancellation) after being asked to stop, 1 with the reason on stderr otherwise. |
 | `wrapper_get_python.txt` / `wrapper_post_python.txt` | Python wrapper that imports the user's handler and serves it via the SDK's `run()` entry point. Placeholders: `{{SOURCE}}`, `{{FUNC}}`, `{{PORT}}`. |
 | `wrapper_get_node.txt` / `wrapper_post_node.txt` | Same shape for Node.js (`require('@ondrift/sdk')`). |
 | `wrapper_get_ruby.txt` / `wrapper_post_ruby.txt` | Same shape for Ruby (loads the bundled SDK via `bundler/setup`). |

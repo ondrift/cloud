@@ -108,9 +108,15 @@ func printResolved(m *project.Manifest, env string) {
 		fmt.Printf("  %-18s %s\n", r[0], val)
 	}
 
-	if fns := s.Entries("name", "atomic", "functions"); len(fns) > 0 {
-		fmt.Printf("\n  functions (%d)\n", len(fns))
-		for _, f := range fns {
+	if pulses := project.PulseEntries(s); len(pulses) > 0 {
+		fmt.Printf("\n  pulses (%d)\n", len(pulses))
+		for _, p := range pulses {
+			fmt.Printf("    · %s\n", p.Str("name"))
+		}
+	}
+	if fields := project.FieldEntries(s); len(fields) > 0 {
+		fmt.Printf("\n  fields (%d)\n", len(fields))
+		for _, f := range fields {
 			fmt.Printf("    · %s\n", f.Str("name"))
 		}
 	}

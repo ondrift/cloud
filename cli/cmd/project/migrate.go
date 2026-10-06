@@ -93,8 +93,10 @@ func (r *MigrationRefusal) Error() string {
 		strings.Join(r.Reasons, "\n  - ")
 }
 
-// functionNamePath is the retired spelling the identity split owns.
-const functionNamePath = "atomic.functions[].name"
+// functionNamePath is the retired spelling the identity split owns. It is
+// addressed under `atomic.pulses`, the spelling the key walker has already
+// renamed `atomic.functions` to by the time the split reads the document.
+const functionNamePath = "atomic.pulses[].name"
 
 // MigrateDriftfile rewrites a Driftfile's retired keys into their current
 // spelling, at the top level and inside every environment overlay.
@@ -269,7 +271,7 @@ func (mg *migrator) planRoot(r migrationRoot) {
 		if !ok {
 			continue
 		}
-		for _, h := range holdersIn(r.node, parent) {
+		for _, h := range holdersWritten(r.node, parent) {
 			k, v := pairOf(h.node, leaf)
 			if k == nil || mg.seen[k] {
 				continue
@@ -373,13 +375,13 @@ func (mg *migrator) planMove(r migrationRoot, h holder, k, v *yaml.Node, key com
 	return pendingMove{key: key, k: k, v: v, from: h, newLeaf: newLeaf, oldPath: oldPath, newPath: newPath}, true
 }
 
-// planSplits rewrites each function's retired `name: method:route` into the
+// planSplits rewrites each Pulse's retired `name: method:route` into the
 // `route` and `method` pair, the derivation normaliseFunctionIdentities makes.
 func (mg *migrator) planSplits(r migrationRoot) {
 	oldPath := r.prefix + functionNamePath
-	newPath := r.prefix + "atomic.functions[].route + method"
+	newPath := r.prefix + "atomic.pulses[].route + method"
 functions:
-	for _, h := range holdersIn(r.node, "atomic.functions[]") {
+	for _, h := range holdersWritten(r.node, "atomic.pulses[]") {
 		k, v := pairOf(h.node, "name")
 		if k == nil || mg.seen[k] {
 			continue
@@ -392,7 +394,7 @@ functions:
 		// ignored, and migrate does not choose which for them.
 		for _, half := range []string{"route", "method"} {
 			if hk, _ := pairOf(h.node, half); hk != nil {
-				mg.refuse(bothSpellings(oldPath, k.Line, r.prefix+"atomic.functions[]."+half, hk.Line))
+				mg.refuse(bothSpellings(oldPath, k.Line, r.prefix+"atomic.pulses[]."+half, hk.Line))
 				continue functions
 			}
 		}
@@ -967,6 +969,74 @@ func holdersIn(root *yaml.Node, parent string) []holder {
 		}
 	}
 	return hs
+}
+
+// holdersWritten is holdersIn for a parent path the registry writes in its
+// CURRENT spelling, read from a file that may still use the old one.
+//
+// The walker renames as it goes, so by the time it looks for
+// `atomic.pulses[].memory` an `atomic.functions` list has already become
+// `atomic.pulses`. Migrate reads the file as written and never rewrites the
+// tree, so the same holders sit under the name the file uses. Both are asked
+// for; a file carrying both spellings of the list is refused by the rename
+// itself, and every key is visited once either way because the plan marks each
+// one seen.
+func holdersWritten(root *yaml.Node, parent string) []holder {
+	var out []holder
+	for _, p := range writtenSpellings(parent) {
+		out = append(out, holdersIn(root, p)...)
+	}
+	return out
+}
+
+// writtenSpellings is parent followed by the same path with every in-place
+// rename the registry makes along it undone: `atomic.pulses[]` is also
+// `atomic.functions[]`. A rename that moves a key to another parent is not
+// undone here; the move puts the key's lines under the new parent, and keys
+// below a moved one are not addressed by the registry.
+func writtenSpellings(parent string) []string {
+	out := []string{parent}
+	for _, key := range driftfileKeyDeprecations {
+		if key.Kind != common.KeyAlias || key.New == "" {
+			continue
+		}
+		oldParent, oldLeaf, ok := splitKeyPath(key.Path)
+		newParent, newLeaf, ok2 := splitKeyPath(key.New)
+		if !ok || !ok2 || oldParent != newParent {
+			continue
+		}
+		for _, p := range out {
+			if alt, renamed := underOldName(p, newParent, newLeaf, oldLeaf); renamed {
+				out = append(out, alt)
+			}
+		}
+	}
+	return out
+}
+
+// underOldName rewrites path when it runs through `<parent>.<newLeaf>`, putting
+// oldLeaf in that segment and keeping any `[]` it carries.
+func underOldName(path, parent, newLeaf, oldLeaf string) (string, bool) {
+	segs := strings.Split(path, ".")
+	depth := 0
+	if parent != "" {
+		depth = len(strings.Split(parent, "."))
+		if depth >= len(segs) || strings.Join(segs[:depth], ".") != parent {
+			return "", false
+		}
+	}
+	if depth >= len(segs) {
+		return "", false
+	}
+	base, isList := strings.CutSuffix(segs[depth], "[]")
+	if base != newLeaf {
+		return "", false
+	}
+	segs[depth] = oldLeaf
+	if isList {
+		segs[depth] += "[]"
+	}
+	return strings.Join(segs, "."), true
 }
 
 func extend(chain []*yaml.Node, n *yaml.Node) []*yaml.Node {

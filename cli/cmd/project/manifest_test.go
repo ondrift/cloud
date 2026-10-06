@@ -32,7 +32,9 @@ func TestParseDriftfile_RestaurantTemplate(t *testing.T) {
 	// memory is asserted alongside the name because it is what the slice admits
 	// work against and what the function is billed at; a list that parsed its
 	// names and dropped its bookings would deploy a slice nobody priced.
-	fns := m.Slice().Entries("name", "atomic", "functions")
+	// The fixture writes the retired `functions`; the walker has renamed it, so
+	// what every reader sees is `pulses`.
+	fns := PulseEntries(m.Slice())
 	if len(fns) != 3 {
 		t.Fatalf("atomic.functions count = %d, want 3", len(fns))
 	}
@@ -384,7 +386,7 @@ func TestParseDriftfile_LocalPathsMustExist(t *testing.T) {
 		{
 			name:      "function explicit dir",
 			driftfile: "name: hello\natomic:\n  functions:\n    - name: \"get:menu\"\n      handler: GetMenu\n      memory: 8MB\n      dir: ./src/menu\n",
-			want:      `atomic.functions[0]: function "get:menu" declares dir`,
+			want:      `atomic.pulses[0]: pulse "get:menu" declares dir`,
 		},
 		{
 			name:      "canvas site directory",
@@ -555,7 +557,7 @@ environments:
 		t.Errorf("prod values changed: rate=%q retention=%q", m.Slice().Str("edge", "rate_limit"), m.Slice().Str("log_retention"))
 	}
 	// The base booking, against which staging's override below is the contrast.
-	if fns := m.Slice().Entries("name", "atomic", "functions"); len(fns) != 1 || fns[0].Str("memory") != "128MB" {
+	if fns := PulseEntries(m.Slice()); len(fns) != 1 || fns[0].Str("memory") != "128MB" {
 		t.Errorf("prod functions = %+v, want [get:redirect booked at 128MB]", fns)
 	}
 
@@ -575,7 +577,7 @@ environments:
 	}
 	// An environment books its own memory per function: staging runs the same
 	// route on a smaller pool, and pays for the smaller one.
-	if fns := m.Slice().Entries("name", "atomic", "functions"); len(fns) != 1 ||
+	if fns := PulseEntries(m.Slice()); len(fns) != 1 ||
 		fns[0].Str("name") != "get:redirect" || fns[0].Str("memory") != "64MB" {
 		t.Errorf("staging functions = %+v, want [get:redirect booked at 64MB]", fns)
 	}

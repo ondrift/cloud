@@ -15,6 +15,7 @@
 package atomic_cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -72,13 +73,55 @@ type FunctionSpec struct {
 	Env map[string]string
 }
 
-// Trigger reports how the function is invoked: "http" or "queue".
+// FieldMethod is the method a Field's slot is booked and deployed under. No
+// HTTP request can carry it, so nothing routes to a Field: the slice's
+// supervisor starts it, and the registry never matches it to a call.
+const FieldMethod = "field"
+
+// FieldKey is a Field's booking key, `field:<name>`: the string the slice books
+// it under, the name a FunctionSpec carries for it, and what the reference
+// check and the idle report compare.
+func FieldKey(name string) string { return FieldMethod + ":" + name }
+
+// IsField reports whether this spec is a Field rather than a Pulse.
+func (s FunctionSpec) IsField() bool {
+	method, _ := s.Wire()
+	return method == FieldMethod
+}
+
+// Trigger reports how the slot is started: "http" or "queue" for a Pulse, and
+// "field" for a Field, which nothing invokes.
 func (s FunctionSpec) Trigger() string {
-	if strings.HasPrefix(s.Name, "queue:") {
+	switch {
+	case s.IsField():
+		return FieldMethod
+	case strings.HasPrefix(s.Name, "queue:"):
 		return "queue"
 	}
 	return "http"
 }
+
+// refuseNonGoField is the rule that a Field runs Go in this release, applied
+// before anything is built.
+//
+// The entry point that turns a handler into a long-running process is a Go
+// template (default/field_native.txt), and no other language has one. Building
+// anything else would produce a Pulse's wrapper, which reads one request and
+// exits, and the supervisor would restart it into a crash loop.
+func refuseNonGoField(spec FunctionSpec, lang string) error {
+	if !spec.IsField() || atomic_common.IsGo(lang) {
+		return nil
+	}
+	_, name := spec.Wire()
+	return fmt.Errorf("field %q is written in %s, and %w. "+
+		"Write its handler in Go, as `func %s(ctx context.Context) error`, in an element of its own "+
+		"if the rest of this one is %s", name, lang, ErrFieldLanguage, spec.Handler, lang)
+}
+
+// ErrFieldLanguage is the rule refuseNonGoField applies, so a caller can tell
+// that refusal from any other build failure and report it before anything is
+// deployed.
+var ErrFieldLanguage = errors.New("a Field runs Go in this release")
 
 // Wire splits the declared name into the (method, name) pair the operator and
 // the slice speak.
@@ -182,9 +225,12 @@ func BuildElements(specs []FunctionSpec) ([]Element, error) {
 
 		el := Element{Name: name, Dir: dir, Lang: lang}
 		for _, s := range group {
+			if ferr := refuseNonGoField(s, lang); ferr != nil {
+				return nil, fmt.Errorf("element %q: %w", name, ferr)
+			}
 			c, cerr := atomic_common.FindCallable(dir, s.Handler)
 			if cerr != nil {
-				return nil, fmt.Errorf("function %q: %w", s.Name, cerr)
+				return nil, fmt.Errorf("%s %q: %w", slotNoun(s), s.Name, cerr)
 			}
 			el.Funcs = append(el.Funcs, ElementFunc{Spec: s, SourceFile: c.SourceFile})
 		}
@@ -194,6 +240,14 @@ func BuildElements(specs []FunctionSpec) ([]Element, error) {
 		elements = append(elements, el)
 	}
 	return elements, nil
+}
+
+// slotNoun names what a spec is, for a message: "pulse" or "field".
+func slotNoun(s FunctionSpec) string {
+	if s.IsField() {
+		return "field"
+	}
+	return "pulse"
 }
 
 // DeployKey is the platform's identity for a function — the Driftfile's own
@@ -226,9 +280,9 @@ func CheckCollisions(specs []FunctionSpec) error {
 		return nil
 	}
 	sort.Strings(collisions)
-	return fmt.Errorf("route collision — these functions share an identity and would shadow "+
-		"each other on deploy (a function is identified by method AND path, so get:x and post:x "+
-		"are fine, but two post:x are not):\n  - %s", strings.Join(collisions, "\n  - "))
+	return fmt.Errorf("route collision: these slots share an identity and would shadow "+
+		"each other on deploy (a pulse is identified by method AND path, so get:x and post:x "+
+		"are fine, but two post:x are not; a field by its name):\n  - %s", strings.Join(collisions, "\n  - "))
 }
 
 // triggersFor assembles the trigger specs a function ships with: the queue it
@@ -247,6 +301,11 @@ func CheckCollisions(specs []FunctionSpec) error {
 // this failure — those accessors are total, so a reader left on a key that
 // stopped being written yields "" with no error anywhere.
 func triggersFor(f ElementFunc) []TriggerSpec {
+	// A Field is started by the slice's supervisor and invoked by nothing, and
+	// the operator refuses a Field that carries a trigger.
+	if f.Spec.IsField() {
+		return nil
+	}
 	var triggers []TriggerSpec
 	method, _ := f.Spec.Wire()
 	if q := f.Spec.QueueSource(); q != "" {

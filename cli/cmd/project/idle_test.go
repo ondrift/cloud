@@ -35,7 +35,7 @@ func TestApply_SaysWhenTheSliceDeclaresASlotTheDriftfileDoesNotName(t *testing.T
 		t.Fatalf("the apply must succeed, there is room, and the report must not change that: %v\n%s", err, out)
 	}
 	for _, want := range []string{
-		"This slice declares 6 function slots and your Driftfile names 5.",
+		"This slice declares 6 atomic slots and your Driftfile names 5.",
 		"get:slot-6 is idle, and you are paying for its 16 MB booking.",
 		"Run `drift slice resize demo` to release it.",
 	} {
@@ -230,7 +230,7 @@ func TestPlan_ReportsTheUnnamedSlotAndChangesNothing(t *testing.T) {
 		t.Fatalf("a plan must not fail: %v", err)
 	}
 	for _, want := range []string{
-		"This slice declares 2 function slots and your Driftfile names 1.",
+		"This slice declares 2 atomic slots and your Driftfile names 1.",
 		"get:slot-2 is not named by your Driftfile",
 		"Run `drift slice resize demo` to release it.",
 		"nothing was deployed",
@@ -259,7 +259,7 @@ func TestPlan_AMissIsReportedWithoutAnIdleList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a plan must not fail: %v", err)
 	}
-	if !strings.Contains(out, `function "get:ping"`) {
+	if !strings.Contains(out, `pulse "get:ping"`) {
 		t.Fatalf("the plan must report the miss, or this proves nothing:\n%s", out)
 	}
 	if strings.Contains(out, "This slice declares") {

@@ -48,9 +48,12 @@ func Logs() *cobra.Command {
 	var follow bool
 
 	cmd := &cobra.Command{
-		Use:     "logs <function-name>",
-		Short:   "Fetch recent logs for a deployed function",
-		Example: "  drift atomic logs send-email\n  drift atomic logs send-email --tail 50\n  drift atomic logs send-email -f\n  drift atomic logs purge send-email",
+		Use:   "logs <name>",
+		Short: "Fetch recent logs for a deployed pulse or field",
+		Long: "Prints the slice's recent log lines for one pulse or field, by name. A pulse's " +
+			"lines arrive when each call returns; a field's arrive as it writes them, beside the " +
+			"slice's own `drift:` lines saying when it started, stopped and was restarted.",
+		Example: "  drift atomic logs send-email\n  drift atomic logs send-email --tail 50\n  drift atomic logs sequencer -f\n  drift atomic logs purge send-email",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -115,8 +118,8 @@ func Logs() *cobra.Command {
 
 func logsPurgeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "purge <function-name>",
-		Short:   "Clear in-memory log entries for a function",
+		Use:     "purge <name>",
+		Short:   "Clear in-memory log entries for a pulse or field",
 		Example: "  drift atomic logs purge send-email",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

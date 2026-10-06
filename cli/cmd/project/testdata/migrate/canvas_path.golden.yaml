@@ -1,6 +1,6 @@
 slice: shop
 atomic:
-  functions:
+  pulses:
     - route: ping
       method: get
       handler: GetPing

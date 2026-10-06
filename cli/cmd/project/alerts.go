@@ -32,14 +32,14 @@ type alertSpec struct {
 	NotifyTarget string `json:"notify_target"`
 }
 
-// applyAlerts writes every alert `slice.atomic.functions[].alerts[]`
-// declares, and reads the live registry to report which of them are
-// new — and which live alerts this manifest does not declare, which it
-// returns rather than prints. Best-effort: per-alert failures are
-// surfaced but don't abort the deploy.
+// applyAlerts writes every alert `atomic.pulses[].alerts[]` declares, and reads
+// the live registry to report which of them are new — and which live alerts
+// this manifest does not declare, which it returns rather than prints.
+// Best-effort: per-alert failures are surfaced but don't abort the deploy. A
+// Field carries no alerts.
 func applyAlerts(m *Manifest) ([]string, error) {
 	declared := map[string]alertSpec{}
-	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+	for _, fn := range PulseEntries(m.Slice()) {
 		name := fn.Str("name")
 		for i, a := range fn.Entries("on", "alerts") {
 			spec, err := alertEntryToSpec(name, i, a)

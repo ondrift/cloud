@@ -82,7 +82,7 @@ func TestApplyAlerts_ReportsAnAlertTheManifestDoesNotName(t *testing.T) {
 	rec := stubAPI(t, liveEverything)
 
 	m := manifestRooted(Node{"name": "demo", "atomic": map[string]any{
-		"functions": []any{map[string]any{
+		"pulses": []any{map[string]any{
 			"name": "post:checkout", "handler": "PostCheckout",
 			"alerts": []any{map[string]any{
 				"on": "errors", "threshold": 3, "window": "5m", "notify": "webhook=https://example.com/hook",
@@ -143,7 +143,7 @@ func TestApply_ReportsNothingWhenTheManifestNamesEverythingLive(t *testing.T) {
 			map[string]any{"name": "ledger"},
 			map[string]any{"name": "audit"},
 		}},
-		"atomic": map[string]any{"functions": []any{
+		"atomic": map[string]any{"pulses": []any{
 			map[string]any{
 				"name": "post:checkout", "handler": "PostCheckout",
 				"alerts": []any{map[string]any{

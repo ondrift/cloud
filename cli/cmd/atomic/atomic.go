@@ -17,9 +17,14 @@ import (
 
 func GetCmd() *cobra.Command {
 	atomicCmd := &cobra.Command{
-		Use:     "atomic",
-		Short:   "Manage Atomic deployments",
-		Example: "  drift atomic list\n  drift atomic deploy ./my-function\n  drift atomic run ./my-function\n  drift atomic new",
+		Use:   "atomic",
+		Short: "Manage Atomic deployments: pulses and fields",
+		Long: "Atomic runs your code on the slice, as two kinds of work.\n\n" +
+			"Pulses: Atomic's functions, one call, one result. Fields: long-running workers.\n\n" +
+			"Both are declared in the Driftfile (`atomic.pulses` and `atomic.fields`) and booked " +
+			"as slots on the slice.",
+		Example: "  drift atomic list\n  drift atomic deploy ./atomic\n  drift atomic run ./atomic\n" +
+			"  drift atomic fields\n  drift atomic new",
 		GroupID: "services",
 	}
 
@@ -39,6 +44,7 @@ func GetCmd() *cobra.Command {
 		cmd.Auth(),
 		cmd.Delete(),
 		cmd.Element(),
+		cmd.Fields(),
 		cmd.List(),
 		cmd.Logs(),
 		cmd.Metrics(),

@@ -1,0 +1,21 @@
+slice: shop
+
+atomic:
+  # Every request the slice answers.
+  pulses: # one call, one result
+    - route: ping
+      method: get
+      handler: GetPing
+  fields:
+    - name: sequencer
+      handler: Sequencer
+      memory: 32MB
+
+environments:
+  staging:
+    atomic:
+      pulses:
+        - route: ping
+          method: get
+          handler: GetPingStaging
+  prod: {}

@@ -41,7 +41,7 @@ func TestReportOrphanedFunctions_NamesTheRouteTheManifestDropped(t *testing.T) {
 	if strings.Contains(got, "post:auth/challenge") {
 		t.Errorf("a function the manifest still names is not an orphan, got %q", got)
 	}
-	if !strings.Contains(got, "drift atomic delete groups/:id") {
+	if !strings.Contains(got, "drift atomic delete get:groups/:id") {
 		t.Errorf("the report must carry the command that frees the slot, got %q", got)
 	}
 	if !strings.Contains(got, "slot") {
@@ -77,6 +77,25 @@ func TestReportOrphanedFunctions_AQueueHandlerIsNotAnOrphan(t *testing.T) {
 
 	if out.Len() != 0 {
 		t.Errorf("a declared queue handler must not report as an orphan, got %q", out.String())
+	}
+}
+
+// A deployed Field is matched by its booking key like any slot: a declared one
+// is not an orphan, and one the Driftfile dropped is named with the key the
+// delete command takes.
+func TestReportOrphanedFunctions_AFieldIsMatchedByItsKey(t *testing.T) {
+	m := manifestWithField([]string{"get:ping"}, "sequencer")
+	deployed := deployedSet("get:ping", "field:sequencer", "field:old-worker")
+
+	var out bytes.Buffer
+	ReportOrphanedFunctions(m, deployed, &out)
+
+	got := out.String()
+	if strings.Contains(got, "field:sequencer") {
+		t.Errorf("a declared Field is not an orphan, got %q", got)
+	}
+	if !strings.Contains(got, "drift atomic delete field:old-worker") {
+		t.Errorf("the dropped Field must be named with the key delete takes, got %q", got)
 	}
 }
 

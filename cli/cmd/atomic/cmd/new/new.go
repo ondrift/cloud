@@ -103,7 +103,7 @@ func New() *cobra.Command {
 	var lang, method, queue, auth, element string
 	c := &cobra.Command{
 		Use:     "new [name]",
-		Short:   "Add an Atomic function to an element",
+		Short:   "Add a pulse to an element",
 		GroupID: "development",
 		Args:    cobra.MaximumNArgs(1),
 		Example: "  drift atomic new\n" +
@@ -120,7 +120,7 @@ func New() *cobra.Command {
 	}
 	c.Flags().StringVarP(&lang, "lang", "l", "", "language: go|python|node|ruby|php|rust")
 	c.Flags().StringVarP(&method, "method", "m", "", "HTTP method: get|post|put|delete|patch")
-	c.Flags().StringVarP(&queue, "queue", "q", "", "queue name (creates a queue-triggered function)")
+	c.Flags().StringVarP(&queue, "queue", "q", "", "queue name (creates a queue-triggered pulse)")
 	c.Flags().StringVarP(&auth, "auth", "a", "", "auth for HTTP: "+strings.Join(AuthOptions, "|")+" (default none)")
 	c.Flags().StringVarP(&element, "element", "e", "", "element to add it to (default: the flat top-level element)")
 	return c
@@ -129,7 +129,7 @@ func New() *cobra.Command {
 func runNew(name, lang, method, queue, auth, element string) error {
 	// ---- name ----
 	if name == "" {
-		if err := survey.AskOne(&survey.Input{Message: "Function name (e.g. send-email):"}, &name,
+		if err := survey.AskOne(&survey.Input{Message: "Pulse name (e.g. send-email):"}, &name,
 			survey.WithValidator(survey.Required)); err != nil {
 			return err
 		}
@@ -323,7 +323,7 @@ func runNew(name, lang, method, queue, auth, element string) error {
 		return nil
 	}
 
-	fmt.Printf("\nDeclare it in your Driftfile, under atomic.functions:\n\n")
+	fmt.Printf("\nDeclare it in your Driftfile, under atomic.pulses:\n\n")
 	if isQueue {
 		fmt.Printf("    - route: %s\n", queue)
 		fmt.Printf("      method: queue\n")

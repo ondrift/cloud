@@ -23,6 +23,7 @@ package project
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -178,7 +179,15 @@ single slice otherwise.`,
 			// A build failure is not reported here: applyAtomic already surfaces a
 			// missing handler or a mixed-language element with the message built
 			// for it, and pre-empting that would report the wrong cause.
-			if els, berr := atomic_cmd.BuildElements(FunctionSpecs(m)); berr == nil {
+			//
+			// A Field written in anything but Go IS reported here: BuildElements
+			// refuses it before anything is built, and that refusal is the
+			// message, so it is returned rather than left to applyAtomic.
+			els, berr := atomic_cmd.BuildElements(AtomicSpecs(m))
+			if errors.Is(berr, atomic_cmd.ErrFieldLanguage) {
+				return berr
+			}
+			if berr == nil {
 				if err := CheckCompiledBookings(m, els); err != nil {
 					return err
 				}
@@ -287,7 +296,7 @@ single slice otherwise.`,
 			// "not known".
 			deployedFns, derr := atomic_cmd.DeployedFunctions()
 			if derr != nil {
-				fmt.Printf("  %s couldn't check for functions the Driftfile no longer names: %v\n",
+				fmt.Printf("  %s couldn't check for pulses or fields the Driftfile no longer names: %v\n",
 					common.Hint("·"), derr)
 			} else {
 				ReportOrphanedFunctions(m, deployedFns, os.Stdout)
@@ -414,7 +423,7 @@ single slice otherwise.`,
 	}
 
 	cmd.Flags().BoolVar(&planOnly, "plan", false, "Print what this file would deploy, and exit")
-	cmd.Flags().BoolVar(&atomicForce, "force", false, "Redeploy every function even if its source is unchanged")
+	cmd.Flags().BoolVar(&atomicForce, "force", false, "Redeploy every pulse and field even if its source is unchanged")
 	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm prompts (for CI)")
 
 	// Two flags that no longer have anything to act on: apply neither creates a
@@ -479,9 +488,16 @@ func runPlan(m *Manifest, live *LiveSlice) error {
 	fmt.Printf("  %s → slice %s\n\n", common.Hint("apply"), common.Highlight(m.Name()))
 
 	specs := FunctionSpecs(m)
-	fmt.Printf("  functions (%d)\n", len(specs))
+	fmt.Printf("  pulses (%d)\n", len(specs))
 	for _, s := range specs {
 		fmt.Printf("    %s %s\n", common.Hint("·"), s.Name)
+	}
+	if fields := FieldSpecs(m); len(fields) > 0 {
+		fmt.Printf("\n  fields (%d)\n", len(fields))
+		for _, f := range fields {
+			_, name := f.Wire()
+			fmt.Printf("    %s %s\n", common.Hint("·"), name)
+		}
 	}
 
 	sites, err := canvasSites(m)
@@ -581,15 +597,17 @@ func waitForSliceReady(name string) error { return common.WaitForSliceReady(name
 // It reads the manifest and nothing else, so it costs no filesystem access and
 // runs before anything is built.
 func checkRouteCollisions(m *Manifest) error {
-	return atomic_cmd.CheckCollisions(FunctionSpecs(m))
+	return atomic_cmd.CheckCollisions(AtomicSpecs(m))
 }
 
-// applyAtomic ships every function the Driftfile declares, element by element.
+// applyAtomic ships every Pulse and Field the Driftfile declares, element by
+// element.
 //
-// There is ONE path. Which functions exist, which element each belongs to and
-// how each is guarded all come from the manifest, so the deploy no longer has a
-// layout to detect: an element is a group of declared functions, and its
-// directory follows from its name.
+// There is ONE path. Which slots exist, which element each belongs to and how
+// each is guarded all come from the manifest, so the deploy no longer has a
+// layout to detect: an element is a group of declared slots, and its directory
+// follows from its name. A Field is built in its element beside the Pulses,
+// with its own entry point.
 func applyAtomic(m *Manifest, out io.Writer) error {
 	// Publish the Driftfile's declared schedules before anything ships. Every
 	// deploy path reads them while building its artifact, and the operator —
@@ -597,7 +615,7 @@ func applyAtomic(m *Manifest, out io.Writer) error {
 	// envelope on the way in.
 	atomic_cmd.SetDeclaredSchedules(declaredSchedules(m))
 
-	specs := FunctionSpecs(m)
+	specs := AtomicSpecs(m)
 	if len(specs) == 0 {
 		return nil
 	}
@@ -643,7 +661,7 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 		if d, err := atomic_cmd.DeployedDigests(); err == nil {
 			deployed = d
 		} else {
-			fmt.Fprintf(out, "  %s couldn't check which functions are unchanged — deploying all\n", common.Hint("·"))
+			fmt.Fprintf(out, "  %s couldn't check which pulses and fields are unchanged, so deploying all of them\n", common.Hint("·"))
 		}
 	}
 

@@ -31,7 +31,7 @@ func writeManifest(t *testing.T, body string) string {
 // A queue trigger whose queue the file never declares is reported, and the
 // document is what answers it: the live slice carries a depth and no names.
 func TestCheckQueueReferences_NamesAnUndeclaredQueue(t *testing.T) {
-	m := manifestFrom(Node{"slice": "demo", "atomic": map[string]any{"functions": []any{
+	m := manifestFrom(Node{"slice": "demo", "atomic": map[string]any{"pulses": []any{
 		map[string]any{"name": "queue:orders", "handler": "HandleOrder"},
 	}}})
 

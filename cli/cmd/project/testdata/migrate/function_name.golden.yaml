@@ -1,6 +1,6 @@
 slice: shop
 atomic:
-  functions:
+  pulses:
     - route: auth/challenge   # the login step
       method: post
       handler: PostChallenge

@@ -166,7 +166,7 @@ func getLintCmd() *cobra.Command {
 			// for review, or one sitting in a directory whose source has not been
 			// checked out — and calling that invalid would refuse a file that is fine.
 			if _, serr := os.Stat(m.ResolvePath("atomic")); serr == nil {
-				els, berr := atomic_cmd.BuildElements(project.FunctionSpecs(m))
+				els, berr := atomic_cmd.BuildElements(project.AtomicSpecs(m))
 				if berr != nil {
 					return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), berr)
 				}

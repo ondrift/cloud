@@ -52,6 +52,9 @@ var defaultNativeServerPost string
 //go:embed default/server_get_native.txt
 var defaultNativeServerGet string
 
+//go:embed default/field_native.txt
+var defaultNativeField string
+
 //go:embed default/wrapper_post_python.txt
 var wrapperPostPython string
 
@@ -99,9 +102,15 @@ func safeTmpName(name string) string {
 // first-parameter type (goBodyType) rather than a hardcoded name, so several
 // POST handlers can coexist in one element — each with its own body struct —
 // without colliding on a shared `RequestBody`.
+//
+// A Field gets an entry point of its own: no request is read, the handler runs
+// until the slice asks it to stop, and the exit status says whether it stopped
+// because it was asked to. See default/field_native.txt.
 func generateMain(dir, funcName, method string) error {
 	var code string
 	switch method {
+	case FieldMethod:
+		code = strings.NewReplacer("{{FUNC}}", funcName).Replace(defaultNativeField)
 	case "post", "put", "delete", "patch", "queue":
 		code = strings.NewReplacer("{{FUNC}}", funcName, "{{BODYTYPE}}", goBodyType(dir, funcName)).
 			Replace(defaultNativeServerPost)
@@ -459,6 +468,16 @@ func invocationProtocol(language string) string {
 	return ""
 }
 
+// slotProtocol is invocationProtocol for one slot. A Field is Go but reads no
+// envelopes at all, so it declares none: "loop" would tell the slice it may hand
+// the process a request, and nothing ever does.
+func slotProtocol(method, language string) string {
+	if method == FieldMethod {
+		return ""
+	}
+	return invocationProtocol(language)
+}
+
 func operatorSink(a FuncArtifact) error {
 	name, method, language, auth, element, stream := a.Name, a.Method, a.Language, a.Auth, a.Element, a.Stream
 	secrets, sourcePath, userSourcePath, triggers, digest := a.Secrets, a.SourcePath, a.UserSourcePath, a.Triggers, a.Digest
@@ -482,7 +501,7 @@ func operatorSink(a FuncArtifact) error {
 		// (#PLATFORM-CORE-OPERATOR-5JPT4H). Empty for compiled languages.
 		"source_module": a.SourceModule,
 		"entry_func":    a.EntryFunc,
-		"protocol":      invocationProtocol(language),
+		"protocol":      slotProtocol(method, language),
 		// The declared reply shape. Sent even when empty so the field is present
 		// on the wire: the operator and the slice both read it, and this is the
 		// first of the three parsers it has to survive.
@@ -602,6 +621,12 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	}
 	language, sourceFile := atomic_common.BuildLanguage(callable.Language), callable.SourceFile
 
+	// The one-function path reaches here without BuildElements, so it applies
+	// the Field language rule itself, from the same owner.
+	if err := refuseNonGoField(spec, language); err != nil {
+		return err
+	}
+
 	// Catch a common footgun before building: a function that uses the SDK
 	// but ships no dependency manifest to declare it — otherwise it deploys
 	// fine and then fails cryptically at runtime ("No module named 'drift'").
@@ -615,21 +640,30 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 		if atomic_common.IsGo(langLabel) {
 			langLabel = "go"
 		}
-		if q := spec.QueueSource(); q != "" {
+		switch q := spec.QueueSource(); {
+		case spec.IsField():
+			fmt.Printf("Deploying field '%s' (%s)\n", name, langLabel)
+		case q != "":
 			fmt.Printf("Deploying queue handler '%s' (%s, source: %s)\n", name, langLabel, q)
-		} else {
-			// Org-only routing: a function is served at /<name>; the element is
+		default:
+			// Org-only routing: a pulse is served at /<name>; the element is
 			// never a route segment.
-			fmt.Printf("Deploying function '%s /%s' (%s, auth: %s)\n", method, name, langLabel, auth)
+			fmt.Printf("Deploying pulse '%s /%s' (%s, auth: %s)\n", method, name, langLabel, auth)
 		}
 	}
 
 	// A `// drift:trigger queue NAME` comment binds an EXTRA queue to a
 	// function that already has its own trigger — a handler consuming from
 	// several queues. It stacks with the one the Driftfile declares.
-	triggers, err := parseTriggerComments(absFolder)
-	if err != nil {
-		return fmt.Errorf("failed to parse trigger comments: %w", err)
+	//
+	// A Field takes none: nothing invokes it, and the operator refuses a Field
+	// that carries a trigger.
+	var triggers []TriggerSpec
+	if !spec.IsField() {
+		triggers, err = parseTriggerComments(absFolder)
+		if err != nil {
+			return fmt.Errorf("failed to parse trigger comments: %w", err)
+		}
 	}
 	// A `// drift:schedule` comment is refused rather than honoured — it worked
 	// on this path alone and was invisible to `drift file apply`. See
@@ -719,7 +753,11 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	}
 
 	if !quiet {
-		fmt.Printf("  Function '%s /%s' deployed successfully!\n", method, name)
+		if spec.IsField() {
+			fmt.Printf("  Field '%s' deployed successfully!\n", name)
+		} else {
+			fmt.Printf("  Pulse '%s /%s' deployed successfully!\n", method, name)
+		}
 	}
 	return nil
 }
@@ -733,11 +771,11 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 func Deploy(resolve func(dir string) ([]FunctionSpec, error)) *cobra.Command {
 	atomicDeployCmd := &cobra.Command{
 		Use:   "deploy [function folder]",
-		Short: "Deploy the functions declared in one folder",
-		Long: "Build and ship every function the project's Driftfile declares in <folder>, " +
+		Short: "Deploy the pulses and fields declared in one folder",
+		Long: "Build and ship every pulse and field the project's Driftfile declares in <folder>, " +
 			"leaving the rest of the project alone.\n\n" +
-			"What each function is — its trigger, the handler that serves it, the memory it " +
-			"books, its gate and its secrets — comes from the Driftfile, so this command " +
+			"What each one is (the handler that runs it, the memory it books, its secrets and, " +
+			"for a pulse, its trigger and gate) comes from the Driftfile, so this command " +
 			"deploys a subset of the manifest and never something the manifest has not seen.",
 		Example: "  drift atomic deploy ./atomic\n  drift atomic deploy ./atomic/billing",
 		GroupID: "operations",
