@@ -178,6 +178,14 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	applyKeyDeprecations(m.doc, driftfileKeyDeprecations)
 	applyKeyDeprecations(m.slice, driftfileKeyDeprecations)
 
+	// Every element's Pulses and Fields, flattened into the two lists every
+	// reader consumes. On the slice alone: the document keeps the nested shape
+	// the environment merge reads, and each merged slice is flattened on its own
+	// (see elements.go).
+	if err := normaliseElements(m.slice, warnElementTag); err != nil {
+		return nil, err
+	}
+
 	// A function's identity, in whichever spelling it was written, resolved to
 	// the one string the platform books against.
 	//
@@ -187,9 +195,9 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	normaliseFunctionIdentities(m.doc)
 	normaliseFunctionIdentities(m.slice)
 
-	// A Field may not share its name with a Pulse's route: the slice keys logs
-	// and metrics by that bare name. Refused here, before anything is built.
-	if err := checkFieldPulseNames(m.slice); err != nil {
+	// Two slots on one booking key, or a Field named like a Pulse route,
+	// anywhere in the slice. Refused here, before anything is built.
+	if err := checkSlotIdentities(m.slice); err != nil {
 		return nil, err
 	}
 
@@ -386,7 +394,9 @@ func checkLocalPaths(m *Manifest) ParseErrors {
 	// is not the one most projects use. Without a `dir`, the directory comes
 	// from the function's element, which is checked when the element is built.
 	//
-	// A Field's `dir` is the same question, asked of `atomic.fields`.
+	// A Field's `dir` is the same question, asked of `atomic.fields`. An entry
+	// declared inside an element, or given its element's `dir`, is named by its
+	// element: its index in the flattened list is not a position in the file.
 	for _, list := range []struct {
 		key, noun string
 		entries   []Node
@@ -401,8 +411,12 @@ func checkLocalPaths(m *Manifest) ParseErrors {
 			}
 			dir := resolveBaseDir(m, declared)
 			if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-				errs = append(errs, fmt.Sprintf("atomic.%s[%d]: %s %q declares dir %s, which is not a directory",
-					list.key, i, list.noun, fn.Str("name"), dir))
+				where := fmt.Sprintf("atomic.%s[%d]", list.key, i)
+				if el := fn.Str("element"); el != "" {
+					where = fmt.Sprintf("element %q", el)
+				}
+				errs = append(errs, fmt.Sprintf("%s: %s %q declares dir %s, which is not a directory",
+					where, list.noun, fn.Str("name"), dir))
 			}
 		}
 	}
@@ -612,6 +626,13 @@ func (m *Manifest) SelectEnvironment(env string, explicit bool) (string, error) 
 	base := m.Name()
 	m.slice = m.mergeEnvironment(env)
 
+	// The merge reads the document, whose elements are still nested, so the
+	// merged result is flattened here, after the overlay's lists have replaced
+	// the base's.
+	if err := normaliseElements(m.slice, warnElementTag); err != nil {
+		return "", err
+	}
+
 	// The overlay arrives as written, and a list REPLACES the base's. An
 	// overlay restating `atomic.functions` in the route/method spelling would
 	// otherwise reach every reader with no composite identity, so each function
@@ -619,9 +640,9 @@ func (m *Manifest) SelectEnvironment(env string, explicit bool) (string, error) 
 	// merged result gets the same pass.
 	normaliseFunctionIdentities(m.slice)
 
-	// The overlay can introduce a Field or a Pulse, so the merged result is
-	// checked again for a Field sharing a Pulse's name.
-	if err := checkFieldPulseNames(m.slice); err != nil {
+	// The overlay can introduce a Pulse or a Field, so the merged result is
+	// checked again for two slots on one key and a Field sharing a Pulse's name.
+	if err := checkSlotIdentities(m.slice); err != nil {
 		return "", err
 	}
 

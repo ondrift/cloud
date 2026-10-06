@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -332,7 +333,9 @@ canvas: ./canvas
 		t.Errorf("get:items + post:items are distinct functions, should not collide: %v", err)
 	}
 
-	// The same identity twice, on two different handlers.
+	// The same identity twice, on two different handlers. The parse refuses it,
+	// naming the key, before any spec exists; the collision check is the same
+	// rule over the specs a deploy is handed.
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
 name: shop
 atomic:
@@ -345,11 +348,12 @@ atomic:
       memory: 32MB
 canvas: ./canvas
 `)
-	m2, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
-	if err != nil {
-		t.Fatalf("ParseDriftfile failed: %v", err)
+	_, err = ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err == nil || !strings.Contains(err.Error(), `the pulse "post:items" is declared 2 times`) {
+		t.Errorf("the parse must refuse two post:items, naming the key, got %v", err)
 	}
-	err = checkRouteCollisions(m2)
+	twice := append(FunctionSpecs(m), FunctionSpecs(m)[1])
+	err = atomic_cmd.CheckCollisions(twice)
 	if err == nil {
 		t.Fatal("expected a collision error for two post:items, got nil")
 	}

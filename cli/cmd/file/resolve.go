@@ -111,13 +111,13 @@ func printResolved(m *project.Manifest, env string) {
 	if pulses := project.PulseEntries(s); len(pulses) > 0 {
 		fmt.Printf("\n  pulses (%d)\n", len(pulses))
 		for _, p := range pulses {
-			fmt.Printf("    · %s\n", p.Str("name"))
+			fmt.Printf("    · %s%s\n", p.Str("name"), inElement(p))
 		}
 	}
 	if fields := project.FieldEntries(s); len(fields) > 0 {
 		fmt.Printf("\n  fields (%d)\n", len(fields))
 		for _, f := range fields {
-			fmt.Printf("    · %s\n", f.Str("name"))
+			fmt.Printf("    · %s%s\n", f.Str("name"), inElement(f))
 		}
 	}
 	if sites := s.Entries("dir", "canvas", "sites"); len(sites) > 0 {
@@ -175,4 +175,13 @@ func printResolved(m *project.Manifest, env string) {
 		fmt.Printf("\n  %s %s\n", common.Hint("environments:"), strings.Join(envs, ", "))
 	}
 	fmt.Printf("\n  %s\n", common.Hint("cost comes from the server — drift file apply --plan"))
+}
+
+// inElement names the element a resolved Pulse or Field belongs to, and nothing
+// for the default element.
+func inElement(entry project.Node) string {
+	if el := entry.Str("element"); el != "" {
+		return "  " + common.Hint("(element "+el+")")
+	}
+	return ""
 }

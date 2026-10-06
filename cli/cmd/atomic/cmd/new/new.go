@@ -323,25 +323,58 @@ func runNew(name, lang, method, queue, auth, element string) error {
 		return nil
 	}
 
-	fmt.Printf("\nDeclare it in your Driftfile, under atomic.pulses:\n\n")
+	route := name
 	if isQueue {
-		fmt.Printf("    - route: %s\n", queue)
-		fmt.Printf("      method: queue\n")
-	} else {
-		fmt.Printf("    - route: %s\n", name)
-		fmt.Printf("      method: %s\n", method)
+		route = queue
 	}
-	fmt.Printf("      handler: %s\n", funcName)
-	if auth != "none" {
-		fmt.Printf("      auth: %s\n", auth)
-	}
-	if elementID != defaultElement {
-		fmt.Printf("      element: %s\n", elementID)
+	snippet := declarationSnippet(route, funcMethod, funcName, auth, elementID)
+	fmt.Printf("\n%s\n\n", snippet.intro)
+	for _, line := range strings.Split(strings.TrimSuffix(snippet.body, "\n"), "\n") {
+		fmt.Printf("    %s\n", line)
 	}
 	fmt.Printf("\nThen:\n")
 	fmt.Printf("\tdrift file apply      # ship it\n")
 	fmt.Printf("\tdrift file benchmark  # what it has actually cost, once it has served traffic\n")
 	return nil
+}
+
+// snippet is the Driftfile declaration `drift atomic new` prints: the sentence
+// saying where it goes, and the YAML to paste there.
+type snippet struct {
+	intro string
+	body  string
+}
+
+// declarationSnippet is the entry declaring a new Pulse, in the element it was
+// added to. A Pulse is declared inside the element its handler lives in, so a
+// named element's snippet is that element's block in `atomic.elements`, holding
+// the entry; the default element's is the bare entry for `atomic.pulses`.
+func declarationSnippet(route, method, handler, auth, element string) snippet {
+	var entry strings.Builder
+	fmt.Fprintf(&entry, "- route: %s\n", route)
+	fmt.Fprintf(&entry, "  method: %s\n", method)
+	fmt.Fprintf(&entry, "  handler: %s\n", handler)
+	if auth != "" && auth != "none" {
+		fmt.Fprintf(&entry, "  auth: %s\n", auth)
+	}
+
+	if element == "" || element == defaultElement {
+		return snippet{
+			intro: "Declare it in your Driftfile, under atomic.pulses:",
+			body:  entry.String(),
+		}
+	}
+	var body strings.Builder
+	fmt.Fprintf(&body, "- name: %s\n", element)
+	body.WriteString("  pulses:\n")
+	for _, line := range strings.Split(strings.TrimSuffix(entry.String(), "\n"), "\n") {
+		body.WriteString("    " + line + "\n")
+	}
+	return snippet{
+		intro: fmt.Sprintf("Declare it in your Driftfile, in the %q element under atomic.elements "+
+			"(add the element if it is not there yet, or just its pulses entry if it is):", element),
+		body: body.String(),
+	}
 }
 
 // HandlerName is the callable the scaffolder writes and names in the Driftfile

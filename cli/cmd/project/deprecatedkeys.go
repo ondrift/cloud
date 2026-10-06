@@ -116,6 +116,8 @@ var shapeKeys = []common.KeyDeprecation{
 	// A Field has no entry here because the format never gave it a `memory`
 	// key: its booking has always been the slice shape's.
 	ignoredShapeKey("atomic.pulses[].memory", "A pulse's memory booking is a slice setting"),
+	// The same key on a Pulse declared inside an element.
+	ignoredShapeKey("atomic.elements[].pulses[].memory", "A pulse's memory booking is a slice setting"),
 
 	ignoredShapeKey("backbone.blob_max_size", "Blob size limits are a slice setting"),
 	ignoredShapeKey("backbone.blob_max_count", "Blob count limits are a slice setting"),

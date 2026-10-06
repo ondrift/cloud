@@ -86,6 +86,28 @@ func TestMigrateGolden(t *testing.T) {
 			"atomic.functions -> atomic.pulses",
 			"environments.staging.atomic.functions -> environments.staging.atomic.pulses",
 		}},
+		// A 1.19 file: the list renamed, a retired name split inside an entry
+		// that moves, every tagged entry moved into its element in first-seen
+		// order with its comments, `element: default` dropped in place, a tag
+		// written as an entry's first key, and the same inside an overlay.
+		{name: "elements_functions", steps: []string{
+			"atomic.functions -> atomic.pulses",
+			"atomic.pulses[].name -> atomic.pulses[].route + method",
+			"atomic.pulses[].element -> atomic.elements[].pulses",
+			"atomic.pulses[].element -> atomic.elements[].pulses",
+			"atomic.pulses[].element -> atomic.pulses[]",
+			"atomic.pulses[].element -> atomic.elements[].pulses",
+			"environments.staging.atomic.functions -> environments.staging.atomic.pulses",
+			"environments.staging.atomic.pulses[].element -> environments.staging.atomic.elements[].pulses",
+		}, kept: []string{"atomic.pulses[].memory"}},
+		// The fxevm testnode's flat 1.20 file, byte for byte: Pulses and a Field
+		// tagged with two elements, each list emptied and removed.
+		{name: "elements_testnode", steps: []string{
+			"atomic.pulses[].element -> atomic.elements[].pulses",
+			"atomic.pulses[].element -> atomic.elements[].pulses",
+			"atomic.pulses[].element -> atomic.elements[].pulses",
+			"atomic.fields[].element -> atomic.elements[].fields",
+		}},
 		{name: "realistic", steps: []string{
 			"domains -> edge.domains",
 			"atomic.egress -> edge.egress",
@@ -177,6 +199,124 @@ func TestMigrateAlreadyCurrentChangesNothing(t *testing.T) {
 		t.Errorf("a current file was rewritten:\n%s", got.Output)
 	}
 	assertAppliesWithoutAMigrationNotice(t, src)
+}
+
+// A file already declaring its Pulses and Fields inside elements, with an
+// element's env and secrets, flow-style entries, a top-level default list and
+// an overlay, comes back byte for byte.
+func TestMigrateAlreadyNestedChangesNothing(t *testing.T) {
+	withMigrateSchema(t)
+	src := readFixture(t, "elements_nested.yaml")
+	if err := ValidateDriftfileSource(src); err != nil {
+		t.Fatalf("the input is not a document the schema fixture accepts, so it tests nothing:\n%v", err)
+	}
+
+	got, err := MigrateDriftfile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Changed() || len(got.Steps) != 0 || !bytes.Equal(got.Output, src) {
+		t.Errorf("a nested file was rewritten (%+v):\n%s", got.Steps, got.Output)
+	}
+	assertAppliesWithoutAMigrationNotice(t, src)
+}
+
+// Moving tagged entries into an element `atomic.elements` already declares
+// appends them to that element's list, or gives it the list, and appends an
+// element it lacks after the existing ones.
+func TestMigrateMergesIntoDeclaredElements(t *testing.T) {
+	withMigrateSchema(t)
+	src := []byte(`slice: shop
+atomic:
+  pulses:
+    - route: refund
+      method: post
+      handler: PostRefund
+      element: payments
+    - route: thumbs
+      method: get
+      handler: GetThumbs
+      element: images
+  fields:
+    - name: settler
+      handler: Settler
+      element: payments
+  elements:
+    - name: payments
+      pulses:
+        - route: charge
+          method: post
+          handler: PostCharge
+`)
+	want := `slice: shop
+atomic:
+  elements:
+    - name: payments
+      pulses:
+        - route: charge
+          method: post
+          handler: PostCharge
+        - route: refund
+          method: post
+          handler: PostRefund
+      fields:
+        - name: settler
+          handler: Settler
+    - name: images
+      pulses:
+        - route: thumbs
+          method: get
+          handler: GetThumbs
+`
+	if err := ValidateDriftfileSource(src); err != nil {
+		t.Fatalf("the input is not a valid document:\n%v", err)
+	}
+	got, err := MigrateDriftfile(src)
+	if err != nil {
+		t.Fatalf("migrate refused:\n%v", err)
+	}
+	if string(got.Output) != want {
+		t.Errorf("output:\n--- got ---\n%s--- want ---\n%s", got.Output, want)
+	}
+	if err := ValidateDriftfileSource(got.Output); err != nil {
+		t.Errorf("the migrated file does not validate:\n%v", err)
+	}
+}
+
+// An entry carrying its tag in a form migrate cannot lift out line by line is
+// refused, naming the line and what to write instead, and nothing is changed.
+func TestMigrateRefusesATagItCannotMove(t *testing.T) {
+	cases := map[string]struct {
+		doc  string
+		want string
+	}{
+		"a flow-style entry": {
+			doc:  "slice: shop\natomic:\n  pulses:\n    - {route: ping, method: get, handler: GetPing, element: evm}\n",
+			want: "atomic.pulses[].element (line 4) is written in flow style",
+		},
+		"a flow-style list": {
+			doc:  "slice: shop\natomic:\n  pulses: [{route: ping, method: get, handler: GetPing, element: evm}]\n",
+			want: "atomic.pulses[].element (line 3) is written in flow style",
+		},
+		"an element that is not a plain block sequence": {
+			doc: "slice: shop\natomic:\n  pulses:\n    - route: ping\n      method: get\n      handler: GetPing\n      element: evm\n" +
+				"  elements: [{name: bench, pulses: [{route: bench, method: get, handler: GetBench}]}]\n",
+			want: "atomic.elements (line 8) is written in flow style",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			withMigrateSchema(t)
+			if err := ValidateDriftfileSource([]byte(tc.doc)); err != nil {
+				t.Fatalf("the input is not a valid document, so this proves nothing:\n%v", err)
+			}
+			_, err := MigrateDriftfile([]byte(tc.doc))
+			var refusal *MigrationRefusal
+			if !errors.As(err, &refusal) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want a refusal saying %q, got: %v", tc.want, err)
+			}
+		})
+	}
 }
 
 // Both spellings of one key is a document contradicting itself. Apply uses the
@@ -378,6 +518,7 @@ func TestMigrateNoticeCheckSeesTheUnmigratedFiles(t *testing.T) {
 	for _, name := range []string{
 		"slice_name", "nosql_slot", "canvas_path", "atomic_egress", "domains",
 		"rate_limit", "function_name", "overlay_only", "pulses", "realistic",
+		"elements_functions", "elements_testnode",
 	} {
 		t.Run(name, func(t *testing.T) {
 			withMigrateSchema(t)

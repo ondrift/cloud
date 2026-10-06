@@ -1,0 +1,48 @@
+# A 1.19 Driftfile: one list of functions, each tagged with its element.
+slice: shop
+
+atomic:
+  elements:
+    - name: payments
+      pulses:
+        # Charges a card; lives with the payment code.
+        - route: charge
+          method: post
+          handler: PostCharge
+          memory: 32MB
+          # the Go element
+
+        - route: refund
+          method: post
+          handler: PostRefund
+    - name: images
+      pulses:
+        # Thumbnails are Python.
+        - route: thumbs
+          method: queue
+          handler: thumbs_handler
+  # Every function the shop runs.
+  pulses:
+    # The storefront's one page.
+    - route: menu
+      method: get
+      handler: GetMenu
+
+    - route: ping
+      method: get
+      handler: GetPing
+
+backbone:
+  queues:
+    - thumbs
+
+environments:
+  prod: {}
+  staging:
+    atomic:
+      elements:
+        - name: payments
+          pulses:
+            - route: charge
+              method: post
+              handler: PostCharge

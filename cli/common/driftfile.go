@@ -182,6 +182,20 @@ func driftfileVersionOf(raw []byte) string {
 //
 // Bump it in the release that implements a format change.
 //
+// 1.21.0 covers elements as the container of Atomic's work. `atomic.elements`
+// lists each element (a folder holding one language's source and one
+// dependency manifest) with the Pulses and Fields whose handlers live in it,
+// and the element's `dir`, `env` and `secrets` apply to every one of them. The
+// top-level `atomic.pulses` and `atomic.fields` are the default element, and
+// their `element:` tag is deprecated: cmd/project/elements.go flattens every
+// element into those two lists, each entry carrying its element, its directory,
+// its env merged over the element's and the union of both secrets lists, so
+// every reader downstream sees the one model it always read. The same pass
+// refuses what the schema cannot express: an element declared twice, the
+// default element declared both in `elements` and at the top level, a route or
+// a Field name declared twice anywhere in the slice, and a Field named like a
+// Pulse route. `drift file migrate` moves each tagged entry into its element.
+//
 // 1.20.0 covers Atomic's two kinds of work. `atomic.pulses` is what
 // `atomic.functions` was, one call and one result, and the old key stays legal
 // as an ALIAS: cmd/project/deprecatedkeys.go renames it in place, at the root and
@@ -241,7 +255,7 @@ func driftfileVersionOf(raw []byte) string {
 // `backbone.secrets` — no constraint, no pattern, nothing that changes what
 // validates — which is a PATCH under the schema's own versioning rule and
 // therefore nothing for a client to implement.
-const ImplementedDriftfileFormat = "1.20.0"
+const ImplementedDriftfileFormat = "1.21.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every
 // authenticated request.

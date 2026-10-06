@@ -56,7 +56,7 @@ var canonicalOrder = []string{
 // sectionOrder is the same idea one level down, for the sections whose shape is
 // known. Sections not listed here are left in the order the user wrote them.
 var sectionOrder = map[string][]string{
-	"atomic":   {"function_timeout", "rate_limit", "deploy_history", "egress", "functions", "pulses", "fields"},
+	"atomic":   {"function_timeout", "rate_limit", "deploy_history", "egress", "elements", "functions", "pulses", "fields"},
 	"backbone": {"secrets", "nosql", "sql", "queues", "blobs", "cache", "realtime"},
 	"canvas":   {"canvas_size", "sites"},
 	"edge":     {"egress", "domains", "rate_limit", "site_auth", "links", "allow", "hosts"},

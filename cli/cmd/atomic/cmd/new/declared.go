@@ -33,12 +33,17 @@ import (
 // fail-open rule is for: this answers for the base list, and when the base list
 // does not name the pulse the snippet is printed.
 //
-// Both spellings of the list are read, `pulses` and the retired `functions`,
-// because this never runs the key walker that renames one onto the other.
+// Both spellings of the top-level list are read, `pulses` and the retired
+// `functions`, because this never runs the key walker that renames one onto the
+// other; and so is every element's `pulses`, where a Pulse is declared when its
+// handler lives in a named element.
 type driftfileRoutes struct {
 	Atomic struct {
 		Pulses    []declaredPulse `yaml:"pulses"`
 		Functions []declaredPulse `yaml:"functions"`
+		Elements  []struct {
+			Pulses []declaredPulse `yaml:"pulses"`
+		} `yaml:"elements"`
 	} `yaml:"atomic"`
 }
 
@@ -70,7 +75,11 @@ func declaredRoute(funcMethod, name, queue string, isQueue bool) bool {
 	if yaml.Unmarshal(data, &df) != nil {
 		return false
 	}
-	for _, fn := range append(df.Atomic.Pulses, df.Atomic.Functions...) {
+	all := append(df.Atomic.Pulses, df.Atomic.Functions...)
+	for _, el := range df.Atomic.Elements {
+		all = append(all, el.Pulses...)
+	}
+	for _, fn := range all {
 		if fn.Route == route && strings.EqualFold(fn.Method, method) {
 			return true
 		}

@@ -1,0 +1,65 @@
+slice: fxevm-testnode
+
+atomic:
+  elements:
+    - name: evm
+      pulses:
+        # JSON-RPC multiplexes on a body field, not a path, so the whole node
+        # answers on this one route. Reads (eth_call, eth_getBalance, eth_getLogs,
+        # eth_getBlockBy*, ...) run here, concurrently, against SQL. Writes
+        # (eth_sendRawTransaction, eth_sendTransaction, evm_*, hardhat_set*) are
+        # enqueued on `txs` for the sequencer, and this Pulse waits for its own
+        # commit before answering. `response: json` escapes the
+        # {status,message,payload} envelope: no Ethereum client could parse it.
+        # Needs 64 MiB of RAM to work.
+        - route: rpc
+          method: post
+          handler: PostRPC
+          response: json
+
+        # Destructive, so it gets a key. Enqueued like any write, so a reset is
+        # ordered against everything before it.
+        # Needs 16 MiB of RAM to work.
+        - route: admin/reset
+          method: post
+          handler: PostReset
+          auth: apikey
+          response: json
+      fields:
+        # The chain's single writer. Exactly one runs on the slice, supervised:
+        # restarted if it exits, drained before a deploy replaces it. It drains
+        # `txs` in order (transactions, evm_mine, evm_snapshot/evm_revert,
+        # hardhat_set*), executes each, commits the block to SQL, and publishes
+        # the new head on Realtime. Hot state is cached in memory; SQL stays the
+        # source of truth, so a restarted sequencer rebuilds from it and loses
+        # nothing. It also owns time: interval mining when automine is off,
+        # reaping abandoned filters, compacting old state generations.
+        #
+        # Handler shape: func Sequencer(ctx context.Context) error, returning when
+        # ctx is cancelled (the slice sends SIGTERM before a deploy or a stop).
+        # Needs 64 MiB of RAM to work.
+        - name: sequencer
+          handler: Sequencer
+    - name: bench
+      pulses:
+        # Day-one probe: does a geth-linked Go binary fit? It does (27 MiB peak);
+        # delete once nothing reads it.
+        # Needs 32 MiB of RAM to work.
+        - route: bench
+          method: get
+          handler: GetBench
+          response: json
+
+backbone:
+  sql:
+    # Everything: chain index, versioned state, and contract bytecode, which
+    # lives in `state` as hex beside the account it belongs to.
+    - name: chain
+      schema: ./backbone/chain.sql      # idempotent DDL, applied every deploy
+      seed:   ./backbone/genesis.sql    # runs only on first deploy
+  queues:
+    - txs                               # Every write, in arrival order: the ordering service.
+
+tests:
+  e2e:
+    - make -C ../source hardhat-tests

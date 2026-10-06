@@ -6,9 +6,10 @@ package project
 // The walker in deprecatedkeys.go rewrites the DOCUMENT `drift file apply`
 // reads, every time, in memory. This rewrites the FILE once, so the person
 // stops hearing about it. Everything it knows comes from the same places: the
-// registry (driftfileKeyDeprecations) says which key goes where, and the
-// identity split (functionidentity.go) says how a function's `name` becomes
-// `route` and `method`.
+// registry (driftfileKeyDeprecations) says which key goes where, the identity
+// split (functionidentity.go) says how a function's `name` becomes `route` and
+// `method`, and the elements pass (elements.go) says which element a tagged
+// entry belongs in; migrate_elements.go moves those entries.
 //
 // # It edits the text, guided by the node tree
 //
@@ -39,7 +40,9 @@ package project
 //   - a key to move that sits in flow style (`{ ... }`) or inside a YAML anchor
 //     that is used elsewhere, where a move would change every use of it;
 //   - a destination that is not a section;
-//   - a move that would put an alias before its anchor.
+//   - a move that would put an alias before its anchor;
+//   - a tagged entry, or the `atomic.elements` it moves into, written in flow
+//     style.
 
 import (
 	"errors"
@@ -134,6 +137,11 @@ func MigrateDriftfile(src []byte) (*Migration, error) {
 	if err := mg.applyInline(); err != nil {
 		return nil, err
 	}
+	// Elements before the moves into sections: an entry appended at the end of
+	// `atomic` belongs above a section created directly after it.
+	for _, p := range mg.elements {
+		mg.emitElements(p)
+	}
 	for _, b := range mg.blocks {
 		mg.emitBlock(b)
 	}
@@ -165,7 +173,9 @@ type migrator struct {
 	inline   map[int][]inlineEdit
 	deleted  map[int]bool
 	inserts  map[int][]string // after line N; 0 is before the first line
+	attached map[int][]string // created lines that belong to line N, and move or go with it
 	blocks   []moveBlock
+	elements []elementPlan
 	steps    []MigrationStep
 	kept     []KeptKey
 	refusals []string
@@ -219,11 +229,12 @@ type moveBlock struct {
 func newMigrator(src []byte, doc *yaml.Node) *migrator {
 	text := string(src)
 	mg := &migrator{
-		aliased: map[*yaml.Node]bool{},
-		seen:    map[*yaml.Node]bool{},
-		inline:  map[int][]inlineEdit{},
-		deleted: map[int]bool{},
-		inserts: map[int][]string{},
+		aliased:  map[*yaml.Node]bool{},
+		seen:     map[*yaml.Node]bool{},
+		inline:   map[int][]inlineEdit{},
+		deleted:  map[int]bool{},
+		inserts:  map[int][]string{},
+		attached: map[int][]string{},
 	}
 	mg.newline = strings.HasSuffix(text, "\n")
 	mg.orig = strings.Split(strings.TrimSuffix(text, "\n"), "\n")
@@ -298,6 +309,7 @@ func (mg *migrator) planRoot(r migrationRoot) {
 		}
 	}
 	mg.planSplits(r)
+	mg.planElements(r)
 	mg.planBlocks(r, moves)
 }
 
@@ -376,12 +388,21 @@ func (mg *migrator) planMove(r migrationRoot, h holder, k, v *yaml.Node, key com
 }
 
 // planSplits rewrites each Pulse's retired `name: method:route` into the
-// `route` and `method` pair, the derivation normaliseFunctionIdentities makes.
+// `route` and `method` pair, the derivation normaliseFunctionIdentities makes,
+// at the top level and inside every element. The `method` line is attached to
+// the key's line, so it moves with the entry when the entry moves into an
+// element.
 func (mg *migrator) planSplits(r migrationRoot) {
-	oldPath := r.prefix + functionNamePath
-	newPath := r.prefix + "atomic.pulses[].route + method"
+	for _, parent := range []string{"atomic.pulses[]", "atomic.elements[].pulses[]"} {
+		mg.planSplitsUnder(r, parent)
+	}
+}
+
+func (mg *migrator) planSplitsUnder(r migrationRoot, parent string) {
+	oldPath := r.prefix + parent + ".name"
+	newPath := r.prefix + parent + ".route + method"
 functions:
-	for _, h := range holdersWritten(r.node, "atomic.pulses[]") {
+	for _, h := range holdersWritten(r.node, parent) {
 		k, v := pairOf(h.node, "name")
 		if k == nil || mg.seen[k] {
 			continue
@@ -394,7 +415,7 @@ functions:
 		// ignored, and migrate does not choose which for them.
 		for _, half := range []string{"route", "method"} {
 			if hk, _ := pairOf(h.node, half); hk != nil {
-				mg.refuse(bothSpellings(oldPath, k.Line, r.prefix+"atomic.pulses[]."+half, hk.Line))
+				mg.refuse(bothSpellings(oldPath, k.Line, r.prefix+parent+"."+half, hk.Line))
 				continue functions
 			}
 		}
@@ -425,7 +446,7 @@ functions:
 			mg.addInline(v.Line, vs, ve, routeText+", method: "+method)
 		} else {
 			mg.addInline(v.Line, vs, ve, routeText)
-			mg.inserts[k.Line] = append(mg.inserts[k.Line], mg.newLine(strings.Repeat(" ", k.Column-1)+"method: "+method))
+			mg.attached[k.Line] = append(mg.attached[k.Line], mg.newLine(strings.Repeat(" ", k.Column-1)+"method: "+method))
 		}
 		mg.steps = append(mg.steps, MigrationStep{Line: k.Line, Old: oldPath, New: newPath})
 	}
@@ -694,8 +715,8 @@ func (mg *migrator) deleteSpan(sp span, collapse bool) {
 	}
 }
 
-// render writes the file: every line not deleted, with the insertions after
-// the line they follow.
+// render writes the file: every line not deleted, each followed by the lines
+// attached to it, with the insertions after the line they follow.
 func (mg *migrator) render() []byte {
 	var b strings.Builder
 	emit := func(s string) {
@@ -708,6 +729,9 @@ func (mg *migrator) render() []byte {
 	for i := 1; i <= len(mg.lines); i++ {
 		if !mg.deleted[i] {
 			emit(mg.lines[i-1])
+			for _, l := range mg.attached[i] {
+				emit(l)
+			}
 		}
 		for _, l := range mg.inserts[i] {
 			emit(l)
@@ -1103,7 +1127,14 @@ func readAsApply(doc Node) (Node, []string) {
 	}
 	walkKeyDeprecations(doc, driftfileKeyDeprecations, tell)
 	for _, root := range documentRoots(doc) {
+		// A document apply would refuse reads unflattened here; the comparison
+		// still holds, because migrate moves entries between the two shapes
+		// and never between an element and the refusal.
+		_ = normaliseElements(root, func(list string) {
+			said = append(said, elementTagDeprecations[list].Old)
+		})
 		normaliseIdentities(root, func() { said = append(said, functionNamePath) })
+		canonicalSlots(root)
 	}
 	return doc, said
 }

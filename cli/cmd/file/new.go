@@ -175,9 +175,20 @@ func starterDriftfile(name, canvasDir string) string {
 	b.WriteString("  # Nothing in your source declares a pulse; the code is just code.\n")
 	b.WriteString("  # Long-running workers go in a `fields:` list beside this one.\n")
 	b.WriteString("  #\n")
+	b.WriteString("  # These two lists are the default element, the flat files in ./atomic.\n")
+	b.WriteString("  # Code in another folder or language is an element of its own, and its\n")
+	b.WriteString("  # pulses and fields are declared inside it:\n")
+	b.WriteString("  #\n")
+	b.WriteString("  #   elements:\n")
+	b.WriteString("  #     - name: billing          # ./atomic/billing\n")
+	b.WriteString("  #       pulses:\n")
+	b.WriteString("  #         - route: invoices\n")
+	b.WriteString("  #           method: post\n")
+	b.WriteString("  #           handler: PostInvoices\n")
+	b.WriteString("  #\n")
 	b.WriteString("  #   route    the path it answers on, without a leading slash: `ping`,\n")
 	b.WriteString("  #            `auth/challenge`, `groups/:id`\n")
-	b.WriteString("  #   method   get, post, put, patch, delete, head, options — or `queue`\n")
+	b.WriteString("  #   method   get, post, put, patch, delete, head, options, or `queue`\n")
 	b.WriteString("  #            for one the slice invokes from a Backbone queue\n")
 	b.WriteString("  #   handler  the callable in your source, found in the element's folder\n")
 	b.WriteString("  #   auth     `none` (the default) or `apikey`\n")
@@ -189,9 +200,6 @@ func starterDriftfile(name, canvasDir string) string {
 	b.WriteString("  pulses:\n")
 	b.WriteString("    - route: " + starterRoute + "\n")
 	b.WriteString("      method: " + starterMethod + "\n")
-	// Derived, never written out. This handler exists only once
-	// `starterFnCommand()` has been run, and that command's own naming rule is
-	// the one that decides what it will be called.
 	// Derived, never written out. This handler exists only once
 	// `starterFnCommand()` has been run, and that command's own naming rule is
 	// the one that decides what it will be called.

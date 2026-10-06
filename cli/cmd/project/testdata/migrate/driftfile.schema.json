@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://api.ondrift.eu/driftfile/schema",
   "$comment": "AUTHORITATIVE Driftfile JSON Schema — the single definition of the format. Embedded in the api binary and served from https://api.ondrift.eu/driftfile/schema. This document replaced a separate prose spec (driftfile-spec.md) on 2026-07-28: documentation lives HERE, in `description` (user-facing, rendered on hover by any YAML LSP), `default` (what omission means), `examples`, and `$comment` (notes for whoever edits the schema). A doc that ships beside the schema is a doc that drifts from it. || VERSIONING: `version` below is the format's own semver. MAJOR = a field removed, renamed or retyped, so an older client cannot read a file written for it; MINOR = a new optional field, which older clients round-trip untouched; PATCH = documentation only. Bump it in the same change that alters the schema — the api serves this number and clients compare it against the one they implement. || DURING THE CLOSED ALPHA THE MAJOR RULE IS SUSPENDED, DELIBERATELY: breaking changes ride MINOR bumps until Drift leaves alpha, because the format is still being found and burning majors on it would leave the number meaningless by the time anyone outside depends on it. 1.2.0 removed fields and made others required and is therefore breaking under the rule above. The cost is explicit rather than hidden, and a client carries it in two rungs rather than one. A MAJOR difference is the only one it REFUSES on, so during alpha no client is ever grounded by a format break. It is WARNED instead: a client holds the version it implements, compares it against this one when it lints or applies a Driftfile, and says so whenever this document is ahead in MINOR — which is the rung every alpha-era break rides. A client that ignores the warning fails to validate a file it cannot express, as before. That is acceptable while the users are counted on one hand and reachable directly; it stops being acceptable the moment they are not, and the first post-alpha format change takes the major it is owed. || WHAT LIVES HERE: the GRAMMAR (which keys exist, their shape, their fixed defaults) and, deliberately, the BOUNDS a client must apply before it can reach the platform — the memory range encoded in `atomicEntry.memory`'s pattern, and the compiled floor and interpreted-language set beside it. Those are here so a booking outside them is refused by `drift file lint` on the laptop rather than by the api after a deploy has been confirmed and uploaded, which is most of what serving the format is for. A bound here is a COPY, never the authority: `tier` enforces the range and the compiled floor, the slice's deploy branch owns the interpreted set, and tests assert the copies still agree (driftfile_test.go for the two memory bounds, the operator's routes tests for the language set) rather than trusting them to be edited together. Add a bound here only with the test that pins it to its owner. A `default` must be a fixed property of the format, and a value no client could act on offline has no reason to be in this document at all.",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "x-drift": {
     "$comment": "BOUNDS THE PLATFORM ENFORCES, published so a client can apply them before it can reach the api. They live at the ROOT because they describe the platform rather than any key of a document — hanging them off `atomicEntry.properties.memory` tied them to the lifetime of one property, and a client reading them had to know where a booking happened to be written down. || Each is a COPY, never the authority: `tier.MinCompiledFunctionMemoryBytes` enforces the floor and the slice's deploy branch owns the interpreted set, with driftfile_test.go asserting these values still equal theirs. A client carrying either rule privately would be a second definition that drifts. || Neither can be a `pattern`: a pattern constrains the DOCUMENT, and nothing in a document says what language a function is written in — that is detected from the source beside the Driftfile, which only the client can see. || Keyed on the INTERPRETED four rather than the compiled ones because that is the stable side; the wire value for a compiled language is a known-moving target, so an unrecognised language is treated as compiled. A client that does not know these keys ignores them, and the api still refuses the deploy.",
     "compiled-minimum": "16MB",
@@ -14,7 +14,7 @@
     ]
   },
   "title": "Driftfile",
-  "description": "The Drift deploy manifest — the YAML file that IS your project.\n\nOne file, at the project root, named `Driftfile` (or `driftfile.yaml`). The resource shape sits at the top level (`slice` plus `atomic`/`backbone`/`canvas`/`edge`), with optional `environments` for per-environment overrides, `hooks` for local pre/post-deploy commands, and `tests` for `drift project test`. Ships with `drift project deploy [environment]`.\n\nAlmost everything has a default, so three lines is a running site:\n\n    name: my-project\n    canvas:\n      sites: [./site]\n\nThe exception is Atomic. A Pulse (Atomic's function: one call, one result) states its trigger, the callable that serves it, and the memory it books — there is no default for the memory, because a reservation nobody chose is one nobody can be held to, and the slice admits work against exactly this figure:\n\n    name: my-project\n    atomic:\n      pulses:\n        - name: post:webhook\n          handler: Webhook\n          memory: 32MB\n        - name: get:report\n          handler: Report\n          memory: 256MB\n          auth: apikey\n\nEach function's memory is its own pool: its concurrent invocations together stay inside it, so booking more buys both headroom per call and more calls at once. It is also what that function is billed at.\n\nWhat can reach the slice, and what it can reach, is declared in one place: `edge` (hostnames, the site-auth gate, the rate limit, an address allowlist, egress, links to your other slices, and the hosts one slice fronts for another).\n\nWhat the Driftfile deliberately does NOT declare: secrets values (use `drift backbone secret set`), anything about the machine it runs on, or replica counts. You declare the shape of your application; the platform decides how to run it.",
+  "description": "The Drift deploy manifest — the YAML file that IS your project.\n\nOne file, at the project root, named `Driftfile` (or `driftfile.yaml`). The resource shape sits at the top level (`slice` plus `atomic`/`backbone`/`canvas`/`edge`), with optional `environments` for per-environment overrides, `hooks` for local pre/post-deploy commands, and `tests` for `drift project test`. Ships with `drift project deploy [environment]`.\n\nAlmost everything has a default, so three lines is a running site:\n\n    name: my-project\n    canvas:\n      sites: [./site]\n\nThe exception is Atomic. A Pulse (Atomic's function: one call, one result) states its trigger, the callable that serves it, and the memory it books — there is no default for the memory, because a reservation nobody chose is one nobody can be held to, and the slice admits work against exactly this figure. Pulses and Fields are declared inside the element whose folder holds their handler, so the Driftfile mirrors ./atomic:\n\n    name: my-project\n    atomic:\n      elements:\n        - name: api\n          pulses:\n            - route: webhook\n              method: post\n              handler: Webhook\n              memory: 32MB\n            - route: report\n              method: get\n              handler: Report\n              memory: 256MB\n              auth: apikey\n\nA Pulse or Field declared directly under `atomic` belongs to the default element, the flat files directly under ./atomic.\n\nEach function's memory is its own pool: its concurrent invocations together stay inside it, so booking more buys both headroom per call and more calls at once. It is also what that function is billed at.\n\nWhat can reach the slice, and what it can reach, is declared in one place: `edge` (hostnames, the site-auth gate, the rate limit, an address allowlist, egress, links to your other slices, and the hosts one slice fronts for another).\n\nWhat the Driftfile deliberately does NOT declare: secrets values (use `drift backbone secret set`), anything about the machine it runs on, or replica counts. You declare the shape of your application; the platform decides how to run it.",
   "type": "object",
   "additionalProperties": false,
   "anyOf": [
@@ -85,6 +85,11 @@
           "anyOf": [
             {
               "required": [
+                "elements"
+              ]
+            },
+            {
+              "required": [
                 "pulses"
               ]
             },
@@ -101,8 +106,8 @@
           ]
         }
       ],
-      "description": "Serverless (Atomic) section: the Pulses and Fields this slice runs, each with the memory it books, plus slice-wide runtime limits. A Pulse is Atomic's function: one call, one result. A Field is a long-running worker the slice keeps running.",
-      "$comment": "Was a oneOf accepting either a bare list of names or this object, and the list form expanded to { functions: [...] }. Removed in 1.2.0 along with per-function memory becoming mandatory: a shorthand that omits the one field every function must declare cannot be sugar for the long form, and two accepted shapes for one section is the sort of cleverness that makes a manifest feel like magic. One shape, stated in full. || The section declares at least one of `pulses`, `functions` (the retired spelling of `pulses`) or `fields`, as an anyOf because draft-07 has no other way to say \"one of these\": a slice running only Fields declares no Pulse, and requiring one would make that slice unwriteable."
+      "description": "Serverless (Atomic) section: the elements of this slice and the Pulses and Fields each one runs, plus slice-wide runtime limits. An element is a folder under ./atomic holding one language's source and one dependency manifest. A Pulse is Atomic's function: one call, one result. A Field is a long-running worker the slice keeps running.",
+      "$comment": "Was a oneOf accepting either a bare list of names or this object, and the list form expanded to { functions: [...] }. Removed in 1.2.0 along with per-function memory becoming mandatory: a shorthand that omits the one field every function must declare cannot be sugar for the long form, and two accepted shapes for one section is the sort of cleverness that makes a manifest feel like magic. One shape, stated in full. || The section declares at least one of `elements`, `pulses`, `functions` (the retired spelling of `pulses`) or `fields`, as an anyOf because draft-07 has no other way to say \"one of these\": a slice running only Fields declares no Pulse, a slice whose every entry sits in a named element declares no top-level list, and requiring any one of them would make that slice unwriteable."
     },
     "backbone": {
       "$ref": "#/definitions/backboneSection",
@@ -187,7 +192,7 @@
         },
         "atomic": {
           "$ref": "#/definitions/atomicSection",
-          "description": "Atomic overrides for this environment. Declares the whole section, Pulses and Fields included: an override that restated only some limits would leave the environment's Pulse and Field lists and their bookings ambiguous."
+          "description": "Atomic overrides for this environment. Declares the whole section, elements, Pulses and Fields included: an override that restated only some limits would leave the environment's Pulse and Field lists and their bookings ambiguous."
         },
         "backbone": {
           "$ref": "#/definitions/backboneSection",
@@ -265,7 +270,7 @@
     "atomicSection": {
       "type": "object",
       "additionalProperties": false,
-      "$comment": "Memory is declared per function in `functions` and is mandatory there; this section carries no slice-wide figure. One figure for every function cannot express a 32MB webhook beside a 256MB report generator without paying the larger for both, and a reservation that appears by default is one nobody chose. Note what the per-function form costs to reproduce: a slice that declares nothing keeps ONE shared pool at its slice-wide booking (slice/src/atomic/budget.rs, Pools), and that shape is now reachable only by slices predating this section — a measurement taken against it cannot be rebuilt from a manifest. || `functions` is required where a slice DECLARES its shape (the top-level `atomic`), and optional in an environment override, which is a partial: an override that had to restate every function to change one rate limit would make the common case the expensive one, and duplicate the list that the base already owns. || `pulses` is the current name of `functions`, with the same item schema; `functions` keeps parsing and the client rewrites it to `pulses`. The top-level `atomic` requires at least one of `pulses`, `functions` or `fields`. || A Field is a slot like a Pulse: its booking key is `field:<name>` and it is sold, priced and pooled under that key, so nothing below `fields` carries a trigger.",
+      "$comment": "Memory is declared per function in `functions` and is mandatory there; this section carries no slice-wide figure. One figure for every function cannot express a 32MB webhook beside a 256MB report generator without paying the larger for both, and a reservation that appears by default is one nobody chose. Note what the per-function form costs to reproduce: a slice that declares nothing keeps ONE shared pool at its slice-wide booking (slice/src/atomic/budget.rs, Pools), and that shape is now reachable only by slices predating this section — a measurement taken against it cannot be rebuilt from a manifest. || A list is required where a slice DECLARES its shape (the top-level `atomic` requires at least one of `elements`, `pulses`, `functions` or `fields`), and none is required in an environment override, which is a partial: an override that had to restate every function to change one rate limit would make the common case the expensive one, and duplicate the list that the base already owns. || `pulses` is the current name of `functions`, with the same item schema; `functions` keeps parsing and the client rewrites it to `pulses`. || ELEMENTS CONTAIN THEIR PULSES AND FIELDS. An element is a folder with one language and one manifest, so the entries whose handlers live in it are declared inside it, and the section mirrors ./atomic. The top-level `pulses`, `functions` and `fields` stay as the DEFAULT element's lists rather than becoming `elements: [{name: default}]`, because the default element is the common case and a one-folder project should not pay a level of nesting for a container it never named. The `element` tag on a top-level entry is the deprecated spelling of the same fact: it still parses, the client merges a tagged entry into the element it names, and `drift file migrate` moves it there. || NOTHING IN A BOOKING KEY NAMES AN ELEMENT. A slot is `<method>:<route>` or `field:<name>`, so routes and Field names are unique across the whole slice rather than per element, and an element is a source layout fact the platform never sees. JSON Schema cannot compare entries across lists, so the client refuses a duplicate, and the platform refuses a config declaring one booking key twice (tier.ValidateFunctionIdentities). || A Field is a slot like a Pulse: its booking key is `field:<name>` and it is sold, priced and pooled under that key, so nothing below `fields` carries a trigger.",
       "properties": {
         "atomic_size": {
           "type": "string",
@@ -289,9 +294,39 @@
           "minimum": 0,
           "default": 0
         },
+        "elements": {
+          "type": "array",
+          "description": "The elements of this slice, each with the Pulses and Fields whose handlers live in its folder. An element is a folder under ./atomic holding one language's source and one dependency manifest, and declaring every Pulse and Field inside its element makes this section mirror that folder. Element names are unique in this list. `default` names the default element, the flat files directly under ./atomic, and may be named here only when no Pulse or Field is declared directly under `atomic`, since those are already the default element's: each element is declared in one place. Routes and Field names are unique across the whole slice, not per element, because a slot is booked as `<method>:<route>` or `field:<name>` with no element in the key: two elements cannot both serve `post:rpc`, and a Field name may not equal any Pulse route in any element.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/elementEntry"
+          },
+          "examples": [
+            [
+              {
+                "name": "evm",
+                "pulses": [
+                  {
+                    "route": "rpc",
+                    "method": "post",
+                    "handler": "PostRPC",
+                    "response": "json"
+                  }
+                ],
+                "fields": [
+                  {
+                    "name": "sequencer",
+                    "handler": "Sequencer"
+                  }
+                ]
+              }
+            ]
+          ],
+          "$comment": "Every rule in the description that compares two entries is the client's to enforce, because JSON Schema cannot compare across lists: `uniqueItems` compares whole entries, so two elements of one name with different contents both pass it. The platform holds the booking-key half of it independently (tier.ValidateFunctionIdentities, tier.ValidateFieldNames)."
+        },
         "pulses": {
           "type": "array",
-          "description": "Every Pulse this slice runs. A Pulse is Atomic's function: one call, one result. Each declares its trigger, the callable that serves it, the memory it books, and how it is guarded. Never inferred: the slice admits work against what a Pulse booked, so a Pulse the manifest does not name is one the platform cannot size, price, or run.",
+          "description": "The Pulses of the default element, the flat source files directly under ./atomic. A Pulse whose handler lives in a named element is declared inside that element, under `elements`. A Pulse is Atomic's function: one call, one result. Each declares its trigger, the callable that serves it, the memory it books, and how it is guarded. Never inferred: the slice admits work against what a Pulse booked, so a Pulse the manifest does not name is one the platform cannot size, price, or run.",
           "minItems": 1,
           "items": {
             "$ref": "#/definitions/atomicEntry"
@@ -310,12 +345,12 @@
         },
         "fields": {
           "type": "array",
-          "description": "Every Field this slice runs. A Field is a long-running worker: the slice keeps exactly one process per Field running, starts it at boot and on every deploy, restarts it with backoff when it exits, and pauses it after a crash loop. It reaches Backbone and egress the way a Pulse does and never listens for requests. Fields run Go in this release.",
+          "description": "The Fields of the default element, the flat source files directly under ./atomic. A Field whose handler lives in a named element is declared inside that element, under `elements`. A Field is a long-running worker: the slice keeps exactly one process per Field running, starts it at boot and on every deploy, restarts it with backoff when it exits, and pauses it after a crash loop. It reaches Backbone and egress the way a Pulse does and never listens for requests. Fields run Go in this release.",
           "minItems": 1,
           "items": {
             "$ref": "#/definitions/fieldEntry"
           },
-          "$comment": "Names are unique across this list, and JSON Schema cannot say so: `uniqueItems` compares whole entries, so two entries naming one Field with different handlers would both pass it. The client refuses the duplicate, and the platform refuses a config declaring one booking key twice (tier.ValidateFunctionIdentities). A Field name may NOT equal any Pulse route: the booking keys `field:<name>` and `<method>:<route>` differ, but the slice keys logs, metrics, alerts and triggers by the bare name, so the two would share them. JSON Schema cannot compare across lists either, so the client and tier.ValidateFieldNames refuse it."
+          "$comment": "Names are unique across the whole slice, this list and every element's together, and JSON Schema cannot say so: `uniqueItems` compares whole entries, so two entries naming one Field with different handlers would both pass it. The client refuses the duplicate, and the platform refuses a config declaring one booking key twice (tier.ValidateFunctionIdentities). A Field name may NOT equal any Pulse route: the booking keys `field:<name>` and `<method>:<route>` differ, but the slice keys logs, metrics, alerts and triggers by the bare name, so the two would share them. JSON Schema cannot compare across lists either, so the client and tier.ValidateFieldNames refuse it."
         },
         "egress": {
           "$ref": "#/definitions/egressSection",
@@ -439,15 +474,17 @@
         },
         "dir": {
           "type": "string",
-          "description": "Source directory holding this function's callable, relative to the Driftfile. Defaults to the element's directory: ./atomic for the default element, ./atomic/<element> for a named one.",
+          "description": "Source directory holding this function's callable, relative to the Driftfile. Defaults to its element's directory: the element's own `dir`, which is ./atomic/<element> for a named element and ./atomic for the default one.",
           "default": "./atomic/<element>",
-          "$comment": "Defaulted to ./atomic/<name> while a name was a bare slug. A name is a route now — it holds `:` and `/` — so deriving a directory from it asks the filesystem for a path nobody wrote, and the one-folder-per-function layout it assumed is not the one most projects use. The element owns the directory; this key overrides it for the odd function that lives elsewhere."
+          "$comment": "Defaulted to ./atomic/<name> while a name was a bare slug. A name is a route now — it holds `:` and `/` — so deriving a directory from it asks the filesystem for a path nobody wrote, and the one-folder-per-function layout it assumed is not the one most projects use. The element owns the directory; this key overrides it for the odd function that lives elsewhere, which is why it is still accepted on an entry inside an element."
         },
         "element": {
           "type": "string",
-          "description": "Element (sub-app) this function belongs to: a folder under ./atomic holding one language's flat source files and that language's single dependency manifest. ONE LANGUAGE PER ELEMENT. A second language is a second element, with its own folder and its own manifest, because an element has exactly one manifest slot and two languages cannot share it. `drift atomic new` refuses the mix and names --element as the way out. Omitted = the default element, the flat source files directly under ./atomic.",
+          "deprecated": true,
+          "description": "DEPRECATED: declare this entry inside its element, under `atomic.elements`, instead. The element (sub-app) this function belongs to: a folder under ./atomic holding one language's source and one dependency manifest. Still parsed, merged into the element it names, and moved there by `drift file migrate`, so an existing Driftfile keeps applying unchanged. Omitted = the default element, the flat source files directly under ./atomic.",
           "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$",
-          "default": "default"
+          "default": "default",
+          "$comment": "Kept in `properties` because draft-07 with additionalProperties:false has two outcomes, legal or error: dropping it would make every tagged Driftfile an error on the next api deploy, with no notice. elementEntry.name carries the same pattern, and elements_test.go asserts the two agree, so a tagged entry can always move into its element unrenamed."
         },
         "auth": {
           "type": "string",
@@ -579,7 +616,8 @@
               "$ref": "#/definitions/atomicEntry/properties/element"
             }
           ],
-          "description": "Element (sub-app) this Field's source belongs to, as for a Pulse. Its language must be Go. Omitted = the default element, the flat source files directly under ./atomic."
+          "deprecated": true,
+          "description": "DEPRECATED: declare this Field inside its element, under `atomic.elements`, instead. The element (sub-app) this Field's source belongs to, as for a Pulse. Its language must be Go. Still parsed, merged into the element it names, and moved there by `drift file migrate`. Omitted = the default element, the flat source files directly under ./atomic."
         },
         "dir": {
           "allOf": [
@@ -587,7 +625,7 @@
               "$ref": "#/definitions/atomicEntry/properties/dir"
             }
           ],
-          "description": "Source directory holding this Field's callable, relative to the Driftfile. Defaults to the element's directory."
+          "description": "Source directory holding this Field's callable, relative to the Driftfile. Defaults to its element's directory."
         },
         "secrets": {
           "allOf": [
@@ -606,6 +644,108 @@
           "description": "Plain configuration for this Field, injected into its environment verbatim. Not for credentials: those go in `secrets:`."
         }
       }
+    },
+    "elementEntry": {
+      "type": "object",
+      "description": "One element: a folder under ./atomic holding one language's source and that language's single dependency manifest, with the Pulses and Fields whose handlers live in it. ONE LANGUAGE PER ELEMENT. A second language is a second element, with its own folder and its own manifest, because an element has exactly one manifest slot and two languages cannot share it; `drift atomic new --element <name>` starts one. A Pulse or Field declared directly under `atomic` belongs to the default element, the flat source files directly under ./atomic.",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "pulses"
+          ]
+        },
+        {
+          "required": [
+            "fields"
+          ]
+        }
+      ],
+      "$comment": "An element declares at least one Pulse or Field, as an anyOf because draft-07 has no other way to say \"one of these\": an element with neither books no slot and names a folder nothing runs from. || `env` and `secrets` are atomicEntry's own rules, reached by $ref, so the env reservation has one owner at every level. They are the element's shared configuration, applied by the client to each entry in it: an entry's own `env` key wins over the element's for the same name, and an entry reads the union of the two `secrets` lists. The platform receives each entry's merged result and never sees the element's lists. || No `memory`, `auth` or any other per-entry key belongs here. An element is a source layout, not a slot: every booking and every gate is a Pulse's or a Field's own.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The element's name, and by default its folder: ./atomic/<name>. Lowercase letters, digits and hyphens, up to 32 characters. `default` names the default element, whose folder is ./atomic.",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+          "examples": [
+            "evm",
+            "bench",
+            "default"
+          ]
+        },
+        "dir": {
+          "type": "string",
+          "description": "The element's source directory, relative to the Driftfile. Every Pulse and Field in the element looks for its handler here unless it sets a `dir` of its own. Defaults to ./atomic/<name>, or ./atomic for `default`.",
+          "default": "./atomic/<name>"
+        },
+        "env": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/atomicEntry/properties/env"
+            }
+          ],
+          "description": "Plain configuration every Pulse and Field in this element receives, injected into its environment verbatim. An entry's own `env` wins over this one for the same name. Not for credentials: those go in `secrets:`."
+        },
+        "secrets": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/atomicEntry/properties/secrets"
+            }
+          ],
+          "description": "The Backbone secrets every Pulse and Field in this element may read. An entry reads these and its own `secrets` together."
+        },
+        "pulses": {
+          "type": "array",
+          "description": "The Pulses whose handlers live in this element. Each is a Pulse as declared anywhere else, without `element`: the element containing it is the one it belongs to.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/elementPulseEntry"
+          }
+        },
+        "fields": {
+          "type": "array",
+          "description": "The Fields whose handlers live in this element. Each is a Field as declared anywhere else, without `element`: the element containing it is the one it belongs to. Fields run Go, so an element declaring one is a Go element.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/elementFieldEntry"
+          }
+        }
+      }
+    },
+    "elementPulseEntry": {
+      "description": "A Pulse declared inside an element: every key a Pulse takes except `element`, which the containing element already states. `dir` is still accepted, for the odd handler that lives outside the element's folder.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/atomicEntry"
+        },
+        {
+          "not": {
+            "required": [
+              "element"
+            ]
+          }
+        }
+      ],
+      "$comment": "Reached by $ref rather than restated, so a Pulse has one schema wherever it is declared. `element` is refused with `not` because atomicEntry's additionalProperties:false applies inside the referenced schema and cannot be narrowed from outside it. A validator reports the refusal as a failed `not`, which names no key, so the description is what tells the reader why."
+    },
+    "elementFieldEntry": {
+      "description": "A Field declared inside an element: every key a Field takes except `element`, which the containing element already states. `dir` is still accepted, for the odd handler that lives outside the element's folder.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/fieldEntry"
+        },
+        {
+          "not": {
+            "required": [
+              "element"
+            ]
+          }
+        }
+      ],
+      "$comment": "Reached by $ref rather than restated, for the reason elementPulseEntry's $comment gives."
     },
     "alertEntry": {
       "type": "object",

@@ -21,7 +21,9 @@ import (
 // `pulses` is the request/response unit, one call and one result; the retired
 // `functions` is renamed onto it by the key walker before anything here reads
 // the document, so no reader in this package names the old key. `fields` is the
-// long-running worker the slice keeps exactly one of.
+// long-running worker the slice keeps exactly one of. Both hold every element's
+// entries by the time anything here reads them: elements.go flattens
+// `atomic.elements` into them, each entry carrying its element.
 const (
 	pulsesKey = "pulses"
 	fieldsKey = "fields"
@@ -92,34 +94,6 @@ func FieldSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
 // one.
 func AtomicSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
 	return append(FunctionSpecs(m), FieldSpecs(m)...)
-}
-
-// checkFieldPulseNames refuses a document in which a Field's name equals a
-// Pulse's route.
-//
-// Their booking keys differ (`field:x` against `get:x`), so the slice could book
-// both, but it keys logs, metrics, alerts and triggers by the bare name, and two
-// slots answering to one name there would share all four. Read after the key
-// walker and the identity split, so a Pulse written as `functions` or as a
-// retired `name` is compared by the route it resolves to; run on the base and
-// again on every merged environment, because an overlay can introduce either.
-func checkFieldPulseNames(doc Node) error {
-	routes := map[string]bool{}
-	for _, p := range PulseEntries(doc) {
-		if r := p.Str("route"); r != "" {
-			routes[r] = true
-		}
-	}
-	var clashes []string
-	for _, f := range FieldEntries(doc) {
-		if name := f.Str("name"); routes[name] {
-			clashes = append(clashes, fmt.Sprintf("the Field %q and the Pulse route %q would share logs and metrics; rename one", name, name))
-		}
-	}
-	if len(clashes) == 0 {
-		return nil
-	}
-	return ParseErrors(clashes)
 }
 
 // entryDir is the absolute source directory of one Pulse or Field entry: its
