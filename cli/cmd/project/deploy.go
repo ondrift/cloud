@@ -1,8 +1,8 @@
 package project
 
 // deploy.go is the apply driver. It reads a Driftfile, refuses if the slice it
-// names does not exist, checks the slice is ready, then walks atomic → backbone
-// → canvas applying every declared resource via the api gateway.
+// names does not exist, checks the slice is ready, then applies Backbone, and
+// then Atomic and Canvas together, every declared resource via the api gateway.
 //
 // It does NOT create, grow or price a slice. `drift slice create`/`resize`
 // declare what a slice IS; this file declares what runs on it. A slice that does
@@ -316,11 +316,10 @@ single slice otherwise.`,
 			//
 			// A slice can be mid-provision or mid-Recreate for reasons this
 			// command did not cause — a resize someone made on the form, a
-			// restart, a converge replacing the pod. Without this, the triad
-			// below fires Atomic, Backbone and Canvas concurrently at a runner
-			// that is still coming up and every one of them fails with "runner
-			// unreachable", which reads as a platform fault and is really an
-			// ordering problem.
+			// restart, a converge replacing the pod. Without this, the apply
+			// below fires Backbone, Atomic and Canvas at a runner that is still
+			// coming up and every one of them fails with "runner unreachable",
+			// which reads as a platform fault and is really an ordering problem.
 			//
 			// Phrased as a check rather than a wait: on a healthy slice it
 			// returns on the first poll, and announcing a wait that did not
@@ -333,25 +332,23 @@ single slice otherwise.`,
 			start := time.Now()
 			fmt.Printf("\n  Deploying %s...\n\n", common.Highlight(m.Name()))
 
-			// Atomic, Backbone, and Canvas are independent slice subsystems —
-			// deploy all three concurrently (wall-clock = slowest, not sum).
-			if err := applySliceTriad(m); err != nil {
+			// Backbone first and alone, then Atomic and Canvas together. See
+			// applySliceInOrder for why the order is what it is.
+			unnamedDatabases, err := applySliceInOrder(m)
+			if err != nil {
 				return err
 			}
-			// The mirror of the reference check, for the three classes whose
-			// live set only arrives with the reconcile. Each reconciler does
-			// its own join, because the rule that matches a declaration to a
-			// live name differs per class — a host and a database match
-			// lowercased, an alert on the derived `<function>-<index>`.
+			// The mirror of the reference check, for the classes whose live set
+			// only arrives with the reconcile. Each reconciler does its own join,
+			// because the rule that matches a declaration to a live name differs
+			// per class — a host and a database match lowercased, an alert on the
+			// derived `<function>-<index>`. Databases were reconciled with the
+			// rest of Backbone, above.
 			unnamedDomains, err := applyDomains(m)
 			if err != nil {
 				return err
 			}
 			unnamedAlerts, err := applyAlerts(m)
-			if err != nil {
-				return err
-			}
-			unnamedDatabases, err := applySQL(m, os.Stdout)
 			if err != nil {
 				return err
 			}
@@ -680,6 +677,14 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 		// its functions; named-element subdirs never bleed into a Default digest.
 		digest, _ := atomic_cmd.ElementDigest(el.Dir, el.Name)
 
+		// Header the element only when the layout is non-trivial (>1 element or
+		// a named one) — a lone Default element shouldn't add visual noise. An
+		// unchanged element is headed too, so every slot line sits under the
+		// element it belongs to.
+		if len(elements) > 1 || el.Name != atomic_cmd.DefaultElementName {
+			fmt.Fprintf(out, "  %s\n", common.Hint(fmt.Sprintf("element %s (%s)", el.Name, el.Lang)))
+		}
+
 		if !atomicForce && elementUnchanged(el, digest, deployed) {
 			for _, f := range el.Funcs {
 				fmt.Fprintf(out, "    %s %s %s\n", common.Check(), f.MethodPath(), common.Hint("(unchanged)"))
@@ -688,20 +693,17 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 			continue
 		}
 
-		// Header the element only when the layout is non-trivial (>1 element or
-		// a named one) — a lone Default element shouldn't add visual noise.
-		if len(elements) > 1 || el.Name != atomic_cmd.DefaultElementName {
-			fmt.Fprintf(out, "  %s\n", common.Hint(fmt.Sprintf("element %s (%s)", el.Name, el.Lang)))
-		}
-
+		// The slot lines go to `out` like every other line of this section. The
+		// section is buffered and printed under its heading once the deploy is
+		// done, so a line written anywhere else lands above the heading.
 		switch {
 		case el.Lang == "go":
-			if err := atomic_cmd.DeployGoElement(el, digest, false); err != nil {
+			if err := atomic_cmd.DeployGoElement(el, digest, out); err != nil {
 				return fmt.Errorf("atomic deploy failed in element %q: %w", el.Name, err)
 			}
 			deployedCount += len(el.Funcs)
 		case el.Lang == "python" || el.Lang == "node" || el.Lang == "ruby" || el.Lang == "php":
-			if err := atomic_cmd.DeployInterpretedElement(el, digest, false); err != nil {
+			if err := atomic_cmd.DeployInterpretedElement(el, digest, out); err != nil {
 				return fmt.Errorf("atomic deploy failed in element %q: %w", el.Name, err)
 			}
 			deployedCount += len(el.Funcs)
@@ -726,16 +728,48 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 	return nil
 }
 
-// applySliceTriad deploys the three independent slice subsystems — Atomic
-// functions, Backbone data, and Canvas sites — CONCURRENTLY. They touch
-// different parts of the slice and share no mutable state (each makes its own
-// stateless HTTP calls), so the wall-clock becomes the slowest of the three
-// instead of their sum. The spinner is single-line by contract, so concurrent
-// phases can't animate it: each phase buffers its own section, one aggregate
-// spinner runs while they work, then the sections print in a stable order
-// (Atomic → Backbone → Canvas). The first failure in that order is returned
-// with its real error; every phase is attempted so all failures are visible.
-func applySliceTriad(m *Manifest) error {
+// applySliceInOrder applies what the Driftfile declares into the slice in two
+// steps, and returns the databases the slice holds that the file does not name.
+//
+//  1. Backbone, alone: secrets, cache seeds, NoSQL collections and their seeds,
+//     queues, and every SQL database's schema, migrations and seed.
+//  2. Atomic and Canvas, concurrently.
+//
+// # Why Backbone goes first
+//
+// An Atomic slot runs the moment it is deployed. A Field is started by the
+// slice's supervisor at once, and a Pulse can be called as soon as it is
+// routed, so whatever it reads and writes has to exist by then. Run together,
+// a Field's first query could meet no table, and a seed that only runs into an
+// empty database was skipped for good once the Field had written its first row.
+//
+// The order is safe because nothing in Backbone depends on Atomic. Every step
+// above reads only the Driftfile and the files it names, and talks only to the
+// slice's Backbone; a seed is SQL or JSONL the project ships, never the output
+// of a function. The things that do depend on Atomic stay after it: alerts are
+// keyed on the function they watch, and the orphan and idle reports read what
+// Atomic deployed.
+//
+// A Backbone failure stops the apply before Atomic, for the same reason: a
+// slot deployed after its table or queue failed to apply starts against the
+// resource that is missing.
+//
+// Atomic and Canvas share nothing (each makes its own stateless HTTP calls), so
+// they run together and the wall-clock is the slower of the two. The spinner is
+// single-line by contract and concurrent phases cannot animate it, so each step
+// buffers its own section and prints it whole when it is done, in a stable
+// order. Of Atomic and Canvas both are attempted, so every failure is visible,
+// and the first in that order is returned with its real error.
+func applySliceInOrder(m *Manifest) ([]string, error) {
+	var backbone bytes.Buffer
+	sp := common.StartSpinner("  ", "Applying Backbone…")
+	unnamedDatabases, err := applyBackboneSection(m, &backbone)
+	sp.Stop()
+	fmt.Print(backbone.String())
+	if err != nil {
+		return nil, err
+	}
+
 	type phase struct {
 		fn  func(*Manifest, io.Writer) error
 		buf bytes.Buffer
@@ -743,11 +777,10 @@ func applySliceTriad(m *Manifest) error {
 	}
 	phases := []*phase{
 		{fn: applyAtomic},
-		{fn: applyBackbone},
 		{fn: applyCanvas},
 	}
 
-	sp := common.StartSpinner("  ", "Deploying Atomic, Backbone & Canvas…")
+	sp = common.StartSpinner("  ", "Deploying Atomic & Canvas…")
 	var wg sync.WaitGroup
 	for _, p := range phases {
 		wg.Add(1)
@@ -766,18 +799,38 @@ func applySliceTriad(m *Manifest) error {
 			firstErr = p.err
 		}
 	}
-	return firstErr
+	return unnamedDatabases, firstErr
 }
 
 // ─── Backbone ───────────────────────────────────────────────────────
 
+// applyBackboneSection writes the Backbone section: its heading when the file
+// declares anything Backbone holds, then every resource, then the SQL
+// databases, and returns the live databases the file does not name.
+func applyBackboneSection(m *Manifest, out io.Writer) ([]string, error) {
+	b := m.Slice().Sub("backbone")
+	declared := len(b.List("nosql"))+len(b.List("queues"))+len(b.Sub("cache"))+
+		len(b.Sub("secrets"))+len(b.List("sql")) > 0
+	if declared {
+		fmt.Fprintf(out, "  %s\n", common.BackboneHeader())
+	}
+	if err := applyBackbone(m, out); err != nil {
+		return nil, err
+	}
+	unnamed, err := applySQL(m, out)
+	if err != nil {
+		return nil, err
+	}
+	if declared {
+		fmt.Fprintln(out)
+	}
+	return unnamed, nil
+}
+
+// applyBackbone applies every Backbone resource but the SQL databases, which
+// applySQL owns.
 func applyBackbone(m *Manifest, out io.Writer) error {
 	b := m.Slice().Sub("backbone")
-	if len(b.List("nosql"))+len(b.List("queues"))+len(b.Sub("cache"))+len(b.Sub("secrets")) == 0 {
-		return nil
-	}
-
-	fmt.Fprintf(out, "  %s\n", common.BackboneHeader())
 
 	for key, e := range b.EntryMap("file", "cache") {
 		label := fmt.Sprintf("Cache: %s", key)
@@ -841,10 +894,10 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 		fmt.Fprintln(out, line)
 	}
 
-	for _, q := range b.Entries("name", "queues") {
-		label := fmt.Sprintf("Queue: %s", q.Str("name"))
-		if err := queueInit(q.Str("name")); err != nil {
-			return fmt.Errorf("queue init %q failed: %w", q.Str("name"), err)
+	for _, name := range DeclaredQueues(m) {
+		label := fmt.Sprintf("Queue: %s", name)
+		if err := queueInit(name); err != nil {
+			return fmt.Errorf("queue init %q failed: %w", name, err)
 		}
 		fmt.Fprintf(out, "    %s %s\n", common.Check(), label)
 	}
@@ -861,8 +914,6 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 			fmt.Fprintf(out, "    %s Secrets: %d injected\n", common.Check(), injected)
 		}
 	}
-
-	fmt.Fprintln(out)
 	return nil
 }
 

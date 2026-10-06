@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -22,11 +23,11 @@ import (
 // Two things make a resize more than a create with the fields filled in, and
 // both are refusals the platform answers with a question rather than an error:
 //
-//   - Booking memory per function for the first time reprices the whole slice,
-//     and is refused until the new figure is sent back.
+//   - A change that moves the monthly figure is refused until the new figure
+//     is sent back.
 //   - A change that takes something away is refused until the slice is named.
 //
-// Both are answered by acting on the form again, which is why the submit
+// One refusal can ask both. Both are answered by acting on the form again, which is why the submit
 // happens inside the form's own loop (shapeForm.onSubmit) rather than after it.
 
 // sliceRecord is the part of GET /ops/slice/get this form reads.
@@ -273,15 +274,24 @@ func declaredFunctions(cfg map[string]any) []declaredFunction {
 	return out
 }
 
-// resizeRefusal is the answerable half of a 409.
+// resizeRefusal is the answerable half of a 409, in the operator's shape
+// (applyResize in the platform's operator routes). One refusal can carry both
+// questions at once, the price and the removal, and each is answered on its own.
 type resizeRefusal struct {
 	Error       string `json:"error"`
 	PriceChange *struct {
 		CurrentMonthlyCents int `json:"current_monthly_cents"`
 		NewMonthlyCents     int `json:"new_monthly_cents"`
+		// What the slice is billed today, sent only when that is a figure from
+		// an older price list rather than today's price of its shape.
+		BilledMonthlyCents *int `json:"billed_monthly_cents"`
 	} `json:"price_change"`
 	ConfirmationRequired *struct {
-		ConfirmSliceName bool                `json:"confirm_slice_name"`
+		// The slice's NAME, which is the exact answer the server will accept in
+		// confirm_slice_name. A string: decoding it as a flag failed the whole
+		// reply, and every removal fell through to a generic refusal nobody could
+		// answer.
+		ConfirmSliceName string              `json:"confirm_slice_name"`
 		Destroys         []map[string]string `json:"destroys"`
 	} `json:"confirmation_required"`
 	Violations []struct {
@@ -289,6 +299,28 @@ type resizeRefusal struct {
 		Used     int    `json:"used"`
 		NewLimit int    `json:"new_limit"`
 	} `json:"violations"`
+}
+
+// asksPrice reports whether the refusal asks the price question.
+func (r *resizeRefusal) asksPrice() bool { return r != nil && r.PriceChange != nil }
+
+// asksRemoval reports whether the refusal asks the removal question, and with
+// what name.
+func (r *resizeRefusal) asksRemoval() bool {
+	return r != nil && r.ConfirmationRequired != nil && r.ConfirmationRequired.ConfirmSliceName != ""
+}
+
+// priceLine states the price question: both figures, and the figure billed
+// today when the server says it is from an older price list.
+func (r *resizeRefusal) priceLine() string {
+	p := r.PriceChange
+	line := fmt.Sprintf("This resize changes what the slice costs, from %s to %s a month.",
+		euros(p.CurrentMonthlyCents), euros(p.NewMonthlyCents))
+	if p.BilledMonthlyCents != nil && *p.BilledMonthlyCents != p.CurrentMonthlyCents {
+		line += fmt.Sprintf(" It is billed %s today, a figure from an older price list, and the new figure replaces it.",
+			euros(*p.BilledMonthlyCents))
+	}
+	return line
 }
 
 // postResize sends one attempt and separates the answerable refusals from the
@@ -419,31 +451,22 @@ func ResizeWithConfig(name string, cfg map[string]any, billingMonths int) error 
 			return true, nil
 		}
 
-		// A refusal that carries a question. Each sets what the next press will
-		// send and says, on the form, what pressing it now means.
-		switch {
-		case refusal.PriceChange != nil:
-			cents := refusal.PriceChange.NewMonthlyCents
-			agreedCents = &cents
-			f.status = fmt.Sprintf("This resize moves what you pay, from %s to %s a month. "+
-				"Press Apply again to agree to it.",
-				euros(refusal.PriceChange.CurrentMonthlyCents), euros(cents))
-			f.createNode.label = fmt.Sprintf("Agree to %s/mo and apply", euros(cents))
-
-		case refusal.ConfirmationRequired != nil && refusal.ConfirmationRequired.ConfirmSliceName:
-			// Named before the act, not after: the list is what the tenant is
-			// agreeing to, so it is printed while the screen is down and can be
-			// read as ordinary output.
-			fmt.Println("This resize takes something away:")
-			for _, d := range refusal.ConfirmationRequired.Destroys {
-				fmt.Printf("  %s: %s → %s (%s)\n",
-					d["resource"], d["current"], d["wanted"], d["destroys"])
+		// A refusal that carries a question, or both at once. Each answer sets
+		// what the next press will send, and the form says what pressing it now
+		// agrees to.
+		if refusal.asksPrice() || refusal.asksRemoval() {
+			a := answerRefusal(refusal, os.Stdout)
+			if a.ack != nil {
+				agreedCents = a.ack
 			}
-			fmt.Println()
-			confirmName = rec.Name
-			f.status = fmt.Sprintf("Listed above. Press Apply again to confirm %q.", rec.Name)
-			f.createNode.label = "Confirm and apply"
+			if a.confirm != "" {
+				confirmName = a.confirm
+			}
+			f.status, f.createNode.label = a.status, a.label
+			return false, nil
+		}
 
+		switch {
 		case len(refusal.Violations) > 0:
 			parts := make([]string, 0, len(refusal.Violations))
 			for _, v := range refusal.Violations {
@@ -466,4 +489,48 @@ func ResizeWithConfig(name string, cfg map[string]any, billingMonths int) error 
 		fmt.Println("Nothing was changed.")
 	}
 	return nil
+}
+
+// formAnswer is what the form sends on its next press, and what it says.
+type formAnswer struct {
+	ack     *int
+	confirm string
+	status  string
+	label   string
+}
+
+// answerRefusal turns a refusal's questions into the form's next press. Both
+// are answered when both are asked: the server asks them together, and pressing
+// Apply once more agrees to every figure and every loss listed. What goes is
+// printed to out while the screen is down, so it can be read as ordinary output
+// before it is agreed to.
+func answerRefusal(r *resizeRefusal, out io.Writer) formAnswer {
+	var a formAnswer
+	var says []string
+	if r.asksPrice() {
+		cents := r.PriceChange.NewMonthlyCents
+		a.ack = &cents
+		says = append(says, r.priceLine())
+	}
+	if r.asksRemoval() {
+		fmt.Fprintln(out, "This resize takes something away:")
+		for _, d := range r.ConfirmationRequired.Destroys {
+			fmt.Fprintf(out, "  %s\n", describeDestroy(d))
+		}
+		fmt.Fprintln(out)
+		a.confirm = r.ConfirmationRequired.ConfirmSliceName
+		says = append(says, "What it takes away is listed above.")
+	}
+	switch {
+	case a.ack != nil && a.confirm != "":
+		a.status = strings.Join(says, " ") + fmt.Sprintf(" Press Apply again to agree to the price and confirm %q.", a.confirm)
+		a.label = fmt.Sprintf("Agree to %s/mo, confirm and apply", euros(*a.ack))
+	case a.ack != nil:
+		a.status = strings.Join(says, " ") + " Press Apply again to agree to it."
+		a.label = fmt.Sprintf("Agree to %s/mo and apply", euros(*a.ack))
+	default:
+		a.status = fmt.Sprintf("Listed above. Press Apply again to confirm %q.", a.confirm)
+		a.label = "Confirm and apply"
+	}
+	return a
 }

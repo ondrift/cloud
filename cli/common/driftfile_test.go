@@ -2,6 +2,8 @@ package common
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -49,20 +51,84 @@ func TestFormatSkew_WarnsWhenTheServedMinorIsAhead(t *testing.T) {
 	}
 }
 
-// One direction only. A client AHEAD of the platform understands everything the
-// platform can express, so refusing or warning would ground a working client
-// for no reason — in both the major and the minor position.
-func TestFormatSkew_SaysNothingWhenThisBinaryIsAhead(t *testing.T) {
+// A held schema BEHIND this binary is never a refusal: the binary understands
+// everything that schema can express. It IS a warning, because the document is
+// validated against that schema, and a key added since is refused as "not
+// allowed" with nothing naming the cause. This rung was silent, and a nested
+// Driftfile linted against a 1.19.0 cache by a 1.21.0 binary was refused for
+// `elements` with no word about the schema being two formats old.
+func TestFormatSkew_WarnsWhenTheHeldSchemaIsBehind(t *testing.T) {
 	for _, tc := range []struct{ implemented, served string }{
 		{"2.0.0", "1.9.0"},
 		{"1.9.0", "1.2.0"},
+		{"1.21.0", "1.19.0"},
 	} {
 		warning, err := driftfileFormatSkew(tc.implemented, tc.served)
-		if err != nil || warning != "" {
-			t.Errorf("implemented %s vs served %s must pass silently, got err=%v warning=%q",
-				tc.implemented, tc.served, err, warning)
+		if err != nil {
+			t.Errorf("implemented %s vs served %s must not be refused: %v", tc.implemented, tc.served, err)
+		}
+		for _, want := range []string{tc.implemented, tc.served, "drift slice list"} {
+			if !strings.Contains(warning, want) {
+				t.Errorf("implemented %s vs served %s: the warning should mention %q, got %q",
+					tc.implemented, tc.served, want, warning)
+			}
 		}
 	}
+}
+
+// A behind cache is refreshed before it is graded, so a reachable platform
+// leaves nothing to warn about; an unreachable one leaves the warning.
+func TestReportSkew_RefreshesAHeldSchemaThatIsBehind(t *testing.T) {
+	behind := "1.0.0"
+	current := `{"version":"` + ImplementedDriftfileFormat + `","properties":{}}`
+
+	t.Run("the platform answers, the cache is refreshed and nothing is said", func(t *testing.T) {
+		withCachedSchemaVersion(t, behind)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(current))
+		}))
+		t.Cleanup(srv.Close)
+		withAPIBase(t, srv.URL)
+
+		var out bytes.Buffer
+		if err := ReportDriftfileFormatSkew(&out); err != nil {
+			t.Fatal(err)
+		}
+		if got := DriftfileSchemaVersion(); got != ImplementedDriftfileFormat {
+			t.Errorf("the cache holds %q, want it refreshed to %q", got, ImplementedDriftfileFormat)
+		}
+		if out.Len() != 0 {
+			t.Errorf("a refreshed cache warns of nothing, got %q", out.String())
+		}
+	})
+
+	t.Run("the platform is unreachable, the warning is written", func(t *testing.T) {
+		withCachedSchemaVersion(t, behind)
+		srv := httptest.NewServer(http.NotFoundHandler())
+		srv.Close()
+		withAPIBase(t, srv.URL)
+
+		var out bytes.Buffer
+		if err := ReportDriftfileFormatSkew(&out); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), behind) || !strings.Contains(out.String(), ImplementedDriftfileFormat) {
+			t.Errorf("the warning must name both versions, got %q", out.String())
+		}
+	})
+}
+
+// withAPIBase points the platform at url for one test, and lets that test make
+// its own refresh attempt.
+func withAPIBase(t *testing.T, url string) {
+	t.Helper()
+	prev := APIBaseURL
+	APIBaseURL = url
+	ResetDriftfileSchemaRefresh()
+	t.Cleanup(func() {
+		APIBaseURL = prev
+		ResetDriftfileSchemaRefresh()
+	})
 }
 
 // A PATCH difference is documentation only, so it changes nothing a client can

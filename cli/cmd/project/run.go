@@ -12,6 +12,7 @@ package project
 // keeps your data) — see docs/memos/todo/self-host-slice-docker-run.md.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
@@ -171,7 +174,16 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 	quotaJSON := localQuotaConfig(app, os.Stdout)
 	runArgs := localRunArgs(m, container, image, port, persist, quotaJSON)
 	if out, err := exec.Command("docker", runArgs...).CombinedOutput(); err != nil {
-		return "", "", "", fmt.Errorf("docker run failed: %s", string(out))
+		return "", "", "", fmt.Errorf("docker create failed: %s", string(out))
+	}
+	// The declared queues exist before the slice starts, as `drift file apply`
+	// makes them exist on a slice before any slot is deployed.
+	if err := seedDeclaredQueues(container, image, DeclaredQueues(m)); err != nil {
+		_ = exec.Command("docker", "rm", "-f", container).Run()
+		return "", "", "", err
+	}
+	if out, err := exec.Command("docker", "start", container).CombinedOutput(); err != nil {
+		return "", "", "", fmt.Errorf("docker start failed: %s", string(out))
 	}
 
 	// ── Health-poll so the closeout is true, not hopeful ────────────
@@ -184,7 +196,9 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 	return app, container, url, nil
 }
 
-// localRunArgs builds the `docker run` argv for one local instance.
+// localRunArgs builds the `docker create` argv for one local instance. The
+// container is created, seeded and then started, so the declared queues are in
+// its data directory before the slice boots.
 //
 // Split out of startLocal so what the container is handed can be asserted
 // without a Docker daemon. An environment variable either reaches the container
@@ -192,7 +206,7 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 // visible before the process exists.
 func localRunArgs(m *Manifest, container, image string, port int, persist bool, quotaJSON string) []string {
 	args := []string{
-		"run", "-d", "--name", container,
+		"create", "--name", container,
 		"-p", fmt.Sprintf("127.0.0.1:%d:8002", port), // canvas only; :8000/:8001 stay internal
 		"-e", "DRIFT_STANDALONE_SAT=drift-run",
 	}
@@ -219,6 +233,75 @@ func localRunArgs(m *Manifest, container, image string, port int, persist bool, 
 		args = append(args, "-v", container+"-data:/data")
 	}
 	return append(args, image)
+}
+
+// seedDeclaredQueues writes one directory per declared queue into the created,
+// not yet started, container's Backbone data directory. The slice restores each
+// as an existing empty queue at boot, so a declared queue nothing has pushed to
+// reads empty, while an undeclared one is still the slice's 404.
+//
+// The data directory and the owner come from the image rather than from here:
+// the runner image owns BACKBONE_DATA_DIR and the user the slice runs as, and
+// a directory the slice cannot write to would refuse the queue's first push.
+// Directories alone, so a persisted volume keeps every message it holds.
+func seedDeclaredQueues(container, image string, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	dataDir, uid, gid, err := imageDataDirAndUser(image)
+	if err != nil {
+		return err
+	}
+	archive, err := atomic_cmd.QueueDirsArchive(names, uid, gid)
+	if err != nil {
+		return err
+	}
+	cp := exec.Command("docker", "cp", "--archive", "-", container+":"+dataDir)
+	cp.Stdin = bytes.NewReader(archive)
+	if out, err := cp.CombinedOutput(); err != nil {
+		return fmt.Errorf("create the declared queues in %s: %s", container, string(out))
+	}
+	return nil
+}
+
+// imageDataDirAndUser reads BACKBONE_DATA_DIR and the numeric user the image
+// runs as.
+func imageDataDirAndUser(image string) (dir string, uid, gid int, err error) {
+	out, err := exec.Command("docker", "image", "inspect", "--format",
+		"{{json .Config.Env}} {{json .Config.User}}", image).Output()
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("inspect %s: %w", image, err)
+	}
+	return parseImageDataDirAndUser(string(out))
+}
+
+// parseImageDataDirAndUser reads `docker image inspect`'s `<env json> <user json>`.
+func parseImageDataDirAndUser(inspected string) (dir string, uid, gid int, err error) {
+	envJSON, userJSON, _ := strings.Cut(strings.TrimSpace(inspected), " ")
+	var env []string
+	var user string
+	if json.Unmarshal([]byte(envJSON), &env) != nil || json.Unmarshal([]byte(userJSON), &user) != nil {
+		return "", 0, 0, fmt.Errorf("unreadable image config: %q", inspected)
+	}
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "BACKBONE_DATA_DIR="); ok {
+			dir = v
+		}
+	}
+	if dir == "" {
+		return "", 0, 0, fmt.Errorf("the runner image sets no BACKBONE_DATA_DIR, so there is nowhere to create the declared queues")
+	}
+	u, g, _ := strings.Cut(user, ":")
+	if uid, err = strconv.Atoi(u); err != nil {
+		return "", 0, 0, fmt.Errorf("the runner image runs as %q, not a numeric uid:gid", user)
+	}
+	gid = uid
+	if g != "" {
+		if gid, err = strconv.Atoi(g); err != nil {
+			return "", 0, 0, fmt.Errorf("the runner image runs as %q, not a numeric uid:gid", user)
+		}
+	}
+	return dir, uid, gid, nil
 }
 
 func getStopCmd() *cobra.Command {
