@@ -15,7 +15,7 @@
 // this repo is currently at /v4), so a future SDK major bump requires a
 // matching CLI change here AND in every generated-wrapper template that
 // hardcodes the same import path: cmd/atomic/cmd/deploy/default/
-// server_{post,get}_native.txt, cmd/atomic/cmd/new/languages/golang_{get,
+// server_{post,get}_{native,mux}.txt, cmd/atomic/cmd/new/languages/golang_{get,
 // post}.txt, and cmd/atomic/cmd/run/default/server_{post,get}.txt — not
 // something `@latest` alone can carry across for Go specifically.
 package atomic_common

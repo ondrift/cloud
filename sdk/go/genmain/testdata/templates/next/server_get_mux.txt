@@ -1,0 +1,18 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+
+	drift "github.com/ondrift/cloud/sdk/go"
+	"github.com/ondrift/cloud/sdk/go/genmain"
+)
+
+func main() {
+	genmain.Serve(func(ctx context.Context, req drift.Request) drift.Response {
+		_ = ctx
+		status, message, payload, headers := {{FUNC}}({{CTXARG}}req)
+		data, _ := json.Marshal(payload)
+		return drift.Response{Status: status, Message: message, Payload: data, Headers: headers}
+	})
+}

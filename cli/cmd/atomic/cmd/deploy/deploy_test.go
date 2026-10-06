@@ -14,20 +14,22 @@ import (
 // error inside a build the user never asked about — with no hint that the fault
 // is ours. Parsing it here moves that failure to us.
 func TestGeneratedNativeWrapperParses(t *testing.T) {
-	for _, method := range []string{"get", "post", "put", "delete", "patch", "queue"} {
-		dir := t.TempDir()
-		if err := generateMain(dir, "Handle", method); err != nil {
-			t.Fatalf("%s: generateMain: %v", method, err)
-		}
-		src, err := os.ReadFile(filepath.Join(dir, "main.go"))
-		if err != nil {
-			t.Fatalf("%s: %v", method, err)
-		}
-		if _, err := parser.ParseFile(token.NewFileSet(), "main.go", src, parser.AllErrors); err != nil {
-			t.Errorf("%s: the generated wrapper is not valid Go: %v\n%s", method, err, src)
-		}
-		if bytes.Contains(src, []byte("{{")) {
-			t.Errorf("%s: an unreplaced placeholder survived:\n%s", method, src)
+	for _, sdk := range []goSDK{{}, {version: "v0.99.0", genmain: true}} {
+		for _, method := range []string{"get", "post", "put", "delete", "patch", "queue"} {
+			dir := t.TempDir()
+			if err := generateMain(dir, goEntry{handler: "Handle", method: method}, sdk); err != nil {
+				t.Fatalf("%s: generateMain: %v", method, err)
+			}
+			src, err := os.ReadFile(filepath.Join(dir, "main.go"))
+			if err != nil {
+				t.Fatalf("%s: %v", method, err)
+			}
+			if _, err := parser.ParseFile(token.NewFileSet(), "main.go", src, parser.AllErrors); err != nil {
+				t.Errorf("%s (genmain %v): the generated wrapper is not valid Go: %v\n%s", method, sdk.genmain, err, src)
+			}
+			if bytes.Contains(src, []byte("{{")) {
+				t.Errorf("%s (genmain %v): an unreplaced placeholder survived:\n%s", method, sdk.genmain, src)
+			}
 		}
 	}
 }
@@ -35,9 +37,10 @@ func TestGeneratedNativeWrapperParses(t *testing.T) {
 // The wrapper serves more than one call, which is the entire point of warming.
 // A template that decoded once would pass a parse check and then answer exactly
 // one request per process, silently paying the sandbox install on every call.
+// This is the native template; genmain's loop is the SDK's to test.
 func TestGeneratedNativeWrapperLoops(t *testing.T) {
 	dir := t.TempDir()
-	if err := generateMain(dir, "Handle", "post"); err != nil {
+	if err := generateMain(dir, goEntry{handler: "Handle", method: "post"}, goSDK{}); err != nil {
 		t.Fatal(err)
 	}
 	src, err := os.ReadFile(filepath.Join(dir, "main.go"))

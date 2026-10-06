@@ -52,6 +52,12 @@ var defaultNativeServerPost string
 //go:embed default/server_get_native.txt
 var defaultNativeServerGet string
 
+//go:embed default/server_post_mux.txt
+var defaultMuxServerPost string
+
+//go:embed default/server_get_mux.txt
+var defaultMuxServerGet string
+
 //go:embed default/field_native.txt
 var defaultNativeField string
 
@@ -97,43 +103,154 @@ func safeTmpName(name string) string {
 	return out
 }
 
-// generateMain writes a main.go that wraps the user's Go handler function.
-// For body-shaped triggers it binds `var body <T>` to the handler's actual
-// first-parameter type (goBodyType) rather than a hardcoded name, so several
-// POST handlers can coexist in one element — each with its own body struct —
-// without colliding on a shared `RequestBody`.
+// goEntry is what one Go slot's generated main is rendered from: the facts of
+// its declaration that decide the template and the call.
+type goEntry struct {
+	name, handler, method, stream string
+	concurrency                   int
+}
+
+// goEntryOf is the entry for one declared slot.
+func goEntryOf(spec FunctionSpec) goEntry {
+	method, _ := spec.Wire()
+	return goEntry{
+		name: spec.Name, handler: spec.Handler, method: method,
+		stream: spec.Stream, concurrency: spec.Concurrency,
+	}
+}
+
+// generateMain writes the main.go that wraps the user's Go handler, chosen by
+// pulseMainTemplate. For body-shaped triggers it binds `var body <T>` to the
+// handler's actual body type (GoHandlerShape) rather than a hardcoded name, so
+// several POST handlers can coexist in one element — each with its own body
+// struct — without colliding on a shared `RequestBody`; and it passes the
+// call's context to a handler whose first parameter is a context.Context.
 //
 // A Field gets an entry point of its own: no request is read, the handler runs
 // until the slice asks it to stop, and the exit status says whether it stopped
 // because it was asked to. See default/field_native.txt.
-func generateMain(dir, funcName, method string) error {
+//
+// A combination no template can serve is refused here, before anything
+// compiles.
+func generateMain(dir string, e goEntry, sdk goSDK) error {
 	var code string
-	switch method {
-	case FieldMethod:
-		code = strings.NewReplacer("{{FUNC}}", funcName).Replace(defaultNativeField)
-	case "post", "put", "delete", "patch", "queue":
-		code = strings.NewReplacer("{{FUNC}}", funcName, "{{BODYTYPE}}", goBodyType(dir, funcName)).
-			Replace(defaultNativeServerPost)
-	default:
-		code = strings.NewReplacer("{{FUNC}}", funcName).Replace(defaultNativeServerGet)
+	if e.method == FieldMethod {
+		code = strings.NewReplacer("{{FUNC}}", e.handler).Replace(defaultNativeField)
+	} else {
+		bodyType, takesContext := GoHandlerShape(dir, e.handler)
+		tpl, err := pulseMainTemplate(e, takesContext, sdk)
+		if err != nil {
+			return err
+		}
+		ctxArg := ""
+		if takesContext {
+			ctxArg = "ctx, "
+		}
+		code = strings.NewReplacer("{{FUNC}}", e.handler, "{{BODYTYPE}}", bodyType, "{{CTXARG}}", ctxArg).Replace(tpl)
 	}
-	return os.WriteFile(filepath.Join(dir, "main.go"), []byte(code), 0o600)
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(code), 0o600); err != nil {
+		return fmt.Errorf("failed to generate main.go: %w", err)
+	}
+	return nil
 }
 
-// goBodyType returns the type of funcName's first parameter, read from the
-// staged Go sources in dir — e.g. `LoginBody` from
-// `func PostLogin(body LoginBody, req drift.Request)`. This lets each POST
-// handler in an element declare its own body struct; the generated wrapper
-// unmarshals into exactly that type. Falls back to "RequestBody" (the
-// historical name) when the signature can't be read, so single-function and
-// legacy deploys are byte-for-byte unchanged.
-func goBodyType(dir, funcName string) string {
+// isBodyMethod reports whether a Pulse of this method is handed a body: the
+// methods whose handler takes `body T` before the request.
+func isBodyMethod(method string) bool {
+	switch method {
+	case "post", "put", "delete", "patch", QueueMethod:
+		return true
+	}
+	return false
+}
+
+// pulseMainTemplate chooses the template a Pulse's main is rendered from.
+//
+// A buffered Pulse is served by the SDK's genmain package (default/
+// server_*_mux.txt): concurrently when its concurrency is above 1 and the
+// slice asks for it, one call at a time otherwise, byte for byte as the native
+// templates answer. Either way the protocol keeps the process's real stdout
+// and fd 1 is pointed at stderr, so what a handler prints reaches the
+// function's log instead of the line the slice reads as its response; and a
+// handler taking a context.Context is given the call's.
+//
+// The native templates (default/server_*_native.txt) serve the rest:
+//
+//   - a streaming Pulse, whose stdout IS the stream it writes to the client;
+//   - a build whose resolved SDK predates genmain (goSDK.genmain).
+//
+// Neither can call a handler with a context or serve calls concurrently, so a
+// handler taking a context.Context, or a concurrency above 1, is refused there
+// rather than compiled into an error in a file the author never wrote.
+func pulseMainTemplate(e goEntry, takesContext bool, sdk goSDK) (string, error) {
+	native, mux := defaultNativeServerGet, defaultMuxServerGet
+	if isBodyMethod(e.method) {
+		native, mux = defaultNativeServerPost, defaultMuxServerPost
+	}
+	switch {
+	case e.stream != "":
+		if takesContext {
+			return "", fmt.Errorf("pulse %q streams its reply (stream: %s), and its handler %s takes a context.Context: "+
+				"a streaming Pulse writes its stream on stdout and is not given a context in this release. "+
+				"Drop the context.Context parameter, or the stream", e.name, e.stream, e.handler)
+		}
+		return native, nil
+	case !sdk.genmain:
+		sdkName := "the Drift Go SDK this build resolved"
+		if sdk.version != "" {
+			sdkName += " (" + sdk.version + ")"
+		}
+		if e.concurrency > 1 {
+			return "", fmt.Errorf("pulse %q declares concurrency: %d, and %s predates concurrent Pulses. "+
+				"Deploy it again once a newer SDK is published, or set concurrency to 1", e.name, e.concurrency, sdkName)
+		}
+		if takesContext {
+			return "", fmt.Errorf("pulse %q has a handler, %s, that takes a context.Context, and %s predates handlers "+
+				"that take one. Deploy it again once a newer SDK is published, or drop the context.Context parameter",
+				e.name, e.handler, sdkName)
+		}
+		return native, nil
+	}
+	return mux, nil
+}
+
+// GoHandlerShape reads funcName's signature from the Go sources in dir and
+// reports its body type and whether its first parameter is a context.Context.
+//
+// The body type is the type of the first parameter after any context, e.g.
+// `LoginBody` from `func PostLogin(body LoginBody, req drift.Request)` or from
+// `func PostLogin(ctx context.Context, body LoginBody, req drift.Request)`. This
+// lets each POST handler in an element declare its own body struct; the
+// generated main unmarshals into exactly that type. It falls back to
+// "RequestBody" (the historical name) when the signature can't be read, so
+// single-function and legacy deploys are byte-for-byte unchanged.
+//
+// main.go is skipped: it is the generated file, or a user's own that the build
+// leaves out.
+func GoHandlerShape(dir, funcName string) (bodyType string, takesContext bool) {
 	const fallback = "RequestBody"
+	types := handlerParamTypes(dir, funcName)
+	if len(types) > 0 && types[0] == "context.Context" {
+		takesContext = true
+		types = types[1:]
+	}
+	if len(types) > 0 && types[0] != "" {
+		return types[0], takesContext
+	}
+	return fallback, takesContext
+}
+
+// handlerParamTypes returns the parameter types of funcName as its declaration
+// in dir writes them, or nil when no file declares it. A parameter it cannot
+// read is "". Read the same way the body type always was: the first file whose
+// text declares `func funcName(`, up to the first closing parenthesis.
+func handlerParamTypes(dir, funcName string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fallback
+		return nil
 	}
-	re := regexp.MustCompile(`func\s+` + regexp.QuoteMeta(funcName) + `\s*\(\s*[A-Za-z_]\w*\s+([^,)]+)`)
+	decl := regexp.MustCompile(`func\s+` + regexp.QuoteMeta(funcName) + `\s*\(([^)]*)\)`)
+	param := regexp.MustCompile(`^\s*[A-Za-z_]\w*\s+(\S.*?)\s*$`)
 	for _, e := range entries {
 		if e.IsDir() || e.Name() == "main.go" || !strings.HasSuffix(e.Name(), ".go") {
 			continue
@@ -142,13 +259,21 @@ func goBodyType(dir, funcName string) string {
 		if rerr != nil {
 			continue
 		}
-		if m := re.FindSubmatch(data); m != nil {
-			if t := strings.TrimSpace(string(m[1])); t != "" {
-				return t
-			}
+		m := decl.FindSubmatch(data)
+		if m == nil {
+			continue
 		}
+		var types []string
+		for _, p := range strings.Split(string(m[1]), ",") {
+			t := ""
+			if pm := param.FindStringSubmatch(p); pm != nil {
+				t = strings.Join(strings.Fields(pm[1]), " ")
+			}
+			types = append(types, t)
+		}
+		return types
 	}
-	return fallback
+	return nil
 }
 
 // generatePythonWrapper writes app.py that wraps the user's Python function.
@@ -481,7 +606,7 @@ func slotProtocol(method, language string) string {
 func operatorSink(a FuncArtifact) error {
 	name, method, language, auth, element, stream := a.Name, a.Method, a.Language, a.Auth, a.Element, a.Stream
 	secrets, sourcePath, userSourcePath, triggers, digest := a.Secrets, a.SourcePath, a.UserSourcePath, a.Triggers, a.Digest
-	meta, err := json.Marshal(map[string]any{
+	fields := map[string]any{
 		"name":     name,
 		"method":   method,
 		"language": language,
@@ -506,7 +631,14 @@ func operatorSink(a FuncArtifact) error {
 		// on the wire: the operator and the slice both read it, and this is the
 		// first of the three parsers it has to survive.
 		"response": a.Response,
-	})
+	}
+	// Only above 1, so a Pulse that declares none is sent exactly the metadata
+	// it always was, and an operator or slice that predates the key never
+	// reads it for one.
+	if a.Concurrency > 1 {
+		fields["concurrency"] = a.Concurrency
+	}
+	meta, err := json.Marshal(fields)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
@@ -626,6 +758,9 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	if err := refuseNonGoField(spec, language); err != nil {
 		return err
 	}
+	if err := refuseConcurrency(spec, language); err != nil {
+		return err
+	}
 
 	// Catch a common footgun before building: a function that uses the SDK
 	// but ships no dependency manifest to declare it — otherwise it deploys
@@ -701,7 +836,7 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	case "rust":
 		sourcePath, err = buildRust(absFolder, method, name, callable)
 	default:
-		sourcePath, err = buildGo(absFolder, method, name, callable)
+		sourcePath, err = buildGo(absFolder, spec)
 	}
 	if err != nil {
 		return err
@@ -744,8 +879,9 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	if err := sendSourceToOperator(FuncArtifact{
 		Name: name, Method: method, Language: language, Auth: auth,
 		Element: element, Stream: stream, Response: response, Secrets: secrets,
-		Env:      spec.Env,
-		Triggers: triggers, Digest: digest,
+		Env:         spec.Env,
+		Concurrency: spec.Concurrency,
+		Triggers:    triggers, Digest: digest,
 		SourcePath: sourcePath, UserSourcePath: userSourcePath,
 		SourceModule: wrapSourceModule, EntryFunc: wrapEntryFunc,
 	}); err != nil {

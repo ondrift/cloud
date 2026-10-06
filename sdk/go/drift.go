@@ -779,6 +779,29 @@ func callBackbone(method, path string, body any) ([]byte, error) {
 	return callBackboneLocal(method, path, body)
 }
 
+// backboneIdleConnsPerHost is how many idle loopback connections the Backbone
+// client keeps per host: the most calls one process serves at once (a Pulse's
+// `concurrency` maximum), so each call in flight can keep its own.
+const backboneIdleConnsPerHost = 64
+
+// backboneClient carries every Backbone and Deed call. Its idle pool is sized
+// for concurrent calls: on a slice every connect a function makes is a round
+// trip to the sandbox supervisor, and the default client keeps only 2 idle
+// connections per host, so concurrent callers would reconnect on most calls.
+// No client timeout: a Backbone call is bounded by the invocation's own
+// deadline, as it was on the default client.
+var backboneClient = newBackboneClient()
+
+func newBackboneClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConnsPerHost = backboneIdleConnsPerHost
+	if t.MaxIdleConns < backboneIdleConnsPerHost {
+		t.MaxIdleConns = backboneIdleConnsPerHost
+	}
+	t.IdleConnTimeout = 90 * time.Second
+	return &http.Client{Transport: t}
+}
+
 // callBackboneHTTP calls the real backbone service via HTTP over TCP
 // localhost. BACKBONE_URL is the full base URL as-is (e.g.
 // http://127.0.0.1:8000).
@@ -802,7 +825,7 @@ func callBackboneHTTP(baseURL, method, path string, body any) ([]byte, error) {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := backboneClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("drift: backbone call: %w", err)
 	}
@@ -1456,7 +1479,7 @@ func callBackboneRaw(method, path string, data []byte, contentType string) error
 		return fmt.Errorf("drift: backbone raw request: %w", err)
 	}
 	req.Header.Set("Content-Type", contentType)
-	resp, err := http.DefaultClient.Do(req) // #nosec G704 -- BACKBONE_URL is the slice's own backbone over UDS or loopback TCP; never a user-supplied URL.
+	resp, err := backboneClient.Do(req) // #nosec G704 -- BACKBONE_URL is the slice's own backbone over UDS or loopback TCP; never a user-supplied URL.
 	if err != nil {
 		return fmt.Errorf("drift: backbone raw call: %w", err)
 	}
@@ -1465,6 +1488,9 @@ func callBackboneRaw(method, path string, data []byte, contentType string) error
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("drift: backbone raw HTTP %d: %s", resp.StatusCode, string(body))
 	}
+	// Read to the end so the connection goes back to the idle pool: a body
+	// closed unread closes its connection, and the next call reconnects.
+	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }
 
@@ -1933,7 +1959,7 @@ func callBackboneHTTPAuth(baseURL, method, path, token string, body any) ([]byte
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := backboneClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("drift: backbone call: %w", err)
 	}
@@ -2352,37 +2378,53 @@ func (e Emitter) SendRaw(event, data string) {
 //	    })
 //	}
 func RunWS(handler func(Request, Conn)) {
-	// The runner writes the initial request as the first stdin line.
-	scanner := bufio.NewScanner(os.Stdin)
-	if !scanner.Scan() {
+	// The runner writes the initial request as the first stdin line. Lines
+	// are read with no length limit: a message is as long as the client sent.
+	r := bufio.NewReader(os.Stdin)
+	first, ok := readLine(r)
+	if !ok {
 		return
 	}
 	var req Request
-	json.Unmarshal(scanner.Bytes(), &req) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
+	json.Unmarshal(first, &req) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 
 	conn := Conn{
-		scanner: scanner,
-		w:       os.Stdout,
+		r: r,
+		w: os.Stdout,
 	}
 	handler(req, conn)
+}
+
+// readLine returns the next line of r without its line ending ("\n" or
+// "\r\n"), and false once r has nothing more. A last line with no newline is
+// still a line.
+func readLine(r *bufio.Reader) ([]byte, bool) {
+	line, err := r.ReadBytes('\n')
+	if len(line) == 0 && err != nil {
+		return nil, false
+	}
+	line = bytes.TrimSuffix(line, []byte("\n"))
+	line = bytes.TrimSuffix(line, []byte("\r"))
+	return line, true
 }
 
 // Conn represents a WebSocket connection bridged through stdin/stdout.
 // The runner handles the actual WebSocket protocol; the function sees
 // JSON lines on stdin (incoming) and writes JSON lines to stdout (outgoing).
 type Conn struct {
-	scanner *bufio.Scanner
-	w       io.Writer
+	r *bufio.Reader
+	w io.Writer
 }
 
 // Read blocks until the next message arrives from the client.
 // Returns the raw message bytes and true, or nil and false if the
 // connection is closed.
 func (c Conn) Read() (json.RawMessage, bool) {
-	if !c.scanner.Scan() {
+	line, ok := readLine(c.r)
+	if !ok {
 		return nil, false
 	}
-	return json.RawMessage(c.scanner.Bytes()), true
+	return json.RawMessage(line), true
 }
 
 // ReadJSON reads the next message and decodes it into the target.

@@ -32,7 +32,7 @@ func buildField(t *testing.T, handler string) string {
 		t.Fatalf("this test compiles the Field entry point and needs a Go toolchain on PATH: %v", err)
 	}
 	dir := t.TempDir()
-	if err := generateMain(dir, "Sequencer", FieldMethod); err != nil {
+	if err := generateMain(dir, goEntry{handler: "Sequencer", method: FieldMethod}, goSDK{}); err != nil {
 		t.Fatalf("generateMain: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module fieldtest\n\ngo 1.22\n"), 0o600); err != nil {
@@ -161,7 +161,7 @@ func TestFieldEntryPoint_AFailureExitsOneWithTheReason(t *testing.T) {
 // a Pulse template would answer one request and exit into a crash loop.
 func TestFieldEntryPoint_IsNotAPulseTemplate(t *testing.T) {
 	dir := t.TempDir()
-	if err := generateMain(dir, "Sequencer", FieldMethod); err != nil {
+	if err := generateMain(dir, goEntry{handler: "Sequencer", method: FieldMethod}, goSDK{version: "v0.99.0", genmain: true}); err != nil {
 		t.Fatal(err)
 	}
 	src, err := os.ReadFile(filepath.Join(dir, "main.go"))

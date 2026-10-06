@@ -128,7 +128,8 @@ func TestNativeWrapperImportsExactlyWhatItUses(t *testing.T) {
 }
 
 // renderNativeWrapper produces the main.go a Go function of this method shape
-// would be built from, through generateMain itself rather than a copy of what
+// would be built from with the native template (a streaming Pulse, or an SDK
+// predating genmain), through generateMain itself rather than a copy of what
 // it does.
 func renderNativeWrapper(t *testing.T, method string) string {
 	t.Helper()
@@ -141,7 +142,7 @@ func renderNativeWrapper(t *testing.T, method string) string {
 	if err := os.WriteFile(filepath.Join(dir, "handler.go"), []byte(handler), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := generateMain(dir, "Handle", method); err != nil {
+	if err := generateMain(dir, goEntry{handler: "Handle", method: method}, goSDK{}); err != nil {
 		t.Fatalf("%s: %v", method, err)
 	}
 	return readFile(t, filepath.Join(dir, "main.go"))

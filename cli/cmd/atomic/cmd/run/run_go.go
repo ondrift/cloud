@@ -13,26 +13,39 @@ import (
 	"path/filepath"
 	"strings"
 
+	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 )
 
+// generateGo writes the dev server's main.go around the handler, read the way
+// the deploy reads it: the body type its declaration names, and the request's
+// context passed first when its first parameter is a context.Context.
 func (r *devRunner) generateGo() error {
-	funcName := r.handler
+	return renderGoServer(r.workDir, r.handler, r.method)
+}
 
-	var code string
+// renderGoServer writes the dev server's main.go for funcName into dir, whose
+// Go sources declare it.
+func renderGoServer(dir, funcName, method string) error {
+	bodyType, takesContext := atomic_cmd.GoHandlerShape(dir, funcName)
+	ctxArg := ""
+	if takesContext {
+		ctxArg = "ctx, "
+	}
 	replacer := strings.NewReplacer(
 		"{{FUNC}}", funcName,
-		"{{ROUTE}}", "/"+r.name,
-		"{{PORT}}", fmt.Sprintf("%d", r.port),
+		"{{BODYTYPE}}", bodyType,
+		"{{CTXARG}}", ctxArg,
 	)
-	switch r.method {
+	var code string
+	switch method {
 	case "post", "put", "delete", "patch":
 		code = replacer.Replace(defaultGolangServerPost)
 	default:
 		code = replacer.Replace(defaultGolangServerGet)
 	}
 
-	return os.WriteFile(filepath.Join(r.workDir, "main.go"), []byte(code), 0o600)
+	return os.WriteFile(filepath.Join(dir, "main.go"), []byte(code), 0o600)
 }
 
 func (r *devRunner) buildAndRunGo() error {

@@ -188,6 +188,18 @@ func driftfileVersionOf(raw []byte) string {
 //
 // Bump it in the release that implements a format change.
 //
+// 1.22.0 covers `concurrency` on a Pulse: how many calls one process of it may
+// serve at once. cmd/project/handlers.go reads it from every Pulse, top level
+// or inside an element. Above 1 it is refused before anything builds unless the
+// Pulse is Go, buffered and reached over HTTP (no `stream`, not `method:
+// queue`), in the operator's words; it travels in the deploy metadata and in
+// the declaration digest only when above 1, so a Pulse that declares none is
+// sent and fingerprinted exactly as before. A Go Pulse's main is generated
+// from the templates that call the SDK's genmain package, which serves it
+// concurrently when the slice asks and one call at a time otherwise, and
+// passes the call's context to a handler whose first parameter is a
+// context.Context.
+//
 // 1.21.0 covers elements as the container of Atomic's work. `atomic.elements`
 // lists each element (a folder holding one language's source and one
 // dependency manifest) with the Pulses and Fields whose handlers live in it,
@@ -261,7 +273,7 @@ func driftfileVersionOf(raw []byte) string {
 // `backbone.secrets` — no constraint, no pattern, nothing that changes what
 // validates — which is a PATCH under the schema's own versioning rule and
 // therefore nothing for a client to implement.
-const ImplementedDriftfileFormat = "1.21.0"
+const ImplementedDriftfileFormat = "1.22.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every
 // authenticated request.
