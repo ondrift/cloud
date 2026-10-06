@@ -342,13 +342,26 @@ func layoutCanvas(m *Manifest, dir string) error {
 	return os.WriteFile(filepath.Join(dir, "registry.json"), b, 0o644)
 }
 
+// thinDockerfile is the Dockerfile bakeImage builds: the runner image plus the
+// project's functions and canvas.
+//
+// The functions go where the runner image's own RUNNER_DIR says, and nowhere
+// else. The sandbox's Landlock rules let a function execute only beneath the
+// runner paths the platform mounts, so code copied anywhere else is refused at
+// its first invocation: the wrapper's execve fails, the worker exits 65, and the
+// caller sees "warm worker closed its output". The image owns RUNNER_DIR,
+// CANVAS_DATA_DIR and BACKBONE_DATA_DIR, so this file names the variables and
+// sets none of them.
+func thinDockerfile(base string) string {
+	return fmt.Sprintf(`FROM %s
+COPY runner $RUNNER_DIR
+COPY canvas $CANVAS_DATA_DIR
+`, base)
+}
+
 // bakeImage writes a thin Dockerfile in work and builds <image> from it.
 func bakeImage(work, image string) error {
-	dockerfile := fmt.Sprintf(`FROM %s
-COPY runner /var/runner
-COPY canvas /var/canvas
-ENV RUNNER_DIR=/var/runner CANVAS_DATA_DIR=/var/canvas BACKBONE_DATA_DIR=/data
-`, runnerImage())
+	dockerfile := thinDockerfile(runnerImage())
 	if err := os.WriteFile(filepath.Join(work, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
 		return err
 	}

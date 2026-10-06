@@ -2441,12 +2441,22 @@ type sqlQueryReply struct {
 	Rows    [][]any  `json:"rows"`
 }
 
+// sqlBody builds the envelope every SQL statement is sent in. `args` is
+// always a JSON array: a call with no arguments leaves the variadic slice nil,
+// which marshals as `null`, and a slice that reads `args` as a list refuses
+// the whole body as invalid JSON.
+func sqlBody(db, sqlText string, args []any) map[string]any {
+	if args == nil {
+		args = []any{}
+	}
+	return map[string]any{"db": db, "sql": sqlText, "args": args}
+}
+
 // Query runs a SELECT and returns rows shaped as `[]map[string]any`
 // keyed by column name. SQLite's NULL is JSON null; other types pass
 // through unchanged.
 func (s SQLDB) Query(sqlText string, args ...any) ([]map[string]any, error) {
-	body := map[string]any{"db": s.name, "sql": sqlText, "args": args}
-	resp, err := callBackbone("POST", "sql/query", body)
+	resp, err := callBackbone("POST", "sql/query", sqlBody(s.name, sqlText, args))
 	if err != nil {
 		return nil, err
 	}
@@ -2469,8 +2479,7 @@ func (s SQLDB) Query(sqlText string, args ...any) ([]map[string]any, error) {
 
 // Execute runs INSERT/UPDATE/DELETE/DDL.
 func (s SQLDB) Execute(sqlText string, args ...any) (SQLResult, error) {
-	body := map[string]any{"db": s.name, "sql": sqlText, "args": args}
-	resp, err := callBackbone("POST", "sql/execute", body)
+	resp, err := callBackbone("POST", "sql/execute", sqlBody(s.name, sqlText, args))
 	if err != nil {
 		return SQLResult{}, err
 	}
@@ -2506,7 +2515,8 @@ func (s SQLDB) Begin() (SQLTx, error) {
 
 // Query inside a transaction.
 func (t SQLTx) Query(sqlText string, args ...any) ([]map[string]any, error) {
-	body := map[string]any{"db": t.db, "sql": sqlText, "args": args, "tx": t.token}
+	body := sqlBody(t.db, sqlText, args)
+	body["tx"] = t.token
 	resp, err := callBackbone("POST", "sql/query", body)
 	if err != nil {
 		return nil, err
@@ -2530,7 +2540,8 @@ func (t SQLTx) Query(sqlText string, args ...any) ([]map[string]any, error) {
 
 // Execute inside a transaction.
 func (t SQLTx) Execute(sqlText string, args ...any) (SQLResult, error) {
-	body := map[string]any{"db": t.db, "sql": sqlText, "args": args, "tx": t.token}
+	body := sqlBody(t.db, sqlText, args)
+	body["tx"] = t.token
 	resp, err := callBackbone("POST", "sql/execute", body)
 	if err != nil {
 		return SQLResult{}, err
