@@ -113,9 +113,8 @@ var shapeKeys = []common.KeyDeprecation{
 	// admission pool AND what it is billed at, so it is chosen where the slice is
 	// sized rather than where the Pulse is declared.
 	//
-	// A Field's `memory` is not here. The format requires it on every Field, and
-	// a notice telling someone to drop a key the schema will not let them drop
-	// is a notice nobody can act on.
+	// A Field has no entry here because the format never gave it a `memory`
+	// key: its booking has always been the slice shape's.
 	ignoredShapeKey("atomic.pulses[].memory", "A pulse's memory booking is a slice setting"),
 
 	ignoredShapeKey("backbone.blob_max_size", "Blob size limits are a slice setting"),

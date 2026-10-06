@@ -271,7 +271,7 @@ func TestCheckSliceReferences_ASecretThisManifestSetsPasses(t *testing.T) {
 func manifestWithField(pulses []string, field string) *Manifest {
 	m := manifestNaming(pulses, nil, nil, nil)
 	m.slice.Sub("atomic")["fields"] = []any{
-		map[string]any{"name": field, "handler": "Run", "memory": "32MB"},
+		map[string]any{"name": field, "handler": "Run"},
 	}
 	return m
 }

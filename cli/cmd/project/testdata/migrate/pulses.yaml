@@ -9,7 +9,6 @@ atomic:
   fields:
     - name: sequencer
       handler: Sequencer
-      memory: 32MB
 
 environments:
   staging:

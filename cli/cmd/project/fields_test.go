@@ -42,7 +42,6 @@ atomic:
   fields:
     - name: sequencer
       handler: Sequencer
-      memory: 32MB
       secrets: [LEDGER_KEY]
       env:
         BATCH: "50"
@@ -91,9 +90,53 @@ func TestFieldSpecs_ParseTheFieldsList(t *testing.T) {
 		t.Errorf("FunctionSpecs is the Pulses alone, got %d", len(FunctionSpecs(m)))
 	}
 
-	// The booking the compiled-floor check reads includes the Field.
-	if got := declaredBookings(m)["field:sequencer"]; got != "32MB" {
-		t.Errorf("the Field's booking reads %q, want 32MB", got)
+	// A Field that writes a `memory` is refused by the format: the figure would
+	// be read by nothing.
+	withMemory := strings.Replace(fieldDriftfile, "handler: Sequencer\n", "handler: Sequencer\n      memory: 32MB\n", 1)
+	if _, err := ParseDriftfile(fieldProject(t, withMemory)); err == nil || !strings.Contains(err.Error(), "memory") {
+		t.Errorf("a Field writing memory must be refused naming the key, got %v", err)
+	}
+
+	// The Field is declared, and writes no booking: the slice shape owns it.
+	if got, ok := declaredBookings(m)["field:sequencer"]; !ok || got != "" {
+		t.Errorf("the Field must be declared with no written booking, got %q (declared=%v)", got, ok)
+	}
+}
+
+// A Field's booking is its live slot's, so the compiled floor is checked
+// against the slice shape: under the floor is refused naming the Field and
+// the resize that raises it; at the floor passes; and with no live slice in
+// hand there is nothing to check a Field against.
+func TestCheckSlotBookings_AFieldIsCheckedAgainstItsLiveSlot(t *testing.T) {
+	m, err := ParseDriftfile(fieldProject(t, fieldDriftfile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	els, err := atomic_cmd.BuildElements(AtomicSpecs(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	slots := func(fieldBytes int) *LiveSlice {
+		l := liveWith([]string{"get:ping"}, nil, nil, nil)
+		l.Config.Atomic.Functions = append(l.Config.Atomic.Functions,
+			AtomicFunction{Name: "field:sequencer", MemoryBytes: fieldBytes})
+		return l
+	}
+
+	err = CheckSlotBookings(m, els, slots(8<<20))
+	if err == nil {
+		t.Fatal("a Go Field booked at 8 MB on the slice must be refused")
+	}
+	for _, want := range []string{"field:sequencer booked 8 MB", "16MB", "drift slice resize"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must say %q, got:\n%v", want, err)
+		}
+	}
+	if err := CheckSlotBookings(m, els, slots(16<<20)); err != nil {
+		t.Errorf("a Field booked at the floor must pass: %v", err)
+	}
+	if err := CheckCompiledBookings(m, els); err != nil {
+		t.Errorf("offline, a Field has no booking to check: %v", err)
 	}
 }
 
@@ -161,7 +204,6 @@ atomic:
   fields:
     - name: sequencer
       handler: Sequencer
-      memory: 32MB
 `
 	_, err := ParseDriftfile(fieldProject(t, clash))
 	if err == nil {

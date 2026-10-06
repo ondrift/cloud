@@ -90,7 +90,7 @@ func TestCountAtomicFunctions_IsTheDeclaredList(t *testing.T) {
 	}
 
 	// A Field is a slot too, and counts as one.
-	m.slice.Sub("atomic")["fields"] = []any{map[string]any{"name": "sequencer", "handler": "Run", "memory": "32MB"}}
+	m.slice.Sub("atomic")["fields"] = []any{map[string]any{"name": "sequencer", "handler": "Run"}}
 	if got, _ := CountAtomicFunctions(m); got != 4 {
 		t.Errorf("three pulses and a field are four slots, got %d", got)
 	}

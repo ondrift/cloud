@@ -242,6 +242,15 @@ single slice otherwise.`,
 				return err
 			}
 
+			// The same floor, against the bookings the slice shape holds. A
+			// Field writes no booking in this file, so this is where its own is
+			// first in hand.
+			if berr == nil && liveSlice != nil {
+				if err := CheckSlotBookings(m, els, liveSlice); err != nil {
+					return err
+				}
+			}
+
 			// In --plan mode nothing is deployed: say what exists and what this
 			// would apply into it, and stop.
 			if planOnly {

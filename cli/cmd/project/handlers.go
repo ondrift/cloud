@@ -137,8 +137,12 @@ func entryDir(m *Manifest, entry Node) string {
 	return dir
 }
 
-// declaredBookings maps every declared slot, Pulse or Field, to the `memory` its
-// entry writes, keyed by the booking key the slice books it under.
+// declaredBookings maps every declared slot, Pulse or Field, by the booking key
+// the slice books it under, to the `memory` its entry writes.
+//
+// A Field writes none: its booking is the slice shape's, chosen on the form
+// `drift slice resize` draws, so its value here is always "". It is still in
+// the map, because the map is also what says a slot is declared at all.
 func declaredBookings(m *Manifest) map[string]string {
 	out := map[string]string{}
 	for _, fn := range PulseEntries(m.Slice()) {
@@ -148,14 +152,26 @@ func declaredBookings(m *Manifest) map[string]string {
 	}
 	for _, f := range FieldEntries(m.Slice()) {
 		if name := f.Str("name"); name != "" {
-			out[atomic_cmd.FieldKey(name)] = f.Str("memory")
+			out[atomic_cmd.FieldKey(name)] = ""
 		}
 	}
 	return out
 }
 
-// CheckCompiledBookings refuses a compiled function booked under the floor its
+// CheckCompiledBookings is CheckSlotBookings with no live slice: the offline
+// check `drift file lint` can make, from the bookings a Driftfile still writes.
+func CheckCompiledBookings(m *Manifest, elements []atomic_cmd.Element) error {
+	return CheckSlotBookings(m, elements, nil)
+}
+
+// CheckSlotBookings refuses a compiled Pulse or Field booked under the floor its
 // own language runtime needs, on this machine, before anything is uploaded.
+//
+// The booking is the slot's on the live slice when one is given, because the
+// slice shape owns every booking; a Field writes none in the Driftfile, so the
+// live slot is the only place its booking exists. Without a live slice the check
+// reads what a Pulse's entry still writes, and a Field is not checked until one
+// is in hand.
 //
 // This is the half of the booking rule the schema cannot state. `pattern` already
 // refuses anything outside 8MB-256MB offline; the compiled floor needs the
@@ -173,17 +189,24 @@ func declaredBookings(m *Manifest) map[string]string {
 //
 // Reports every offending function rather than the first: a tutorial Driftfile
 // booking three Go functions at 8MB should be fixed in one pass, not three.
-func CheckCompiledBookings(m *Manifest, elements []atomic_cmd.Element) error {
+func CheckSlotBookings(m *Manifest, elements []atomic_cmd.Element, live *LiveSlice) error {
 	floor := CompiledMemoryFloor()
 	if floor.Bytes <= 0 {
 		return nil
 	}
 
-	// The declared booking, by slot. Read from the manifest rather than the spec
-	// because a FunctionSpec carries what it takes to BUILD a slot, and memory is
-	// not one of those things. Fields are in it: a Field is Go, so the floor
-	// binds every one of them.
+	// The written booking, by slot, read from the manifest rather than the spec
+	// because a FunctionSpec carries what it takes to BUILD a slot, and memory
+	// is not one of those things. The live slot's booking replaces it.
 	declared := declaredBookings(m)
+	booked := map[string]int{}
+	if live != nil {
+		for _, s := range live.Config.Atomic.Functions {
+			if s.MemoryBytes > 0 {
+				booked[s.Name] = s.MemoryBytes
+			}
+		}
+	}
 
 	var bad []string
 	for _, el := range elements {
@@ -191,15 +214,24 @@ func CheckCompiledBookings(m *Manifest, elements []atomic_cmd.Element) error {
 			continue
 		}
 		for _, f := range el.Funcs {
-			raw := declared[f.Spec.Name]
-			if raw == "" {
-				continue // a missing booking is already reported, with its own message
+			bytes, label := booked[f.Spec.Name], ""
+			if bytes > 0 {
+				label = sizeLabel(bytes)
+			} else {
+				raw := declared[f.Spec.Name]
+				if raw == "" {
+					continue // no booking in hand: the slice form or the api says so
+				}
+				parsed, err := parseSizeBytes(raw)
+				if err != nil {
+					continue
+				}
+				bytes, label = parsed, raw
 			}
-			bytes, err := parseSizeBytes(raw)
-			if err != nil || bytes >= floor.Bytes {
+			if bytes >= floor.Bytes {
 				continue
 			}
-			bad = append(bad, fmt.Sprintf("  %s booked %s, in %s", f.Spec.Name, raw, el.Lang))
+			bad = append(bad, fmt.Sprintf("  %s booked %s, in %s", f.Spec.Name, label, el.Lang))
 		}
 	}
 	if len(bad) == 0 {
@@ -211,7 +243,7 @@ func CheckCompiledBookings(m *Manifest, elements []atomic_cmd.Element) error {
 			"and the pool is charged what an invocation is measured to cost — that runtime "+
 			"included. The interpreted languages share one language server each and can book "+
 			"as little as 8MB.\n"+
-			"Raise each of them to %s or higher, or run `drift file benchmark` against a "+
+			"Raise each of them to %s or higher with `drift slice resize`, or run `drift file benchmark` against a "+
 			"deployed slice to size them from what they actually hold.",
 		floor.Declared, len(bad), strings.Join(bad, "\n"), floor.Declared)
 }

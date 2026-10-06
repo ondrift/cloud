@@ -315,7 +315,7 @@
           "items": {
             "$ref": "#/definitions/fieldEntry"
           },
-          "$comment": "Names are unique across this list, and JSON Schema cannot say so: `uniqueItems` compares whole entries, so two entries naming one Field with different memory would both pass it. The client refuses the duplicate, and the platform refuses a config declaring one booking key twice (tier.ValidateFunctionIdentities). A Field name may NOT equal any Pulse route: the booking keys `field:<name>` and `<method>:<route>` differ, but the slice keys logs, metrics, alerts and triggers by the bare name, so the two would share them. JSON Schema cannot compare across lists either, so the client and tier.ValidateFieldNames refuse it."
+          "$comment": "Names are unique across this list, and JSON Schema cannot say so: `uniqueItems` compares whole entries, so two entries naming one Field with different handlers would both pass it. The client refuses the duplicate, and the platform refuses a config declaring one booking key twice (tier.ValidateFunctionIdentities). A Field name may NOT equal any Pulse route: the booking keys `field:<name>` and `<method>:<route>` differ, but the slice keys logs, metrics, alerts and triggers by the bare name, so the two would share them. JSON Schema cannot compare across lists either, so the client and tier.ValidateFieldNames refuse it."
         },
         "egress": {
           "$ref": "#/definitions/egressSection",
@@ -547,14 +547,13 @@
     },
     "fieldEntry": {
       "type": "object",
-      "description": "One Field: the long-running worker the slice keeps running, the callable it runs, and the memory it books.",
+      "description": "One Field: the long-running worker the slice keeps running, and the callable it runs. A Field declares no memory here: its booking is part of the slice's shape, set with `drift slice create` or `drift slice resize` under the slot `field:<name>`, like a Pulse's. A Field is compiled (Go), so that booking is held to the compiled floor of 16MB, and a Field that grows past it is stopped and restarted.",
       "additionalProperties": false,
       "required": [
         "name",
-        "handler",
-        "memory"
+        "handler"
       ],
-      "$comment": "Every property but `name` is atomicEntry's own, reached by $ref, so the handler grammar, the memory range and the env reservation have one owner and a Field cannot drift from a Pulse on any of them. Wrapped in allOf so each can carry a description of its own: draft-07 ignores siblings of a bare $ref. || Nothing else belongs here. A Field is not reached by a request, so it has no route, method, auth, stream or response; it is always running, so it has no cron; and alerts key on invocation errors, which a Field does not produce.",
+      "$comment": "Every property but `name` is atomicEntry's own, reached by $ref, so the handler grammar and the env reservation have one owner and a Field cannot drift from a Pulse on either. Wrapped in allOf so each can carry a description of its own: draft-07 ignores siblings of a bare $ref. || `memory` is ABSENT, not deprecated: the slice shape owns every booking, so a Field never had a key here to retire, and additionalProperties:false refuses one with a schema error rather than accepting a figure nothing reads. The compiled floor is enforced on the slot's booking at create and resize (tier.ValidateAtomicMemory). || Nothing else belongs here. A Field is not reached by a request, so it has no route, method, auth, stream or response; it is always running, so it has no cron; and alerts key on invocation errors, which a Field does not produce.",
       "properties": {
         "name": {
           "type": "string",
@@ -573,14 +572,6 @@
             }
           ],
           "description": "The callable the Field runs, `func Name(ctx context.Context) error` in Go. The context is cancelled when the slice stops the Field; returning nil after that is a clean stop."
-        },
-        "memory": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/atomicEntry/properties/memory"
-            }
-          ],
-          "description": "Memory this Field books for as long as it runs, from 16MB to 256MB: a Field is compiled (Go), so the compiled floor applies. It is the Field's own pool and what it is billed at, per MiB. A Field that grows past it is stopped and restarted."
         },
         "element": {
           "allOf": [

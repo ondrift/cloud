@@ -192,6 +192,8 @@ func driftfileVersionOf(raw []byte) string {
 // (default/field_native.txt), refused before building when its element is not Go,
 // and uploaded as the slot `field:<name>` with no triggers, so it is booked,
 // referenced, reported idle and skipped when unchanged exactly as a Pulse is.
+// A Field writes no `memory`: its booking is the slice shape's, and the
+// compiled floor is checked against the live slot before anything deploys.
 //
 // 1.19.0 covers top-level `edge:`, the one home of every fact about how a slice
 // is reached. Three keys moved there, and the old spellings stay legal as
