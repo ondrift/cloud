@@ -1,0 +1,112 @@
+package main
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	drift "github.com/ondrift/cloud/sdk/go"
+)
+
+// One process, many invocations. The slice writes newline-delimited envelopes
+// and reads one response line per call; stdin closing is how it retires this
+// worker. Installing the sandbox and starting the Go runtime costs ~2.6ms and is
+// paid once here instead of once per request.
+func main() {
+	dec := json.NewDecoder(os.Stdin)
+	enc := json.NewEncoder(os.Stdout)
+	injected := map[string]bool{}
+	for {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return // stdin closed or malformed: this worker is done
+		}
+
+		var req drift.Request
+		_ = json.Unmarshal(raw, &req)
+
+		// Scratch for THIS call. The process outlives the invocation, so its
+		// TMPDIR was fixed at spawn and cannot be this call's — the slice names
+		// it per envelope and the runtime is pointed at it here, so os.TempDir()
+		// and anything reading HOME land in a directory nobody else shares.
+		var envelope struct {
+			Tmpdir   string            `json:"tmpdir"`
+			Secrets  map[string]string `json:"secrets"`
+			Previous map[string]string `json:"secrets_previous"`
+		}
+		_ = json.Unmarshal(raw, &envelope)
+		if envelope.Tmpdir != "" && filepath.IsAbs(envelope.Tmpdir) {
+			_ = os.Setenv("TMPDIR", envelope.Tmpdir)
+			_ = os.Setenv("HOME", envelope.Tmpdir)
+		}
+
+		// Secrets for THIS call, for exactly the reason TMPDIR is re-pointed
+		// above: the slice sets DRIFT_SECRET_* once at spawn, and this process
+		// then serves up to 200 more calls. A secret rotated in between stayed
+		// stale for all of them, because the SDK's accessor reads the
+		// environment and the environment was fixed before the rotation
+		// happened. The slice already sends the current values in every
+		// envelope; this is what makes the SDK see them.
+		//
+		// A name the envelope no longer carries is REMOVED, not left behind. A
+		// secret deleted from the store must stop being readable, and a stale
+		// variable is indistinguishable from a live one to the accessor.
+		for k := range injected {
+			if _, still := envelope.Secrets[k]; !still {
+				_ = os.Unsetenv("DRIFT_SECRET_" + strings.ToUpper(k))
+				delete(injected, k)
+			}
+			if _, still := envelope.Previous[k]; !still {
+				_ = os.Unsetenv("DRIFT_SECRET_" + strings.ToUpper(k) + "_PREVIOUS")
+			}
+		}
+		for k, v := range envelope.Secrets {
+			_ = os.Setenv("DRIFT_SECRET_"+strings.ToUpper(k), v)
+			injected[k] = true
+		}
+		// The value each secret held before it was last replaced, while that is
+		// still inside its grace window. Usually absent, and removed above the
+		// moment the envelope stops carrying it — a grace window that ends has
+		// to end here too, or this worker keeps accepting a retired credential
+		// for the rest of its life.
+		for k, v := range envelope.Previous {
+			_ = os.Setenv("DRIFT_SECRET_"+strings.ToUpper(k)+"_PREVIOUS", v)
+			injected[k] = true
+		}
+
+		var body {{BODYTYPE}}
+		_ = json.Unmarshal(req.Body, &body)
+		status, message, payload, headers := {{FUNC}}(body, req)
+		data, _ := json.Marshal(payload)
+		out := map[string]any{
+			"status":  status,
+			"message": message,
+			"payload": json.RawMessage(data),
+		}
+		if len(headers) > 0 {
+			out["headers"] = headers
+		}
+		// What this process has reached. Nothing exits for the slice to weigh
+		// with wait4, so a warm worker reports its own high-water mark — that is
+		// what /sizing, `drift project benchmark` and the admission reservation
+		// read, and a warmed language that stopped reporting would go blind.
+		if rss := peakRSSBytes(); rss > 0 {
+			out["rss_bytes"] = rss
+		}
+		if err := enc.Encode(out); err != nil {
+			return
+		}
+	}
+}
+
+// peakRSSBytes is this process's high-water resident size. ru_maxrss is in
+// kilobytes on Linux, which is where a deployed function runs.
+func peakRSSBytes() int64 {
+	var ru syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err != nil {
+		return 0
+	}
+	return int64(ru.Maxrss) * 1024
+}

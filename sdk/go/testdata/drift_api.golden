@@ -1,0 +1,115 @@
+func (*EgressDeniedError) Error() string
+func (*EgressDeniedError) Unwrap() error
+func (*JWTError) Error() string
+func (Conn) Read() (json.RawMessage, bool)
+func (Conn) ReadJSON(target any) bool
+func (Conn) Write(data any)
+func (Conn) WriteRaw(msg string)
+func (Emitter) Send(event string, data any)
+func (Emitter) SendRaw(event, data string)
+func (RealtimeChannel) Presence() (int, error)
+func (RealtimeChannel) Publish(msg any) (int, error)
+func (SQLDB) Begin() (SQLTx, error)
+func (SQLDB) Execute(sqlText string, args ...any) (SQLResult, error)
+func (SQLDB) Query(sqlText string, args ...any) ([]map[string]any, error)
+func (SQLTx) Commit() error
+func (SQLTx) Execute(sqlText string, args ...any) (SQLResult, error)
+func (SQLTx) Query(sqlText string, args ...any) ([]map[string]any, error)
+func (SQLTx) Rollback() error
+func (SliceClient) Get(path string) (*HTTPResponse, error)
+func (SliceClient) Post(path string, body any) (*HTTPResponse, error)
+func (SliceClient) Request(method, path string, headers map[string]string, body []byte) (*HTTPResponse, error)
+func (backboneNS) Queue(name string) queueHandle
+func (backboneNS) SQL(name string) SQLDB
+func (blobNS) Get(name string) ([]byte, error)
+func (blobNS) Put(name string, data []byte, contentType string) error
+func (cacheNS) Del(key string) error
+func (cacheNS) Get(key string) ([]byte, error)
+func (cacheNS) Set(key string, value any, ttlSeconds int) error
+func (collectionHandle) Delete(key string) error
+func (collectionHandle) Drop() error
+func (collectionHandle) Get(id string) (json.RawMessage, error)
+func (collectionHandle) Insert(doc any) (string, error)
+func (collectionHandle) InsertMany(docs []any) (int, error)
+func (collectionHandle) List(filter map[string]string, limit ...int) ([]json.RawMessage, error)
+func (collectionHandle) ListAll(filter map[string]string) ([]json.RawMessage, error)
+func (collectionHandle) ListAllInOrder() ([]json.RawMessage, error)
+func (collectionHandle) ListInOrder(limit ...int) ([]json.RawMessage, error)
+func (collectionHandle) Read(key string) (json.RawMessage, error)
+func (edgeNS) Slice(name string) SliceClient
+func (jwtNS) Issue(claims JWTClaims) (string, error)
+func (jwtNS) SliceID() string
+func (jwtNS) Verify(token string, opts JWTVerifyOptions) (JWTClaims, error)
+func (keyAuthNS) Challenge(pubkey string) (string, error)
+func (keyAuthNS) Verify(pubkey, sig, domain string) (string, error)
+func (linkNS) Attest(identity, sessionID, attestingPubkey, sig string, sealed ...string) error
+func (linkNS) Begin(pubkey string, metadata ...string) (string, error)
+func (linkNS) Complete(sessionID string) (LinkStatus, error)
+func (linkNS) QR(text string) (string, error)
+func (linkNS) Revoke(identity, targetPubkey, revokingPubkey, sig string) error
+func (linkNS) SessionInfo(sessionID string) (LinkSessionInfo, error)
+func (lockNS) Acquire(name string, ttlSeconds int) (string, error)
+func (lockNS) AcquireAs(name, owner string, ttlSeconds int) (string, error)
+func (lockNS) Release(name, token string) error
+func (lockNS) Renew(name, token string, ttlSeconds int) error
+func (nosqlNS) Collection(name string) collectionHandle
+func (pocketNS) Delete(token, key string) error
+func (pocketNS) Get(token, key string) (json.RawMessage, error)
+func (pocketNS) List(token string) ([]string, error)
+func (pocketNS) Set(token, key string, blob any) error
+func (queueHandle) Len() (int, error)
+func (queueHandle) Peek() (json.RawMessage, error)
+func (queueHandle) Pop() (json.RawMessage, error)
+func (queueHandle) Push(body any) (string, error)
+func (realtimeNS) Channel(name string) RealtimeChannel
+func (secretNS) Delete(name string) error
+func (secretNS) Get(name string) (string, error)
+func (secretNS) Previous(name string) (string, error)
+func (secretNS) Set(name, value string) error
+func (vaultNS) Get(uid string) (json.RawMessage, error)
+func (vaultNS) Put(uid string, blob any) error
+func CallerSlice(req Request) string
+func Env(key string) string
+func HTTPRequest(method, rawURL string, headers map[string]string, body []byte) (*HTTPResponse, error)
+func HTTPRequestWithTimeout(method, rawURL string, headers map[string]string, body []byte, timeout time.Duration) (*HTTPResponse, error)
+func Log(msg string)
+func Run(handler func(Request) Response)
+func RunSSE(handler func(Request, Emitter))
+func RunWS(handler func(Request, Conn))
+func Slice(name string) SliceClient
+type BackboneRequest struct{Method string `json:"method"` Path string `json:"path"` Body json.RawMessage `json:"body,omitempty"` Raw []byte `json:"-"`}
+type Conn struct{}
+type EgressDeniedError struct{Host string Err error}
+type Emitter struct{}
+type HTTPResponse struct{Status int Body []byte}
+type JWTClaims struct{Sub string `json:"sub,omitempty"` Iat int64 `json:"iat,omitempty"` Exp int64 `json:"exp,omitempty"` Nbf int64 `json:"nbf,omitempty"` Iss string `json:"iss,omitempty"` Aud []string `json:"aud,omitempty"` Jti string `json:"jti,omitempty"` Custom map[string]any `json:"custom,omitempty"`}
+type JWTError struct{Reason string}
+type JWTVerifyOptions struct{Audience string AllowedIssuer string}
+type LinkSessionInfo struct{NewPubkey string `json:"new_pubkey"` Metadata string `json:"metadata,omitempty"`}
+type LinkStatus struct{Status string `json:"status"` Identity string `json:"identity,omitempty"` Sealed string `json:"sealed,omitempty"`}
+type RealtimeChannel struct{}
+type Request struct{Path string `json:"path"` Headers map[string]string `json:"headers"` Query string `json:"query"` Body json.RawMessage `json:"body"` Params map[string]string `json:"params,omitempty"` RoutePattern string `json:"route_pattern,omitempty"`}
+type Response struct{Status int `json:"status"` Message string `json:"message"` Payload json.RawMessage `json:"payload"` Headers map[string]string `json:"headers,omitempty"`}
+type SQLDB struct{}
+type SQLResult struct{RowsAffected int64 `json:"rows_affected"` LastInsertID int64 `json:"last_insert_id"`}
+type SQLTx struct{}
+type SliceClient struct{}
+type backboneNS struct{Secret secretNS NoSQL nosqlNS Cache cacheNS Blob blobNS Lock lockNS Realtime realtimeNS}
+type blobNS struct{}
+type cacheNS struct{}
+type collectionHandle struct{}
+type deedNS struct{KeyAuth keyAuthNS JWT jwtNS Vault vaultNS Link linkNS Pocket pocketNS}
+type edgeNS struct{}
+type jwtNS struct{}
+type keyAuthNS struct{}
+type linkNS struct{}
+type lockNS struct{}
+type nosqlNS struct{}
+type pocketNS struct{}
+type queueHandle struct{}
+type realtimeNS struct{}
+type secretNS struct{}
+type vaultNS struct{}
+var Backbone backboneNS
+var Deed deedNS
+var Edge edgeNS
