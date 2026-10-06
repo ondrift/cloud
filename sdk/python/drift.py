@@ -54,6 +54,7 @@ from memory.
 
 import base64
 import http.client
+import io
 import json
 import os
 import re
@@ -284,6 +285,25 @@ def _ensure_deed_conn(base_url):
     return _deed_conn, parsed.path or ""
 
 
+class BackboneError(urllib.error.HTTPError):
+    """A Backbone call the slice refused, carrying the slice's own words.
+
+    It is an HTTPError, so a caller catching that keeps working, and its
+    message reads as every other SDK's does:
+    `drift: backbone <path>: HTTP <status>: <the slice's reply>`. The reply is
+    also readable through .read(), as an HTTPError's body is.
+    """
+
+    def __init__(self, url, path, code, reason, headers, body):
+        super().__init__(url, code, reason, headers, io.BytesIO(body or b""))
+        self.path = path.split("?", 1)[0]
+        self.text = (body or b"").decode("utf-8", errors="replace").strip()
+
+    def __str__(self):
+        detail = self.text or self.reason or ""
+        return f"drift: backbone {self.path}: HTTP {self.code}" + (f": {detail}" if detail else "")
+
+
 def _call(method, path, body=None):
     """Call backbone via HTTP (deployed) or return None (local dev fallback).
 
@@ -316,11 +336,11 @@ def _call(method, path, body=None):
                         return json.loads(raw)
                     except (json.JSONDecodeError, ValueError):
                         return raw.decode("utf-8", errors="replace")
-                # Non-2xx: raise the same exception type the previous
-                # urllib-based code raised, so callers that catch
-                # HTTPError keep working.
-                raise urllib.error.HTTPError(
-                    f"{base}/{path}", resp.status, resp.reason or "", resp.getheaders(), None
+                # Non-2xx: a BackboneError, which IS an HTTPError so callers
+                # that catch HTTPError keep working, and which carries the
+                # slice's own words in its message and in .read().
+                raise BackboneError(
+                    f"{base}/{path}", path, resp.status, resp.reason or "", resp.getheaders(), raw
                 )
             except (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError):
                 # The persistent connection died — close + retry once
@@ -421,6 +441,38 @@ def _blob_address(bucket, key):
     return f"{bucket or ''}/{key or ''}"
 
 
+def _local_valid_name(s):
+    """The slice's rule for a single-segment resource name such as a queue: an
+    alphanumeric first byte, then alphanumerics and `. _ -`, at most 255 bytes."""
+    return (
+        0 < len(s.encode("utf-8")) <= 255
+        and s.isascii()
+        and s[0].isalnum()
+        and all(c.isalnum() or c in "._-" for c in s)
+    )
+
+
+def _ensure_declared_queues():
+    """Create, empty, every queue DRIFT_DECLARED_QUEUES names that the local
+    store does not hold yet.
+
+    The CLI sets it for a local run from the Driftfile's declared queues, as
+    `drift file apply` creates them on a slice before anything runs. A queue it
+    does not name still has to be pushed to before it exists.
+    """
+    for name in os.environ.get("DRIFT_DECLARED_QUEUES", "").split(","):
+        name = name.strip()
+        if name and _local_valid_name(name) and name not in _local_store["queues"]:
+            _local_store["queues"][name] = {"msgs": [], "next_id": 0}
+
+
+def _queue_timestamp():
+    """The slice's message timestamp: RFC 3339 in UTC with nine fractional digits."""
+    ns = time.time_ns()
+    secs, frac = divmod(ns, 1_000_000_000)
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(secs)) + f".{frac:09d}Z"
+
+
 def _call_local(method, path, body=None):
     """In-memory backbone for local development."""
     s = _local_store
@@ -514,18 +566,42 @@ def _call_local(method, path, body=None):
         return None
 
     # Queue
+    #
+    # Answered as a slice answers, refusals included: a push names its queue in
+    # the body and must carry an object; a pop, a peek and a length name it in
+    # the query string and nowhere else; a queue nothing was ever pushed to is a
+    # 404.
+    if base_path.startswith("queue/"):
+        _ensure_declared_queues()
     if base_path == "queue/push" and method == "POST":
         name = (body or {}).get("queue", "")
+        if not isinstance(name, str):
+            raise RuntimeError("drift: backbone queue/push: HTTP 400: invalid JSON")
         msg = (body or {}).get("body")
-        s["queues"].setdefault(name, []).append(msg)
-        return None
+        if not name or not isinstance(msg, dict):
+            raise RuntimeError("drift: backbone queue/push: HTTP 400: queue and body required")
+        if not _local_valid_name(name):
+            raise RuntimeError("drift: backbone queue/push: HTTP 400: invalid queue name")
+        q = s["queues"].setdefault(name, {"msgs": [], "next_id": 0})
+        msg_id = str(q["next_id"])
+        q["next_id"] += 1
+        q["msgs"].append({"id": msg_id, "body": json.loads(json.dumps(msg)), "timestamp": _queue_timestamp()})
+        return {"id": msg_id}
 
-    if base_path == "queue/pop" and method == "POST":
-        name = (body or {}).get("queue", "")
-        q = s["queues"].get(name, [])
-        if not q:
+    if (method, base_path) in (("POST", "queue/pop"), ("GET", "queue/peek"), ("GET", "queue/len")):
+        name = query.get("queue", "")
+        if not name:
+            raise RuntimeError(f"drift: backbone {base_path}: HTTP 400: queue query param required")
+        if not _local_valid_name(name):
+            raise RuntimeError(f"drift: backbone {base_path}: HTTP 400: invalid queue name")
+        q = s["queues"].get(name)
+        if q is None:
+            raise RuntimeError(f"drift: backbone {base_path}: HTTP 404: queue {name} not found")
+        if base_path == "queue/len":
+            return {"length": len(q["msgs"])}
+        if not q["msgs"]:
             return None
-        return q.pop(0)
+        return q["msgs"].pop(0) if base_path == "queue/pop" else q["msgs"][0]
 
     # Blob
     #
@@ -803,14 +879,53 @@ nosql = _NoSQLNS()
 # ---------------------------------------------------------------------------
 
 class _QueueHandle:
+    """A Backbone queue.
+
+    The slice takes a push's queue name in the JSON body, and a pop's, a peek's
+    and a length's in the query string and nowhere else. A pop or a peek answers
+    with the message's envelope ({id, body, timestamp}); the caller gets the body
+    it pushed, or None when the queue is empty. A queue nothing was ever pushed
+    to does not exist, and every read of it raises.
+    """
+
     def __init__(self, name):
         self.name = name
 
     def push(self, body):
-        _call("POST", "queue/push", {"queue": self.name, "body": body})
+        """Append body, which must be a dict; the slice refuses anything else.
+        Returns the id the slice gave the message."""
+        reply = _call("POST", "queue/push", {"queue": self.name, "body": body})
+        if not isinstance(reply, dict) or not isinstance(reply.get("id"), str) or not reply["id"]:
+            raise RuntimeError(
+                f"drift: queue {self.name}: the push may have succeeded, but its reply carries no id: {reply!r}"
+            )
+        return reply["id"]
 
     def pop(self):
-        return _call("POST", "queue/pop", {"queue": self.name})
+        """Remove the message at the head of the queue and return its body."""
+        return self._head("POST", "queue/pop")
+
+    def peek(self):
+        """Return the body of the message at the head without removing it."""
+        return self._head("GET", "queue/peek")
+
+    def len(self):
+        """How many messages are waiting."""
+        reply = _call("GET", self._at("queue/len"))
+        if not isinstance(reply, dict) or not isinstance(reply.get("length"), int):
+            raise RuntimeError(f"drift: queue {self.name}: the length reply is unreadable: {reply!r}")
+        return reply["length"]
+
+    def _at(self, path):
+        return f"{path}?queue={urllib.parse.quote(self.name, safe='')}"
+
+    def _head(self, method, path):
+        msg = _call(method, self._at(path))
+        if msg is None:
+            return None
+        if not isinstance(msg, dict) or "body" not in msg:
+            raise RuntimeError(f"drift: queue {self.name}: the {path} reply is not a message: {msg!r}")
+        return msg["body"]
 
 def queue(name):
     return _QueueHandle(name)

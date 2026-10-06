@@ -112,7 +112,7 @@ drift.Backbone.Secret.Get("API_KEY")                           // .Set(k, v), .D
 c := drift.Backbone.NoSQL.Collection("orders")
 c.Insert(doc); c.Get(id); c.Read(key); c.List(filter); c.Delete(key); c.Drop()
 drift.Backbone.Cache.Set("k", v, 60); drift.Backbone.Cache.Get("k")        // ttl seconds
-drift.Backbone.Queue("q").Push(m); drift.Backbone.Queue("q").Pop()
+id, err := drift.Backbone.Queue("q").Push(m); drift.Backbone.Queue("q").Pop()   // .Peek(), .Len(); Pop/Peek return the pushed body, nil when empty
 drift.Backbone.Blob.Put("k", data, "image/png"); drift.Backbone.Blob.Get("k")
 drift.Backbone.Lock.Acquire("r", 30); drift.Backbone.Lock.Release("r", token)
 drift.Backbone.SQL("clinic").Query("SELECT …", args)           // .Execute(…), .Begin() (transactions)
@@ -155,7 +155,7 @@ drift.backbone.secret.get("API_KEY")                          # .set(k, v), .del
 c = drift.backbone.nosql.collection("orders")
 c.insert(doc); c.get(id); c.read(key); c.list(filter); c.delete(key); c.drop()
 drift.backbone.cache.set("k", v, 60); drift.backbone.cache.get("k"); drift.backbone.cache.delete("k")
-drift.backbone.queue("q").push(m); drift.backbone.queue("q").pop()
+drift.backbone.queue("q").push(m); drift.backbone.queue("q").pop()    # push returns the id; .peek(), .len(); pop/peek return the pushed body, None when empty; a refusal raises drift.BackboneError (an HTTPError)
 drift.backbone.blob.put("k", data); drift.backbone.blob.get("k")
 drift.backbone.lock.acquire("r", ttl=30); drift.backbone.lock.release("r", token)
 db = drift.backbone.sql("clinic"); db.query("SELECT …", args)  # .execute(…), .begin()
@@ -199,7 +199,7 @@ await drift.backbone.secret.get("API_KEY");                   // .set(k, v), .de
 const c = drift.backbone.nosql.collection("orders");
 await c.insert(doc); await c.get(id); await c.read(key); await c.list(filter); await c.delete(key); await c.drop();
 await drift.backbone.cache.set("k", v, 60); await drift.backbone.cache.get("k"); await drift.backbone.cache.delete("k");
-await drift.backbone.queue("q").push(m); await drift.backbone.queue("q").pop();
+await drift.backbone.queue("q").push(m); await drift.backbone.queue("q").pop();   // push resolves to the id; .peek(), .len(); pop/peek return the pushed body, null when empty
 await drift.backbone.blob.put("k", data); await drift.backbone.blob.get("k");
 await drift.backbone.lock.acquire("r", 30); await drift.backbone.lock.release("r", token);
 const db = drift.backbone.sql("clinic"); await db.query("SELECT …", args);   // .execute(…), .begin()
@@ -242,7 +242,7 @@ Drift::Backbone::Secret.get("API_KEY")                        # .set(k, v), .del
 c = Drift::Backbone::Nosql.collection("orders")
 c.insert(doc); c.get(id); c.list(filter)
 Drift::Backbone::Cache.get("k"); Drift::Backbone::Cache.set("k", v, ttl: 60)
-Drift::Backbone.queue("q").push(m); Drift::Backbone.queue("q").pop
+Drift::Backbone.queue("q").push(m); Drift::Backbone.queue("q").pop   # push returns the id; .peek, .len; pop/peek return the pushed body, nil when empty
 Drift::Backbone::Blob.put("k", data, content_type: "image/png"); Drift::Backbone::Blob.get("k")
 Drift::Backbone::Lock.acquire("r", ttl: 30); Drift::Backbone::Lock.release("r", token)
 db = Drift::Backbone.sql("clinic"); db.query("SELECT …", args)   # .execute(…), .transaction { |tx| … }
@@ -289,7 +289,7 @@ function queue_notifier($body, $req = null) {
 $c = \Drift\Backbone\Nosql::collection('orders');
 $c->insert($doc); $c->get($id); $c->read($key); $c->list($filter); $c->delete($key); $c->drop();
 \Drift\Backbone\Cache::set('k', $v, 60); \Drift\Backbone\Cache::get('k'); \Drift\Backbone\Cache::delete('k');
-\Drift\Backbone\queue('q')->push($m); \Drift\Backbone\queue('q')->pop();
+\Drift\Backbone\queue('q')->push($m); \Drift\Backbone\queue('q')->pop();   // push returns the id; ->peek(), ->len(); pop/peek return the pushed body, null when empty
 \Drift\Backbone\Blob::put('k', $data); \Drift\Backbone\Blob::get('k');
 \Drift\Backbone\Lock::acquire('r', 30); \Drift\Backbone\Lock::release('r', $token);
 $db = \Drift\Backbone\sql('clinic'); $db->query('SELECT …', $args);   // ->execute(…), ->transaction(fn($tx)=>…)
@@ -340,7 +340,7 @@ secret::get("API_KEY");                                       // set(k, v), dele
 let c = nosql::collection("orders");
 c.insert(doc); c.get(id); c.read(key); c.list(Some(filter)); c.delete(key); c.drop();
 cache::set("k", v, 60); cache::get("k"); cache::delete("k");
-queue("q").push(m); queue("q").pop();
+queue("q").push(m); queue("q").pop();                         // push -> Option<id>; try_push, try_pop, peek, len -> Result; pop/peek give the pushed body
 blob::put("k", &data, Some("image/png")); blob::get("k");
 lock::acquire("r", 30); lock::release("r", &token);
 let db = sql("clinic"); db.query("SELECT …", &args);         // .execute(…), .begin()

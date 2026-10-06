@@ -11,13 +11,19 @@ import json
 import os
 import sys
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # No BACKBONE_URL: every case runs against the in-memory local store, which is the
 # loop a developer meets first and the one where the six drifted. Set BEFORE the
 # import, because the SDK caches the value on first read.
-os.environ["BACKBONE_URL"] = ""
+#
+# DRIFT_CONFORMANCE_BACKBONE_URL names a running slice's Backbone instead, and
+# runs the queue cases against it alone: the slice is the authority on the queue
+# wire, and the local store is held to what it answers.
+SLICE = os.environ.get("DRIFT_CONFORMANCE_BACKBONE_URL", "")
+os.environ["BACKBONE_URL"] = SLICE
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python"))
 
@@ -38,7 +44,65 @@ def fail(message):
     sys.exit(0)  # check.py turns the reported error into the failure
 
 
+def queue_cases():
+    """Drive every queue call once. The names carry the time, so a run against a
+    slice, whose queues outlive the run, never meets an earlier run's."""
+    stamp = f"{time.time_ns()}{os.getpid()}"
+    q = drift.backbone.queue(f"conformance-python-{stamp}")
+    absent = drift.backbone.queue(f"conformance-absent-python-{stamp}")
+
+    def attempt(fn, read):
+        try:
+            return read(fn())
+        except Exception:  # noqa: BLE001
+            return "error"
+
+    def body(msg):
+        return None if msg is None else msg["n"]
+
+    def same(v):
+        return v
+
+    def refused(_):
+        return None
+
+    out["queue_pop_never_pushed"] = attempt(absent.pop, body)
+    try:
+        absent.pop()
+        out["queue_error_carries_the_refusal"] = False
+    except Exception as e:  # noqa: BLE001
+        out["queue_error_carries_the_refusal"] = "HTTP 404" in str(e) and "not found" in str(e)
+    out["queue_len_never_pushed"] = attempt(absent.len, same)
+    out["queue_push_not_an_object"] = attempt(lambda: q.push("a bare string"), refused)
+    out["queue_push_bad_name"] = attempt(lambda: drift.backbone.queue("-flag").push({"n": 0}), refused)
+    out["queue_push_ids"] = []
+    for n in range(1, 4):
+        try:
+            out["queue_push_ids"].append(q.push({"n": n}))
+        except Exception as e:  # noqa: BLE001
+            fail(f"queue.push {n}: {e}")
+    out["queue_len_after_push"] = attempt(q.len, same)
+    out["queue_peek"] = attempt(q.peek, body)
+    out["queue_len_after_peek"] = attempt(q.len, same)
+    out["queue_pop_in_order"] = [attempt(q.pop, body) for _ in range(3)]
+    out["queue_pop_empty"] = attempt(q.pop, body)
+    out["queue_peek_empty"] = attempt(q.peek, body)
+    out["queue_len_after_pop"] = attempt(q.len, same)
+
+
 def main():
+    queue_cases()
+    if SLICE:
+        emit()
+        return
+
+    # A declared queue, named the way the CLI names it for a local run.
+    os.environ["DRIFT_DECLARED_QUEUES"] = "conformance-declared"
+    try:
+        out["declared_queue_pop_empty"] = drift.backbone.queue("conformance-declared").pop()
+    except Exception:  # noqa: BLE001
+        out["declared_queue_pop_empty"] = "error"
+
     blob = drift.backbone.blob
 
     # -- Blob ---------------------------------------------------------------

@@ -20,7 +20,7 @@ func resetLocalStore(t *testing.T) {
 	defer localBackbone.mu.Unlock()
 	localBackbone.nosql = make(map[string]map[string]json.RawMessage)
 	localBackbone.cache = make(map[string]json.RawMessage)
-	localBackbone.queues = make(map[string][]json.RawMessage)
+	localBackbone.queues = make(map[string]*localQueue)
 	localBackbone.blobs = make(map[string][]byte)
 	localBackbone.locks = make(map[string]localLock)
 	localBackbone.secrets = make(map[string]string)
@@ -369,11 +369,21 @@ func TestLocalBlobRoundTripsWithoutABucket(t *testing.T) {
 
 // An empty queue is a legitimate empty answer, not a missing implementation.
 // The default case must not turn one into the other.
+//
+// The queue is emptied rather than never written: a queue nothing was ever
+// pushed to does not exist, and a slice answers that 404 rather than empty.
 func TestLocalEmptyAnswersStayEmpty(t *testing.T) {
 	t.Setenv("BACKBONE_URL", "")
 	resetLocalStore(t)
 
-	msg, err := Backbone.Queue("jobs").Pop()
+	jobs := Backbone.Queue("jobs")
+	if _, err := jobs.Push(map[string]any{"n": 1}); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if _, err := jobs.Pop(); err != nil {
+		t.Fatalf("Pop: %v", err)
+	}
+	msg, err := jobs.Pop()
 	if err != nil {
 		t.Fatalf("popping an empty queue must not be an error: %v", err)
 	}

@@ -10,8 +10,13 @@
 // No BACKBONE_URL: every case runs against the in-memory local store, which is
 // the loop a developer meets first and the one where the six drifted. Set BEFORE
 // the require, because the SDK caches the value on first read.
-putenv('BACKBONE_URL=');
-$_ENV['BACKBONE_URL'] = '';
+//
+// DRIFT_CONFORMANCE_BACKBONE_URL names a running slice's Backbone instead, and
+// runs the queue cases against it alone: the slice is the authority on the queue
+// wire, and the local store is held to what it answers.
+$slice = (string) getenv('DRIFT_CONFORMANCE_BACKBONE_URL');
+putenv('BACKBONE_URL=' . $slice);
+$_ENV['BACKBONE_URL'] = $slice;
 
 require_once __DIR__ . '/../php/drift.php';
 
@@ -30,6 +35,63 @@ function fail_with(string $message): void {
     emit();
     exit(0); // check.py turns the reported error into the failure
 }
+
+// -- Queue -------------------------------------------------------------------
+// Every queue call once. The names carry the time, so a run against a slice,
+// whose queues outlive the run, never meets an earlier run's.
+function attempt(callable $fn, callable $read) {
+    try {
+        return $read($fn());
+    } catch (\Throwable $e) {
+        return 'error';
+    }
+}
+
+$stamp = hrtime(true) . getmypid();
+$q = \Drift\Backbone\queue("conformance-php-$stamp");
+$absent = \Drift\Backbone\queue("conformance-absent-php-$stamp");
+$body = fn($msg) => $msg === null ? null : $msg['n'];
+$same = fn($v) => $v;
+$refused = fn($_) => null;
+
+$out['queue_pop_never_pushed'] = attempt(fn() => $absent->pop(), $body);
+try {
+    $absent->pop();
+    $out['queue_error_carries_the_refusal'] = false;
+} catch (\Throwable $e) {
+    $out['queue_error_carries_the_refusal'] =
+        str_contains($e->getMessage(), 'HTTP 404') && str_contains($e->getMessage(), 'not found');
+}
+$out['queue_len_never_pushed'] = attempt(fn() => $absent->len(), $same);
+$out['queue_push_not_an_object'] = attempt(fn() => $q->push('a bare string'), $refused);
+$out['queue_push_bad_name'] = attempt(fn() => \Drift\Backbone\queue('-flag')->push(['n' => 0]), $refused);
+$out['queue_push_ids'] = [];
+for ($n = 1; $n <= 3; $n++) {
+    try {
+        $out['queue_push_ids'][] = $q->push(['n' => $n]);
+    } catch (\Throwable $e) {
+        fail_with("queue->push $n: " . $e->getMessage());
+    }
+}
+$out['queue_len_after_push'] = attempt(fn() => $q->len(), $same);
+$out['queue_peek'] = attempt(fn() => $q->peek(), $body);
+$out['queue_len_after_peek'] = attempt(fn() => $q->len(), $same);
+$out['queue_pop_in_order'] = [];
+for ($i = 0; $i < 3; $i++) {
+    $out['queue_pop_in_order'][] = attempt(fn() => $q->pop(), $body);
+}
+$out['queue_pop_empty'] = attempt(fn() => $q->pop(), $body);
+$out['queue_peek_empty'] = attempt(fn() => $q->peek(), $body);
+$out['queue_len_after_pop'] = attempt(fn() => $q->len(), $same);
+
+if ($slice !== '') {
+    emit();
+    exit(0);
+}
+
+// A declared queue, named the way the CLI names it for a local run.
+putenv('DRIFT_DECLARED_QUEUES=conformance-declared');
+$out['declared_queue_pop_empty'] = attempt(fn() => \Drift\Backbone\queue('conformance-declared')->pop(), $same);
 
 // -- Blob --------------------------------------------------------------------
 try {

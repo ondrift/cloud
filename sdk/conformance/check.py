@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """check.py — compare one SDK driver's output against the shared expectations.
 
-    <driver> | python3 check.py <language>
+    <driver> | python3 check.py <language> [--only <prefix>]
+
+--only checks the cases whose names start with <prefix> and no others: a run
+against a real slice drives the queue_ cases alone.
 
 The driver prints a JSON object of case name to the value it actually got. The
 expectations live in expected.json and are the SAME for every language, which is
@@ -22,7 +25,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def main() -> int:
-    language = sys.argv[1] if len(sys.argv) > 1 else "unknown"
+    args = sys.argv[1:]
+    only = ""
+    if "--only" in args:
+        i = args.index("--only")
+        if i + 1 >= len(args):
+            print("  --only needs a case-name prefix")
+            return 1
+        only = args[i + 1]
+        del args[i : i + 2]
+    language = args[0] if args else "unknown"
 
     with open(os.path.join(HERE, "expected.json")) as f:
         expected = json.load(f)
@@ -44,7 +56,10 @@ def main() -> int:
         print(f"  {language}: the driver reported an error: {actual['error']}")
         return 1
 
-    cases = [k for k in expected if not k.startswith("$")]
+    cases = [k for k in expected if not k.startswith("$") and k.startswith(only)]
+    if not cases:
+        print(f"  {language}: no case starts with {only!r}, so nothing was checked")
+        return 1
     failed = []
     for case in cases:
         want = expected[case]["expect"]

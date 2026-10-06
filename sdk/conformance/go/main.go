@@ -18,16 +18,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	drift "github.com/ondrift/cloud/sdk/go"
 )
 
 func main() {
-	// No BACKBONE_URL: every case runs against the in-memory local store, which
-	// is the loop a developer meets first and the one where the six drifted.
-	_ = os.Setenv("BACKBONE_URL", "")
-
 	out := map[string]any{}
 	defer func() {
 		if r := recover(); r != nil {
@@ -35,6 +33,32 @@ func main() {
 			emit(out)
 		}
 	}()
+
+	// DRIFT_CONFORMANCE_BACKBONE_URL names a running slice's Backbone, and runs
+	// the queue cases against it alone: the slice is the authority on the queue
+	// wire, and the local store is held to what it answers.
+	if slice := os.Getenv("DRIFT_CONFORMANCE_BACKBONE_URL"); slice != "" {
+		_ = os.Setenv("BACKBONE_URL", slice)
+		queueCases(out)
+		emit(out)
+		return
+	}
+
+	// No BACKBONE_URL: every case runs against the in-memory local store, which
+	// is the loop a developer meets first and the one where the six drifted.
+	_ = os.Setenv("BACKBONE_URL", "")
+
+	queueCases(out)
+
+	// A declared queue, named the way the CLI names it for a local run.
+	_ = os.Setenv("DRIFT_DECLARED_QUEUES", "conformance-declared")
+	if msg, err := drift.Backbone.Queue("conformance-declared").Pop(); err != nil {
+		out["declared_queue_pop_empty"] = "error"
+	} else if msg == nil {
+		out["declared_queue_pop_empty"] = nil
+	} else {
+		out["declared_queue_pop_empty"] = string(msg)
+	}
 
 	// ── Blob ────────────────────────────────────────────────────────────────
 	if err := drift.Backbone.Blob.Put("uploads/greeting.txt", []byte("hello, slice"), "text/plain"); err != nil {
@@ -191,6 +215,70 @@ func main() {
 	}
 
 	emit(out)
+}
+
+// queueCases drives every queue call once. The names carry the time, so a run
+// against a slice, whose queues outlive the run, never meets an earlier run's.
+func queueCases(out map[string]any) {
+	stamp := strconv.FormatInt(time.Now().UnixNano(), 10)
+	q := drift.Backbone.Queue("conformance-go-" + stamp)
+	absent := drift.Backbone.Queue("conformance-absent-go-" + stamp)
+
+	body := func(raw json.RawMessage, err error) any {
+		if err != nil {
+			return "error"
+		}
+		if raw == nil {
+			return nil
+		}
+		var doc struct {
+			N int `json:"n"`
+		}
+		if json.Unmarshal(raw, &doc) != nil {
+			return string(raw)
+		}
+		return doc.N
+	}
+	length := func(n int, err error) any {
+		if err != nil {
+			return "error"
+		}
+		return n
+	}
+	refused := func(_ string, err error) any {
+		if err != nil {
+			return "error"
+		}
+		return nil
+	}
+
+	out["queue_pop_never_pushed"] = body(absent.Pop())
+	_, err := absent.Pop()
+	out["queue_error_carries_the_refusal"] = err != nil &&
+		strings.Contains(err.Error(), "HTTP 404") && strings.Contains(err.Error(), "not found")
+	out["queue_len_never_pushed"] = length(absent.Len())
+	out["queue_push_not_an_object"] = refused(q.Push("a bare string"))
+	out["queue_push_bad_name"] = refused(drift.Backbone.Queue("-flag").Push(map[string]any{"n": 0}))
+	ids := []any{}
+	for n := 1; n <= 3; n++ {
+		id, err := q.Push(map[string]any{"n": n})
+		if err != nil {
+			fail(out, "Queue.Push %d: %v", n, err)
+		}
+		ids = append(ids, id)
+	}
+	out["queue_push_ids"] = ids
+	out["queue_len_after_push"] = length(q.Len())
+	out["queue_peek"] = body(q.Peek())
+	out["queue_len_after_peek"] = length(q.Len())
+	popped := []any{}
+	for range 3 {
+		popped = append(popped, body(q.Pop()))
+	}
+	out["queue_pop_in_order"] = popped
+	out["queue_pop_empty"] = body(q.Pop())
+	out["queue_peek_empty"] = body(q.Peek())
+	out["queue_len_after_pop"] = length(q.Len())
 }
 
 // echoed decodes what the loopback peer echoed back.

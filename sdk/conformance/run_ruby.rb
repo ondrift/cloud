@@ -11,7 +11,12 @@ require 'json'
 # No BACKBONE_URL: every case runs against the in-memory local store, which is
 # the loop a developer meets first and the one where the six drifted. Set BEFORE
 # the require, because the SDK caches the value on first read.
-ENV['BACKBONE_URL'] = ''
+#
+# DRIFT_CONFORMANCE_BACKBONE_URL names a running slice's Backbone instead, and
+# runs the queue cases against it alone: the slice is the authority on the queue
+# wire, and the local store is held to what it answers.
+SLICE = ENV.fetch('DRIFT_CONFORMANCE_BACKBONE_URL', '')
+ENV['BACKBONE_URL'] = SLICE
 
 require_relative '../ruby/drift'
 
@@ -28,6 +33,54 @@ def fail_with(message)
   emit
   exit 0 # check.py turns the reported error into the failure
 end
+
+# -- Queue -------------------------------------------------------------------
+# Every queue call once. The names carry the time, so a run against a slice,
+# whose queues outlive the run, never meets an earlier run's.
+def attempt(read)
+  read.call(yield)
+rescue StandardError
+  'error'
+end
+
+stamp = "#{Process.clock_gettime(Process::CLOCK_REALTIME, :nanosecond)}#{Process.pid}"
+q = Drift::Backbone.queue("conformance-ruby-#{stamp}")
+absent = Drift::Backbone.queue("conformance-absent-ruby-#{stamp}")
+body = ->(msg) { msg.nil? ? nil : msg['n'] }
+same = ->(v) { v }
+refused = ->(_) { nil }
+
+OUT['queue_pop_never_pushed'] = attempt(body) { absent.pop }
+begin
+  absent.pop
+  OUT['queue_error_carries_the_refusal'] = false
+rescue StandardError => e
+  OUT['queue_error_carries_the_refusal'] = e.message.include?('HTTP 404') && e.message.include?('not found')
+end
+OUT['queue_len_never_pushed'] = attempt(same) { absent.len }
+OUT['queue_push_not_an_object'] = attempt(refused) { q.push('a bare string') }
+OUT['queue_push_bad_name'] = attempt(refused) { Drift::Backbone.queue('-flag').push({ 'n' => 0 }) }
+OUT['queue_push_ids'] = (1..3).map do |n|
+  q.push({ 'n' => n })
+rescue StandardError => e
+  fail_with("queue.push #{n}: #{e.message}")
+end
+OUT['queue_len_after_push'] = attempt(same) { q.len }
+OUT['queue_peek'] = attempt(body) { q.peek }
+OUT['queue_len_after_peek'] = attempt(same) { q.len }
+OUT['queue_pop_in_order'] = Array.new(3) { attempt(body) { q.pop } }
+OUT['queue_pop_empty'] = attempt(body) { q.pop }
+OUT['queue_peek_empty'] = attempt(body) { q.peek }
+OUT['queue_len_after_pop'] = attempt(same) { q.len }
+
+unless SLICE.empty?
+  emit
+  exit 0
+end
+
+# A declared queue, named the way the CLI names it for a local run.
+ENV['DRIFT_DECLARED_QUEUES'] = 'conformance-declared'
+OUT['declared_queue_pop_empty'] = attempt(same) { Drift::Backbone.queue('conformance-declared').pop }
 
 blob = Drift::Backbone::Blob
 
