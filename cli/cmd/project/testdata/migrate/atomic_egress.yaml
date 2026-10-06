@@ -6,7 +6,7 @@ atomic:
     mode: allowlist
     hosts:
       - api.stripe.com # payments
-  functions:
+  pulses:
     - route: ping
       method: get
       handler: GetPing

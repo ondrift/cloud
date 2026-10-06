@@ -1,7 +1,7 @@
-// handlers.go — the Driftfile's `atomic.functions` list, resolved into what the
-// deploy paths consume.
+// handlers.go — the Driftfile's `atomic.pulses` and `atomic.fields` lists,
+// resolved into what the deploy paths consume.
 //
-// This is the ONE place a manifest entry becomes a deployable function. Every
+// This is the ONE place a manifest entry becomes a deployable slot. Every
 // count, every collision check and every build reads the result of this file,
 // so "what does this project expose" has a single answer rather than one per
 // caller.
@@ -16,34 +16,44 @@ import (
 	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 )
 
-// FunctionSpecs resolves every declared function into a deployable spec, with
-// its source directory made absolute.
+// The two lists Atomic's work is declared in, under `atomic`.
+//
+// `pulses` is the request/response unit, one call and one result; the retired
+// `functions` is renamed onto it by the key walker before anything here reads
+// the document, so no reader in this package names the old key. `fields` is the
+// long-running worker the slice keeps exactly one of. Both hold every element's
+// entries by the time anything here reads them: elements.go flattens
+// `atomic.elements` into them, each entry carrying its element.
+const (
+	pulsesKey = "pulses"
+	fieldsKey = "fields"
+)
+
+// PulseEntries is every `atomic.pulses` entry of a resolved document, read after
+// the key walker, so a file still written with `atomic.functions` reads the
+// same.
+func PulseEntries(doc Node) []Node { return doc.Entries("name", "atomic", pulsesKey) }
+
+// FieldEntries is every `atomic.fields` entry of a resolved document.
+func FieldEntries(doc Node) []Node { return doc.Entries("name", "atomic", fieldsKey) }
+
+// FunctionSpecs resolves every declared Pulse into a deployable spec, with its
+// source directory made absolute.
 //
 // The directory follows from the element unless the entry overrides it: the
 // default element is the flat files under `atomic/`, a named element is
-// `atomic/<element>`. It is never derived from the function's NAME — a name is
-// a route, holding `/` and `:`, and the one-folder-per-function layout that
+// `atomic/<element>`. It is never derived from the Pulse's NAME — a name is a
+// route, holding `/` and `:`, and the one-folder-per-function layout that
 // derivation assumed is not the one most projects use.
 func FunctionSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
-	atomicRoot := m.ResolvePath("atomic")
-
-	entries := m.Slice().Entries("name", "atomic", "functions")
+	entries := PulseEntries(m.Slice())
 	specs := make([]atomic_cmd.FunctionSpec, 0, len(entries))
 	for _, fn := range entries {
-		dir := fn.Str("dir")
-		if dir == "" {
-			dir = atomic_cmd.ElementDir(atomicRoot, fn.Str("element"))
-		} else {
-			dir = m.ResolvePath(dir)
-		}
-		if abs, err := filepath.Abs(dir); err == nil {
-			dir = abs
-		}
 		specs = append(specs, atomic_cmd.FunctionSpec{
 			Name:     fn.Str("name"),
 			Handler:  fn.Str("handler"),
 			Element:  fn.Str("element"),
-			Dir:      dir,
+			Dir:      entryDir(m, fn),
 			Auth:     fn.Str("auth"),
 			Stream:   fn.Str("stream"),
 			Response: fn.Str("response"),
@@ -54,8 +64,88 @@ func FunctionSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
 	return specs
 }
 
-// CheckCompiledBookings refuses a compiled function booked under the floor its
+// FieldSpecs resolves every declared Field into a deployable spec.
+//
+// A Field is a slot whose method is `field`, so its spec is a FunctionSpec named
+// by its booking key, `field:<name>`. Wire splits that into the method and name
+// the operator takes, the digest, the collision check, the reference check and
+// the idle report all read it as they read a Pulse's, and IsField is what the
+// build reads to give it the Field entry point instead of a Pulse's. A Field has
+// no gate, stream, reply shape or schedule: nothing calls it.
+func FieldSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
+	entries := FieldEntries(m.Slice())
+	specs := make([]atomic_cmd.FunctionSpec, 0, len(entries))
+	for _, f := range entries {
+		specs = append(specs, atomic_cmd.FunctionSpec{
+			Name:    atomic_cmd.FieldKey(f.Str("name")),
+			Handler: f.Str("handler"),
+			Element: f.Str("element"),
+			Dir:     entryDir(m, f),
+			Secrets: f.Strings("secrets"),
+			Env:     f.StrMap("env"),
+		})
+	}
+	return specs
+}
+
+// AtomicSpecs is every slot the Driftfile declares: its Pulses, then its
+// Fields. It is what a build, a deploy, the collision check and the slice
+// reference check read, because each of those is about slots, and a Field is
+// one.
+func AtomicSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
+	return append(FunctionSpecs(m), FieldSpecs(m)...)
+}
+
+// entryDir is the absolute source directory of one Pulse or Field entry: its
+// own `dir` when it declares one, its element's otherwise.
+func entryDir(m *Manifest, entry Node) string {
+	dir := entry.Str("dir")
+	if dir == "" {
+		dir = atomic_cmd.ElementDir(m.ResolvePath("atomic"), entry.Str("element"))
+	} else {
+		dir = m.ResolvePath(dir)
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	return dir
+}
+
+// declaredBookings maps every declared slot, Pulse or Field, by the booking key
+// the slice books it under, to the `memory` its entry writes.
+//
+// A Field writes none: its booking is the slice shape's, chosen on the form
+// `drift slice resize` draws, so its value here is always "". It is still in
+// the map, because the map is also what says a slot is declared at all.
+func declaredBookings(m *Manifest) map[string]string {
+	out := map[string]string{}
+	for _, fn := range PulseEntries(m.Slice()) {
+		if name := fn.Str("name"); name != "" {
+			out[name] = fn.Str("memory")
+		}
+	}
+	for _, f := range FieldEntries(m.Slice()) {
+		if name := f.Str("name"); name != "" {
+			out[atomic_cmd.FieldKey(name)] = ""
+		}
+	}
+	return out
+}
+
+// CheckCompiledBookings is CheckSlotBookings with no live slice: the offline
+// check `drift file lint` can make, from the bookings a Driftfile still writes.
+func CheckCompiledBookings(m *Manifest, elements []atomic_cmd.Element) error {
+	return CheckSlotBookings(m, elements, nil)
+}
+
+// CheckSlotBookings refuses a compiled Pulse or Field booked under the floor its
 // own language runtime needs, on this machine, before anything is uploaded.
+//
+// The booking is the slot's on the live slice when one is given, because the
+// slice shape owns every booking; a Field writes none in the Driftfile, so the
+// live slot is the only place its booking exists. Without a live slice the check
+// reads what a Pulse's entry still writes, and a Field is not checked until one
+// is in hand.
 //
 // This is the half of the booking rule the schema cannot state. `pattern` already
 // refuses anything outside 8MB-256MB offline; the compiled floor needs the
@@ -73,18 +163,23 @@ func FunctionSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
 //
 // Reports every offending function rather than the first: a tutorial Driftfile
 // booking three Go functions at 8MB should be fixed in one pass, not three.
-func CheckCompiledBookings(m *Manifest, elements []atomic_cmd.Element) error {
+func CheckSlotBookings(m *Manifest, elements []atomic_cmd.Element, live *LiveSlice) error {
 	floor := CompiledMemoryFloor()
 	if floor.Bytes <= 0 {
 		return nil
 	}
 
-	// The declared booking, by function name. Read from the manifest rather than
-	// the spec because a FunctionSpec carries what it takes to BUILD a function,
-	// and memory is not one of those things.
-	declared := map[string]string{}
-	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
-		declared[fn.Str("name")] = fn.Str("memory")
+	// The written booking, by slot, read from the manifest rather than the spec
+	// because a FunctionSpec carries what it takes to BUILD a slot, and memory
+	// is not one of those things. The live slot's booking replaces it.
+	declared := declaredBookings(m)
+	booked := map[string]int{}
+	if live != nil {
+		for _, s := range live.Config.Atomic.Functions {
+			if s.MemoryBytes > 0 {
+				booked[s.Name] = s.MemoryBytes
+			}
+		}
 	}
 
 	var bad []string
@@ -93,27 +188,36 @@ func CheckCompiledBookings(m *Manifest, elements []atomic_cmd.Element) error {
 			continue
 		}
 		for _, f := range el.Funcs {
-			raw := declared[f.Spec.Name]
-			if raw == "" {
-				continue // a missing booking is already reported, with its own message
+			bytes, label := booked[f.Spec.Name], ""
+			if bytes > 0 {
+				label = sizeLabel(bytes)
+			} else {
+				raw := declared[f.Spec.Name]
+				if raw == "" {
+					continue // no booking in hand: the slice form or the api says so
+				}
+				parsed, err := parseSizeBytes(raw)
+				if err != nil {
+					continue
+				}
+				bytes, label = parsed, raw
 			}
-			bytes, err := parseSizeBytes(raw)
-			if err != nil || bytes >= floor.Bytes {
+			if bytes >= floor.Bytes {
 				continue
 			}
-			bad = append(bad, fmt.Sprintf("  %s booked %s, in %s", f.Spec.Name, raw, el.Lang))
+			bad = append(bad, fmt.Sprintf("  %s booked %s, in %s", f.Spec.Name, label, el.Lang))
 		}
 	}
 	if len(bad) == 0 {
 		return nil
 	}
 	return fmt.Errorf(
-		"a compiled function needs at least %s, and %d of these book less:\n%s\n\n"+
+		"a compiled pulse or field needs at least %s, and %d of these book less:\n%s\n\n"+
 			"A compiled language carries a private language runtime inside every invocation, "+
 			"and the pool is charged what an invocation is measured to cost — that runtime "+
 			"included. The interpreted languages share one language server each and can book "+
 			"as little as 8MB.\n"+
-			"Raise each of them to %s or higher, or run `drift file benchmark` against a "+
+			"Raise each of them to %s or higher with `drift slice resize`, or run `drift file benchmark` against a "+
 			"deployed slice to size them from what they actually hold.",
 		floor.Declared, len(bad), strings.Join(bad, "\n"), floor.Declared)
 }
@@ -195,36 +299,37 @@ func FunctionSpecsInDir(dir string) ([]atomic_cmd.FunctionSpec, error) {
 	}
 
 	var out []atomic_cmd.FunctionSpec
-	for _, s := range FunctionSpecs(m) {
+	for _, s := range AtomicSpecs(m) {
 		if s.Dir == want {
 			out = append(out, s)
 		}
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf(
-			"%s declares no functions in %s.\n"+
-				"       A function is declared in the Driftfile — its trigger, the handler that\n"+
-				"       serves it, the memory it books and its gate — so there is nothing here to\n"+
-				"       deploy until one names this directory.",
+			"%s declares no pulses or fields in %s.\n"+
+				"       A pulse or field is declared in the Driftfile (the handler that runs it,\n"+
+				"       the memory it books and, for a pulse, its trigger and gate), so there is\n"+
+				"       nothing here to deploy until one names this directory.",
 			filepath.Base(path), dir)
 	}
 	return out, nil
 }
 
-// CountAtomicFunctions returns how many functions the deploy will ship.
+// CountAtomicFunctions returns how many slots the deploy will ship: every Pulse
+// and every Field.
 //
-// An Atomic function IS a declared entry. Callables the manifest does not name
-// are helpers: free, unrouted, and uncounted.
+// An Atomic slot IS a declared entry. Callables the manifest does not name are
+// helpers: free, unrouted, and uncounted.
 func CountAtomicFunctions(m *Manifest) (int, error) {
-	return len(m.Slice().Entries("name", "atomic", "functions")), nil
+	return len(PulseEntries(m.Slice())) + len(FieldEntries(m.Slice())), nil
 }
 
 // CountScheduledFunctions returns how many scheduled jobs the deploy will
 // register — the count used to size the slice's envelope, and what
-// tier.CentsPerScheduledJob is charged against.
+// tier.CentsPerScheduledJob is charged against. Only a Pulse carries a `cron:`.
 func CountScheduledFunctions(m *Manifest) (int, error) {
 	n := 0
-	for _, fn := range m.Slice().Entries("name", "atomic", "functions") {
+	for _, fn := range PulseEntries(m.Slice()) {
 		if fn.Str("cron") != "" {
 			n++
 		}

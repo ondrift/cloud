@@ -28,7 +28,7 @@ type alertSpec struct {
 func Alert() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "alert",
-		Short:   "Add, list, or remove function alerts",
+		Short:   "Add, list, or remove pulse alerts",
 		GroupID: "operations",
 		Example: "  drift atomic alert add checkout-errors checkout --on errors --threshold 1 --window 5m --notify webhook=https://hooks.slack.com/...\n" +
 			"  drift atomic alert list\n" +
@@ -46,7 +46,7 @@ func getAlertAddCmd() *cobra.Command {
 		notify    string
 	)
 	c := &cobra.Command{
-		Use:   "add <name> <function>",
+		Use:   "add <name> <pulse>",
 		Short: "Register an alert (v1: errors trigger + webhook notify)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -78,7 +78,7 @@ func getAlertAddCmd() *cobra.Command {
 				_, e := common.CheckResponse(resp, "add alert")
 				return e
 			}
-			fmt.Printf("Alert %q added on function %q (%s, threshold %d / %s).\n",
+			fmt.Printf("Alert %q added on pulse %q (%s, threshold %d / %s).\n",
 				spec.Name, spec.Function, spec.Trigger, spec.Threshold, window)
 			return nil
 		},
@@ -112,7 +112,7 @@ func getAlertListCmd() *cobra.Command {
 				return nil
 			}
 			fmt.Printf("%-24s  %-24s  %-8s  %-9s  %-7s  %s\n",
-				"NAME", "FUNCTION", "TRIGGER", "THRESHOLD", "WINDOW", "NOTIFY")
+				"NAME", "PULSE", "TRIGGER", "THRESHOLD", "WINDOW", "NOTIFY")
 			for _, s := range specs {
 				fmt.Printf("%-24s  %-24s  %-8s  %-9d  %-7s  %s=%s\n",
 					s.Name, s.Function, s.Trigger, s.Threshold,

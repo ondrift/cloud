@@ -34,7 +34,7 @@ func splitBookingKey(name string) (route, method string, split bool) {
 		return name, "", false
 	}
 	switch strings.ToLower(prefix) {
-	case "get", "post", "put", "patch", "delete", "head", "options":
+	case "get", "post", "put", "patch", "delete", "head", "options", "field":
 		return rest, strings.ToLower(prefix), true
 	}
 	return name, "", false
@@ -44,15 +44,17 @@ func Delete() *cobra.Command {
 	var method string
 	cmd := &cobra.Command{
 		Use:   "delete <name>",
-		Short: "Delete a deployed atomic function by name",
+		Short: "Delete a deployed pulse or field by name",
 		Long: "Takes either form of the name:\n\n" +
 			"  drift atomic delete get:users     the booking key, as the Driftfile declares it\n" +
-			"  drift atomic delete users --method get\n\n" +
-			"A route containing a colon that is not an HTTP method is left alone, so a\n" +
-			"path like `users/:id` still means itself.",
+			"  drift atomic delete users --method get\n" +
+			"  drift atomic delete field:sequencer\n\n" +
+			"A route containing a colon that is not an HTTP method or `field` is left\n" +
+			"alone, so a path like `users/:id` still means itself.",
 		Example: "  drift atomic delete send-email\n" +
 			"  drift atomic delete get:groups/id\n" +
-			"  drift atomic delete users --method get",
+			"  drift atomic delete users --method get\n" +
+			"  drift atomic delete field:sequencer",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(1),
 		// SilenceUsage: a refused delete is the platform answering, not the command
@@ -91,10 +93,17 @@ func Delete() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Function %q deleted.\n", name)
+			switch method {
+			case "field":
+				fmt.Printf("Field %q deleted.\n", name)
+			case "":
+				fmt.Printf("%q deleted.\n", name)
+			default:
+				fmt.Printf("Pulse %q deleted.\n", name)
+			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path")
+	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path, or `field` for a field")
 	return cmd
 }

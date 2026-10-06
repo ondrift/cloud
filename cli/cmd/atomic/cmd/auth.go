@@ -15,7 +15,7 @@ import (
 func Auth() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "auth",
-		Short:   "Manage API key authentication for deployed functions",
+		Short:   "Manage API key authentication for deployed pulses",
 		Example: "  drift atomic auth set send-email my-secret-key\n  drift atomic auth list send-email\n  drift atomic auth revoke send-email --method get",
 		GroupID: "operations",
 	}
@@ -28,8 +28,8 @@ func authSet() *cobra.Command {
 	var method string
 
 	cmd := &cobra.Command{
-		Use:     "set <function-name> <api-key>",
-		Short:   "Set or rotate the API key for a deployed function",
+		Use:     "set <pulse-name> <api-key>",
+		Short:   "Set or rotate the API key for a deployed pulse",
 		Example: "  drift atomic auth set send-email my-secret-key\n  drift atomic auth set send-email my-secret-key --method get",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -61,15 +61,15 @@ func authSet() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&method, "method", "m", "post", "HTTP method of the function (get, post, put, delete)")
+	cmd.Flags().StringVarP(&method, "method", "m", "post", "HTTP method of the pulse (get, post, put, delete)")
 	return cmd
 }
 
 // authList shows key fingerprints configured for a function.
 func authList() *cobra.Command {
 	return &cobra.Command{
-		Use:     "list <function-name>",
-		Short:   "List API keys configured for a deployed function",
+		Use:     "list <pulse-name>",
+		Short:   "List API keys configured for a deployed pulse",
 		Example: "  drift atomic auth list send-email",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -100,7 +100,7 @@ func authList() *cobra.Command {
 				return nil
 			}
 
-			fmt.Printf("%-8s  %-24s  %s\n", "METHOD", "FUNCTION", "KEY")
+			fmt.Printf("%-8s  %-24s  %s\n", "METHOD", "PULSE", "KEY")
 			fmt.Printf("%-8s  %-24s  %s\n", "--------", "------------------------", "-------")
 			for _, k := range keys {
 				fmt.Printf("%-8s  %-24s  %s\n", k.Method, k.Path, k.Fingerprint)
@@ -115,8 +115,8 @@ func authRevoke() *cobra.Command {
 	var method string
 
 	cmd := &cobra.Command{
-		Use:     "revoke <function-name>",
-		Short:   "Revoke the API key for a deployed function",
+		Use:     "revoke <pulse-name>",
+		Short:   "Revoke the API key for a deployed pulse",
 		Example: "  drift atomic auth revoke send-email\n  drift atomic auth revoke send-email --method delete",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -146,6 +146,6 @@ func authRevoke() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&method, "method", "m", "post", "HTTP method of the function (get, post, put, delete)")
+	cmd.Flags().StringVarP(&method, "method", "m", "post", "HTTP method of the pulse (get, post, put, delete)")
 	return cmd
 }

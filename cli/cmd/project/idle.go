@@ -98,9 +98,13 @@ func ReportIdleDeclarations(m *Manifest, live *LiveSlice, deployed []atomic_cmd.
 }
 
 // idleFunctions reports the declared slots the manifest does not name and
-// nothing serves, each with the memory it books.
+// nothing runs, each with the memory it books.
+//
+// Pulse slots and Field slots are one set, as the slice holds them: a Field's
+// slot is `field:<name>`, named when this manifest declares that Field, running
+// when its record is deployed, and idle otherwise, exactly as a Pulse's is.
 func idleFunctions(m *Manifest, slots []AtomicFunction, deployed []atomic_cmd.DeployedFunction) idleClass {
-	c := idleClass{one: "function slot", many: "function slots", declared: len(slots)}
+	c := idleClass{one: "atomic slot", many: "atomic slots", declared: len(slots)}
 	named := stringSet(namedFunctions(m))
 
 	var serving map[string]bool
@@ -123,7 +127,7 @@ func idleFunctions(m *Manifest, slots []AtomicFunction, deployed []atomic_cmd.De
 		case serving == nil:
 			c.lines = append(c.lines, fmt.Sprintf("%s is not named by your Driftfile, and %s.", s.Name, cost))
 		case serving[atomic_cmd.DeployedKey(specMethodAndPath(s.Name))]:
-			// Serving something this file does not name, so not idle, and
+			// Running something this file does not name, so not idle, and
 			// already reported by ReportOrphanedFunctions.
 		default:
 			c.lines = append(c.lines, fmt.Sprintf("%s is idle, and %s.", s.Name, cost))

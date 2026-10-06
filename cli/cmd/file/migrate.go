@@ -45,7 +45,9 @@ func getMigrateCmd() *cobra.Command {
 			"every deprecated key moved to its replacement, at the top level and inside every " +
 			"environment. Nothing is written unless --write is passed.\n\n" +
 			"Only the retired keys change. Comments, key order, blank lines and formatting everywhere " +
-			"else stay exactly as they are, and comments on a moved key move with it. A key that has " +
+			"else stay exactly as they are, and comments on a moved key move with it. A pulse or field " +
+			"tagged with `element:` moves into that element under `atomic.elements`, with the comments " +
+			"above it, and loses the tag. A key that has " +
 			"no replacement in this file is left where it is and reported with what to do instead.\n\n" +
 			"Exits 0 when the file is already current, when it shows the changes, and when it writes " +
 			"them; non-zero only when it cannot rewrite the file, which it then leaves untouched.",

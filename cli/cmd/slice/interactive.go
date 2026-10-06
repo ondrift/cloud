@@ -43,7 +43,10 @@ const (
 	maxFunctionSlots = 64
 )
 
-var httpMethods = []string{"get", "post", "put", "patch", "delete", "head", "options", "queue"}
+// httpMethods is every method a slot can be booked under: the HTTP verbs a
+// pulse answers, `queue` for a pulse a queue drives, and `field` for a field,
+// which nothing calls and whose route is its name.
+var httpMethods = []string{"get", "post", "put", "patch", "delete", "head", "options", "queue", "field"}
 
 // A slice name is what its hostname is built from, so the rule is DNS's, not
 // this program's.
@@ -85,6 +88,20 @@ func validQueueName(v any) error {
 	if !queueNameRe.MatchString(s) {
 		return fmt.Errorf("lowercase letters, digits and interior hyphens only, up to 32 — " +
 			"a queue name is not a path, so no slashes and no underscores")
+	}
+	return nil
+}
+
+// A field's name is its whole identity, booked as `field:<name>`, and the
+// Driftfile's `atomic.fields[].name` pattern is the rule; this is the same
+// expression, so the refusal happens on the row being typed.
+var fieldNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+
+func validFieldName(v any) error {
+	s := strings.TrimSpace(fmt.Sprint(v))
+	if !fieldNameRe.MatchString(s) {
+		return fmt.Errorf("a lowercase letter, then lowercase letters, digits and hyphens, up to 63; " +
+			"a field's name is not a path")
 	}
 	return nil
 }

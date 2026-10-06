@@ -12,7 +12,7 @@ import (
 )
 
 // The fixtures `drift file migrate` is proven against live beside the engine,
-// in cmd/project, with the 1.19.0 schema the api serves.
+// in cmd/project, with the schema fixture of the format this binary implements.
 const migrateFixtures = "../project/testdata/migrate"
 
 // withServedSchema isolates HOME and gives it the schema fixture, so these
@@ -68,7 +68,7 @@ func TestMigrate_ShowsTheDiffAndWritesNothing(t *testing.T) {
 		" slice: shop",
 		" ",
 		" atomic:",
-		"+  functions:",
+		"+  pulses:",
 		"+    - route: ping",
 		"+      method: get",
 		"+      handler: GetPing",
@@ -79,7 +79,7 @@ func TestMigrate_ShowsTheDiffAndWritesNothing(t *testing.T) {
 		"     mode: allowlist",
 		"     hosts:",
 		"       - api.stripe.com # payments",
-		"-  functions:",
+		"-  pulses:",
 		"-    - route: ping",
 		"-      method: get",
 		"-      handler: GetPing",
@@ -116,11 +116,12 @@ func TestMigrate_WriteWritesTheMigratedFile(t *testing.T) {
 	if got, _ := os.ReadFile(path); !bytes.Equal(got, want) {
 		t.Errorf("the written file is not the golden output:\n%s", got)
 	}
-	if !strings.Contains(out.String(), "10 keys rewritten") {
+	if !strings.Contains(out.String(), "11 keys rewritten") ||
+		!strings.Contains(out.String(), "atomic.functions → atomic.pulses") {
 		t.Errorf("the result does not say what was rewritten:\n%s", out.String())
 	}
 	// The keys it could not move are named, never dropped in silence.
-	if !strings.Contains(errOut.String(), "atomic.functions[].memory") ||
+	if !strings.Contains(errOut.String(), "atomic.pulses[].memory") ||
 		!strings.Contains(errOut.String(), "drift slice resize") {
 		t.Errorf("the kept keys are not reported with what to do instead:\n%s", errOut.String())
 	}

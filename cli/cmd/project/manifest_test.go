@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,7 +33,9 @@ func TestParseDriftfile_RestaurantTemplate(t *testing.T) {
 	// memory is asserted alongside the name because it is what the slice admits
 	// work against and what the function is billed at; a list that parsed its
 	// names and dropped its bookings would deploy a slice nobody priced.
-	fns := m.Slice().Entries("name", "atomic", "functions")
+	// The fixture writes the retired `functions`; the walker has renamed it, so
+	// what every reader sees is `pulses`.
+	fns := PulseEntries(m.Slice())
 	if len(fns) != 3 {
 		t.Fatalf("atomic.functions count = %d, want 3", len(fns))
 	}
@@ -330,7 +333,9 @@ canvas: ./canvas
 		t.Errorf("get:items + post:items are distinct functions, should not collide: %v", err)
 	}
 
-	// The same identity twice, on two different handlers.
+	// The same identity twice, on two different handlers. The parse refuses it,
+	// naming the key, before any spec exists; the collision check is the same
+	// rule over the specs a deploy is handed.
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
 name: shop
 atomic:
@@ -343,11 +348,12 @@ atomic:
       memory: 32MB
 canvas: ./canvas
 `)
-	m2, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
-	if err != nil {
-		t.Fatalf("ParseDriftfile failed: %v", err)
+	_, err = ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err == nil || !strings.Contains(err.Error(), `the pulse "post:items" is declared 2 times`) {
+		t.Errorf("the parse must refuse two post:items, naming the key, got %v", err)
 	}
-	err = checkRouteCollisions(m2)
+	twice := append(FunctionSpecs(m), FunctionSpecs(m)[1])
+	err = atomic_cmd.CheckCollisions(twice)
 	if err == nil {
 		t.Fatal("expected a collision error for two post:items, got nil")
 	}
@@ -384,7 +390,7 @@ func TestParseDriftfile_LocalPathsMustExist(t *testing.T) {
 		{
 			name:      "function explicit dir",
 			driftfile: "name: hello\natomic:\n  functions:\n    - name: \"get:menu\"\n      handler: GetMenu\n      memory: 8MB\n      dir: ./src/menu\n",
-			want:      `atomic.functions[0]: function "get:menu" declares dir`,
+			want:      `atomic.pulses[0]: pulse "get:menu" declares dir`,
 		},
 		{
 			name:      "canvas site directory",
@@ -555,7 +561,7 @@ environments:
 		t.Errorf("prod values changed: rate=%q retention=%q", m.Slice().Str("edge", "rate_limit"), m.Slice().Str("log_retention"))
 	}
 	// The base booking, against which staging's override below is the contrast.
-	if fns := m.Slice().Entries("name", "atomic", "functions"); len(fns) != 1 || fns[0].Str("memory") != "128MB" {
+	if fns := PulseEntries(m.Slice()); len(fns) != 1 || fns[0].Str("memory") != "128MB" {
 		t.Errorf("prod functions = %+v, want [get:redirect booked at 128MB]", fns)
 	}
 
@@ -575,7 +581,7 @@ environments:
 	}
 	// An environment books its own memory per function: staging runs the same
 	// route on a smaller pool, and pays for the smaller one.
-	if fns := m.Slice().Entries("name", "atomic", "functions"); len(fns) != 1 ||
+	if fns := PulseEntries(m.Slice()); len(fns) != 1 ||
 		fns[0].Str("name") != "get:redirect" || fns[0].Str("memory") != "64MB" {
 		t.Errorf("staging functions = %+v, want [get:redirect booked at 64MB]", fns)
 	}

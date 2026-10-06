@@ -231,7 +231,7 @@ func TestApply_StillCreatesWhatTheManifestNames(t *testing.T) {
 		"backbone": map[string]any{
 			"sql": []any{map[string]any{"name": "orders", "schema": "orders.sql"}},
 		},
-		"atomic": map[string]any{"functions": []any{map[string]any{
+		"atomic": map[string]any{"pulses": []any{map[string]any{
 			"name":    "post:checkout",
 			"handler": "PostCheckout",
 			"alerts": []any{map[string]any{

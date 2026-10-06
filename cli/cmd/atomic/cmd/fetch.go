@@ -32,11 +32,11 @@ import (
 func Fetch() *cobra.Command {
 	return &cobra.Command{
 		Use:   "fetch [path]",
-		Short: "Resolve dependencies for every Atomic function under a path",
-		Long: "Recursively finds every Atomic function under the given path " +
-			"(default: current directory) and resolves its dependencies in " +
-			"place using that language's package manager — a 'tidy' for all " +
-			"functions across all six languages at once.",
+		Short: "Resolve dependencies for every Atomic element under a path",
+		Long: "Recursively finds every Atomic element (a directory of pulse and field source " +
+			"in one language) under the given path (default: current directory) and resolves " +
+			"its dependencies in place using that language's package manager: a 'tidy' for " +
+			"every element across all six languages at once.",
 		Example: "  drift atomic fetch\n  drift atomic fetch ./intake-review",
 		GroupID: "development",
 		Args:    cobra.MaximumNArgs(1),
@@ -69,14 +69,14 @@ func runFetch(root string) error {
 
 	targets, err := discoverFunctions(root)
 	if err != nil {
-		return fmt.Errorf("scanning for functions: %w", err)
+		return fmt.Errorf("scanning for elements: %w", err)
 	}
 	if len(targets) == 0 {
-		fmt.Printf("No Atomic functions found under %s\n", root)
+		fmt.Printf("No Atomic elements found under %s\n", root)
 		return nil
 	}
 
-	fmt.Printf("Found %d Atomic function(s). Resolving dependencies...\n\n", len(targets))
+	fmt.Printf("Found %d Atomic element(s). Resolving dependencies...\n\n", len(targets))
 	var failed int
 	for _, t := range targets {
 		fmt.Printf("  %-32s %-6s … ", t.dir, fetchLangLabel(t.language))
@@ -93,9 +93,9 @@ func runFetch(root string) error {
 
 	fmt.Println()
 	if failed > 0 {
-		return fmt.Errorf("%d of %d function(s) failed to resolve", failed, len(targets))
+		return fmt.Errorf("%d of %d element(s) failed to resolve", failed, len(targets))
 	}
-	fmt.Printf("✅ All %d function(s) resolved.\n", len(targets))
+	fmt.Printf("✅ All %d element(s) resolved.\n", len(targets))
 	return nil
 }
 

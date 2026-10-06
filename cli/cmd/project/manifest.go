@@ -178,6 +178,14 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	applyKeyDeprecations(m.doc, driftfileKeyDeprecations)
 	applyKeyDeprecations(m.slice, driftfileKeyDeprecations)
 
+	// Every element's Pulses and Fields, flattened into the two lists every
+	// reader consumes. On the slice alone: the document keeps the nested shape
+	// the environment merge reads, and each merged slice is flattened on its own
+	// (see elements.go).
+	if err := normaliseElements(m.slice, warnElementTag); err != nil {
+		return nil, err
+	}
+
 	// A function's identity, in whichever spelling it was written, resolved to
 	// the one string the platform books against.
 	//
@@ -186,6 +194,12 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	// has to be recomposed for every reader that already speaks it.
 	normaliseFunctionIdentities(m.doc)
 	normaliseFunctionIdentities(m.slice)
+
+	// Two slots on one booking key, or a Field named like a Pulse route,
+	// anywhere in the slice. Refused here, before anything is built.
+	if err := checkSlotIdentities(m.slice); err != nil {
+		return nil, err
+	}
 
 	// The one class of check the schema CANNOT own: whether the paths a valid
 	// document names actually exist on THIS machine. A schema describes the
@@ -379,14 +393,31 @@ func checkLocalPaths(m *Manifest) ParseErrors {
 	// holds `/` and `:`, and the layout it assumes — one folder per function —
 	// is not the one most projects use. Without a `dir`, the directory comes
 	// from the function's element, which is checked when the element is built.
-	for i, fn := range m.slice.Entries("name", "atomic", "functions") {
-		declared := fn.Str("dir")
-		if declared == "" {
-			continue // the element owns the directory; nothing to check here
-		}
-		dir := resolveBaseDir(m, declared)
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			errs = append(errs, fmt.Sprintf("atomic.functions[%d]: function %q declares dir %s, which is not a directory", i, fn.Str("name"), dir))
+	//
+	// A Field's `dir` is the same question, asked of `atomic.fields`. An entry
+	// declared inside an element, or given its element's `dir`, is named by its
+	// element: its index in the flattened list is not a position in the file.
+	for _, list := range []struct {
+		key, noun string
+		entries   []Node
+	}{
+		{pulsesKey, "pulse", PulseEntries(m.slice)},
+		{fieldsKey, "field", FieldEntries(m.slice)},
+	} {
+		for i, fn := range list.entries {
+			declared := fn.Str("dir")
+			if declared == "" {
+				continue // the element owns the directory; nothing to check here
+			}
+			dir := resolveBaseDir(m, declared)
+			if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+				where := fmt.Sprintf("atomic.%s[%d]", list.key, i)
+				if el := fn.Str("element"); el != "" {
+					where = fmt.Sprintf("element %q", el)
+				}
+				errs = append(errs, fmt.Sprintf("%s: %s %q declares dir %s, which is not a directory",
+					where, list.noun, fn.Str("name"), dir))
+			}
 		}
 	}
 
@@ -595,12 +626,25 @@ func (m *Manifest) SelectEnvironment(env string, explicit bool) (string, error) 
 	base := m.Name()
 	m.slice = m.mergeEnvironment(env)
 
+	// The merge reads the document, whose elements are still nested, so the
+	// merged result is flattened here, after the overlay's lists have replaced
+	// the base's.
+	if err := normaliseElements(m.slice, warnElementTag); err != nil {
+		return "", err
+	}
+
 	// The overlay arrives as written, and a list REPLACES the base's. An
 	// overlay restating `atomic.functions` in the route/method spelling would
 	// otherwise reach every reader with no composite identity, so each function
 	// would deploy, book and report as "". The parse normalised the base; the
 	// merged result gets the same pass.
 	normaliseFunctionIdentities(m.slice)
+
+	// The overlay can introduce a Pulse or a Field, so the merged result is
+	// checked again for two slots on one key and a Field sharing a Pulse's name.
+	if err := checkSlotIdentities(m.slice); err != nil {
+		return "", err
+	}
 
 	// The merge re-reads the RAW document, where a `$VAR` secret is still the
 	// placeholder ParseDriftfile resolved. Resolve again — exactly once, on

@@ -6,9 +6,10 @@ package project
 // The walker in deprecatedkeys.go rewrites the DOCUMENT `drift file apply`
 // reads, every time, in memory. This rewrites the FILE once, so the person
 // stops hearing about it. Everything it knows comes from the same places: the
-// registry (driftfileKeyDeprecations) says which key goes where, and the
-// identity split (functionidentity.go) says how a function's `name` becomes
-// `route` and `method`.
+// registry (driftfileKeyDeprecations) says which key goes where, the identity
+// split (functionidentity.go) says how a function's `name` becomes `route` and
+// `method`, and the elements pass (elements.go) says which element a tagged
+// entry belongs in; migrate_elements.go moves those entries.
 //
 // # It edits the text, guided by the node tree
 //
@@ -39,7 +40,9 @@ package project
 //   - a key to move that sits in flow style (`{ ... }`) or inside a YAML anchor
 //     that is used elsewhere, where a move would change every use of it;
 //   - a destination that is not a section;
-//   - a move that would put an alias before its anchor.
+//   - a move that would put an alias before its anchor;
+//   - a tagged entry, or the `atomic.elements` it moves into, written in flow
+//     style.
 
 import (
 	"errors"
@@ -93,8 +96,10 @@ func (r *MigrationRefusal) Error() string {
 		strings.Join(r.Reasons, "\n  - ")
 }
 
-// functionNamePath is the retired spelling the identity split owns.
-const functionNamePath = "atomic.functions[].name"
+// functionNamePath is the retired spelling the identity split owns. It is
+// addressed under `atomic.pulses`, the spelling the key walker has already
+// renamed `atomic.functions` to by the time the split reads the document.
+const functionNamePath = "atomic.pulses[].name"
 
 // MigrateDriftfile rewrites a Driftfile's retired keys into their current
 // spelling, at the top level and inside every environment overlay.
@@ -132,6 +137,11 @@ func MigrateDriftfile(src []byte) (*Migration, error) {
 	if err := mg.applyInline(); err != nil {
 		return nil, err
 	}
+	// Elements before the moves into sections: an entry appended at the end of
+	// `atomic` belongs above a section created directly after it.
+	for _, p := range mg.elements {
+		mg.emitElements(p)
+	}
 	for _, b := range mg.blocks {
 		mg.emitBlock(b)
 	}
@@ -163,7 +173,9 @@ type migrator struct {
 	inline   map[int][]inlineEdit
 	deleted  map[int]bool
 	inserts  map[int][]string // after line N; 0 is before the first line
+	attached map[int][]string // created lines that belong to line N, and move or go with it
 	blocks   []moveBlock
+	elements []elementPlan
 	steps    []MigrationStep
 	kept     []KeptKey
 	refusals []string
@@ -217,11 +229,12 @@ type moveBlock struct {
 func newMigrator(src []byte, doc *yaml.Node) *migrator {
 	text := string(src)
 	mg := &migrator{
-		aliased: map[*yaml.Node]bool{},
-		seen:    map[*yaml.Node]bool{},
-		inline:  map[int][]inlineEdit{},
-		deleted: map[int]bool{},
-		inserts: map[int][]string{},
+		aliased:  map[*yaml.Node]bool{},
+		seen:     map[*yaml.Node]bool{},
+		inline:   map[int][]inlineEdit{},
+		deleted:  map[int]bool{},
+		inserts:  map[int][]string{},
+		attached: map[int][]string{},
 	}
 	mg.newline = strings.HasSuffix(text, "\n")
 	mg.orig = strings.Split(strings.TrimSuffix(text, "\n"), "\n")
@@ -269,7 +282,7 @@ func (mg *migrator) planRoot(r migrationRoot) {
 		if !ok {
 			continue
 		}
-		for _, h := range holdersIn(r.node, parent) {
+		for _, h := range holdersWritten(r.node, parent) {
 			k, v := pairOf(h.node, leaf)
 			if k == nil || mg.seen[k] {
 				continue
@@ -296,6 +309,7 @@ func (mg *migrator) planRoot(r migrationRoot) {
 		}
 	}
 	mg.planSplits(r)
+	mg.planElements(r)
 	mg.planBlocks(r, moves)
 }
 
@@ -373,13 +387,22 @@ func (mg *migrator) planMove(r migrationRoot, h holder, k, v *yaml.Node, key com
 	return pendingMove{key: key, k: k, v: v, from: h, newLeaf: newLeaf, oldPath: oldPath, newPath: newPath}, true
 }
 
-// planSplits rewrites each function's retired `name: method:route` into the
-// `route` and `method` pair, the derivation normaliseFunctionIdentities makes.
+// planSplits rewrites each Pulse's retired `name: method:route` into the
+// `route` and `method` pair, the derivation normaliseFunctionIdentities makes,
+// at the top level and inside every element. The `method` line is attached to
+// the key's line, so it moves with the entry when the entry moves into an
+// element.
 func (mg *migrator) planSplits(r migrationRoot) {
-	oldPath := r.prefix + functionNamePath
-	newPath := r.prefix + "atomic.functions[].route + method"
+	for _, parent := range []string{"atomic.pulses[]", "atomic.elements[].pulses[]"} {
+		mg.planSplitsUnder(r, parent)
+	}
+}
+
+func (mg *migrator) planSplitsUnder(r migrationRoot, parent string) {
+	oldPath := r.prefix + parent + ".name"
+	newPath := r.prefix + parent + ".route + method"
 functions:
-	for _, h := range holdersIn(r.node, "atomic.functions[]") {
+	for _, h := range holdersWritten(r.node, parent) {
 		k, v := pairOf(h.node, "name")
 		if k == nil || mg.seen[k] {
 			continue
@@ -392,7 +415,7 @@ functions:
 		// ignored, and migrate does not choose which for them.
 		for _, half := range []string{"route", "method"} {
 			if hk, _ := pairOf(h.node, half); hk != nil {
-				mg.refuse(bothSpellings(oldPath, k.Line, r.prefix+"atomic.functions[]."+half, hk.Line))
+				mg.refuse(bothSpellings(oldPath, k.Line, r.prefix+parent+"."+half, hk.Line))
 				continue functions
 			}
 		}
@@ -423,7 +446,7 @@ functions:
 			mg.addInline(v.Line, vs, ve, routeText+", method: "+method)
 		} else {
 			mg.addInline(v.Line, vs, ve, routeText)
-			mg.inserts[k.Line] = append(mg.inserts[k.Line], mg.newLine(strings.Repeat(" ", k.Column-1)+"method: "+method))
+			mg.attached[k.Line] = append(mg.attached[k.Line], mg.newLine(strings.Repeat(" ", k.Column-1)+"method: "+method))
 		}
 		mg.steps = append(mg.steps, MigrationStep{Line: k.Line, Old: oldPath, New: newPath})
 	}
@@ -692,8 +715,8 @@ func (mg *migrator) deleteSpan(sp span, collapse bool) {
 	}
 }
 
-// render writes the file: every line not deleted, with the insertions after
-// the line they follow.
+// render writes the file: every line not deleted, each followed by the lines
+// attached to it, with the insertions after the line they follow.
 func (mg *migrator) render() []byte {
 	var b strings.Builder
 	emit := func(s string) {
@@ -706,6 +729,9 @@ func (mg *migrator) render() []byte {
 	for i := 1; i <= len(mg.lines); i++ {
 		if !mg.deleted[i] {
 			emit(mg.lines[i-1])
+			for _, l := range mg.attached[i] {
+				emit(l)
+			}
 		}
 		for _, l := range mg.inserts[i] {
 			emit(l)
@@ -969,6 +995,74 @@ func holdersIn(root *yaml.Node, parent string) []holder {
 	return hs
 }
 
+// holdersWritten is holdersIn for a parent path the registry writes in its
+// CURRENT spelling, read from a file that may still use the old one.
+//
+// The walker renames as it goes, so by the time it looks for
+// `atomic.pulses[].memory` an `atomic.functions` list has already become
+// `atomic.pulses`. Migrate reads the file as written and never rewrites the
+// tree, so the same holders sit under the name the file uses. Both are asked
+// for; a file carrying both spellings of the list is refused by the rename
+// itself, and every key is visited once either way because the plan marks each
+// one seen.
+func holdersWritten(root *yaml.Node, parent string) []holder {
+	var out []holder
+	for _, p := range writtenSpellings(parent) {
+		out = append(out, holdersIn(root, p)...)
+	}
+	return out
+}
+
+// writtenSpellings is parent followed by the same path with every in-place
+// rename the registry makes along it undone: `atomic.pulses[]` is also
+// `atomic.functions[]`. A rename that moves a key to another parent is not
+// undone here; the move puts the key's lines under the new parent, and keys
+// below a moved one are not addressed by the registry.
+func writtenSpellings(parent string) []string {
+	out := []string{parent}
+	for _, key := range driftfileKeyDeprecations {
+		if key.Kind != common.KeyAlias || key.New == "" {
+			continue
+		}
+		oldParent, oldLeaf, ok := splitKeyPath(key.Path)
+		newParent, newLeaf, ok2 := splitKeyPath(key.New)
+		if !ok || !ok2 || oldParent != newParent {
+			continue
+		}
+		for _, p := range out {
+			if alt, renamed := underOldName(p, newParent, newLeaf, oldLeaf); renamed {
+				out = append(out, alt)
+			}
+		}
+	}
+	return out
+}
+
+// underOldName rewrites path when it runs through `<parent>.<newLeaf>`, putting
+// oldLeaf in that segment and keeping any `[]` it carries.
+func underOldName(path, parent, newLeaf, oldLeaf string) (string, bool) {
+	segs := strings.Split(path, ".")
+	depth := 0
+	if parent != "" {
+		depth = len(strings.Split(parent, "."))
+		if depth >= len(segs) || strings.Join(segs[:depth], ".") != parent {
+			return "", false
+		}
+	}
+	if depth >= len(segs) {
+		return "", false
+	}
+	base, isList := strings.CutSuffix(segs[depth], "[]")
+	if base != newLeaf {
+		return "", false
+	}
+	segs[depth] = oldLeaf
+	if isList {
+		segs[depth] += "[]"
+	}
+	return strings.Join(segs, "."), true
+}
+
 func extend(chain []*yaml.Node, n *yaml.Node) []*yaml.Node {
 	return append(append([]*yaml.Node(nil), chain...), n)
 }
@@ -1033,7 +1127,14 @@ func readAsApply(doc Node) (Node, []string) {
 	}
 	walkKeyDeprecations(doc, driftfileKeyDeprecations, tell)
 	for _, root := range documentRoots(doc) {
+		// A document apply would refuse reads unflattened here; the comparison
+		// still holds, because migrate moves entries between the two shapes
+		// and never between an element and the refusal.
+		_ = normaliseElements(root, func(list string) {
+			said = append(said, elementTagDeprecations[list].Old)
+		})
 		normaliseIdentities(root, func() { said = append(said, functionNamePath) })
+		canonicalSlots(root)
 	}
 	return doc, said
 }

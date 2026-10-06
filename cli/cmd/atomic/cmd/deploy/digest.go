@@ -216,6 +216,11 @@ func ElementDigest(dir, name string) (string, error) {
 // is never sent, so folding it in would make the same project redeploy for every
 // developer who checked it out somewhere else.
 //
+// A Field is hashed through the same list. Its name is its booking key,
+// `field:<name>`, so a Field and a Pulse never share a declaration digest, and
+// its handler, element, secrets and env are what it tells the operator; the
+// keys a Field cannot carry hash as empty.
+//
 // Maps and slices are written in sorted order so the same declaration always
 // hashes the same way. `secrets` is a set in meaning, and a reordered list that
 // forced a redeploy would be a digest reporting a change nobody made.

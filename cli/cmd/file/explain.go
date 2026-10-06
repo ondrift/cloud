@@ -53,7 +53,8 @@ func getExplainCmd() *cobra.Command {
 			"`drift file lint` validates against, so the two can never disagree.\n\n" +
 			"For what one FILE resolves to, see `drift file resolve`.",
 		Example: "  drift file explain\n  drift file explain backbone.nosql\n" +
-			"  drift file explain atomic.functions.memory\n  drift file explain --recursive",
+			"  drift file explain atomic.pulses.memory\n  drift file explain atomic.fields\n" +
+			"  drift file explain --recursive",
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

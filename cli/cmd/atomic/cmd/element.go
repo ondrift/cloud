@@ -22,7 +22,7 @@ func Element() *cobra.Command {
 func elementList() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
-		Short:   "List all elements and the functions they contain",
+		Short:   "List all elements and the pulses and fields they contain",
 		Example: "  drift atomic element list",
 		Args:    cobra.NoArgs,
 		// RunE, not Run. A `Run` handler has no error channel, so the only way to
@@ -59,16 +59,20 @@ func elementList() *cobra.Command {
 
 			for _, name := range names {
 				fns := byElement[name]
-				fmt.Printf("%s  (%d function", name, len(fns))
+				fmt.Printf("%s  (%d slot", name, len(fns))
 				if len(fns) != 1 {
 					fmt.Print("s")
 				}
 				fmt.Println(")")
 
 				for _, r := range fns {
-					// Org-only routing: the element groups these functions (it's the
+					// Org-only routing: the element groups these slots (it's the
 					// section header above) but never appears in the route path.
+					// A field has no route at all; nothing calls it.
 					route := "/api/" + r.FunctionName
+					if r.Method == "field" {
+						route = r.FunctionName + " (field, no route)"
+					}
 					methods := r.Method
 					if methods == "" {
 						methods = "?"

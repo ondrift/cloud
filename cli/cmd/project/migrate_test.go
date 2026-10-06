@@ -15,8 +15,9 @@ import (
 // migrateFixtures is where every input, its golden output and the schema live.
 const migrateFixtures = "testdata/migrate"
 
-// withMigrateSchema isolates HOME and gives it the 1.19.0 schema the api
-// serves, so these tests never read whatever this machine happens to hold.
+// withMigrateSchema isolates HOME and gives it the schema fixture, the format
+// this binary implements, so these tests never read whatever this machine
+// happens to hold.
 func withMigrateSchema(t *testing.T) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(migrateFixtures, "driftfile.schema.json"))
@@ -70,26 +71,56 @@ func TestMigrateGolden(t *testing.T) {
 		{name: "domains", steps: []string{"domains -> edge.domains"}},
 		{name: "rate_limit", steps: []string{"atomic.rate_limit -> edge.rate_limit"}},
 		{name: "function_name", steps: []string{
-			"atomic.functions[].name -> atomic.functions[].route + method",
-			"atomic.functions[].name -> atomic.functions[].route + method",
-			"atomic.functions[].name -> atomic.functions[].route + method",
-		}, kept: []string{"atomic.functions[].memory", "atomic.functions[].memory", "atomic.functions[].memory"}},
+			"atomic.functions -> atomic.pulses",
+			"atomic.pulses[].name -> atomic.pulses[].route + method",
+			"atomic.pulses[].name -> atomic.pulses[].route + method",
+			"atomic.pulses[].name -> atomic.pulses[].route + method",
+		}, kept: []string{"atomic.pulses[].memory", "atomic.pulses[].memory", "atomic.pulses[].memory"}},
 		{name: "overlay_only", steps: []string{
 			"environments.staging.atomic.egress -> environments.staging.edge.egress",
 			"environments.prod.domains -> environments.prod.edge.domains",
+		}},
+		// The list renamed in place, in the base and inside an overlay, with the
+		// comments on and above it kept and a `fields` list beside it untouched.
+		{name: "pulses", steps: []string{
+			"atomic.functions -> atomic.pulses",
+			"environments.staging.atomic.functions -> environments.staging.atomic.pulses",
+		}},
+		// A 1.19 file: the list renamed, a retired name split inside an entry
+		// that moves, every tagged entry moved into its element in first-seen
+		// order with its comments, `element: default` dropped in place, a tag
+		// written as an entry's first key, and the same inside an overlay.
+		{name: "elements_functions", steps: []string{
+			"atomic.functions -> atomic.pulses",
+			"atomic.pulses[].name -> atomic.pulses[].route + method",
+			"atomic.pulses[].element -> atomic.elements[].pulses",
+			"atomic.pulses[].element -> atomic.elements[].pulses",
+			"atomic.pulses[].element -> atomic.pulses[]",
+			"atomic.pulses[].element -> atomic.elements[].pulses",
+			"environments.staging.atomic.functions -> environments.staging.atomic.pulses",
+			"environments.staging.atomic.pulses[].element -> environments.staging.atomic.elements[].pulses",
+		}, kept: []string{"atomic.pulses[].memory"}},
+		// The fxevm testnode's flat 1.20 file, byte for byte: Pulses and a Field
+		// tagged with two elements, each list emptied and removed.
+		{name: "elements_testnode", steps: []string{
+			"atomic.pulses[].element -> atomic.elements[].pulses",
+			"atomic.pulses[].element -> atomic.elements[].pulses",
+			"atomic.pulses[].element -> atomic.elements[].pulses",
+			"atomic.fields[].element -> atomic.elements[].fields",
 		}},
 		{name: "realistic", steps: []string{
 			"domains -> edge.domains",
 			"atomic.egress -> edge.egress",
 			"atomic.rate_limit -> edge.rate_limit",
-			"atomic.functions[].name -> atomic.functions[].route + method",
-			"atomic.functions[].name -> atomic.functions[].route + method",
+			"atomic.functions -> atomic.pulses",
+			"atomic.pulses[].name -> atomic.pulses[].route + method",
+			"atomic.pulses[].name -> atomic.pulses[].route + method",
 			"backbone.nosql[].name -> backbone.nosql[].slot",
 			"environments.staging.atomic.rate_limit -> environments.staging.edge.rate_limit",
 			"environments.staging.atomic.egress -> environments.staging.edge.egress",
 			"name -> slice",
 			"canvas.sites[].route -> canvas.sites[].path",
-		}, kept: []string{"atomic.functions[].memory", "atomic.functions[].memory", "backbone.nosql[].size"}},
+		}, kept: []string{"atomic.pulses[].memory", "atomic.pulses[].memory", "backbone.nosql[].size"}},
 	}
 
 	for _, tc := range cases {
@@ -98,7 +129,7 @@ func TestMigrateGolden(t *testing.T) {
 			src := readFixture(t, tc.name+".yaml")
 
 			if err := ValidateDriftfileSource(src); err != nil {
-				t.Fatalf("the input is not a document the 1.19.0 schema accepts, so it tests nothing:\n%v", err)
+				t.Fatalf("the input is not a document the schema fixture accepts, so it tests nothing:\n%v", err)
 			}
 
 			got, err := MigrateDriftfile(src)
@@ -135,7 +166,7 @@ func TestMigrateGolden(t *testing.T) {
 			}
 
 			if err := ValidateDriftfileSource(got.Output); err != nil {
-				t.Errorf("the migrated file does not validate against the 1.19.0 schema:\n%v", err)
+				t.Errorf("the migrated file does not validate against the schema fixture:\n%v", err)
 			}
 			assertAppliesWithoutAMigrationNotice(t, got.Output)
 
@@ -170,6 +201,124 @@ func TestMigrateAlreadyCurrentChangesNothing(t *testing.T) {
 	assertAppliesWithoutAMigrationNotice(t, src)
 }
 
+// A file already declaring its Pulses and Fields inside elements, with an
+// element's env and secrets, flow-style entries, a top-level default list and
+// an overlay, comes back byte for byte.
+func TestMigrateAlreadyNestedChangesNothing(t *testing.T) {
+	withMigrateSchema(t)
+	src := readFixture(t, "elements_nested.yaml")
+	if err := ValidateDriftfileSource(src); err != nil {
+		t.Fatalf("the input is not a document the schema fixture accepts, so it tests nothing:\n%v", err)
+	}
+
+	got, err := MigrateDriftfile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Changed() || len(got.Steps) != 0 || !bytes.Equal(got.Output, src) {
+		t.Errorf("a nested file was rewritten (%+v):\n%s", got.Steps, got.Output)
+	}
+	assertAppliesWithoutAMigrationNotice(t, src)
+}
+
+// Moving tagged entries into an element `atomic.elements` already declares
+// appends them to that element's list, or gives it the list, and appends an
+// element it lacks after the existing ones.
+func TestMigrateMergesIntoDeclaredElements(t *testing.T) {
+	withMigrateSchema(t)
+	src := []byte(`slice: shop
+atomic:
+  pulses:
+    - route: refund
+      method: post
+      handler: PostRefund
+      element: payments
+    - route: thumbs
+      method: get
+      handler: GetThumbs
+      element: images
+  fields:
+    - name: settler
+      handler: Settler
+      element: payments
+  elements:
+    - name: payments
+      pulses:
+        - route: charge
+          method: post
+          handler: PostCharge
+`)
+	want := `slice: shop
+atomic:
+  elements:
+    - name: payments
+      pulses:
+        - route: charge
+          method: post
+          handler: PostCharge
+        - route: refund
+          method: post
+          handler: PostRefund
+      fields:
+        - name: settler
+          handler: Settler
+    - name: images
+      pulses:
+        - route: thumbs
+          method: get
+          handler: GetThumbs
+`
+	if err := ValidateDriftfileSource(src); err != nil {
+		t.Fatalf("the input is not a valid document:\n%v", err)
+	}
+	got, err := MigrateDriftfile(src)
+	if err != nil {
+		t.Fatalf("migrate refused:\n%v", err)
+	}
+	if string(got.Output) != want {
+		t.Errorf("output:\n--- got ---\n%s--- want ---\n%s", got.Output, want)
+	}
+	if err := ValidateDriftfileSource(got.Output); err != nil {
+		t.Errorf("the migrated file does not validate:\n%v", err)
+	}
+}
+
+// An entry carrying its tag in a form migrate cannot lift out line by line is
+// refused, naming the line and what to write instead, and nothing is changed.
+func TestMigrateRefusesATagItCannotMove(t *testing.T) {
+	cases := map[string]struct {
+		doc  string
+		want string
+	}{
+		"a flow-style entry": {
+			doc:  "slice: shop\natomic:\n  pulses:\n    - {route: ping, method: get, handler: GetPing, element: evm}\n",
+			want: "atomic.pulses[].element (line 4) is written in flow style",
+		},
+		"a flow-style list": {
+			doc:  "slice: shop\natomic:\n  pulses: [{route: ping, method: get, handler: GetPing, element: evm}]\n",
+			want: "atomic.pulses[].element (line 3) is written in flow style",
+		},
+		"an element that is not a plain block sequence": {
+			doc: "slice: shop\natomic:\n  pulses:\n    - route: ping\n      method: get\n      handler: GetPing\n      element: evm\n" +
+				"  elements: [{name: bench, pulses: [{route: bench, method: get, handler: GetBench}]}]\n",
+			want: "atomic.elements (line 8) is written in flow style",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			withMigrateSchema(t)
+			if err := ValidateDriftfileSource([]byte(tc.doc)); err != nil {
+				t.Fatalf("the input is not a valid document, so this proves nothing:\n%v", err)
+			}
+			_, err := MigrateDriftfile([]byte(tc.doc))
+			var refusal *MigrationRefusal
+			if !errors.As(err, &refusal) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want a refusal saying %q, got: %v", tc.want, err)
+			}
+		})
+	}
+}
+
 // Both spellings of one key is a document contradicting itself. Apply uses the
 // new one and ignores the old; migrate deletes neither, and refuses naming
 // both paths and both lines.
@@ -192,10 +341,16 @@ func TestMigrateRefusesBothSpellings(t *testing.T) {
 				"environments:\n  staging:\n    domains: [{host: a.example.com}]\n    edge:\n      domains: [{host: b.example.com}]\n",
 			want: []string{"environments.staging.domains (line 7)", "environments.staging.edge.domains (line 9)"},
 		},
-		"a function's name beside its route": {
+		"a pulse's name beside its route": {
 			doc: "slice: shop\natomic:\n  functions:\n    - name: get:ping\n      route: pong\n" +
 				"      method: get\n      handler: GetPing\n      memory: 16MB\n",
-			want: []string{"atomic.functions[].name (line 4)", "atomic.functions[].route (line 5)"},
+			want: []string{"atomic.pulses[].name (line 4)", "atomic.pulses[].route (line 5)"},
+		},
+		"both spellings of the pulse list": {
+			doc: "slice: shop\natomic:\n  functions:\n    - {route: ping, method: get, handler: GetPing}\n" +
+				"  pulses:\n    - {route: pong, method: get, handler: GetPong}\n",
+			want: []string{"atomic.functions (line 3)", "atomic.pulses (line 5)",
+				"drift file apply uses atomic.pulses and ignores atomic.functions"},
 		},
 	}
 	for name, tc := range cases {
@@ -223,7 +378,7 @@ func TestMigrateRefusesBothSpellings(t *testing.T) {
 func TestMigrateReportsAnIgnoredKeyAndKeepsIt(t *testing.T) {
 	withMigrateSchema(t)
 	src := []byte("slice: shop\nlog_retention: 72h # a week is too long\natomic:\n  atomic_size: 100MB\n" +
-		"  functions:\n    - route: ping\n      method: get\n      handler: GetPing\n      memory: 16MB\n")
+		"  pulses:\n    - route: ping\n      method: get\n      handler: GetPing\n      memory: 16MB\n")
 
 	got, err := MigrateDriftfile(src)
 	if err != nil {
@@ -232,7 +387,7 @@ func TestMigrateReportsAnIgnoredKeyAndKeepsIt(t *testing.T) {
 	if got.Changed() || !bytes.Equal(got.Output, src) {
 		t.Errorf("a file whose only retired keys are ignored ones was changed:\n%s", got.Output)
 	}
-	want := map[string]int{"log_retention": 2, "atomic.atomic_size": 4, "atomic.functions[].memory": 9}
+	want := map[string]int{"log_retention": 2, "atomic.atomic_size": 4, "atomic.pulses[].memory": 9}
 	if len(got.Kept) != len(want) {
 		t.Fatalf("kept %d keys, want %d: %+v", len(got.Kept), len(want), got.Kept)
 	}
@@ -312,8 +467,8 @@ environments:
 // A destination that exists but is empty takes the moved key under its own
 // key line, with the empty value removed and any comment on that line kept.
 func TestMigrateFillsAnEmptyDestination(t *testing.T) {
-	head := "slice: shop\natomic:\n  rate_limit: 600/min\n  functions:\n    - {route: ping, method: get, handler: GetPing}\n"
-	body := "slice: shop\natomic:\n  functions:\n    - {route: ping, method: get, handler: GetPing}\n"
+	head := "slice: shop\natomic:\n  rate_limit: 600/min\n  pulses:\n    - {route: ping, method: get, handler: GetPing}\n"
+	body := "slice: shop\natomic:\n  pulses:\n    - {route: ping, method: get, handler: GetPing}\n"
 	for in, want := range map[string]string{
 		"edge:\n":                "edge:\n  rate_limit: 600/min\n",
 		"edge: ~\n":              "edge:\n  rate_limit: 600/min\n",
@@ -334,7 +489,7 @@ func TestMigrateKeepsLineEndings(t *testing.T) {
 	withMigrateSchema(t)
 	src := []byte("name: shop\r\natomic:\r\n  rate_limit: 600/min\r\n  functions:\r\n" +
 		"    - {route: ping, method: get, handler: GetPing}")
-	want := "slice: shop\r\natomic:\r\n  functions:\r\n" +
+	want := "slice: shop\r\natomic:\r\n  pulses:\r\n" +
 		"    - {route: ping, method: get, handler: GetPing}\r\nedge:\r\n  rate_limit: 600/min"
 
 	got, err := MigrateDriftfile(src)
@@ -362,7 +517,8 @@ func assertAppliesWithoutAMigrationNotice(t *testing.T, src []byte) {
 func TestMigrateNoticeCheckSeesTheUnmigratedFiles(t *testing.T) {
 	for _, name := range []string{
 		"slice_name", "nosql_slot", "canvas_path", "atomic_egress", "domains",
-		"rate_limit", "function_name", "overlay_only", "realistic",
+		"rate_limit", "function_name", "overlay_only", "pulses", "realistic",
+		"elements_functions", "elements_testnode",
 	} {
 		t.Run(name, func(t *testing.T) {
 			withMigrateSchema(t)

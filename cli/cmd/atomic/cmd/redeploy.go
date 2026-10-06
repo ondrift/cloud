@@ -14,9 +14,9 @@ import (
 func Redeploy() *cobra.Command {
 	var method string
 	cmd := &cobra.Command{
-		Use:     "redeploy <function-name>",
-		Short:   "Re-deploy the last known artifact for a function",
-		Example: "  drift atomic redeploy send-email\n  drift atomic redeploy users --method get",
+		Use:     "redeploy <name>",
+		Short:   "Re-deploy the last known artifact for a pulse or field",
+		Example: "  drift atomic redeploy send-email\n  drift atomic redeploy users --method get\n  drift atomic redeploy sequencer --method field",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -33,20 +33,20 @@ func Redeploy() *cobra.Command {
 			)
 			if err != nil {
 				s.Stop()
-				return common.TransportError("redeploy function", err)
+				return common.TransportError("redeploy", err)
 			}
 			defer resp.Body.Close()
 
-			_, err = common.CheckResponse(resp, "redeploy function")
+			_, err = common.CheckResponse(resp, "redeploy")
 			s.Stop()
 			if err != nil {
 				return err
 			}
 
-			fmt.Printf("Function %s redeployed from last known artifact.\n", common.Highlight(function))
+			fmt.Printf("%s redeployed from its last known artifact.\n", common.Highlight(function))
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path")
+	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path, or `field` for a field")
 	return cmd
 }

@@ -3,7 +3,7 @@
 // ONE QUESTION, AND IT FAILS OPEN. `drift file new` scaffolds a Driftfile that
 // declares `route: hello, method: get` and prints the `drift atomic new` command
 // that writes its source. A user who follows that hint would otherwise be told
-// "Declare it in your Driftfile, under atomic.functions:" and handed a duplicate
+// "Declare it in your Driftfile, under atomic.pulses:" and handed a duplicate
 // of an entry three lines above the one they just read — and two entries for one
 // route is a parse error, not a harmless repeat.
 //
@@ -28,17 +28,28 @@ import (
 )
 
 // driftfileRoutes is the sliver of a Driftfile this file reads. Every other key
-// is ignored — including `environments`, which can override the function list
+// is ignored — including `environments`, which can override the pulse list
 // per environment. A per-environment override is exactly the ambiguous case the
 // fail-open rule is for: this answers for the base list, and when the base list
-// does not name the function the snippet is printed.
+// does not name the pulse the snippet is printed.
+//
+// Both spellings of the top-level list are read, `pulses` and the retired
+// `functions`, because this never runs the key walker that renames one onto the
+// other; and so is every element's `pulses`, where a Pulse is declared when its
+// handler lives in a named element.
 type driftfileRoutes struct {
 	Atomic struct {
-		Functions []struct {
-			Route  string `yaml:"route"`
-			Method string `yaml:"method"`
-		} `yaml:"functions"`
+		Pulses    []declaredPulse `yaml:"pulses"`
+		Functions []declaredPulse `yaml:"functions"`
+		Elements  []struct {
+			Pulses []declaredPulse `yaml:"pulses"`
+		} `yaml:"elements"`
 	} `yaml:"atomic"`
+}
+
+type declaredPulse struct {
+	Route  string `yaml:"route"`
+	Method string `yaml:"method"`
 }
 
 // declaredRoute reports whether the Driftfile in the working directory already
@@ -64,7 +75,11 @@ func declaredRoute(funcMethod, name, queue string, isQueue bool) bool {
 	if yaml.Unmarshal(data, &df) != nil {
 		return false
 	}
-	for _, fn := range df.Atomic.Functions {
+	all := append(df.Atomic.Pulses, df.Atomic.Functions...)
+	for _, el := range df.Atomic.Elements {
+		all = append(all, el.Pulses...)
+	}
+	for _, fn := range all {
 		if fn.Route == route && strings.EqualFold(fn.Method, method) {
 			return true
 		}

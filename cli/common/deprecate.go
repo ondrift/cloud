@@ -244,7 +244,7 @@ const (
 // KeyDeprecation is one retired Driftfile key.
 //
 // Path addresses the key in the document, with `[]` meaning "every element of
-// this list" — `atomic.functions[].memory`. Four of the five renames in the
+// this list" — `atomic.pulses[].memory`. Four of the five renames in the
 // shape split live inside lists, so addressing elements is not a nicety.
 //
 // The path is also the notice's identity: Warn keys on Deprecation.Old, so one

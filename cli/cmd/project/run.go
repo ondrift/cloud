@@ -46,9 +46,10 @@ func getRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [environment]",
 		Short: "Build and run the project locally in Docker (no account, no cloud)",
-		Long: `Build the project's functions + canvas, bake a thin image on top of the
-Drift runtime, and launch it detached. The app is served on localhost — the
-same code that runs on Drift Cloud, on your own machine.
+		Long: `Build the project's pulses, fields and canvas, bake a thin image on top
+of the Drift runtime, and launch it detached. The app is served on localhost,
+and its fields run beside it: the same code that runs on Drift Cloud, on your
+own machine.
 
 Needs Docker — and only Docker. Every language builds in a throwaway container
 (Go, Rust, Python, Node, PHP, Ruby), so you install no toolchain at all. Set
@@ -131,7 +132,9 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 	canvasDir := filepath.Join(work, "canvas")
 
 	fmt.Printf("\n  %s building %s…\n", common.Hint("·"), common.Highlight(app))
-	elements, err := atomic_cmd.BuildElements(FunctionSpecs(m))
+	// Pulses and Fields alike: the runner image is a slice, and its supervisor
+	// starts every Field slot it finds, so a local run behaves as the cloud does.
+	elements, err := atomic_cmd.BuildElements(AtomicSpecs(m))
 	if err != nil {
 		return "", "", "", err
 	}
@@ -140,7 +143,7 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 			return "", "", "", err
 		}
 		if err := atomic_cmd.StageElementsLocally(elements, runnerDir, true); err != nil {
-			return "", "", "", fmt.Errorf("build functions: %w", err)
+			return "", "", "", fmt.Errorf("build pulses and fields: %w", err)
 		}
 	} else {
 		_ = os.MkdirAll(runnerDir, 0o755)

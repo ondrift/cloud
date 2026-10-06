@@ -49,13 +49,13 @@ func TestFunctionIdentity_BothSpellingsProduceTheSameBookingKeys(t *testing.T) {
 // A route carrying colons of its own is the case a split on the LAST colon, or a
 // naive SplitN(3), gets wrong.
 func TestFunctionIdentity_ARouteKeepsItsOwnColons(t *testing.T) {
-	doc := Node{"atomic": map[string]any{"functions": []any{
+	doc := Node{"atomic": map[string]any{"pulses": []any{
 		map[string]any{"name": "get:groups/:id"},
 		map[string]any{"name": "delete:items/:id/tags/:tag"},
 	}}}
 	normaliseFunctionIdentities(doc)
 
-	fns := doc.Nodes("atomic", "functions")
+	fns := doc.Nodes("atomic", "pulses")
 	for i, want := range []struct{ method, route string }{
 		{"get", "groups/:id"},
 		{"delete", "items/:id/tags/:tag"},
@@ -72,12 +72,12 @@ func TestFunctionIdentity_ARouteKeepsItsOwnColons(t *testing.T) {
 // The pair is the current spelling, so a document carrying both means the pair.
 // Deriving from the retired string instead would let the old name win.
 func TestFunctionIdentity_ThePairWinsWhenADocumentStatesBoth(t *testing.T) {
-	doc := Node{"atomic": map[string]any{"functions": []any{
+	doc := Node{"atomic": map[string]any{"pulses": []any{
 		map[string]any{"name": "get:stale", "route": "fresh", "method": "post"},
 	}}}
 	normaliseFunctionIdentities(doc)
 
-	if got := doc.Nodes("atomic", "functions")[0].Str("name"); got != "post:fresh" {
+	if got := doc.Nodes("atomic", "pulses")[0].Str("name"); got != "post:fresh" {
 		t.Errorf("name = %q, want post:fresh — the pair is what the document means", got)
 	}
 }
@@ -85,12 +85,12 @@ func TestFunctionIdentity_ThePairWinsWhenADocumentStatesBoth(t *testing.T) {
 // The method is lowercased into the key because the runtime's lookup is exact
 // against a lowercase-method key.
 func TestFunctionIdentity_TheMethodIsLowercasedIntoTheKey(t *testing.T) {
-	doc := Node{"atomic": map[string]any{"functions": []any{
+	doc := Node{"atomic": map[string]any{"pulses": []any{
 		map[string]any{"route": "ping", "method": "GET"},
 	}}}
 	normaliseFunctionIdentities(doc)
 
-	if got := doc.Nodes("atomic", "functions")[0].Str("name"); got != "get:ping" {
+	if got := doc.Nodes("atomic", "pulses")[0].Str("name"); got != "get:ping" {
 		t.Errorf("name = %q, want get:ping — a key stored with an uppercase method "+
 			"names a pool no invocation reaches", got)
 	}
@@ -100,12 +100,12 @@ func TestFunctionIdentity_TheMethodIsLowercasedIntoTheKey(t *testing.T) {
 // one written as `queue:orders`, because Trigger() and QueueSource() read the
 // composed string and neither was repointed.
 func TestFunctionIdentity_AQueuePairIsTheSameFunctionAsTheRetiredForm(t *testing.T) {
-	doc := Node{"atomic": map[string]any{"functions": []any{
+	doc := Node{"atomic": map[string]any{"pulses": []any{
 		map[string]any{"route": "orders", "method": "queue", "handler": "H"},
 	}}}
 	normaliseFunctionIdentities(doc)
 
-	spec := atomic_cmd.FunctionSpec{Name: doc.Nodes("atomic", "functions")[0].Str("name")}
+	spec := atomic_cmd.FunctionSpec{Name: doc.Nodes("atomic", "pulses")[0].Str("name")}
 	if spec.Trigger() != "queue" {
 		t.Errorf("Trigger() = %q, want queue", spec.Trigger())
 	}
@@ -125,7 +125,7 @@ func TestFunctionIdentity_TheRetiredSpellingIsAnnouncedExactlyOnce(t *testing.T)
 
 	bookingKeys(t, driftfileRetired(prorataFunctions))
 
-	if n := strings.Count(notices.String(), "atomic.functions[].name"); n != 1 {
+	if n := strings.Count(notices.String(), "atomic.pulses[].name"); n != 1 {
 		t.Errorf("the retired spelling was announced %d times across %d entries, want 1:\n%s",
 			n, len(prorataFunctions), notices.String())
 	}
@@ -144,7 +144,7 @@ func TestFunctionIdentity_TheCurrentSpellingIsSilent(t *testing.T) {
 
 	bookingKeys(t, driftfileCurrent(prorataFunctions))
 
-	if strings.Contains(notices.String(), "atomic.functions[].name") {
+	if strings.Contains(notices.String(), "atomic.pulses[].name") {
 		t.Errorf("a Driftfile using route/method was told about a key it does not "+
 			"declare:\n%s", notices.String())
 	}
@@ -164,7 +164,7 @@ func bookingKeys(t *testing.T, body string) []string {
 		t.Fatalf("parse failed:\n%v", err)
 	}
 	var out []string
-	for _, fn := range m.Slice().Nodes("atomic", "functions") {
+	for _, fn := range m.Slice().Nodes("atomic", "pulses") {
 		out = append(out, fn.Str("name"))
 	}
 	sort.Strings(out)

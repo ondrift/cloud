@@ -1,0 +1,36 @@
+# Already nested: every Pulse and Field sits in the element its handler
+# lives in, and the flat files under ./atomic are the default element.
+slice: ledger
+
+atomic:
+  pulses:
+    - route: ping
+      method: get
+      handler: GetPing
+  elements:
+    - name: evm
+      env:
+        CHAIN_ID: "31337"
+      secrets: [SIGNER_KEY]
+      pulses:
+        # The one JSON-RPC route.
+        - route: rpc
+          method: post
+          handler: PostRPC
+          response: json
+      fields:
+        - name: sequencer   # the chain's single writer
+          handler: Sequencer
+    - name: bench
+      pulses:
+        - {route: bench, method: get, handler: GetBench}
+
+environments:
+  prod: {}
+  staging:
+    atomic:
+      elements:
+        - name: evm
+          fields:
+            - name: sequencer
+              handler: Sequencer

@@ -305,9 +305,10 @@ func functionGroup(i int) *node {
 			"The route is what the function is called; open it for the method and memory.",
 		children: []*node{
 			{label: "Method", kind: kindChoice, value: "post", choices: httpMethods,
-				hint: "← → to choose. Part of the function's identity, not a detail — " +
-					"get:items and post:items are two different functions. QUEUE names " +
-					"a queue to drain instead of a path."},
+				hint: "← → to choose. Part of the slot's identity, not a detail: " +
+					"get:items and post:items are two different pulses. QUEUE names " +
+					"a queue to drain instead of a path. FIELD books a long-running " +
+					"worker, and the route is its name."},
 			{label: "Memory", kind: kindInt, unit: "MB", minV: minMemoryMiB, maxV: maxMemoryMiB,
 				placeholder: fmt.Sprintf("%d-%d", minMemoryMiB, maxMemoryMiB),
 				hint: fmt.Sprintf("The pool this function's SIMULTANEOUS calls share — it "+
@@ -1448,8 +1449,11 @@ func (f *shapeForm) collect() (declaredShape, string, error) {
 		// accepted queue_test here and had it refused after the create was
 		// priced, summarised and sent.
 		check, what := validRoute, "route"
-		if childValue(g, "Method") == "queue" {
+		switch childValue(g, "Method") {
+		case "queue":
 			check, what = validQueueName, "queue name"
+		case "field":
+			check, what = validFieldName, "field name"
 		}
 		if err := check(route); err != nil {
 			return declaredShape{}, "", fmt.Errorf("function %d %s: %s", len(shape.Slots)+1, what, err)

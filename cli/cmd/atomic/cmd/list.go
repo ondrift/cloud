@@ -120,7 +120,7 @@ func printFlatTable(records []atomicRecord) {
 func List() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
-		Short:   "List all deployed atomic functions",
+		Short:   "List every pulse and field slot on the slice",
 		Example: "  drift atomic list",
 		GroupID: "operations",
 		Args:    cobra.NoArgs,
@@ -134,7 +134,7 @@ func List() *cobra.Command {
 				return err
 			}
 			if len(deployed) == 0 {
-				fmt.Println("No functions deployed.")
+				fmt.Println("No pulses or fields deployed.")
 				return nil
 			}
 

@@ -6,8 +6,7 @@ package file
 // the minimum the format allows, because the gap between those two is where the
 // golden-path run kept stalling.
 //
-// Every function now declares its own `memory` and nothing is defaulted, so the
-// scaffold ships one complete function rather than an empty list: `functions: []`
+// The scaffold ships one complete pulse rather than an empty list: `pulses: []`
 // is technically valid and teaches nothing, and a user's first edit should be
 // changing a real entry rather than inventing the shape of one.
 
@@ -140,7 +139,7 @@ func nameLooksValid(s string) bool {
 // The ONE function the starter Driftfile declares, and the only place its route,
 // method and language are written down.
 //
-// Two things are generated from these three values: the `atomic.functions` entry
+// Two things are generated from these three values: the `atomic.pulses` entry
 // in the scaffolded file, and the `drift atomic new` command printed beside it.
 // They have to agree — the entry names a handler that only that exact command
 // produces — and a second copy of "hello"/"get" in either half is how they stop
@@ -171,27 +170,36 @@ func starterDriftfile(name, canvasDir string) string {
 	}
 
 	b.WriteString("atomic:\n")
-	b.WriteString("  # Every function you run. This list is the whole declaration — what the\n")
-	b.WriteString("  # slice exposes, what serves it, and what guards it. Nothing in your\n")
-	b.WriteString("  # source declares a function; the code is just code.\n")
+	b.WriteString("  # Pulses: Atomic's functions, one call, one result. This list is the whole\n")
+	b.WriteString("  # declaration: what the slice exposes, what serves it, and what guards it.\n")
+	b.WriteString("  # Nothing in your source declares a pulse; the code is just code.\n")
+	b.WriteString("  # Long-running workers go in a `fields:` list beside this one.\n")
+	b.WriteString("  #\n")
+	b.WriteString("  # These two lists are the default element, the flat files in ./atomic.\n")
+	b.WriteString("  # Code in another folder or language is an element of its own, and its\n")
+	b.WriteString("  # pulses and fields are declared inside it:\n")
+	b.WriteString("  #\n")
+	b.WriteString("  #   elements:\n")
+	b.WriteString("  #     - name: billing          # ./atomic/billing\n")
+	b.WriteString("  #       pulses:\n")
+	b.WriteString("  #         - route: invoices\n")
+	b.WriteString("  #           method: post\n")
+	b.WriteString("  #           handler: PostInvoices\n")
 	b.WriteString("  #\n")
 	b.WriteString("  #   route    the path it answers on, without a leading slash: `ping`,\n")
 	b.WriteString("  #            `auth/challenge`, `groups/:id`\n")
-	b.WriteString("  #   method   get, post, put, patch, delete, head, options — or `queue`\n")
+	b.WriteString("  #   method   get, post, put, patch, delete, head, options, or `queue`\n")
 	b.WriteString("  #            for one the slice invokes from a Backbone queue\n")
 	b.WriteString("  #   handler  the callable in your source, found in the element's folder\n")
 	b.WriteString("  #   auth     `none` (the default) or `apikey`\n")
 	b.WriteString("  #   secrets  the Backbone secrets this one function may read\n")
 	b.WriteString("  #\n")
 	b.WriteString("  # Memory is a SLICE setting, chosen on the form `drift slice resize`\n")
-	b.WriteString("  # draws — not a key in this file. `drift file benchmark` reports what\n")
-	b.WriteString("  # each function has actually cost.\n")
-	b.WriteString("  functions:\n")
+	b.WriteString("  # draws, not a key in this file. `drift file benchmark` reports what\n")
+	b.WriteString("  # each pulse has actually cost.\n")
+	b.WriteString("  pulses:\n")
 	b.WriteString("    - route: " + starterRoute + "\n")
 	b.WriteString("      method: " + starterMethod + "\n")
-	// Derived, never written out. This handler exists only once
-	// `starterFnCommand()` has been run, and that command's own naming rule is
-	// the one that decides what it will be called.
 	// Derived, never written out. This handler exists only once
 	// `starterFnCommand()` has been run, and that command's own naming rule is
 	// the one that decides what it will be called.

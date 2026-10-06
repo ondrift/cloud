@@ -37,6 +37,18 @@ import (
 // functionidentity.go instead, and emits its notice through the same Deprecation
 // type so it still lists with these.
 var driftfileKeyDeprecations = append([]common.KeyDeprecation{
+	// Atomic runs two kinds of work, and the list a request/response unit is
+	// declared in is named for the kind it holds: a Pulse is one call and one
+	// result, beside the long-running Fields in `atomic.fields`. A rename in
+	// place, so each overlay renames its own key and the merge sees one spelling.
+	//
+	// FIRST, because every other entry under this list is addressed by the new
+	// spelling: the walker visits the registry in order, so the rename has to
+	// land before `atomic.pulses[].memory` is looked for.
+	common.KeyDeprecationFor("atomic.functions", common.KeyAlias, common.Deprecation{
+		Old: "atomic.functions",
+		New: "atomic.pulses",
+	}),
 	// The identity is a REFERENCE to a slice `drift slice create` made, not a name
 	// this file mints. A straight rename, so the walker rewrites it and every
 	// reader downstream sees one spelling.
@@ -97,10 +109,15 @@ var shapeKeys = []common.KeyDeprecation{
 	ignoredShapeKey("atomic.atomic_size", "Atomic storage is a slice setting"),
 	ignoredShapeKey("atomic.function_timeout", "The function timeout is a slice setting"),
 	ignoredShapeKey("atomic.deploy_history", "Deploy history depth is a slice setting"),
-	// A function's booking is the sharpest of these: it is that function's own
+	// A Pulse's booking is the sharpest of these: it is that Pulse's own
 	// admission pool AND what it is billed at, so it is chosen where the slice is
-	// sized rather than where the function is declared.
-	ignoredShapeKey("atomic.functions[].memory", "A function's memory booking is a slice setting"),
+	// sized rather than where the Pulse is declared.
+	//
+	// A Field has no entry here because the format never gave it a `memory`
+	// key: its booking has always been the slice shape's.
+	ignoredShapeKey("atomic.pulses[].memory", "A pulse's memory booking is a slice setting"),
+	// The same key on a Pulse declared inside an element.
+	ignoredShapeKey("atomic.elements[].pulses[].memory", "A pulse's memory booking is a slice setting"),
 
 	ignoredShapeKey("backbone.blob_max_size", "Blob size limits are a slice setting"),
 	ignoredShapeKey("backbone.blob_max_count", "Blob count limits are a slice setting"),
