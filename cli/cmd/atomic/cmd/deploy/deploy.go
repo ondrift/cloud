@@ -107,7 +107,7 @@ func safeTmpName(name string) string {
 // its declaration that decide the template and the call.
 type goEntry struct {
 	name, handler, method, stream string
-	concurrency                   int
+	concurrent                    bool
 }
 
 // goEntryOf is the entry for one declared slot.
@@ -115,7 +115,7 @@ func goEntryOf(spec FunctionSpec) goEntry {
 	method, _ := spec.Wire()
 	return goEntry{
 		name: spec.Name, handler: spec.Handler, method: method,
-		stream: spec.Stream, concurrency: spec.Concurrency,
+		stream: spec.Stream, concurrent: spec.IsConcurrent(),
 	}
 }
 
@@ -167,7 +167,7 @@ func isBodyMethod(method string) bool {
 // pulseMainTemplate chooses the template a Pulse's main is rendered from.
 //
 // A buffered Pulse is served by the SDK's genmain package (default/
-// server_*_mux.txt): concurrently when its concurrency is above 1 and the
+// server_*_mux.txt): concurrently when it is declared concurrent and the
 // slice asks for it, one call at a time otherwise, byte for byte as the native
 // templates answer. Either way the protocol keeps the process's real stdout
 // and fd 1 is pointed at stderr, so what a handler prints reaches the
@@ -180,7 +180,7 @@ func isBodyMethod(method string) bool {
 //   - a build whose resolved SDK predates genmain (goSDK.genmain).
 //
 // Neither can call a handler with a context or serve calls concurrently, so a
-// handler taking a context.Context, or a concurrency above 1, is refused there
+// handler taking a context.Context, or a concurrent Pulse, is refused there
 // rather than compiled into an error in a file the author never wrote.
 func pulseMainTemplate(e goEntry, takesContext bool, sdk goSDK) (string, error) {
 	native, mux := defaultNativeServerGet, defaultMuxServerGet
@@ -200,9 +200,9 @@ func pulseMainTemplate(e goEntry, takesContext bool, sdk goSDK) (string, error) 
 		if sdk.version != "" {
 			sdkName += " (" + sdk.version + ")"
 		}
-		if e.concurrency > 1 {
-			return "", fmt.Errorf("pulse %q declares concurrency: %d, and %s predates concurrent Pulses. "+
-				"Deploy it again once a newer SDK is published, or set concurrency to 1", e.name, e.concurrency, sdkName)
+		if e.concurrent {
+			return "", fmt.Errorf("pulse %q is declared concurrent, and %s predates concurrent Pulses. "+
+				"Deploy it again once a newer SDK is published, or set concurrent to false", e.name, sdkName)
 		}
 		if takesContext {
 			return "", fmt.Errorf("pulse %q has a handler, %s, that takes a context.Context, and %s predates handlers "+
@@ -632,11 +632,12 @@ func operatorSink(a FuncArtifact) error {
 		// first of the three parsers it has to survive.
 		"response": a.Response,
 	}
-	// Only above 1, so a Pulse that declares none is sent exactly the metadata
-	// it always was, and an operator or slice that predates the key never
-	// reads it for one.
-	if a.Concurrency > 1 {
-		fields["concurrency"] = a.Concurrency
+	// Only when true, so a Pulse that is not concurrent is sent exactly the
+	// metadata it always was, and an operator or slice that predates the key
+	// never reads it for one. The deprecated count is never sent: the slice
+	// decides the number.
+	if a.Concurrent {
+		fields["concurrent"] = true
 	}
 	meta, err := json.Marshal(fields)
 	if err != nil {
@@ -879,9 +880,9 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	if err := sendSourceToOperator(FuncArtifact{
 		Name: name, Method: method, Language: language, Auth: auth,
 		Element: element, Stream: stream, Response: response, Secrets: secrets,
-		Env:         spec.Env,
-		Concurrency: spec.Concurrency,
-		Triggers:    triggers, Digest: digest,
+		Env:        spec.Env,
+		Concurrent: spec.IsConcurrent(),
+		Triggers:   triggers, Digest: digest,
 		SourcePath: sourcePath, UserSourcePath: userSourcePath,
 		SourceModule: wrapSourceModule, EntryFunc: wrapEntryFunc,
 	}); err != nil {

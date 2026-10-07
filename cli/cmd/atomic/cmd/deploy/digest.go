@@ -46,7 +46,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -209,16 +208,17 @@ func ElementDigest(dir, name string) (string, error) {
 //
 // The field list is `operatorSink`'s metadata minus what the build already
 // covers: it is the gate, the reply shape, the stream mode, the secrets, the
-// env, the element, the schedule the manifest declares, and the concurrency.
-// Get this list out of step with what is actually sent and the failure is
-// silent in one direction only — a field left out here is a field whose change
-// is skipped.
+// env, the element, the schedule the manifest declares, and whether it is
+// concurrent. Get this list out of step with what is actually sent and the
+// failure is silent in one direction only — a field left out here is a field
+// whose change is skipped.
 //
-// The concurrency is hashed only when it is above 1, which is also when it is
-// sent. Every declaration written before the key existed therefore hashes
-// exactly as it did, so a CLI that knows the key redeploys nothing on its
-// account, and a change to or from a concurrency above 1 is never skipped as
-// unchanged.
+// `concurrent` is hashed only when the Pulse is concurrent, in either
+// spelling, which is also when it is sent. Every declaration that is not
+// therefore hashes exactly as it did before the key existed, so a CLI that
+// knows the key redeploys nothing on its account, and a change to or from
+// concurrent is never skipped as unchanged. The deprecated count is not
+// hashed: it is not sent, and only whether it is above 1 means anything.
 //
 // `dir` is deliberately absent. It says where the source is on THIS machine and
 // is never sent, so folding it in would make the same project redeploy for every
@@ -250,8 +250,8 @@ func DeclarationDigest(spec FunctionSpec) string {
 	} {
 		fmt.Fprintf(h, "%s\x00%s\x00", kv[0], kv[1])
 	}
-	if spec.Concurrency > 1 {
-		fmt.Fprintf(h, "concurrency\x00%s\x00", strconv.Itoa(spec.Concurrency))
+	if spec.IsConcurrent() {
+		fmt.Fprintf(h, "concurrent\x00true\x00")
 	}
 
 	secrets := append([]string(nil), spec.Secrets...)

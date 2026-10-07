@@ -59,8 +59,10 @@ func FunctionSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
 			Response: fn.Str("response"),
 			Secrets:  fn.Strings("secrets"),
 			Env:      fn.StrMap("env"),
-			// Read from every Pulse, top level or flattened out of an element;
-			// absent reads 0, which means 1.
+			// Read from every Pulse, top level or flattened out of an element.
+			// The deprecated count is kept as written, so a refusal names what
+			// the Driftfile says; the spec reads it as concurrent above 1.
+			Concurrent:  fn.Bool("concurrent"),
 			Concurrency: fn.Int("concurrency"),
 		})
 	}

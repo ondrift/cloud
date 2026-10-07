@@ -38,9 +38,9 @@ type FuncArtifact struct {
 	// which is the property `secrets:` is meant to advertise and the reason
 	// these are two fields rather than one. See FunctionSpec.Env, hurdles/011.
 	Env map[string]string
-	// Concurrency is the Pulse's declared concurrency. Both sinks write it only
-	// when it is above 1.
-	Concurrency    int
+	// Concurrent is whether the Pulse was declared concurrent, in either
+	// spelling. Both sinks write `concurrent` only when it is true.
+	Concurrent     bool
 	Triggers       []TriggerSpec
 	Digest         string
 	SourcePath     string
@@ -176,11 +176,11 @@ func localSlotSink(runnerDir string) SlotSink {
 		if len(a.Env) > 0 {
 			meta["env"] = a.Env
 		}
-		// Above 1 only, as the operator sends it: a runner built from a slice
+		// Only when true, as the operator sends it: a runner built from a slice
 		// that knows the key then serves the Pulse concurrently, and an older
 		// one ignores it and serves it one call at a time.
-		if a.Concurrency > 1 {
-			meta["concurrency"] = a.Concurrency
+		if a.Concurrent {
+			meta["concurrent"] = true
 		}
 		metaJSON, _ := json.Marshal(meta)
 		return os.WriteFile(filepath.Join(slotDir, "metadata.json"), metaJSON, 0o644)

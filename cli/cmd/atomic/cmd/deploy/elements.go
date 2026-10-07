@@ -73,11 +73,22 @@ type FunctionSpec struct {
 	// channel, so an in-cluster address was declared beside the token that
 	// authenticates to it.
 	Env map[string]string
-	// Concurrency is how many calls one process of this Pulse may serve at
-	// once, as declared; 0 means the Driftfile left it out, which is 1. Above 1
-	// only a buffered Go Pulse reached over HTTP may declare it (see
-	// refuseConcurrency), and it reaches the operator and the digest only then.
+	// Concurrent is the Driftfile's `concurrent`: the handler is safe to run in
+	// parallel, and how many of its calls run at once is the slice's to
+	// decide.
+	Concurrent bool
+	// Concurrency is the deprecated `concurrency: N` from Driftfile 1.22.0, as
+	// written; 0 means the Driftfile left it out. Above 1 it declares what
+	// Concurrent does, and the number is used for nothing else.
 	Concurrency int
+}
+
+// IsConcurrent reports whether the Pulse was declared concurrent, in either
+// spelling. Only a buffered Go Pulse reached over HTTP may be (see
+// refuseConcurrency), and it reaches the operator and the digest, as
+// `concurrent`, only then.
+func (s FunctionSpec) IsConcurrent() bool {
+	return s.Concurrent || s.Concurrency > 1
 }
 
 // FieldMethod is the method a Field's slot is booked and deployed under. No
@@ -144,16 +155,16 @@ func refuseNonGoField(spec FunctionSpec, lang string) error {
 // deployed.
 var ErrFieldLanguage = errors.New("a Field runs Go in this release")
 
-// MaxPulseConcurrency is the most calls one process of a Pulse may serve at
-// once. The platform's tier.MaxPulseConcurrency is the authority and the
-// Driftfile schema's `concurrency.maximum` its published copy; this is the
-// copy the refusal below states, and a test pins it to the schema.
+// MaxPulseConcurrency bounds the deprecated `concurrency: N`. The platform's
+// tier.MaxPulseConcurrency is the authority and the Driftfile schema's
+// `concurrency.maximum` its published copy; this is the copy the refusal below
+// states, and a test pins it to the schema.
 const MaxPulseConcurrency = 64
 
 // ErrConcurrency is the rule refuseConcurrency applies, so a caller can tell
 // that refusal from any other build failure and report it before anything is
 // deployed.
-var ErrConcurrency = errors.New("a declared concurrency this release cannot honour")
+var ErrConcurrency = errors.New("a concurrent Pulse this release cannot honour")
 
 // concurrencyRefusal carries the operator's own words for a refused
 // concurrency and answers errors.Is(err, ErrConcurrency).
@@ -164,32 +175,37 @@ func (r concurrencyRefusal) Is(target error) bool { return target == ErrConcurre
 
 // validatePulseConcurrency is the operator's tier.ValidatePulseConcurrency,
 // rule for rule and word for word, so a Driftfile is refused here, before
-// anything builds, with the text the operator's 400 would carry. n is the
-// declared value; 0 means it was not declared, which is 1.
-func validatePulseConcurrency(method, language, stream string, n int) error {
+// anything builds, with the text the operator's 400 would carry. concurrent is
+// the Driftfile's `concurrent`; n is the deprecated `concurrency` as written,
+// 0 when it was not.
+func validatePulseConcurrency(method, language, stream string, concurrent bool, n int) error {
 	if n < 0 || n > MaxPulseConcurrency {
 		return concurrencyRefusal{fmt.Sprintf("concurrency %d is not usable: it must be between 1 and %d", n, MaxPulseConcurrency)}
 	}
-	if n <= 1 {
+	if !concurrent && n <= 1 {
 		return nil
 	}
+	declared := "concurrent: true"
+	if !concurrent {
+		declared = fmt.Sprintf("concurrency: %d", n)
+	}
 	if language != "go" {
-		return concurrencyRefusal{fmt.Sprintf("concurrency %d needs a Go Pulse: a concurrent Pulse runs Go in this release, "+
-			"and this one is built as %q. Set concurrency to 1, or move the handler into a Go element",
-			n, language)}
+		return concurrencyRefusal{fmt.Sprintf("%s needs a Go Pulse: a concurrent Pulse runs Go in this release, "+
+			"and this one is built as %q. Set concurrent to false, or move the handler into a Go element",
+			declared, language)}
 	}
 	if stream != "" {
-		return concurrencyRefusal{fmt.Sprintf("concurrency %d cannot be combined with stream %q: a concurrent Pulse serves "+
-			"buffered requests in this release. Set concurrency to 1, or drop the stream", n, stream)}
+		return concurrencyRefusal{fmt.Sprintf("%s cannot be combined with stream %q: a concurrent Pulse serves "+
+			"buffered requests in this release. Set concurrent to false, or drop the stream", declared, stream)}
 	}
 	switch {
 	case method == FieldMethod:
-		return concurrencyRefusal{fmt.Sprintf("concurrency %d cannot be declared on a Field: a Field is one process by definition", n)}
+		return concurrencyRefusal{fmt.Sprintf("%s cannot be declared on a Field: a Field is one process by definition", declared)}
 	case method == QueueMethod:
-		return concurrencyRefusal{fmt.Sprintf("concurrency %d cannot be combined with method queue: a queue Pulse is invoked "+
-			"one call at a time by its trigger. Set concurrency to 1", n)}
+		return concurrencyRefusal{fmt.Sprintf("%s cannot be combined with method queue: a queue Pulse is invoked "+
+			"one call at a time by its trigger. Set concurrent to false", declared)}
 	case !IsSlotMethod(method):
-		return concurrencyRefusal{fmt.Sprintf("concurrency %d needs an HTTP method, got %q", n, method)}
+		return concurrencyRefusal{fmt.Sprintf("%s needs an HTTP method, got %q", declared, method)}
 	}
 	return nil
 }
@@ -202,7 +218,7 @@ func refuseConcurrency(spec FunctionSpec, lang string) error {
 	if atomic_common.IsGo(lang) {
 		language = "go"
 	}
-	if err := validatePulseConcurrency(method, language, spec.Stream, spec.Concurrency); err != nil {
+	if err := validatePulseConcurrency(method, language, spec.Stream, spec.Concurrent, spec.Concurrency); err != nil {
 		return fmt.Errorf("%s %q: %w", slotNoun(spec), spec.Name, err)
 	}
 	return nil
@@ -461,10 +477,10 @@ func DeployGoElement(el Element, digest string, out io.Writer) error {
 		return sendSourceToOperator(FuncArtifact{
 			Name: name, Method: method, Language: "go", Auth: f.Spec.Auth,
 			Element: el.Name, Stream: f.Spec.Stream, Response: f.Spec.Response,
-			Secrets:     f.Spec.Secrets,
-			Env:         f.Spec.Env,
-			Concurrency: f.Spec.Concurrency,
-			Triggers:    triggersFor(f), Digest: DeployDigest(digest, f.Spec),
+			Secrets:    f.Spec.Secrets,
+			Env:        f.Spec.Env,
+			Concurrent: f.Spec.IsConcurrent(),
+			Triggers:   triggersFor(f), Digest: DeployDigest(digest, f.Spec),
 			SourcePath: bin, UserSourcePath: userSrc,
 		})
 	}
