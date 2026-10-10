@@ -605,20 +605,14 @@ type canvasSite struct {
 }
 
 // siteMount reads where one `canvas.sites[]` entry mounts, and the slug the
-// slice stores it under. `path` is the key; `route` is the older spelling of
-// the same value and reads identically.
+// slice stores it under: its `path`, which the compiler writes for every `site`
+// block not at the root.
 //
-// An entry naming NEITHER mounts at the root — that is what the short form
-// `canvas: ./site` means. An entry naming one and leaving it empty is refused,
-// because a mount path nobody can read is how every site on a project ends up
-// sharing one slug.
+// An entry with no `path` mounts at the root, which is `site "/"`. An entry
+// naming one and leaving it empty is refused, because a mount path nobody can
+// read is how every site on a project ends up sharing one slug.
 func siteMount(s Node) (route, slug string, err error) {
-	// One spelling, because the key walker has already rewritten the retired
-	// `route` onto `path`. Reading both here would be a second implementation of
-	// that alias, and the two could disagree about which wins.
-	//
-	// An entry with NO mount key at all is the root, and that is the common case:
-	// `canvas: ["./site"]` is a bare string, which carries no keys to read.
+	// An entry with NO mount key at all is the root, and that is the common case.
 	if !s.Has("path") {
 		return "/", "default", nil
 	}

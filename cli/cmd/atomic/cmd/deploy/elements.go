@@ -156,9 +156,9 @@ func refuseNonGoField(spec FunctionSpec, lang string) error {
 var ErrFieldLanguage = errors.New("a Field runs Go in this release")
 
 // MaxPulseConcurrency bounds the deprecated `concurrency: N`. The platform's
-// tier.MaxPulseConcurrency is the authority and the Driftfile schema's
-// `concurrency.maximum` its published copy; this is the copy the refusal below
-// states, and a test pins it to the schema.
+// tier.MaxPulseConcurrency is the authority; this is the copy the refusal below
+// states. A test pins it to a schema that still publishes the count's bound;
+// format 2 does not, because the compiled document never carries the count.
 const MaxPulseConcurrency = 64
 
 // ErrConcurrency is the rule refuseConcurrency applies, so a caller can tell

@@ -430,15 +430,25 @@ func (c *compiler) booking(key, route, method string, expr hcl.Expression, def h
 	return bytes
 }
 
-// memoryPattern is the platform's booking range, read from the schema's
-// `memory` pattern rather than restated. Nil when this machine holds no
-// schema; the plan refuses to run then.
+// memoryPattern is the platform's booking range, read from the schema rather
+// than restated. Nil when this machine holds no schema; the plan refuses to
+// run then.
+//
+// The range lives in the schema's root `x-drift` block as `memory-pattern`,
+// because the compiled document has no `memory` key for a property to carry
+// it. A machine whose cached schema predates that move holds it on
+// `atomicEntry.properties.memory` instead, so that is read when the root block
+// has none: returning nil there would silently skip the check rather than
+// fail it. Both carry the same pattern.
 func memoryPattern() *regexp.Regexp {
 	raw, err := common.LocalDriftfileSchema()
 	if err != nil {
 		return nil
 	}
 	var doc struct {
+		XDrift struct {
+			MemoryPattern string `json:"memory-pattern"`
+		} `json:"x-drift"`
 		Definitions struct {
 			AtomicEntry struct {
 				Properties struct {
@@ -449,10 +459,17 @@ func memoryPattern() *regexp.Regexp {
 			} `json:"atomicEntry"`
 		} `json:"definitions"`
 	}
-	if json.Unmarshal(raw, &doc) != nil || doc.Definitions.AtomicEntry.Properties.Memory.Pattern == "" {
+	if json.Unmarshal(raw, &doc) != nil {
 		return nil
 	}
-	re, cerr := regexp.Compile(doc.Definitions.AtomicEntry.Properties.Memory.Pattern)
+	pattern := doc.XDrift.MemoryPattern
+	if pattern == "" {
+		pattern = doc.Definitions.AtomicEntry.Properties.Memory.Pattern
+	}
+	if pattern == "" {
+		return nil
+	}
+	re, cerr := regexp.Compile(pattern)
 	if cerr != nil {
 		return nil
 	}

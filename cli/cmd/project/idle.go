@@ -55,8 +55,7 @@ type idleClass struct {
 // called idle, only unnamed, and the sentence says exactly that.
 //
 // Names are compared exactly, in the spelling the reference check compares
-// them in, after the parse has folded every retired spelling onto the current
-// one.
+// them in.
 func ReportIdleDeclarations(m *Manifest, live *LiveSlice, deployed []atomic_cmd.DeployedFunction, out io.Writer) {
 	if live == nil || slice.TierLabel(live.Tier) == "free" {
 		return

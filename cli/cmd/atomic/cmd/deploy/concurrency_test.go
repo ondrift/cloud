@@ -111,10 +111,11 @@ func TestBuildElements_AcceptsEveryConcurrencyTheSliceHonours(t *testing.T) {
 	}
 }
 
-// The CLI's bound on the deprecated count is a copy of the platform's,
-// published in the schema the platform serves, which this machine holds (CI
-// fetches it before the suite runs); and it carries `concurrent`, a boolean,
-// beside the count.
+// The schema the platform serves, which this machine holds (CI fetches it
+// before the suite runs), carries `concurrent` as a boolean. Format 1 also
+// published the deprecated count with a bound, and while a schema still does,
+// the CLI's bound is a copy of it; format 2 publishes no count, since the
+// compiled document never carries one.
 func TestMaxPulseConcurrencyIsTheSchemasMaximum(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".drift", "driftfile.schema.json"))
 	if err != nil {
@@ -139,12 +140,13 @@ func TestMaxPulseConcurrencyIsTheSchemasMaximum(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	c := doc.Definitions.AtomicEntry.Properties.Concurrency
-	if c.Maximum != MaxPulseConcurrency || c.Minimum != 1 {
-		t.Errorf("the schema bounds concurrency to %d..%d, this CLI to 1..%d", c.Minimum, c.Maximum, MaxPulseConcurrency)
-	}
-	if !c.Deprecated {
-		t.Error("the schema this CLI implements does not mark concurrency deprecated")
+	if c := doc.Definitions.AtomicEntry.Properties.Concurrency; c.Maximum != 0 {
+		if c.Maximum != MaxPulseConcurrency || c.Minimum != 1 {
+			t.Errorf("the schema bounds concurrency to %d..%d, this CLI to 1..%d", c.Minimum, c.Maximum, MaxPulseConcurrency)
+		}
+		if !c.Deprecated {
+			t.Error("the schema publishes concurrency and does not mark it deprecated")
+		}
 	}
 	if got := doc.Definitions.AtomicEntry.Properties.Concurrent.Type; got != "boolean" {
 		t.Errorf("the schema this CLI implements has concurrent as %q, want a boolean", got)

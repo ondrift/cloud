@@ -1,9 +1,5 @@
-// schedules.go — resolving `atomic.pulses[].cron` into what the deploy
-// artifact carries. Only a Pulse is scheduled; a Field runs all the time.
-//
-// The Driftfile field was documented with worked examples and never read by any
-// deploy code; `translate.go` called it "vestigial" while the spec called it the
-// feature. This is the half that makes the spec true.
+// schedules.go — resolving a pulse's `cron` into what the deploy artifact
+// carries. Only a Pulse is scheduled; a Field runs all the time.
 
 package project
 

@@ -14,9 +14,8 @@ package project
 // and the digest all read `atomic.pulses` and `atomic.fields` entries, each
 // carrying its `element`, and each of them stays as it is. Flattening here, once,
 // is what keeps "which slots does this slice run" a single answer: every element
-// entry is appended to the top-level list it belongs to, carrying its element,
-// the element's `dir` unless it has its own, its `env` merged over the
-// element's, and the union of both `secrets` lists. `atomic.elements` is then
+// entry is appended to the top-level list it belongs to, carrying its element
+// and the element's `dir` unless it has its own. `atomic.elements` is then
 // removed, so nothing can count an entry twice.
 //
 // # What the schema cannot say
@@ -94,33 +93,12 @@ func checkElementDeclarations(elements []Node) ParseErrors {
 	return errs
 }
 
-// inheritElement gives one entry what its element declares for all of them:
-// the element's `dir` unless the entry has its own, the element's `env` with
-// the entry's own keys winning, and the union of both `secrets` lists, the
-// element's first.
+// inheritElement gives one entry its element's `dir`, unless the entry has its
+// own. An element declares nothing else for its entries: each Pulse and Field
+// states its own `env` and `secrets`.
 func inheritElement(entry, el Node) {
 	if !entry.Has("dir") && el.Str("dir") != "" {
 		entry["dir"] = el.Str("dir")
-	}
-
-	if env := el.Sub("env"); len(env) > 0 {
-		merged := env.Clone()
-		for k, v := range entry.Sub("env") {
-			merged[k] = v
-		}
-		entry["env"] = map[string]any(merged)
-	}
-
-	if secrets := el.Strings("secrets"); len(secrets) > 0 {
-		seen := map[string]bool{}
-		var union []any
-		for _, s := range append(secrets, entry.Strings("secrets")...) {
-			if !seen[s] {
-				seen[s] = true
-				union = append(union, s)
-			}
-		}
-		entry["secrets"] = union
 	}
 }
 

@@ -88,10 +88,6 @@ func applyEgress(m *Manifest) error {
 // (mode, hosts) tuple the rest of this file works in, and reports
 // whether the file declares one at all. An absent block declares
 // nothing; a present block with `mode` unset is "open".
-//
-// One spelling: the key walker has already moved the retired
-// `atomic.egress` onto `edge.egress`, and the selected environment's
-// overlay is already merged into m.Slice().
 func desiredEgress(m *Manifest) (mode string, hosts []string, declared bool) {
 	if !m.Slice().Has("edge", "egress") {
 		return "", nil, false
