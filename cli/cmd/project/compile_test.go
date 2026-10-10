@@ -41,7 +41,7 @@ func withRealSchema(t *testing.T) {
 	t.Cleanup(func() { compiledSchema = nil })
 }
 
-// writeDriftfilelays out a Driftfile project in a temp dir: the file, and every
+// writeDriftfile lays out a Driftfile project in a temp dir: the file, and every
 // directory or file it names (a path ending in / is a directory).
 func writeDriftfile(t *testing.T, body string, paths ...string) string {
 	t.Helper()
