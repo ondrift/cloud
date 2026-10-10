@@ -45,10 +45,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // APIError is the humane rendering of a non-2xx response from the Drift API.
@@ -85,6 +88,17 @@ type APIError struct {
 	Limit    int
 	Current  int
 	HasLimit bool
+
+	// RetryAfter is how long the server asked the caller to wait, from the
+	// response's Retry-After header, or zero when it sent none.
+	//
+	// It is what tells a THROTTLE from a QUOTA. Both are a 429 and their remedies
+	// are opposite: a throttle (too many logins, too many control-plane calls in a
+	// minute, a restart inside its cooldown) clears by itself, while a quota stays
+	// until something is freed or the slice is resized. The platform sends
+	// Retry-After on every throttle and on no quota, so its presence is the whole
+	// test and no sentence has to be read.
+	RetryAfter time.Duration
 }
 
 // ErrPlatformUnavailable and ErrSessionRejected split the two ways a token
@@ -158,6 +172,8 @@ func (e *APIError) code() string {
 		return "DRIFT-1002"
 	case e.Status == http.StatusNotFound:
 		return "DRIFT-1003"
+	case e.throttled():
+		return "DRIFT-1014"
 	case e.Status == http.StatusPaymentRequired || e.Status == http.StatusTooManyRequests:
 		return "DRIFT-1004"
 
@@ -226,6 +242,15 @@ func (e *APIError) message() string {
 		}
 		return lead + ": that conflicts with existing state."
 
+	// A throttle says when, and nothing about capacity: resizing changes what a
+	// slice costs and does not lift a rate limit.
+	case e.throttled():
+		reason := "too many requests"
+		if e.Detail != "" {
+			reason = e.Detail
+		}
+		return lead + ": " + reason + ". This clears by itself; try again in " + humanWait(e.RetryAfter) + "."
+
 	case e.Status == http.StatusPaymentRequired || e.Status == http.StatusTooManyRequests:
 		if e.Detail != "" {
 			return lead + ": " + e.Detail + ". Run 'drift slice resize' to add capacity."
@@ -290,7 +315,54 @@ func CheckResponse(resp *http.Response, op string) ([]byte, error) {
 		Raw:    strings.TrimSpace(string(body)),
 	}
 	e.Action, e.Limit, e.Current, e.HasLimit = quotaFromBody(body)
+	e.RetryAfter = retryAfter(resp.Header.Get("Retry-After"), time.Now())
 	return nil, e
+}
+
+// throttled reports whether this refusal is a rate limit that clears by itself:
+// a 429 that says when to retry.
+func (e *APIError) throttled() bool {
+	return e.Status == http.StatusTooManyRequests && e.RetryAfter > 0
+}
+
+// retryAfter reads a Retry-After header in either form RFC 9110 allows, a
+// number of seconds or an HTTP date, and returns zero for a missing,
+// malformed or past value: a wait the CLI cannot state is no wait.
+func retryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if at, err := http.ParseTime(v); err == nil && at.After(now) {
+		return at.Sub(now)
+	}
+	return 0
+}
+
+// humanWait states a wait the way a person says it, rounded up so the user
+// never retries early: "30 seconds", "1 minute", "5 minutes", "24 hours".
+func humanWait(d time.Duration) string {
+	unit := func(n int64, one string) string {
+		if n == 1 {
+			return "1 " + one
+		}
+		return strconv.FormatInt(n, 10) + " " + one + "s"
+	}
+	secs := int64(math.Ceil(d.Seconds()))
+	switch {
+	case secs < 90:
+		return unit(secs, "second")
+	case secs < 90*60:
+		return unit((secs+59)/60, "minute")
+	default:
+		return unit((secs+3599)/3600, "hour")
+	}
 }
 
 // quotaFromBody reads a refusal's numbers out of the response FIELDS.

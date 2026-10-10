@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAPIError_StatusMessages(t *testing.T) {
@@ -329,6 +330,108 @@ func TestErrorCodes_TheUnavailableRemedyDoesNotDenyTheUserCausedIt(t *testing.T)
 	fault, _ := LookupErrorCode("DRIFT-1005")
 	if unavailable.Remedy == fault.Remedy {
 		t.Error("the two codes carry the same remedy, so the split added a number and no information")
+	}
+}
+
+// A THROTTLE IS NOT A QUOTA. Both are a 429; the platform marks a throttle with
+// Retry-After. A login refused for too many attempts was told "Run 'drift slice
+// resize' to add capacity" under the plan-quota code, sending a person who had
+// mistyped their password towards an operation that changes what they pay.
+func TestAPIError_AThrottleSaysWaitAndNeverResize(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{"Retry-After": {"60"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":"too many login attempts, try again later"}`)),
+	}
+	_, err := CheckResponse(resp, "log in")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.RetryAfter != time.Minute {
+		t.Fatalf("RetryAfter = %v, want 1m from the header", apiErr.RetryAfter)
+	}
+
+	got := apiErr.Error()
+	if strings.Contains(got, "resize") || strings.Contains(got, "plan limit") {
+		t.Errorf("a throttle must not send anyone to resize a slice:\n%s", got)
+	}
+	if !strings.Contains(got, "try again in 60 seconds") {
+		t.Errorf("a throttle must say when to try again:\n%s", got)
+	}
+	if !strings.Contains(got, "too many login attempts") {
+		t.Errorf("the server's own reason must lead:\n%s", got)
+	}
+	if apiErr.code() != "DRIFT-1014" {
+		t.Errorf("code() = %q, want DRIFT-1014", apiErr.code())
+	}
+	if _, ok := LookupErrorCode("DRIFT-1014"); !ok {
+		t.Error("DRIFT-1014 is rendered but not registered, so `doctor explain` cannot answer it")
+	}
+
+	// The control: a 429 with no Retry-After is a quota, and keeps its advice.
+	quota := &APIError{Op: "deploy", Status: http.StatusTooManyRequests, Detail: "function limit reached (5/5)"}
+	if quota.code() != "DRIFT-1004" || !strings.Contains(quota.Error(), "drift slice resize") {
+		t.Errorf("a quota lost its code or its remedy:\n%s", quota.Error())
+	}
+}
+
+// The registry says the same thing the message does: wait, and do not resize.
+func TestErrorCodes_TheThrottleRemedyDoesNotAdviseResizing(t *testing.T) {
+	c, ok := LookupErrorCode("DRIFT-1014")
+	if !ok {
+		t.Fatal("DRIFT-1014 is not in the registry")
+	}
+	if c.Command != "" {
+		t.Errorf("a throttle's only remedy is to wait, so it names no command, got %q", c.Command)
+	}
+	quota, _ := LookupErrorCode("DRIFT-1004")
+	if c.Remedy == quota.Remedy {
+		t.Error("the throttle and the quota carry the same remedy")
+	}
+}
+
+// Retry-After comes in two forms, seconds or an HTTP date. Anything the CLI
+// cannot turn into a future wait is no wait, so the refusal reads as a quota
+// rather than as "try again in 0 seconds".
+func TestRetryAfter_ReadsBothFormsAndRefusesNonsense(t *testing.T) {
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"60", time.Minute},
+		{" 86400 ", 24 * time.Hour},
+		{now.Add(90 * time.Second).Format(http.TimeFormat), 90 * time.Second},
+		{now.Add(-time.Minute).Format(http.TimeFormat), 0},
+		{"0", 0},
+		{"-5", 0},
+		{"soon", 0},
+		{"", 0},
+	}
+	for _, c := range cases {
+		if got := retryAfter(c.in, now); got != c.want {
+			t.Errorf("retryAfter(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// A wait is stated the way a person says it, and rounded UP: rounding down tells
+// someone to retry while the refusal still stands.
+func TestHumanWait_RoundsUpIntoTheUnitAPersonUses(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		time.Second:                  "1 second",
+		30 * time.Second:             "30 seconds",
+		time.Minute:                  "60 seconds",
+		90 * time.Second:             "2 minutes",
+		270 * time.Second:            "5 minutes",
+		24 * time.Hour:               "24 hours",
+		90*time.Minute + time.Second: "2 hours",
+		1500 * time.Millisecond:      "2 seconds",
+	} {
+		if got := humanWait(d); got != want {
+			t.Errorf("humanWait(%v) = %q, want %q", d, got, want)
+		}
 	}
 }
 
