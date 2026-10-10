@@ -1,8 +1,8 @@
-// domains.go — Driftfile reconcile of `edge.domains[]`. Adds any
-// host that's declared in the manifest but missing on the slice. A
-// host the manifest does not name is left attached and reported
-// instead (see unnamed.go): a project declares the hosts it wants,
-// and two projects can share a slice.
+// domains.go — Driftfile reconcile of the `domain` blocks in `edge`. Adds
+// any host that's declared in the file but missing on the slice, as a
+// wildcard when its block says `wildcard = true`. A host the file does not
+// name is left attached and reported instead (see unnamed.go): a project
+// declares the hosts it wants, and two projects can share a slice.
 // After add, the user still has to flip DNS and run
 // `drift slice domain verify <host>` — that step requires the
 // CNAME / TXT to be live and is not something we can do
@@ -30,15 +30,15 @@ type liveDomain struct {
 // the rest of the slice (atomic, backbone, canvas) is more important
 // than the cosmetic step of attaching a hostname.
 func applyDomains(m *Manifest) ([]string, error) {
-	declared := map[string]Manifest{}
-	// One spelling: the key walker has already moved a top-level `domains`
-	// onto `edge.domains`.
+	// declared maps each host the file names to whether it is a wildcard.
+	declared := map[string]bool{}
 	for _, d := range m.Slice().Entries("host", "edge", "domains") {
 		host := strings.ToLower(strings.TrimSpace(d.Str("host")))
 		if host == "" {
 			continue
 		}
-		declared[host] = Manifest{}
+		wildcard, _ := d["wildcard"].(bool)
+		declared[host] = wildcard
 	}
 
 	live, err := fetchLiveDomains()
@@ -54,11 +54,11 @@ func applyDomains(m *Manifest) ([]string, error) {
 
 	added := 0
 
-	for host := range declared {
+	for host, wildcard := range declared {
 		if _, ok := liveByHost[host]; ok {
 			continue
 		}
-		if err := addDomain(host); err != nil {
+		if err := addDomain(host, wildcard); err != nil {
 			fmt.Printf("  %s add domain %s: %v\n", common.Hint("·"), host, err)
 			continue
 		}
@@ -102,8 +102,10 @@ func fetchLiveDomains() ([]liveDomain, error) {
 	return out, nil
 }
 
-func addDomain(host string) error {
-	body, _ := json.Marshal(map[string]string{"host": host, "verify": "dns-txt"})
+// addDomain attaches one host, sending the same fields `drift slice domain
+// add` does.
+func addDomain(host string, wildcard bool) error {
+	body, _ := json.Marshal(map[string]any{"host": host, "verify": "dns-txt", "wildcard": wildcard})
 	resp, err := common.DoJSONRequest(http.MethodPost,
 		common.APIBaseURL+"/ops/slice/domain", strings.NewReader(string(body)))
 	if err != nil {
