@@ -44,6 +44,7 @@ func GetPlanCmd() *cobra.Command {
 		vars      []string
 		secrets   []string
 		noEnvFile bool
+		outFile   string
 	)
 	cmd := &cobra.Command{
 		Use:   "plan [environment]",
@@ -105,9 +106,16 @@ Driftfile prints what 'drift file apply --plan' prints.`,
 				return err
 			}
 			p.render(os.Stdout)
+			if outFile != "" {
+				if err := writePlanFile(outFile, data, p, p.diff()); err != nil {
+					return fmt.Errorf("write the plan file: %w", err)
+				}
+				fmt.Printf("  Plan written to %s: `drift apply %s` applies exactly this, or refuses if anything moved.\n\n", outFile, outFile)
+			}
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&outFile, "out", "", "Write the plan to this file, for `drift apply <file>` to apply exactly it")
 	cmd.Flags().StringArrayVar(&vars, "var", nil, "Set a variable env() reads: KEY=value (repeatable). Yields to the terminal's environment; beats the .env file.")
 	cmd.Flags().StringArrayVar(&secrets, "secret", nil, "The same as --var, under the name `drift file apply` uses.")
 	cmd.Flags().BoolVar(&noEnvFile, "no-env-file", false, "Do not read the .env / .env.<env> file beside the Driftfile")
@@ -408,6 +416,12 @@ type planDiff struct {
 	removes  []string
 	dataLoss []string
 	changed  bool
+	// shapeChanged is whether the slice's shape differs from the file's: a
+	// booking, a storage size or a limit. Apply resizes only then.
+	shapeChanged bool
+	// billingChanged is whether the file moves the slice between free and
+	// monthly.
+	billingChanged bool
 }
 
 func (d *planDiff) add(mark, address, format string, args ...any) {
@@ -456,6 +470,9 @@ func (p *planState) diff() *planDiff {
 		h, inLive := have[key]
 		addr := addressOf(c, key)
 		deployedDigest, deployed := p.deployed[deployedKeyOf(key)]
+		if inFile != inLive || w.MemoryBytes != h.MemoryBytes {
+			d.shapeChanged = true
+		}
 		switch {
 		case inFile && !inLive:
 			d.add("+", addr, "books %s, and deploys", sizeLabel2(w.MemoryBytes))
@@ -513,6 +530,9 @@ func (p *planState) diff() *planDiff {
 			w, inFile := set.want[name]
 			h, inLive := set.have[name]
 			addr := set.noun + " " + name
+			if inFile != inLive || w != h {
+				d.shapeChanged = true
+			}
 			switch {
 			case inFile && !inLive:
 				d.add("+", addr, "%s", label(w))
@@ -545,13 +565,14 @@ func (p *planState) diff() *planDiff {
 				d.add("+", l.name, "%s", l.format(w))
 			}
 		case w != h:
+			d.shapeChanged = true
 			d.add("~", l.name, "%s → %s", l.format(h), l.format(w))
 			if h != 0 && w == 0 {
 				// resize_guards lists a limit going to zero as a removal.
 				d.removes = append(d.removes, l.name+" (set to the platform default)")
 			}
 			if l.name == "limits.backup_retention" && w < h {
-				d.dataLoss = append(d.dataLoss, fmt.Sprintf("backups older than %s (deleted on the next nightly run)", l.format(w)))
+				d.dataLoss = append(d.dataLoss, fmt.Sprintf("limits.backup_retention (backups older than %s are deleted on the next nightly run)", l.format(w)))
 			}
 		}
 	}
@@ -562,6 +583,7 @@ func (p *planState) diff() *planDiff {
 			liveBilling = "free"
 		}
 		if liveBilling != c.Billing {
+			d.billingChanged = true
 			d.add("~", "billing", "%s → %s", liveBilling, c.Billing)
 		}
 		for _, ch := range diffLabels(c.Shape.Labels, live.Labels) {
@@ -872,7 +894,53 @@ func planLimits() []planLimit {
 
 // ─── printing ───────────────────────────────────────────────────────────────
 
+// render prints the plan, then how to apply it.
 func (p *planState) render(out io.Writer) {
+	d := p.renderBody(out)
+	if !d.changed && p.live != nil {
+		fmt.Fprintf(out, "  Nothing to change.\n\n")
+		return
+	}
+	hint := "drift apply"
+	flags := p.approvalFlags(d)
+	fmt.Fprintf(out, "  Apply with:  %-16s (asks for each of the above)\n", hint)
+	if len(flags) > 0 {
+		fmt.Fprintf(out, "         or:   %s %s\n", hint, strings.Join(flags, " "))
+	}
+	fmt.Fprintln(out)
+}
+
+// approvalFlags are the flags that answer every question this plan raises,
+// for a run with nobody to ask.
+func (p *planState) approvalFlags(d *planDiff) []string {
+	var flags []string
+	if p.priceAsked() {
+		flags = append(flags, fmt.Sprintf("--approve-price %d", p.priceNew))
+	}
+	for _, r := range d.removes {
+		flags = append(flags, fmt.Sprintf("--approve-remove %q", guardAddress(r)))
+	}
+	for _, l := range d.dataLoss {
+		flags = append(flags, fmt.Sprintf("--allow-data-loss %q", guardAddress(l)))
+	}
+	return flags
+}
+
+// priceAsked is whether applying this plan agrees to a new monthly figure: a
+// slice created on monthly billing, or a monthly price that moves.
+func (p *planState) priceAsked() bool {
+	if p.c.Billing == "free" {
+		return false
+	}
+	return p.live == nil || liveIsFree(p.live) || p.priceNew != p.priceOld
+}
+
+// guardAddress is what a removal or a data loss is named by on the command
+// line: its address, without the explanation in brackets.
+func guardAddress(s string) string { return strings.SplitN(s, " (", 2)[0] }
+
+// renderBody prints the diff and its summary, and returns the diff.
+func (p *planState) renderBody(out io.Writer) *planDiff {
 	d := p.diff()
 	c := p.c
 	who := c.Manifest.Name()
@@ -917,24 +985,7 @@ func (p *planState) render(out io.Writer) {
 		fmt.Fprintf(out, "  Data      could be lost: %s\n", strings.Join(d.dataLoss, "\n                           "))
 	}
 	fmt.Fprintln(out)
-
-	if !d.changed && p.live != nil {
-		fmt.Fprintf(out, "  Nothing to change.\n\n")
-		return
-	}
-	hint := "drift apply"
-	var flags []string
-	if p.live == nil || p.priceNew != p.priceOld {
-		flags = append(flags, fmt.Sprintf("--approve-price %d", p.priceNew))
-	}
-	for _, r := range d.removes {
-		flags = append(flags, fmt.Sprintf("--approve-remove %q", strings.SplitN(r, " (", 2)[0]))
-	}
-	fmt.Fprintf(out, "  Apply with:  %-16s (asks for each of the above)\n", hint)
-	if len(flags) > 0 {
-		fmt.Fprintf(out, "         or:   %s %s\n", hint, strings.Join(flags, " "))
-	}
-	fmt.Fprintf(out, "  %s\n\n", common.Hint("drift apply arrives in the next phase of Driftfile 2; this plan changed nothing."))
+	return d
 }
 
 func (p *planState) priceLine() string {

@@ -157,59 +157,12 @@ single slice otherwise.`,
 				fmt.Printf("  %s environment %s → slice %s\n", common.Hint("·"), resolvedEnv, common.Highlight(m.Name()))
 			}
 
-			// Loud, pre-network preflight: reject route collisions before the
-			// slice diff / cost-confirm, so a path clash fails immediately
-			// rather than mid-deploy after you've already paid the ceremony.
-			if err := checkRouteCollisions(m); err != nil {
+			// Everything that can refuse the file before the network is asked:
+			// route collisions, canvas slugs, the bookings the language refuses,
+			// and (except in --plan, which reports them instead) the edge keys.
+			els, berr, err := preflightManifest(m, !planOnly)
+			if err != nil {
 				return err
-			}
-
-			// Same preflight for canvas: two sites landing on one slug overwrite
-			// each other in the slice's layout, and the survivor is whichever
-			// uploaded last.
-			if _, err := canvasSites(m); err != nil {
-				return err
-			}
-
-			// Same preflight, for a booking the function's LANGUAGE refuses. The
-			// api is the enforcing owner and answers 400, but it answers it after
-			// the cost-confirm and the upload — so the same verdict is reached
-			// here, from the floor the schema publishes.
-			//
-			// A build failure is not reported here: applyAtomic already surfaces a
-			// missing handler or a mixed-language element with the message built
-			// for it, and pre-empting that would report the wrong cause.
-			//
-			// A Field written in anything but Go, and a concurrency the Pulse
-			// cannot have, ARE reported here: BuildElements refuses each before
-			// anything is built, and that refusal is the message, so it is
-			// returned rather than left to applyAtomic.
-			els, berr := atomic_cmd.BuildElements(AtomicSpecs(m))
-			if errors.Is(berr, atomic_cmd.ErrFieldLanguage) || errors.Is(berr, atomic_cmd.ErrConcurrency) {
-				return berr
-			}
-			if berr == nil {
-				if err := CheckCompiledBookings(m, els); err != nil {
-					return err
-				}
-			}
-
-			// Same preflight, for the `edge` keys: one this CLI cannot apply
-			// refuses the file here, before anything reaches the slice, rather
-			// than after the rest of it is live. Skipped in --plan, which
-			// reports each of them instead.
-			if !planOnly {
-				for _, preflight := range []func(*Manifest) error{
-					preflightEdgeRateLimit,
-					preflightEdgeSiteAuth,
-					preflightEdgeLinks,
-					preflightEdgeAllow,
-					preflightEdgeHosts,
-				} {
-					if err := preflight(m); err != nil {
-						return err
-					}
-				}
 			}
 
 			// Say once that a flag the caller passed does nothing, before the
@@ -258,159 +211,11 @@ single slice otherwise.`,
 				return runPlan(m, liveSlice)
 			}
 
-			// Does the slice actually hold what the manifest names? A write to
-			// an undeclared collection or bucket is refused by the slice with a
-			// 400 — at runtime, on a live slice, after the upload — and a
-			// function the config does not name silently draws on the shared
-			// pool. Both become a refusal here instead.
-			//
-			// RECONCILE, not check: this is the applying path, and it is the
-			// only one allowed to rename an idle slot to make room. The plan
-			// path below calls the read-only half — it used to call this one,
-			// and a dry run therefore resized the live slice.
-			//
-			// It reconciles IDENTITY and never CAPACITY. Re-pointing a slot the
-			// slice already holds is shown and confirmed; needing a slot it does
-			// not hold is a refusal naming `drift slice resize`, with no prompt
-			// that could be answered into a bigger bill. --yes skips the question
-			// for CI and never the notice.
-			if err := ReconcileSliceReferences(m, liveSlice, autoYes); err != nil {
+			// The deploy itself, which `drift apply` runs too: the reference
+			// reconcile, then Backbone, Atomic, Canvas and edge, then the reports.
+			// --yes answers the reconcile's question for CI and never its notice.
+			if err := deployChecked(m, liveSlice, autoYes, os.Stdout); err != nil {
 				return err
-			}
-
-			// The slice exists and holds what the manifest names, so it becomes
-			// the active one — BEFORE anything that resolves a slice from the
-			// session rather than from the manifest.
-			//
-			// The orphan check below is the first such reader: it sends the
-			// active slice as `X-Slice`, so running it first asks the platform
-			// about whatever slice this machine last used — `default` on a
-			// session that has never set one. That answers "slice not found:
-			// default", which degrades to a warning and reads as a platform
-			// problem, and it means the check never ran on a first apply from
-			// any machine not already pointed at this slice.
-			if err := common.SaveActiveSlice(m.Name()); err != nil {
-				return fmt.Errorf("set active slice: %w", err)
-			}
-
-			// The mirror of the reference check: what the slice serves and the
-			// manifest no longer names. A rename leaves the old route deployed,
-			// serving, re-registering on every restart and holding a slot the
-			// slice was sold. A fetch failure is STATED rather than swallowed —
-			// the best-effort silence that suits skip-unchanged would be a false
-			// all-clear here.
-			//
-			// The list outlives this check: the idle-slot report at the end reads
-			// it to tell a slot nothing serves from one another project's
-			// function holds. Nil after a failure, which that report reads as
-			// "not known".
-			deployedFns, derr := atomic_cmd.DeployedFunctions()
-			if derr != nil {
-				fmt.Printf("  %s couldn't check for pulses or fields the Driftfile no longer names: %v\n",
-					common.Hint("·"), derr)
-			} else {
-				ReportOrphanedFunctions(m, deployedFns, os.Stdout)
-			}
-
-			// The readiness poll OUTLIVES the create and grow branches that used
-			// to own it, and that is the whole point of keeping it here.
-			//
-			// A slice can be mid-provision or mid-Recreate for reasons this
-			// command did not cause — a resize someone made on the form, a
-			// restart, a converge replacing the pod. Without this, the apply
-			// below fires Backbone, Atomic and Canvas at a runner that is still
-			// coming up and every one of them fails with "runner unreachable",
-			// which reads as a platform fault and is really an ordering problem.
-			//
-			// Phrased as a check rather than a wait: on a healthy slice it
-			// returns on the first poll, and announcing a wait that did not
-			// happen is its own small lie.
-			fmt.Println("  Checking the slice is ready...")
-			if err := waitForSliceReady(m.Name()); err != nil {
-				return fmt.Errorf("slice %q is not ready to deploy into: %w", m.Name(), err)
-			}
-
-			start := time.Now()
-			fmt.Printf("\n  Deploying %s...\n\n", common.Highlight(m.Name()))
-
-			// Backbone first and alone, then Atomic and Canvas together. See
-			// applySliceInOrder for why the order is what it is.
-			unnamedDatabases, err := applySliceInOrder(m)
-			if err != nil {
-				return err
-			}
-			// The mirror of the reference check, for the classes whose live set
-			// only arrives with the reconcile. Each reconciler does its own join,
-			// because the rule that matches a declaration to a live name differs
-			// per class — a host and a database match lowercased, an alert on the
-			// derived `<function>-<index>`. Databases were reconciled with the
-			// rest of Backbone, above.
-			unnamedDomains, err := applyDomains(m)
-			if err != nil {
-				return err
-			}
-			unnamedAlerts, err := applyAlerts(m)
-			if err != nil {
-				return err
-			}
-			// Canvas is asked separately: the triad runs its three phases behind
-			// one uniform signature, and applyCanvas returns early when the
-			// manifest declares no sites — the case where every live site is
-			// unnamed. A failure is stated, never swallowed into an all-clear.
-			unnamedSites, cerr := unnamedCanvasSites(m)
-			if cerr != nil {
-				fmt.Printf("  %s couldn't check for canvas sites the Driftfile no longer names: %v\n",
-					common.Hint("·"), cerr)
-			}
-			if err := applyEgress(m); err != nil {
-				return err
-			}
-			// The rest of `edge`, one reconciler per key, each in its own file.
-			// Links come before hosts: a fronted host names a slice this one
-			// must already link.
-			for _, apply := range []func(*Manifest) error{
-				applyEdgeRateLimit,
-				applyEdgeSiteAuth,
-				applyEdgeLinks,
-				applyEdgeAllow,
-				applyEdgeHosts,
-			} {
-				if err := apply(m); err != nil {
-					return err
-				}
-			}
-			// The tenant's own labels, declared in the Driftfile and reconciled
-			// like every other declaration here. It changes no limit and no
-			// price, which is the only reason a deploy may touch it at all —
-			// see labels.go.
-			if err := applyLabels(m, liveSlice, os.Stdout); err != nil {
-				return err
-			}
-
-			elapsed := time.Since(start).Seconds()
-			fmt.Printf("  %s\n", common.Hint(fmt.Sprintf("Done in %.1fs!", elapsed)))
-
-			reportUnnamedResources(unnamedResources{
-				Databases:   unnamedDatabases,
-				Alerts:      unnamedAlerts,
-				Domains:     unnamedDomains,
-				CanvasSites: unnamedSites,
-			}, os.Stdout)
-
-			// The other direction: what the slice declares, and is billed for,
-			// that this file does not name. A report and never a question; see
-			// idle.go.
-			//
-			// The slice is read AGAIN rather than taken from liveSlice. The
-			// reconcile above may have re-pointed idle slots to the names this
-			// file uses, and the copy read before it would report a slot under
-			// the name it no longer has. A failed read is stated, never an
-			// all-clear, and changes nothing about the run's outcome.
-			if after, ferr := FetchLiveSlice(m.Name()); ferr != nil {
-				fmt.Printf("  %s couldn't check for slots the slice declares and the Driftfile does not name: %v\n",
-					common.Hint("·"), ferr)
-			} else {
-				ReportIdleDeclarations(m, after, deployedFns, os.Stdout)
 			}
 
 			// post_deploy hooks run against the now-live slice (typically a
@@ -443,6 +248,201 @@ single slice otherwise.`,
 	cmd.Flags().StringArrayVar(&secretOverrides, "secret", nil, "Override a variable for ${VAR}/$ENVREF resolution: KEY=value (repeatable). Yields to a variable already set in the environment; beats the .env file.")
 	cmd.Flags().BoolVar(&noEnvFile, "no-env-file", false, "Do not read the .env / .env.<env> file sitting next to the Driftfile")
 	return cmd
+}
+
+// preflightManifest is everything that can refuse a file before the network is
+// asked, returned with the build it read so the caller can hold the bookings to
+// the live slice. edge is false for --plan, which reports the edge keys instead
+// of refusing them.
+func preflightManifest(m *Manifest, edge bool) ([]atomic_cmd.Element, error, error) {
+	// Route collisions, before the slice diff and the cost-confirm, so a path
+	// clash fails at once rather than mid-deploy.
+	if err := checkRouteCollisions(m); err != nil {
+		return nil, nil, err
+	}
+
+	// Two sites landing on one slug overwrite each other in the slice's layout,
+	// and the survivor is whichever uploaded last.
+	if _, err := canvasSites(m); err != nil {
+		return nil, nil, err
+	}
+
+	// A booking the function's LANGUAGE refuses. The api is the enforcing owner
+	// and answers 400, but after the cost-confirm and the upload, so the same
+	// verdict is reached here from the floor the schema publishes.
+	//
+	// A build failure is not reported here: applyAtomic surfaces a missing
+	// handler or a mixed-language element with the message built for it. A
+	// Field written in anything but Go, and a concurrency the Pulse cannot
+	// have, ARE: BuildElements refuses each before anything is built, and that
+	// refusal is the message.
+	els, berr := atomic_cmd.BuildElements(AtomicSpecs(m))
+	if errors.Is(berr, atomic_cmd.ErrFieldLanguage) || errors.Is(berr, atomic_cmd.ErrConcurrency) {
+		return nil, nil, berr
+	}
+	if berr == nil {
+		if err := CheckCompiledBookings(m, els); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// The `edge` keys: one this CLI cannot apply refuses the file here, before
+	// anything reaches the slice, rather than after the rest of it is live.
+	if edge {
+		for _, preflight := range []func(*Manifest) error{
+			preflightEdgeRateLimit,
+			preflightEdgeSiteAuth,
+			preflightEdgeLinks,
+			preflightEdgeAllow,
+			preflightEdgeHosts,
+		} {
+			if err := preflight(m); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	return els, berr, nil
+}
+
+// deployManifest applies a compiled Driftfile 2 into its slice, which exists and
+// holds the file's shape: the same preflight and the same deploy a YAML file is
+// applied with. The shape is the caller's; this deploys what runs on it.
+func deployManifest(m *Manifest, out io.Writer) error {
+	els, berr, err := preflightManifest(m, true)
+	if err != nil {
+		return err
+	}
+	liveSlice, err := FetchLiveSlice(m.Name())
+	if err != nil {
+		return err
+	}
+	if liveSlice == nil {
+		return fmt.Errorf("slice %q does not exist after it was created", m.Name())
+	}
+	if berr == nil {
+		if err := CheckSlotBookings(m, els, liveSlice); err != nil {
+			return err
+		}
+	}
+	// The slice was just brought to the file's shape, so the reconcile
+	// re-points nothing, and it refuses rather than asks.
+	return deployChecked(m, liveSlice, false, out)
+}
+
+// deployChecked deploys a checked manifest into its slice: the reference
+// reconcile, Backbone, Atomic and Canvas, edge and labels, then the reports of
+// what the slice holds and the file does not name. Both `drift file apply` and
+// `drift apply` deploy through it.
+func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.Writer) error {
+	// Does the slice actually hold what the manifest names? A write to an
+	// undeclared collection or bucket is refused by the slice with a 400, at
+	// runtime and after the upload, and a function the config does not name
+	// silently draws on the shared pool. Both become a refusal here instead.
+	//
+	// RECONCILE, not check: this is the applying path, and it is the only one
+	// allowed to rename an idle slot to make room. It reconciles IDENTITY and
+	// never CAPACITY: re-pointing a slot the slice already holds is shown and
+	// confirmed; needing a slot it does not hold is a refusal naming `drift
+	// slice resize`, with no prompt that could be answered into a bigger bill.
+	if err := ReconcileSliceReferences(m, liveSlice, reconcileYes); err != nil {
+		return err
+	}
+
+	// The slice exists and holds what the manifest names, so it becomes the
+	// active one, BEFORE anything that resolves a slice from the session: the
+	// orphan check below sends the active slice as `X-Slice`.
+	if err := common.SaveActiveSlice(m.Name()); err != nil {
+		return fmt.Errorf("set active slice: %w", err)
+	}
+
+	// What the slice serves and the manifest no longer names. A fetch failure
+	// is STATED rather than swallowed: silence here would be a false all-clear.
+	// The list outlives this check: the idle-slot report at the end reads it.
+	deployedFns, derr := atomic_cmd.DeployedFunctions()
+	if derr != nil {
+		fmt.Fprintf(out, "  %s couldn't check for pulses or fields the Driftfile no longer names: %v\n",
+			common.Hint("·"), derr)
+	} else {
+		ReportOrphanedFunctions(m, deployedFns, out)
+	}
+
+	// A slice can be mid-provision or mid-Recreate for reasons this command did
+	// not cause. Without this, Backbone, Atomic and Canvas fire at a runner that
+	// is still coming up, and every one fails with "runner unreachable". On a
+	// healthy slice it returns on the first poll.
+	fmt.Fprintln(out, "  Checking the slice is ready...")
+	if err := waitForSliceReady(m.Name()); err != nil {
+		return fmt.Errorf("slice %q is not ready to deploy into: %w", m.Name(), err)
+	}
+
+	start := time.Now()
+	fmt.Fprintf(out, "\n  Deploying %s...\n\n", common.Highlight(m.Name()))
+
+	// Backbone first and alone, then Atomic and Canvas together. See
+	// applySliceInOrder for why the order is what it is.
+	unnamedDatabases, err := applySliceInOrder(m)
+	if err != nil {
+		return err
+	}
+	// The mirror of the reference check, for the classes whose live set only
+	// arrives with the reconcile. Each reconciler does its own join, because
+	// the rule that matches a declaration to a live name differs per class.
+	unnamedDomains, err := applyDomains(m)
+	if err != nil {
+		return err
+	}
+	unnamedAlerts, err := applyAlerts(m)
+	if err != nil {
+		return err
+	}
+	// Canvas is asked separately: applyCanvas returns early when the manifest
+	// declares no sites, the case where every live site is unnamed.
+	unnamedSites, cerr := unnamedCanvasSites(m)
+	if cerr != nil {
+		fmt.Fprintf(out, "  %s couldn't check for canvas sites the Driftfile no longer names: %v\n",
+			common.Hint("·"), cerr)
+	}
+	if err := applyEgress(m); err != nil {
+		return err
+	}
+	// The rest of `edge`, one reconciler per key. Links come before hosts: a
+	// fronted host names a slice this one must already link.
+	for _, apply := range []func(*Manifest) error{
+		applyEdgeRateLimit,
+		applyEdgeSiteAuth,
+		applyEdgeLinks,
+		applyEdgeAllow,
+		applyEdgeHosts,
+	} {
+		if err := apply(m); err != nil {
+			return err
+		}
+	}
+	// The tenant's own labels. They change no limit and no price, which is the
+	// only reason a deploy may touch them at all; see labels.go.
+	if err := applyLabels(m, liveSlice, out); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "  %s\n", common.Hint(fmt.Sprintf("Done in %.1fs!", time.Since(start).Seconds())))
+	reportUnnamedResources(unnamedResources{
+		Databases:   unnamedDatabases,
+		Alerts:      unnamedAlerts,
+		Domains:     unnamedDomains,
+		CanvasSites: unnamedSites,
+	}, out)
+
+	// What the slice declares, and is billed for, that this file does not
+	// name: a report, never a question (idle.go). The slice is read AGAIN: the
+	// reconcile may have re-pointed idle slots, and the earlier copy would
+	// report a slot under the name it no longer has.
+	if after, ferr := FetchLiveSlice(m.Name()); ferr != nil {
+		fmt.Fprintf(out, "  %s couldn't check for slots the slice declares and the Driftfile does not name: %v\n",
+			common.Hint("·"), ferr)
+	} else {
+		ReportIdleDeclarations(m, after, deployedFns, out)
+	}
+	return nil
 }
 
 // runHooks runs one Driftfile lifecycle phase: each command in order, via the
