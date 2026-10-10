@@ -300,7 +300,7 @@ func TestApply_APlanFileAppliesWhatItRecordsAndRefusesWhenTheFileMoved(t *testin
 	p, deployed := applyFixture(t, matchingLive(t), double)
 	planFile := filepath.Join(t.TempDir(), "plan.json")
 	if _, err := planOutput(t, "--no-env-file", "--out", planFile); err != nil {
-		t.Fatalf("plan -out: %v", err)
+		t.Fatalf("plan --out: %v", err)
 	}
 	if _, err := runApplyTest(t, noAnswers(), planFile); err != nil {
 		t.Fatalf("apply plan.json: %v", err)
@@ -321,6 +321,9 @@ func TestApply_APlanFileAppliesWhatItRecordsAndRefusesWhenTheFileMoved(t *testin
 	_, err := runApplyTest(t, noAnswers(), planFile)
 	if err == nil || !strings.Contains(err.Error(), "the Driftfile changed after the plan was made") {
 		t.Fatalf("a plan file for an older Driftfile was applied: %v", err)
+	}
+	if !strings.Contains(err.Error(), "run `drift plan --out` again") {
+		t.Errorf("the refusal does not name the flag drift plan accepts: %v", err)
 	}
 	if len(p.writes) != before {
 		t.Fatalf("something was sent for a stale plan file: %v", p.writes[before:])

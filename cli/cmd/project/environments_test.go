@@ -172,7 +172,7 @@ func TestEnvironment_APlanFileAppliesTheEnvironmentItWasPlannedFor(t *testing.T)
 	p, _ := applyFixture(t, "", withEnvironments(""))
 	planFile := filepath.Join(t.TempDir(), "plan.json")
 	if _, err := planOutput(t, "--no-env-file", "--out", planFile, "staging"); err != nil {
-		t.Fatalf("plan -out staging: %v", err)
+		t.Fatalf("plan --out staging: %v", err)
 	}
 	if _, err := runApplyTest(t, noAnswers(), planFile); err != nil {
 		t.Fatalf("apply plan.json: %v", err)
