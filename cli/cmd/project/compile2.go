@@ -67,9 +67,10 @@ type Compiled2 struct {
 	WriteOnly []WriteOnlyRef
 	// Format is what `drift { format = ... }` says.
 	Format string
-	// Environments are the declared environment blocks, validated. What they
-	// do arrives with per-environment slices.
+	// Environments are the declared environment blocks, validated.
 	Environments []string
+	// Environment is the one this compile is for, or "" for the default slice.
+	Environment string
 	// Notices are said once, before the plan.
 	Notices []string
 	// Domains is how many custom domains the file declares.
@@ -102,13 +103,21 @@ type compiler struct {
 	crons  int
 }
 
-// CompileDriftfile2 reads and compiles the format-2 Driftfile at path.
+// CompileDriftfile2 reads and compiles the format-2 Driftfile at path, for its
+// default slice.
 func CompileDriftfile2(path string) (*Compiled2, error) {
+	return CompileDriftfile2Env(path, "")
+}
+
+// CompileDriftfile2Env compiles the file for one of its environments: its
+// variables take the environment's values, and the result names the
+// environment's slice and billing. env "" is the default slice.
+func CompileDriftfile2Env(path, env string) (*Compiled2, error) {
 	data, err := os.ReadFile(path) // #nosec G304 — the user's own manifest
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	file, ev, err := readFormat2(path, data)
+	file, ev, err := readFormat2Env(path, data, env)
 	if err != nil {
 		return nil, err
 	}
@@ -189,18 +198,39 @@ func (c *compiler) compileSlice(f *df2File) {
 		return
 	}
 	s := f.Slice[0]
-	c.doc["slice"] = s.Name
-	c.at("", s.NameRange, fmt.Sprintf("slice %q", s.Name))
-	c.at("/slice", s.NameRange, fmt.Sprintf("slice %q", s.Name))
+	name, nameRange := s.Name, s.NameRange
+	if e := c.ev.env; e != nil {
+		// An environment is its own slice: the one it names, or the YAML
+		// format's `<slice>-<env>`.
+		c.out.Environment = e.name
+		name = deriveSliceName(s.Name, e.name)
+		if e.hasSlice {
+			name, nameRange = e.slice, e.sliceRange
+		}
+		if re := NamePattern(); re != nil && !re.MatchString(name) {
+			c.ev.errorf(nameRange, "Not a slice name", "environment %q is applied to slice %q, which is not a slice name.", e.name, name)
+		}
+	}
+	c.doc["slice"] = name
+	c.at("", nameRange, fmt.Sprintf("slice %q", name))
+	c.at("/slice", nameRange, fmt.Sprintf("slice %q", name))
 
+	// The billing is the environment's when it states one, else the slice's.
 	billing, ok := c.ev.str(s.Billing, "billing")
+	billingRange := s.DefRange
+	if present(s.Billing) {
+		billingRange = s.Billing.Range()
+	}
+	if e := c.ev.env; e != nil && e.hasBilling {
+		billing, ok, billingRange = e.billing, true, e.billingRange
+	}
 	switch {
 	case !ok:
 		// Money is stated, never defaulted: a file that does not say how the
 		// slice is paid for is not one a plan can price.
 		c.ev.errorf(s.DefRange, "Missing billing", `the slice says how it is paid for: billing = "monthly", or "free" for a shape inside the free slice.`)
 	case billing != "free" && billing != "monthly":
-		c.ev.errorf(s.Billing.Range(), "Unknown billing", `billing is "free" or "monthly", not %q.`, billing)
+		c.ev.errorf(billingRange, "Unknown billing", `billing is "free" or "monthly", not %q.`, billing)
 	default:
 		c.out.Billing = billing
 	}
@@ -832,9 +862,8 @@ func (c *compiler) compileHooksAndTests(hooks []df2Hook, tests []df2Test) {
 	}
 }
 
-// compileEnvironments validates every environment block. Nothing here acts on
-// one yet: each environment becoming its own slice, created and sized by the
-// file, is the next step of Driftfile 2.
+// compileEnvironments validates every environment block, whichever one the
+// file is compiled for: each is its own slice, planned and applied by name.
 func (c *compiler) compileEnvironments(envs []df2Environment) {
 	seen := map[string]bool{}
 	name := NamePattern()

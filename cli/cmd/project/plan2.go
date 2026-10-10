@@ -55,7 +55,7 @@ platform), whether the slice restarts, and what data a removal could lose.
 
 Nothing is changed. A Driftfile 2 (HCL) is diffed against the live slice; a YAML
 Driftfile prints what 'drift file apply --plan' prints.`,
-		Example: "  drift plan\n  drift plan --var RESET_KEY=...",
+		Example: "  drift plan\n  drift plan staging\n  drift plan --var RESET_KEY=...",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, err := requireDriftfile()
@@ -71,12 +71,12 @@ Driftfile prints what 'drift file apply --plan' prints.`,
 			if !IsFormat2(data) {
 				return planFormat1(args, overrides, noEnvFile)
 			}
+			env := ""
 			if len(args) == 1 {
-				return fmt.Errorf("a Driftfile 2 plans its environments once each environment is its own slice the file creates; " +
-					"until then, `drift plan` plans the slice the file names")
+				env = args[0]
 			}
 
-			sum, err := applyVariableSources(filepath.Dir(path), overrides, !noEnvFile, "")
+			sum, err := applyVariableSources(filepath.Dir(path), overrides, !noEnvFile, env)
 			if err != nil {
 				return err
 			}
@@ -86,9 +86,12 @@ Driftfile prints what 'drift file apply --plan' prints.`,
 			if !SchemaAvailable() {
 				return ErrNoSchema
 			}
-			c, err := CompileDriftfile2(path)
+			c, err := CompileDriftfile2Env(path, env)
 			if err != nil {
 				return err
+			}
+			if env != "" {
+				fmt.Printf("  %s environment %s → slice %s\n", common.Hint("·"), env, common.Highlight(c.Manifest.Name()))
 			}
 			for _, n := range c.Notices {
 				fmt.Fprintf(os.Stderr, "  %s %s\n", common.Hint("·"), n)
