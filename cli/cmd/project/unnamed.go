@@ -2,10 +2,9 @@
 //
 // The mirror of references.go. That file refuses a manifest naming a resource
 // the slice does not have; this one reports a resource the slice has and the
-// manifest does not name. A renamed `sql:` entry, a dropped `edge.domains` host or
-// an alert taken off a function leaves the live resource in place — nothing on
-// the apply path removes one — so without this it is invisible from the
-// terminal that stopped naming it.
+// manifest does not name. A renamed `sql` block or a dropped `domain` block leaves
+// the live resource in place — nothing on the apply path removes one — so
+// without this it is invisible from the terminal that stopped naming it.
 //
 // IT REPORTS. It does not refuse and it does not delete, for the same reason
 // ReportOrphanedFunctions does not: nothing records which project owns a
@@ -26,19 +25,17 @@ import (
 // unnamedResources is what is live on the slice and unnamed by the manifest,
 // one list per class. Each reconciler fills its own field, because the rule
 // that joins a declaration to a live name differs per class: a host and a
-// database match lowercased, an alert on the derived `<function>-<index>`.
-// Holding the join beside the declaration is what keeps the two spellings from
-// being restated here, where only one of them would be right.
+// database match lowercased, a site by its slug. Holding the join beside the
+// declaration is what keeps the spellings from being restated here, where only
+// one of them would be right.
 type unnamedResources struct {
 	Databases   []string
-	Alerts      []string
 	Domains     []string
 	CanvasSites []string
 }
 
 func (u unnamedResources) empty() bool {
-	return len(u.Databases) == 0 && len(u.Alerts) == 0 &&
-		len(u.Domains) == 0 && len(u.CanvasSites) == 0
+	return len(u.Databases) == 0 && len(u.Domains) == 0 && len(u.CanvasSites) == 0
 }
 
 // liveCanvasSite is one entry of the slice's canvas registry.
@@ -136,7 +133,6 @@ func reportUnnamedResources(u unnamedResources, out io.Writer) {
 		remove func(string) string
 	}{
 		{"sql database", u.Databases, func(n string) string { return "drift backbone sql drop " + n }},
-		{"alert", u.Alerts, func(n string) string { return "drift atomic alert remove " + n }},
 		{"domain", u.Domains, func(n string) string { return "drift slice domain remove " + n }},
 		{"canvas site", u.CanvasSites, nil},
 	}

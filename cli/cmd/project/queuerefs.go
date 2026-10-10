@@ -73,16 +73,16 @@ func checkQueueReferences(m *Manifest) []string {
 	}
 	sort.Strings(queues)
 
+	// A queue has one booking key, so one pulse drains it, and the warning names
+	// that pulse as the file labels it.
 	out := make([]string, 0, len(queues))
 	for _, q := range queues {
-		fns := missing[q]
-		sort.Strings(fns)
 		out = append(out, fmt.Sprintf(
-			"function %s is triggered by queue %q, which this Driftfile does not declare. "+
-				"It will still fire — an undeclared queue is created on its first push — but the "+
+			"pulse %q drains queue %q, which this Driftfile does not declare. "+
+				"It will still fire, because an undeclared queue is created on its first push, but the "+
 				"queue has no declared depth and nothing records that it should exist. "+
-				"Add it under `backbone.queues`.",
-			strings.Join(fns, ", "), q))
+				"Declare it: `queue %q {}`.",
+			"QUEUE "+q, q, q))
 	}
 	return out
 }

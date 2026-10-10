@@ -220,7 +220,7 @@ func confirmed(question string) bool {
 //
 //   - the slice's live secrets, because one set once with `drift backbone secret
 //     set` and never named in a manifest is an ordinary pattern, not a fault;
-//   - this manifest's own `backbone.secrets`, because those are not on the slice
+//   - this file's own `secret` blocks, because those are not on the slice
 //     yet at check time — applyBackbone and applyAtomic run concurrently, so the
 //     live list alone would refuse a project that sets its secrets in the very
 //     deploy being checked.
@@ -259,8 +259,8 @@ func missingSecrets(m *Manifest) []referenceMiss {
 				Name:  name,
 				// Secrets are the one class the slice form does not own, so the
 				// shared closing line would send the reader to the wrong place.
-				Remedy: fmt.Sprintf("declared by %s — set it with `drift backbone secret set %s=…`, "+
-					"or add it to this file's `backbone.secrets`", s.Name, name),
+				Remedy: fmt.Sprintf("declared by %s: declare it in this file, `secret %q { value = env(%q) }`, "+
+					"so drift apply sets it from your environment", s.Name, name, name),
 			})
 		}
 	}

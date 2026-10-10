@@ -95,7 +95,7 @@ func runTransform(inDir, outDir string, m Manifest) (transformResult, error) {
 			res.refusals = append(res.refusals, Refusal{
 				RefuseTimerTrigger, fn.Name,
 				"timer trigger (schedule \"" + fn.Trigger.Schedule + "\")",
-				"Hand-port: add `# drift:schedule " + fn.Trigger.Schedule + "` above an http=post handler (the source is in the snapshot), or keep it on Azure.",
+				"Hand-port: port the handler (the source is in the snapshot) and give its pulse block in the Driftfile `cron = \"" + fn.Trigger.Schedule + "\"`, or keep it on Azure.",
 			})
 			continue
 		}

@@ -180,7 +180,9 @@ func unrunnable(root *cobra.Command, invocation string) string {
 		cur = child
 	}
 
-	if !cur.Runnable() {
+	// A group's own run function, the one refuseUnknownVerbs installs, prints
+	// help or refuses a verb: it is not a command a hint can send someone to.
+	if !cur.Runnable() || cur.Annotations[unknownVerbAnnotation] != "" {
 		return "stops at `" + cur.CommandPath() + "`, which is a group and runs nothing"
 	}
 	return ""
