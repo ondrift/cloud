@@ -171,7 +171,7 @@ func newShapeForm(name string) *shapeForm {
 				{label: "Deploy history", kind: kindInt, unit: "versions", value: "0", minV: 0,
 					scalar: "atomic.MaxNumberOfDeploymentsInHistory", placeholder: "versions",
 					hint: "Rollback slots kept per function. Free."},
-				adder("Add function", "Function ", maxFunctionSlots, functionGroup,
+				adder("Add function", "Function ", MaxFunctionSlots, functionGroup,
 					"Adds a function slot. Each books its own memory and is billed "+
 						"from the moment it exists, deployed or not."),
 			}},

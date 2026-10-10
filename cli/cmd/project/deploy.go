@@ -475,13 +475,15 @@ func runHooks(phase string, cmds []string, dir string) error {
 // runPlan answers the two questions an apply can be planned against: does the
 // referenced slice exist, and what would this file deploy into it.
 //
-// It PRICES NOTHING, deliberately. A Driftfile does not declare a slice's
+// It PRICES NOTHING, deliberately. A YAML Driftfile does not declare a slice's
 // shape, so there is no shape here to quote — the slice form owns that and
 // shows the price of the shape that exists. A cost printed from this
 // file would be a second pricing model computed from a document that does not
-// describe what is being billed.
+// describe what is being billed. A Driftfile 2 declares its shape, and
+// `drift plan` (plan2.go) prices it with the platform's quote.
 //
-// Shared with `drift file simulate`, so both verbs answer the same question.
+// Shared with `drift file simulate` and with `drift plan` for a YAML file, so
+// every verb answers the same question.
 func runPlan(m *Manifest, live *LiveSlice) error {
 	fmt.Println()
 	if live == nil {

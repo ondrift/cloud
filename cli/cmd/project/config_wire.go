@@ -1,22 +1,22 @@
 package project
 
-// config_wire.go — the shape of a slice as the platform reports it, for READING.
+// config_wire.go — the shape of a slice, as the platform encodes it.
 //
 // These types are a CLI-local mirror of drift-common/models.SliceConfig. The CLI
 // is deliberately self-contained — no drift-common dependency — so it can be
 // `go install`ed without pulling in core code.
 //
-// # Read-only, and that is the whole point
+// # Two uses, one type
 //
 // The CLI decodes a live slice's `config` into these (FetchLiveSlice, api.go) so
 // it can SAY what a slice holds: which collections and buckets a manifest may
-// reference, what `drift file explain` prints, what a plan reports. Nothing here
-// builds a config to send.
+// reference, what `drift file explain` prints, what a plan reports.
 //
-// The slice form declares what a slice IS; a Driftfile declares what runs on
-// it. Nothing here translates a Manifest into this shape and posts it to create
-// or resize: two writers of one fact is what the split removed, and a mirror the
-// CLI only ever decodes into cannot drift into being a second owner.
+// A Driftfile 2 declares the shape as well as what runs on it, and compile2.go
+// builds its shape in this same type. `drift plan` diffs the two field by
+// field and posts the compiled one to the platform's price quote, which writes
+// nothing. A YAML 1.x Driftfile still declares no shape, and nothing translates
+// one into this type.
 //
 // Field names match the platform's encoded shape exactly: parent fields live
 // under lowercase JSON keys, while leaf fields use the Go field names, because
@@ -33,6 +33,7 @@ type SliceConfig struct {
 	Canvas   CanvasLimits   `json:"canvas"`
 	Atomic   AtomicLimits   `json:"atomic"`
 	Backbone BackboneLimits `json:"backbone"`
+	Deed     DeedLimits     `json:"deed"`
 
 	// Labels are the tenant's own, and they are READ here for the same reason
 	// everything else in this file is: to say what the slice currently carries,
@@ -68,6 +69,25 @@ type AtomicLimits struct {
 type AtomicFunction struct {
 	Name        string `json:"name"`
 	MemoryBytes int    `json:"memory_bytes"`
+	// Route and Method are the halves Name is composed from. The platform
+	// fills whichever a request omits, so a compiled shape sends all three.
+	Route  string `json:"route,omitempty"`
+	Method string `json:"method,omitempty"`
+}
+
+// DeedLimits mirrors drift-common/models.Deed.
+type DeedLimits struct {
+	Vault  DeedVaultLimits  `json:"vault"`
+	Pocket DeedPocketLimits `json:"pocket"`
+}
+
+type DeedVaultLimits struct {
+	MaxSizeInBytesEach int
+	MaxEntriesPerUID   int
+}
+
+type DeedPocketLimits struct {
+	MaxSizeInBytesEach int
 }
 
 type BackboneLimits struct {
@@ -88,7 +108,7 @@ type BackboneSQLLimits struct {
 	MaxDatabases int
 	// Databases carries each declared database's own storage quota, keyed by
 	// database name — the billing and enforcement driver.
-	Databases map[string]int
+	Databases map[string]int `json:"databases"`
 }
 
 type BackboneSecretsLimits struct {
@@ -102,7 +122,7 @@ type BackboneBlobsLimits struct {
 	// name. Bytes are what is billed, so there is no object COUNT beside it: the
 	// platform's model carries none, and a field only this side holds is one the
 	// api decodes away.
-	Buckets map[string]int
+	Buckets map[string]int `json:"buckets"`
 }
 
 type BackboneNoSQLLimits struct {
@@ -111,7 +131,7 @@ type BackboneNoSQLLimits struct {
 	// own: two fields for one fact is two fields that can disagree, and the
 	// count that used to sit beside it was billed while reaching no enforcement
 	// path at all.
-	Collections map[string]int
+	Collections map[string]int `json:"collections"`
 }
 
 type BackboneQueuesLimits struct {

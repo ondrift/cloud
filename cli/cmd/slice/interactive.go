@@ -40,8 +40,12 @@ const (
 	minMemoryMiB     = 8
 	maxMemoryMiB     = 256
 	compiledFloorMiB = 16
-	maxFunctionSlots = 64
 )
+
+// MaxFunctionSlots is the most Pulses and Fields one slice may declare. The
+// form stops adding slots here, and a Driftfile 2 declaring more is refused
+// when it is compiled.
+const MaxFunctionSlots = 64
 
 // httpMethods is every method a slot can be booked under: the HTTP verbs a
 // pulse answers, `queue` for a pulse a queue drives, and `field` for a field,
