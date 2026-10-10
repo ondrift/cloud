@@ -27,7 +27,7 @@ package project
 //
 // At a terminal each is asked as a question. Without one, an unanswered
 // question stops the apply before anything is sent, and says which flags
-// answer it. A plan file (`drift plan -out`) carries the answers of a plan a
+// answer it. A plan file (`drift plan --out`) carries the answers of a plan a
 // person reviewed, and is refused if the file or the slice moved since.
 
 import (
@@ -73,7 +73,7 @@ creates or resizes the slice and deploys what the file declares.
 
 Without a terminal each question is answered by a flag: --approve-price with the
 quoted figure, --approve-remove and --allow-data-loss with each resource's
-address. A plan file written by 'drift plan -out' carries the answers of the
+address. A plan file written by 'drift plan --out' carries the answers of the
 plan it records, and is refused if the Driftfile or the slice changed since.
 
 An environment's name applies the file to that environment's own slice, with
@@ -81,7 +81,7 @@ its variables and its billing.`,
 		Example: "  drift apply\n" +
 			"  drift apply staging\n" +
 			"  drift apply --approve-price 768 --approve-remove \"pulse GET /bench\"\n" +
-			"  drift plan -out plan.json && drift apply plan.json",
+			"  drift plan --out plan.json && drift apply plan.json",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			approveSet = cmd.Flags().Changed("approve-price")
@@ -466,7 +466,7 @@ func applyAPIKeys(c *Compiled, p *planState, out io.Writer) error {
 
 // ─── plan files ─────────────────────────────────────────────────────────────
 
-// planRecord is what `drift plan -out` writes: what the plan was made from,
+// planRecord is what `drift plan --out` writes: what the plan was made from,
 // and the answers it carries. No value of any write-only key is in it.
 type planRecord struct {
 	Version     int      `json:"version"`
@@ -539,12 +539,12 @@ func checkPlanFile(path string, data []byte, p *planState, d *planDiff, a *apply
 	case rec.Slice != now.Slice:
 		return fmt.Errorf("the plan file is for slice %q, and this Driftfile names %q; nothing was applied", rec.Slice, now.Slice)
 	case rec.Driftfile != now.Driftfile:
-		return fmt.Errorf("the Driftfile changed after the plan was made; run `drift plan -out` again. Nothing was applied")
+		return fmt.Errorf("the Driftfile changed after the plan was made; run `drift plan --out` again. Nothing was applied")
 	case rec.Live != now.Live:
-		return fmt.Errorf("slice %q changed after the plan was made; run `drift plan -out` again. Nothing was applied", now.Slice)
+		return fmt.Errorf("slice %q changed after the plan was made; run `drift plan --out` again. Nothing was applied", now.Slice)
 	case rec.Price != now.Price || strings.Join(rec.Removes, "\n") != strings.Join(now.Removes, "\n") ||
 		strings.Join(rec.DataLoss, "\n") != strings.Join(now.DataLoss, "\n"):
-		return fmt.Errorf("this plan no longer asks what the recorded one did; run `drift plan -out` again. Nothing was applied")
+		return fmt.Errorf("this plan no longer asks what the recorded one did; run `drift plan --out` again. Nothing was applied")
 	}
 	if rec.Price >= 0 {
 		a.price = rec.Price
@@ -558,7 +558,7 @@ func checkPlanFile(path string, data []byte, p *planState, d *planDiff, a *apply
 	return nil
 }
 
-// readPlanRecord reads a plan file `drift plan -out` wrote.
+// readPlanRecord reads a plan file `drift plan --out` wrote.
 func readPlanRecord(path string) (planRecord, error) {
 	raw, err := os.ReadFile(path) // #nosec G304 — a plan file the caller names
 	if err != nil {
@@ -566,7 +566,7 @@ func readPlanRecord(path string) (planRecord, error) {
 	}
 	var rec planRecord
 	if err := json.Unmarshal(raw, &rec); err != nil || rec.Version != planRecordVersion {
-		return planRecord{}, fmt.Errorf("%s is not a plan file this CLI wrote (drift plan -out)", path)
+		return planRecord{}, fmt.Errorf("%s is not a plan file this CLI wrote (drift plan --out)", path)
 	}
 	return rec, nil
 }
