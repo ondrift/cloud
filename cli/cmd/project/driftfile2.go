@@ -302,9 +302,28 @@ type df2Test struct {
 // ─── reading the text ───────────────────────────────────────────────────────
 
 // readFormat2 parses a format-2 file into its blocks and the evaluation
-// context its expressions run in. The context needs the variables, and the
-// variables are themselves blocks, so they are read first on their own.
+// context its expressions run in, for the default slice.
 func readFormat2(path string, data []byte) (*df2File, *df2Eval, error) {
+	return readFormat2Env(path, data, "")
+}
+
+// selectedEnv is the environment a file is read for: its name, the slice it
+// is applied to, and its billing when it states one.
+type selectedEnv struct {
+	name, slice, billing string
+	sliceRange           hcl.Range
+	billingRange         hcl.Range
+	hasSlice, hasBilling bool
+}
+
+// readFormat2Env parses a format-2 file for one environment, or for the
+// default slice when env is "". The context needs the variables, and the
+// variables are themselves blocks, so they are read first on their own; an
+// environment sets variables, so the environments are read with them.
+//
+// A variable's value is the selected environment's, else its default. One
+// with neither is an error at the variable, naming where it could be set.
+func readFormat2Env(path string, data []byte, env string) (*df2File, *df2Eval, error) {
 	name := filepath.Base(path)
 	f, diags := hclsyntax.ParseConfig(data, name, hcl.InitialPos)
 	if diags.HasErrors() {
@@ -325,13 +344,66 @@ func readFormat2(path string, data []byte) (*df2File, *df2Eval, error) {
 
 	ev := &df2Eval{dir: filepath.Dir(path)}
 
-	// Variables first, with no `var` of their own: a default is a literal or
-	// an env()/file() call, and one variable cannot read another.
-	vschema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "variable", LabelNames: []string{"name"}}}}
+	// Variables and environments first, with no `var` of their own: a default
+	// or an environment's value is a literal or an env()/file() call, and one
+	// variable cannot read another.
+	vschema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{
+		{Type: "variable", LabelNames: []string{"name"}},
+		{Type: "environment", LabelNames: []string{"name"}},
+	}}
 	vcontent, _, _ := f.Body.PartialContent(vschema)
-	vars := map[string]cty.Value{}
 	ev.ctx = &hcl.EvalContext{Functions: ev.functions()}
+
+	// The selected environment, and what it sets.
+	var declaredEnvs []string
+	envVars := map[string]cty.Value{}
 	for _, blk := range vcontent.Blocks {
+		if blk.Type != "environment" {
+			continue
+		}
+		declaredEnvs = append(declaredEnvs, blk.Labels[0])
+		if blk.Labels[0] != env || env == "" {
+			continue
+		}
+		var e df2Environment
+		if d := gohcl.DecodeBody(blk.Body, ev.ctx, &e); d.HasErrors() {
+			ev.diags = append(ev.diags, d...)
+			continue
+		}
+		sel := &selectedEnv{name: env}
+		if s, ok := ev.str(e.Slice, fmt.Sprintf("environment %q: slice", env)); ok {
+			sel.slice, sel.hasSlice, sel.sliceRange = s, true, e.Slice.Range()
+		}
+		if b, ok := ev.str(e.Billing, fmt.Sprintf("environment %q: billing", env)); ok {
+			sel.billing, sel.hasBilling, sel.billingRange = b, true, e.Billing.Range()
+		}
+		if present(e.Vars) {
+			v, d := e.Vars.Value(ev.ctx)
+			if d.HasErrors() {
+				ev.diags = append(ev.diags, d...)
+			} else if v.CanIterateElements() {
+				for it := v.ElementIterator(); it.Next(); {
+					k, el := it.Element()
+					envVars[k.AsString()] = el
+				}
+			}
+		}
+		ev.env = sel
+	}
+	if env != "" && ev.env == nil && !ev.diags.HasErrors() {
+		sort.Strings(declaredEnvs)
+		detail := "this file declares no environment block"
+		if len(declaredEnvs) > 0 {
+			detail = "the file declares " + strings.Join(declaredEnvs, ", ")
+		}
+		ev.errorf(body.Range(), "Unknown environment", "there is no environment %q: %s.", env, detail)
+	}
+
+	vars := map[string]cty.Value{}
+	for _, blk := range vcontent.Blocks {
+		if blk.Type != "variable" {
+			continue
+		}
 		var v df2Variable
 		if d := gohcl.DecodeBody(blk.Body, ev.ctx, &v); d.HasErrors() {
 			ev.diags = append(ev.diags, d...)
@@ -342,13 +414,21 @@ func readFormat2(path string, data []byte) (*df2File, *df2Eval, error) {
 			ev.errorf(blk.DefRange, "Duplicate variable", "variable %q is declared twice.", v.Name)
 			continue
 		}
+		if set, ok := envVars[v.Name]; ok {
+			vars[v.Name] = set
+			continue
+		}
 		val, d := v.Default.Value(ev.ctx)
 		ev.diags = append(ev.diags, d...)
 		if !d.HasErrors() && val.IsNull() {
-			// Phase 1 has no other source for a variable's value: environments
-			// assign them, and that behaviour is phase 4's.
-			ev.errorf(blk.DefRange, "Variable has no value",
-				"variable %q needs a default; environments that set variables arrive with per-environment slices.", v.Name)
+			where := "give it a default"
+			switch {
+			case env != "":
+				where = fmt.Sprintf("give it a default, or set it in environment %q's vars", env)
+			case len(declaredEnvs) > 0:
+				where = "give it a default, or plan and apply an environment that sets it"
+			}
+			ev.errorf(blk.DefRange, "Variable has no value", "variable %q has no value here: %s.", v.Name, where)
 			continue
 		}
 		vars[v.Name] = val
@@ -378,6 +458,8 @@ type df2Eval struct {
 	dir   string
 	vars  map[string]cty.Value
 	diags hcl.Diagnostics
+	// env is the environment the file is read for; nil for the default slice.
+	env *selectedEnv
 }
 
 func (e *df2Eval) errorf(rng hcl.Range, summary, format string, args ...any) {

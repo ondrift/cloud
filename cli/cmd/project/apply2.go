@@ -63,7 +63,7 @@ func GetApplyCmd() *cobra.Command {
 		approveSet bool
 	)
 	cmd := &cobra.Command{
-		Use:   "apply [plan.json]",
+		Use:   "apply [environment | plan.json]",
 		Short: "Make the slice what its Driftfile says: create or resize it, then deploy",
 		Long: `Make the slice exactly what the Driftfile declares, and nothing else.
 
@@ -76,8 +76,12 @@ quoted figure, --approve-remove and --allow-data-loss with each resource's
 address. A plan file written by 'drift plan -out' carries the answers of the
 plan it records, and is refused if the Driftfile or the slice changed since.
 
+An environment's name applies the file to that environment's own slice, with
+its variables and its billing.
+
 A YAML Driftfile is applied by 'drift file apply'.`,
 		Example: "  drift apply\n" +
+			"  drift apply staging\n" +
 			"  drift apply --approve-price 768 --approve-remove \"pulse GET /bench\"\n" +
 			"  drift plan -out plan.json && drift apply plan.json",
 		Args: cobra.MaximumNArgs(1),
@@ -93,15 +97,22 @@ A YAML Driftfile is applied by 'drift file apply'.`,
 			for _, l := range dataLoss {
 				a.dataLoss[l] = true
 			}
-			planFile := ""
+			// The argument is a plan file when it names one, and an
+			// environment otherwise.
+			planFile, env := "", ""
 			if len(args) == 1 {
-				planFile = args[0]
+				if isPlanFile(args[0]) {
+					planFile = args[0]
+				} else {
+					env = args[0]
+				}
 			}
 			return runApply2(applyOptions{
 				overrides: append(append([]string{}, vars...), secrets...),
 				noEnvFile: noEnvFile,
 				answers:   a,
 				planFile:  planFile,
+				env:       env,
 				force:     force,
 				ask:       term.IsTerminal(int(os.Stdin.Fd())),
 				out:       os.Stdout,
@@ -130,7 +141,10 @@ type applyOptions struct {
 	noEnvFile bool
 	answers   applyAnswers
 	planFile  string
-	force     bool
+	// env is the environment to apply, or "" for the default slice. A plan
+	// file carries its own.
+	env   string
+	force bool
 	// ask is whether there is someone at a terminal to put a question to.
 	ask bool
 	in  io.Reader
@@ -160,7 +174,15 @@ func runApply2(o applyOptions) error {
 	}
 	dir := filepath.Dir(path)
 
-	sum, err := applyVariableSources(dir, o.overrides, !o.noEnvFile, "")
+	if o.planFile != "" {
+		rec, err := readPlanRecord(o.planFile)
+		if err != nil {
+			return err
+		}
+		o.env = rec.Environment
+	}
+
+	sum, err := applyVariableSources(dir, o.overrides, !o.noEnvFile, o.env)
 	if err != nil {
 		return err
 	}
@@ -180,7 +202,7 @@ func runApply2(o applyOptions) error {
 	if !SchemaAvailable() {
 		return ErrNoSchema
 	}
-	c, err := CompileDriftfile2(path)
+	c, err := CompileDriftfile2Env(path, o.env)
 	if err != nil {
 		return err
 	}
@@ -188,6 +210,9 @@ func runApply2(o applyOptions) error {
 		fmt.Fprintf(os.Stderr, "  %s %s\n", common.Hint("·"), n)
 	}
 	name := c.Manifest.Name()
+	if o.env != "" {
+		fmt.Fprintf(o.out, "  %s environment %s → slice %s\n", common.Hint("·"), o.env, common.Highlight(name))
+	}
 	if err := os.Setenv(common.SliceEnv, name); err != nil {
 		return err
 	}
@@ -443,13 +468,14 @@ func applyAPIKeys(c *Compiled2, p *planState, out io.Writer) error {
 // planRecord is what `drift plan -out` writes: what the plan was made from,
 // and the answers it carries. No value of any write-only key is in it.
 type planRecord struct {
-	Version   int      `json:"version"`
-	Slice     string   `json:"slice"`
-	Driftfile string   `json:"driftfile_sha256"`
-	Live      string   `json:"live_sha256"`
-	Price     int      `json:"price_monthly_cents"`
-	Removes   []string `json:"removes"`
-	DataLoss  []string `json:"data_loss"`
+	Version     int      `json:"version"`
+	Slice       string   `json:"slice"`
+	Environment string   `json:"environment,omitempty"`
+	Driftfile   string   `json:"driftfile_sha256"`
+	Live        string   `json:"live_sha256"`
+	Price       int      `json:"price_monthly_cents"`
+	Removes     []string `json:"removes"`
+	DataLoss    []string `json:"data_loss"`
 }
 
 const planRecordVersion = 1
@@ -474,7 +500,7 @@ func fileHash(data []byte) string {
 // recordPlan builds the record of a plan.
 func recordPlan(data []byte, p *planState, d *planDiff) planRecord {
 	r := planRecord{
-		Version: planRecordVersion, Slice: p.c.Manifest.Name(),
+		Version: planRecordVersion, Slice: p.c.Manifest.Name(), Environment: p.c.Environment,
 		Driftfile: fileHash(data), Live: liveHash(p), Price: -1,
 		Removes: []string{}, DataLoss: []string{},
 	}
@@ -503,13 +529,9 @@ func writePlanFile(path string, data []byte, p *planState, d *planDiff) error {
 // the same live slice, and so the same questions, whose recorded answers it
 // then gives. Anything that moved is a refusal, before anything is sent.
 func checkPlanFile(path string, data []byte, p *planState, d *planDiff, a *applyAnswers) error {
-	raw, err := os.ReadFile(path) // #nosec G304 — a plan file the caller names
+	rec, err := readPlanRecord(path)
 	if err != nil {
-		return fmt.Errorf("read the plan file: %w", err)
-	}
-	var rec planRecord
-	if err := json.Unmarshal(raw, &rec); err != nil || rec.Version != planRecordVersion {
-		return fmt.Errorf("%s is not a plan file this CLI wrote (drift plan -out)", path)
+		return err
 	}
 	now := recordPlan(data, p, d)
 	switch {
@@ -533,6 +555,30 @@ func checkPlanFile(path string, data []byte, p *planState, d *planDiff, a *apply
 		a.dataLoss[l] = true
 	}
 	return nil
+}
+
+// readPlanRecord reads a plan file `drift plan -out` wrote.
+func readPlanRecord(path string) (planRecord, error) {
+	raw, err := os.ReadFile(path) // #nosec G304 — a plan file the caller names
+	if err != nil {
+		return planRecord{}, fmt.Errorf("read the plan file: %w", err)
+	}
+	var rec planRecord
+	if err := json.Unmarshal(raw, &rec); err != nil || rec.Version != planRecordVersion {
+		return planRecord{}, fmt.Errorf("%s is not a plan file this CLI wrote (drift plan -out)", path)
+	}
+	return rec, nil
+}
+
+// isPlanFile reports whether apply's argument names a plan file rather than
+// an environment: a .json name, or a file that exists. An environment's name
+// is a slice-name fragment, which is never either.
+func isPlanFile(arg string) bool {
+	if strings.HasSuffix(arg, ".json") {
+		return true
+	}
+	info, err := os.Stat(arg)
+	return err == nil && !info.IsDir()
 }
 
 // ─── hooks ──────────────────────────────────────────────────────────────────
