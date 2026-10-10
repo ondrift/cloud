@@ -183,5 +183,63 @@ func newRootCmd(shownVersion string) *cobra.Command {
 		upgrade.GetCmd(),
 	)
 
+	refuseUnknownVerbs(rootCmd)
 	return rootCmd
+}
+
+// unknownVerbAnnotation marks a group whose run function refuseUnknownVerbs
+// installed, so a test can tell it from a command's own.
+const unknownVerbAnnotation = "drift/refuses-unknown-verbs"
+
+// removedVerbs are the Driftfile verbs that are gone, by the group's path, with
+// what does the job now. A script still running one fails and is told what to
+// type instead.
+var removedVerbs = map[string]map[string]string{
+	"drift file": {
+		"apply":    "`drift apply` applies the Driftfile, and `drift plan` shows what it would change",
+		"deploy":   "`drift apply` applies the Driftfile, and `drift plan` shows what it would change",
+		"simulate": "`drift plan` shows what applying the Driftfile would change, and what it would cost",
+		"diff":     "`drift plan` shows what applying the Driftfile would change, and what it would cost",
+		"migrate":  "the Driftfile is HCL: `drift file new` writes a starter, and `drift file explain` lists every block it can hold",
+	},
+}
+
+// refuseUnknownVerbs gives every group without a run function one: bare, it
+// prints the group's help; with a verb the group does not have, it is an error.
+//
+// Cobra's own answer to `drift file nosuchverb` is the group's help and exit 0,
+// because a group with no run function treats any argument as a request for
+// help. Only the root refuses an unknown command. So `drift file apply`, which
+// was a deploy, became a no-op that passed in CI.
+//
+// Unknown flags are let through to the run function, so `drift file apply
+// --plan` is answered with what replaced `drift file apply` rather than with a
+// complaint about --plan.
+func refuseUnknownVerbs(root *cobra.Command) {
+	var visit func(c *cobra.Command)
+	visit = func(c *cobra.Command) {
+		for _, child := range c.Commands() {
+			visit(child)
+		}
+		if c == root || !c.HasSubCommands() || c.Run != nil || c.RunE != nil {
+			return
+		}
+		if c.Annotations == nil {
+			c.Annotations = map[string]string{}
+		}
+		c.Annotations[unknownVerbAnnotation] = "true"
+		c.FParseErrWhitelist.UnknownFlags = true
+		c.Args = cobra.ArbitraryArgs
+		c.RunE = func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			if instead, ok := removedVerbs[cmd.CommandPath()][args[0]]; ok {
+				return fmt.Errorf("there is no %q: %s", cmd.CommandPath()+" "+args[0], instead)
+			}
+			return fmt.Errorf("unknown command %q for %q. Run '%s --help' for the commands it has",
+				args[0], cmd.CommandPath(), cmd.CommandPath())
+		}
+	}
+	visit(root)
 }

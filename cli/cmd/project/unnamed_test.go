@@ -21,13 +21,6 @@ func liveEverything(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/ops/backbone/sql/admin/list":
 		_, _ = w.Write([]byte(sqlListBody))
-	case "/ops/atomic/alert":
-		if r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(`[{"name":"post:checkout-0"},{"name":"get:health-0"}]`))
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{}`))
 	case "/ops/slice/domain":
 		if r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(`[{"host":"shop.example.com","status":"live"},{"host":"admin.example.com","status":"live"}]`))
@@ -76,33 +69,6 @@ func TestApplySQL_ReportsADatabaseTheManifestDoesNotName(t *testing.T) {
 	}
 }
 
-// The alert registry is keyed on the derived `<function>-<index>` name, so the
-// join has to be against that spelling and not against the function.
-func TestApplyAlerts_ReportsAnAlertTheManifestDoesNotName(t *testing.T) {
-	rec := stubAPI(t, liveEverything)
-
-	m := manifestRooted(Node{"name": "demo", "atomic": map[string]any{
-		"pulses": []any{map[string]any{
-			"name": "post:checkout", "handler": "PostCheckout",
-			"alerts": []any{map[string]any{
-				"on": "errors", "threshold": 3, "window": "5m", "notify": "webhook=https://example.com/hook",
-			}},
-		}},
-	}}, t.TempDir())
-
-	unnamed, err := applyAlerts(m)
-	if err != nil {
-		t.Fatalf("applyAlerts: %v", err)
-	}
-
-	if got := strings.Join(unnamed, ","); got != "get:health-0" {
-		t.Errorf("the alert the manifest does not declare must be reported, got %q", got)
-	}
-	if n := rec.count("DELETE /ops/atomic/alert"); n != 0 {
-		t.Errorf("reporting must not delete: got %d delete request(s)", n)
-	}
-}
-
 // A host is matched lowercased, because that is how applyDomains declares one
 // and how the slice stores it.
 func TestApplyDomains_ReportsAHostTheManifestDoesNotName(t *testing.T) {
@@ -125,9 +91,9 @@ func TestApplyDomains_ReportsAHostTheManifestDoesNotName(t *testing.T) {
 	}
 }
 
-// The control: a manifest naming everything live reports nothing from any of
-// the three classes. Without it every test above passes for a reconcile that
-// returns its whole live set.
+// The control: a manifest naming everything live reports nothing from either
+// class. Without it every test above passes for a reconcile that returns its
+// whole live set.
 func TestApply_ReportsNothingWhenTheManifestNamesEverythingLive(t *testing.T) {
 	stubAPI(t, liveEverything)
 
@@ -143,30 +109,12 @@ func TestApply_ReportsNothingWhenTheManifestNamesEverythingLive(t *testing.T) {
 			map[string]any{"name": "ledger"},
 			map[string]any{"name": "audit"},
 		}},
-		"atomic": map[string]any{"pulses": []any{
-			map[string]any{
-				"name": "post:checkout", "handler": "PostCheckout",
-				"alerts": []any{map[string]any{
-					"on": "errors", "threshold": 3, "window": "5m", "notify": "webhook=https://example.com/hook",
-				}},
-			},
-			map[string]any{
-				"name": "get:health", "handler": "GetHealth",
-				"alerts": []any{map[string]any{
-					"on": "errors", "threshold": 1, "window": "5m", "notify": "webhook=https://example.com/hook",
-				}},
-			},
-		}},
 	}
 	m := manifestRooted(slice, root)
 
 	dbs, err := applySQL(m, io.Discard)
 	if err != nil {
 		t.Fatalf("applySQL: %v", err)
-	}
-	alerts, err := applyAlerts(m)
-	if err != nil {
-		t.Fatalf("applyAlerts: %v", err)
 	}
 	domains, err := applyDomains(m)
 	if err != nil {
@@ -176,7 +124,7 @@ func TestApply_ReportsNothingWhenTheManifestNamesEverythingLive(t *testing.T) {
 	for _, c := range []struct {
 		class string
 		got   []string
-	}{{"sql database", dbs}, {"alert", alerts}, {"domain", domains}} {
+	}{{"sql database", dbs}, {"domain", domains}} {
 		if len(c.got) != 0 {
 			t.Errorf("every live %s is named by this manifest, so none must be reported, got %q", c.class, c.got)
 		}
@@ -189,14 +137,12 @@ func TestReportUnnamedResources_NamesEachClassAndHowToRemoveIt(t *testing.T) {
 	var out bytes.Buffer
 	reportUnnamedResources(unnamedResources{
 		Databases: []string{"ledger"},
-		Alerts:    []string{"get:health-0"},
 		Domains:   []string{"admin.example.com"},
 	}, &out)
 
 	got := out.String()
 	for _, want := range []string{
 		"ledger", "drift backbone sql drop ledger",
-		"get:health-0", "drift atomic alert remove get:health-0",
 		"admin.example.com", "drift slice domain remove admin.example.com",
 	} {
 		if !strings.Contains(got, want) {

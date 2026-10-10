@@ -39,7 +39,8 @@ func TestCheckQueueReferences_NamesAnUndeclaredQueue(t *testing.T) {
 	if len(warnings) != 1 {
 		t.Fatalf("an undeclared queue must be reported once, got %d: %v", len(warnings), warnings)
 	}
-	for _, want := range []string{"orders", "queue:orders", "backbone.queues"} {
+	// The pulse as the file labels it, and the block that declares the queue.
+	for _, want := range []string{`pulse "QUEUE orders"`, "`queue \"orders\" {}`"} {
 		if !strings.Contains(warnings[0], want) {
 			t.Errorf("the warning must carry %q, got %q", want, warnings[0])
 		}

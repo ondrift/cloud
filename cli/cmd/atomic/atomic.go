@@ -21,10 +21,10 @@ func GetCmd() *cobra.Command {
 		Short: "Manage Atomic deployments: pulses and fields",
 		Long: "Atomic runs your code on the slice, as two kinds of work.\n\n" +
 			"Pulses: Atomic's functions, one call, one result. Fields: long-running workers.\n\n" +
-			"Both are declared in the Driftfile, inside the element their handler lives in " +
-			"(`atomic.elements[].pulses` and `atomic.elements[].fields`; the top-level `atomic.pulses` " +
-			"and `atomic.fields` are the default element, the flat files in ./atomic), and booked " +
-			"as slots on the slice.",
+			"Both are declared in the Driftfile, as `pulse` and `field` blocks inside the `element` " +
+			"block their handler lives in (`element \"default\"` is ./atomic itself, any other name " +
+			"is ./atomic/<name>), each with the memory it books as a slot on the slice. " +
+			"`drift file explain element.pulse` describes the block.",
 		Example: "  drift atomic list\n  drift atomic deploy ./atomic\n  drift atomic run ./atomic\n" +
 			"  drift atomic fields\n  drift atomic new",
 		GroupID: "services",

@@ -168,10 +168,8 @@ func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.
 	if err != nil {
 		return err
 	}
-	unnamedAlerts, err := applyAlerts(m)
-	if err != nil {
-		return err
-	}
+	// Alerts are not the Driftfile's: they are set with `drift atomic alert`,
+	// and the apply neither writes nor reports them.
 	// Canvas is asked separately: applyCanvas returns early when the manifest
 	// declares no sites, the case where every live site is unnamed.
 	unnamedSites, cerr := unnamedCanvasSites(m)
@@ -204,7 +202,6 @@ func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.
 	fmt.Fprintf(out, "  %s\n", common.Hint(fmt.Sprintf("Done in %.1fs!", time.Since(start).Seconds())))
 	reportUnnamedResources(unnamedResources{
 		Databases:   unnamedDatabases,
-		Alerts:      unnamedAlerts,
 		Domains:     unnamedDomains,
 		CanvasSites: unnamedSites,
 	}, out)
@@ -405,9 +402,8 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 // The order is safe because nothing in Backbone depends on Atomic. Every step
 // above reads only the Driftfile and the files it names, and talks only to the
 // slice's Backbone; a seed is SQL or JSONL the project ships, never the output
-// of a function. The things that do depend on Atomic stay after it: alerts are
-// keyed on the function they watch, and the orphan and idle reports read what
-// Atomic deployed.
+// of a function. The things that do depend on Atomic stay after it: the orphan
+// and idle reports read what Atomic deployed.
 //
 // A Backbone failure stops the apply before Atomic, for the same reason: a
 // slot deployed after its table or queue failed to apply starts against the

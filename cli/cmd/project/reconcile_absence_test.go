@@ -132,37 +132,6 @@ func TestApplyCanvas_DoesNotPruneAnUnmentionedSite(t *testing.T) {
 	}
 }
 
-// applyAlerts has no zero-entry guard at all, so a project whose functions
-// declare no alerts wipes the live registry on its next apply.
-func TestApplyAlerts_DoesNotRemoveAnUndeclaredAlert(t *testing.T) {
-	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/ops/atomic/alert":
-			if r.Method == http.MethodGet {
-				_, _ = w.Write([]byte(`[{"name":"post:checkout-0"},{"name":"get:health-0"}]`))
-				return
-			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
-		default:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
-		}
-	})
-
-	m := manifestRooted(Node{"name": "demo", "atomic": map[string]any{
-		"functions": []any{map[string]any{"name": "get:ping", "handler": "GetPing"}},
-	}}, t.TempDir())
-
-	if _, err := applyAlerts(m); err != nil {
-		t.Fatalf("applyAlerts: %v", err)
-	}
-
-	if n := rec.count("DELETE /ops/atomic/alert"); n != 0 {
-		t.Errorf("an alert the manifest does not declare must survive the apply; got %d delete request(s)", n)
-	}
-}
-
 // applyDomains removes every live host the manifest omits, so two projects
 // deploying into one slice make each other's domains disappear.
 func TestApplyDomains_DoesNotRemoveAnUndeclaredHost(t *testing.T) {
@@ -206,13 +175,6 @@ func TestApply_StillCreatesWhatTheManifestNames(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{}`))
-		case "/ops/atomic/alert":
-			if r.Method == http.MethodGet {
-				_, _ = w.Write([]byte(`[]`))
-				return
-			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
 		case "/ops/backbone/sql/admin/list":
 			_, _ = w.Write([]byte(`[]`))
 		default:
@@ -231,21 +193,11 @@ func TestApply_StillCreatesWhatTheManifestNames(t *testing.T) {
 		"backbone": map[string]any{
 			"sql": []any{map[string]any{"name": "orders", "schema": "orders.sql"}},
 		},
-		"atomic": map[string]any{"pulses": []any{map[string]any{
-			"name":    "post:checkout",
-			"handler": "PostCheckout",
-			"alerts": []any{map[string]any{
-				"on": "errors", "threshold": 3, "window": "5m", "notify": "webhook=https://example.com/hook",
-			}},
-		}}},
 	}
 	m := manifestRooted(slice, root)
 
 	if _, err := applyDomains(m); err != nil {
 		t.Fatalf("applyDomains: %v", err)
-	}
-	if _, err := applyAlerts(m); err != nil {
-		t.Fatalf("applyAlerts: %v", err)
 	}
 	if _, err := applySQL(m, io.Discard); err != nil {
 		t.Fatalf("applySQL: %v", err)
@@ -253,9 +205,6 @@ func TestApply_StillCreatesWhatTheManifestNames(t *testing.T) {
 
 	if n := rec.count("POST /ops/slice/domain"); n != 1 {
 		t.Errorf("a declared host must still be added, got %d", n)
-	}
-	if n := rec.count("POST /ops/atomic/alert"); n != 1 {
-		t.Errorf("a declared alert must still be written, got %d", n)
 	}
 	if n := rec.count("POST /ops/backbone/sql/admin/load-schema"); n != 1 {
 		t.Errorf("a declared schema must still be uploaded, got %d", n)
