@@ -135,9 +135,12 @@ func newRootCmd(shownVersion string) *cobra.Command {
 	// because it is about the whole slice the file declares.
 	planCmd := project.GetPlanCmd()
 	planCmd.GroupID = "project"
+	applyCmd := project.GetApplyCmd()
+	applyCmd.GroupID = "project"
 
 	rootCmd.AddCommand(
 		planCmd,
+		applyCmd,
 
 		// File (everything a Driftfile does — lint it, apply it, run it)
 		fileCmd,
