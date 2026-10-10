@@ -11,7 +11,7 @@ package common
 //
 //	export DRIFT_TOKEN=drift_pat_…
 //	export DRIFT_SLICE=my-slice      # what `drift slice use` would have set
-//	drift file apply
+//	drift apply
 //
 // # It is EXCHANGED, not sent
 //

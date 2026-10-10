@@ -2,32 +2,21 @@ package file
 
 // resolve.go — what THIS Driftfile will actually provision.
 //
-// The value is the RESOLVED shape, not a re-print of the file. "Omitted means
-// inherit" is exactly where users have been getting caught: an environment block
-// that sets three knobs looks like it describes the slice, and it describes three
-// knobs on top of a base you have to hold in your head. This resolves the
-// environment overlay and prints the result, so the answer to "what does staging
-// actually get" is a command rather than an inference.
+// The value is the RESOLVED shape, not a re-print of the file. Variables take
+// their values, an environment names its own slice and billing, and every
+// booking, storage size and limit is printed as the platform will be asked for
+// it, so the answer to "what does staging actually get" is a command rather
+// than an inference.
 //
 // It does NOT print a price. The server is the single authority on cost
-// (`plan.PriceConfig`, reached via POST /ops/slice/price) and computing one here
-// would be a second source of truth for the number a user is billed — the exact
-// thing pricing is centralised to avoid. `drift file apply --plan` shows it,
-// with a session, from the server.
+// (POST /ops/slice/price), and `drift plan` asks it, with a session.
 //
-// # This was `drift file explain`, and the rename is the point
+// # Not `drift file explain`
 //
-// `explain` now describes the FORMAT, kubectl-style — what is this key, what may
-// it contain (cloud/public#69). That is a different question from this one, and
-// both are useful: one is about the document's grammar, the other about one
-// document's meaning.
-//
-// THEY ARE NOT ALIASES OF EACH OTHER, so there is no alias. cloud-platform#509
-// keeps every old route spelling answering forever, and that is safe there
-// because each old path reaches the identical handler — the two names mean one
-// thing. Here they would mean two, on one verb, which is the ambiguity the split
-// exists to remove. `explain` refuses an argument meant for this command and
-// names it instead; see the guard in explain.go.
+// `explain` describes the FORMAT — what is this block, what may it contain.
+// That is a different question from this one: one is about the grammar, the
+// other about one file's meaning. `explain` refuses an argument meant for this
+// command and names it instead; see the guard in explain.go.
 
 import (
 	"fmt"
@@ -43,10 +32,10 @@ func getResolveCmd() *cobra.Command {
 	var env string
 	cmd := &cobra.Command{
 		Use:   "resolve [path]",
-		Short: "Show what a Driftfile resolves to, including inherited defaults",
-		Long: "Resolves the manifest — applying an environment overlay if one is selected — " +
-			"and prints the shape it will provision. Offline; no account needed.\n\n" +
-			"For what a KEY means rather than what this file says, see `drift file explain`.",
+		Short: "Show what a Driftfile resolves to: every booking, size and limit",
+		Long: "Compiles the Driftfile, for an environment if one is named, and prints the shape it " +
+			"will provision. Offline; no account needed.\n\n" +
+			"For what a block means rather than what this file says, see `drift file explain`.",
 		Example:      "  drift file resolve\n  drift file resolve --env staging\n  drift file resolve ./Driftfile",
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
@@ -55,75 +44,93 @@ func getResolveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			m, perr := project.ParseDriftfile(path)
+			if !project.SchemaAvailable() {
+				return project.ErrNoSchema
+			}
+			c, perr := project.CompileDriftfileEnv(path, env)
 			if perr != nil {
 				return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), perr)
 			}
-
-			selected, serr := m.SelectEnvironment(env, cmd.Flags().Changed("env"))
-			if serr != nil {
-				return serr
-			}
-			printResolved(m, selected)
+			printResolved(c)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&env, "env", "", "environment to resolve (default: the project's own default)")
+	cmd.Flags().StringVar(&env, "env", "", "environment to resolve (default: the file's own slice)")
 	return cmd
 }
 
-func printResolved(m *project.Manifest, env string) {
+func printResolved(c *project.Compiled) {
+	m := c.Manifest
 	s := m.Slice()
 
-	title := fmt.Sprintf("slice %s", m.Name())
-	if env != "" {
-		title += fmt.Sprintf("  (environment %s)", env)
+	title := fmt.Sprintf("slice %s  (%s)", m.Name(), c.Billing)
+	if c.Environment != "" {
+		title += fmt.Sprintf("  environment %s", c.Environment)
 	}
 	fmt.Println(title)
 	fmt.Println(strings.Repeat("─", len(title)))
 
-	// Only print what the manifest actually resolves to. A knob left empty is
-	// resolved by the platform at deploy time, and printing a guess at that
-	// default here would be this command inventing a second answer to
-	// "what will I get" — which is the confusion it exists to remove.
-	rows := [][2]string{
-		{"log retention", s.Str("log_retention")},
-		{"backup retention", s.Str("backup_retention")},
-		{"function timeout", s.Str("atomic", "function_timeout")},
-		{"rate limit", s.Str("edge", "rate_limit")},
-	}
-	if dh := s.Int("atomic", "deploy_history"); dh != 0 {
-		rows = append(rows, [2]string{"deploy history", fmt.Sprintf("%d", dh)})
-	}
-	if cs := s.Str("canvas", "canvas_size"); cs != "" {
-		rows = append(rows, [2]string{"canvas size", cs})
+	booked := map[string]int{}
+	for _, f := range c.Shape.Atomic.Functions {
+		booked[f.Name] = f.MemoryBytes
 	}
 
-	fmt.Println()
-	for _, r := range rows {
-		val := r[1]
-		if val == "" {
-			val = common.Hint("— platform default")
+	if specs := project.FunctionSpecs(m); len(specs) > 0 {
+		fmt.Printf("\n  pulses (%d)\n", len(specs))
+		for _, p := range specs {
+			fmt.Printf("    · %-34s %s%s\n", c.Addresses[p.Name], sizeOf(booked[p.Name]), inElement(p.Element))
 		}
-		fmt.Printf("  %-18s %s\n", r[0], val)
+	}
+	if specs := project.FieldSpecs(m); len(specs) > 0 {
+		fmt.Printf("\n  fields (%d)\n", len(specs))
+		for _, f := range specs {
+			fmt.Printf("    · %-34s %s%s\n", c.Addresses[f.Name], sizeOf(booked[f.Name]), inElement(f.Element))
+		}
 	}
 
-	if pulses := project.PulseEntries(s); len(pulses) > 0 {
-		fmt.Printf("\n  pulses (%d)\n", len(pulses))
-		for _, p := range pulses {
-			fmt.Printf("    · %s%s\n", p.Str("name"), inElement(p))
+	bb := c.Shape.Backbone
+	for _, set := range []struct {
+		noun  string
+		sizes map[string]int
+	}{
+		{"sql", bb.SQL.Databases},
+		{"nosql", bb.NoSQL.Collections},
+		{"blobs", bb.Blobs.Buckets},
+	} {
+		if len(set.sizes) == 0 {
+			continue
+		}
+		fmt.Printf("\n  %s (%d)\n", set.noun, len(set.sizes))
+		for _, name := range sortedKeys(set.sizes) {
+			fmt.Printf("    · %-34s %s\n", name, sizeOf(set.sizes[name]))
 		}
 	}
-	if fields := project.FieldEntries(s); len(fields) > 0 {
-		fmt.Printf("\n  fields (%d)\n", len(fields))
-		for _, f := range fields {
-			fmt.Printf("    · %s%s\n", f.Str("name"), inElement(f))
+	if len(bb.Queues.Queues) > 0 {
+		fmt.Printf("\n  queues (%d)\n", len(bb.Queues.Queues))
+		for _, name := range sortedKeys(bb.Queues.Queues) {
+			depth := "the slice's queue depth"
+			if d := bb.Queues.Queues[name]; d > 0 {
+				depth = fmt.Sprintf("%d messages", d)
+			}
+			fmt.Printf("    · %-34s %s\n", name, depth)
 		}
 	}
+
+	if limits := project.ShapeLimits(c); len(limits) > 0 {
+		fmt.Printf("\n  limits\n")
+		for _, l := range limits {
+			fmt.Printf("    · %-34s %s\n", l.Name, l.Value)
+		}
+	}
+
 	if sites := s.Entries("dir", "canvas", "sites"); len(sites) > 0 {
-		fmt.Printf("\n  canvas sites (%d)\n", len(sites))
+		fmt.Printf("\n  sites (%d)\n", len(sites))
 		for _, site := range sites {
-			fmt.Printf("    · %s\n", site.Str("dir"))
+			path := site.Str("path")
+			if path == "" {
+				path = "/"
+			}
+			fmt.Printf("    · %-34s %s\n", path, site.Str("dir"))
 		}
 	}
 	if domains := s.Entries("host", "edge", "domains"); len(domains) > 0 {
@@ -144,8 +151,8 @@ func printResolved(m *project.Manifest, env string) {
 		if len(cidrs) == 0 {
 			fmt.Printf("    %s\n", common.Hint("empty: every address reaches the slice"))
 		}
-		for _, c := range cidrs {
-			fmt.Printf("    · %s\n", c)
+		for _, cidr := range cidrs {
+			fmt.Printf("    · %s\n", cidr)
 		}
 	}
 	if hosts := s.Entries("host", "edge", "hosts"); len(hosts) > 0 {
@@ -155,33 +162,50 @@ func printResolved(m *project.Manifest, env string) {
 		}
 	}
 
-	// Secrets: names only, never values. Some of them are resolved $ENVREFs by
-	// this point, and a command whose whole job is "print the resolved shape"
-	// must not be the thing that puts a live credential on a terminal or into a
-	// CI log.
-	if secrets := s.Sub("backbone", "secrets"); len(secrets) > 0 {
-		names := make([]string, 0, len(secrets))
-		for k := range secrets {
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		fmt.Printf("\n  secrets (%d, names only)\n", len(names))
-		for _, k := range names {
-			fmt.Printf("    · %s\n", k)
+	// Write-only values: where each is read from, never a value. The compile
+	// holds references only, so there is no value here to print.
+	if len(c.WriteOnly) > 0 {
+		fmt.Printf("\n  write-only values (%d, read from the environment)\n", len(c.WriteOnly))
+		for _, w := range c.WriteOnly {
+			fmt.Printf("    · %-34s $%s\n", w.Address, w.Env)
 		}
 	}
 
-	if envs := m.EnvironmentNames(); len(envs) > 0 {
-		fmt.Printf("\n  %s %s\n", common.Hint("environments:"), strings.Join(envs, ", "))
+	if len(c.Environments) > 0 {
+		fmt.Printf("\n  %s %s\n", common.Hint("environments:"), strings.Join(c.Environments, ", "))
 	}
-	fmt.Printf("\n  %s\n", common.Hint("cost comes from the server — drift file apply --plan"))
+	fmt.Printf("\n  %s\n", common.Hint("the price comes from the platform: drift plan"))
 }
 
-// inElement names the element a resolved Pulse or Field belongs to, and nothing
-// for the default element.
-func inElement(entry project.Node) string {
-	if el := entry.Str("element"); el != "" {
-		return "  " + common.Hint("(element "+el+")")
+// inElement names the element a Pulse or Field belongs to, and nothing for
+// the default element.
+func inElement(element string) string {
+	if element != "" {
+		return "  " + common.Hint("(element "+element+")")
 	}
 	return ""
+}
+
+// sizeOf renders a byte count the way a Driftfile writes it.
+func sizeOf(b int) string {
+	switch {
+	case b <= 0:
+		return "—"
+	case b%(1<<30) == 0:
+		return fmt.Sprintf("%dGiB", b>>30)
+	case b%(1<<20) == 0:
+		return fmt.Sprintf("%dMiB", b>>20)
+	case b%(1<<10) == 0:
+		return fmt.Sprintf("%dKiB", b>>10)
+	}
+	return fmt.Sprintf("%dB", b)
+}
+
+func sortedKeys(m map[string]int) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

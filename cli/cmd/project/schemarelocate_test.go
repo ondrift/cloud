@@ -9,27 +9,36 @@ import (
 // propertyNames composed of a pattern and two negations. Local, because this is
 // about how an error is RENDERED, and pinning it to the served document would
 // make the test fail whenever the reservation's contents change.
+//
+// It describes the compiled document: `slice`, and `atomic.elements[].pulses[]`
+// with the keys a pulse compiles to.
 const relocateSchema = `{
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
-    "name": {"type": "string"},
-    "canvas": {},
+    "slice": {"type": "string"},
     "atomic": {
       "type": "object",
       "properties": {
-        "functions": {"type": "array", "items": {"$ref": "#/definitions/atomicEntry"}}
+        "elements": {"type": "array", "items": {"$ref": "#/definitions/elementEntry"}}
       }
     }
   },
   "definitions": {
-    "atomicEntry": {
+    "elementEntry": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "pulses": {"type": "array", "items": {"$ref": "#/definitions/pulseEntry"}}
+      }
+    },
+    "pulseEntry": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "name": {"type": "string"},
+        "route": {"type": "string"},
+        "method": {"type": "string"},
         "handler": {"type": "string"},
-        "memory": {"type": "string"},
         "env": {
           "type": "object",
           "propertyNames": {
@@ -53,24 +62,24 @@ const relocateSchema = `{
 //
 //	at '': 'not' failed
 //
-// against a whole Driftfile. That names no function, no key and no position —
-// it is the least actionable thing this package can print, and it is what a
-// user gets the first time they try to set BACKBONE_URL in `env:`.
+// against a whole document. That names no pulse, no key and no position: it is
+// the least actionable thing this package can print, and it is what a user gets
+// the first time they try to set BACKBONE_URL in `env`. Repaired, the refusal is
+// reported at the `env` attribute of the pulse that carries it.
 func TestAReservedEnvNameIsReportedWhereItIs(t *testing.T) {
 	withSchema(t, relocateSchema)
-	root := demoProject(t, `
-name: demo
-atomic:
-  functions:
-    - name: get:ping
-      handler: GetPing
-      memory: 8MB
-      env:
-        BACKBONE_URL: http://evil.example.com
-canvas: ./canvas
-`)
+	body := "slice \"demo\" { billing = \"monthly\" }\n" + // line 1
+		"element \"api\" {\n" + // line 2
+		"  pulse \"GET /ping\" {\n" + // line 3
+		"    handler = \"GetPing\"\n" + // line 4
+		"    memory  = \"8MiB\"\n" + // line 5
+		"    env = {\n" + // line 6
+		"      BACKBONE_URL = \"http://evil.example.com\"\n" +
+		"    }\n" +
+		"  }\n" +
+		"}\n"
 
-	_, err := ParseDriftfile(root + "/Driftfile")
+	_, err := ParseDriftfile(writeDriftfile(t, body, "atomic/api/"))
 	if err == nil {
 		t.Fatal("a reserved env name must be refused — the whole point of the reservation")
 	}
@@ -80,13 +89,15 @@ canvas: ./canvas
 		t.Errorf("the error still points at the document root, which tells the user "+
 			"nothing about where to look:\n  %s", msg)
 	}
-	// The entry it is in, and the key it is under. Both are recoverable and
-	// neither is in the leaf the library hands over.
-	if !strings.Contains(msg, "/atomic/functions/0") {
-		t.Errorf("the error must name the function entry, got:\n  %s", msg)
+	// Moved back to the file: the env attribute, which is the line the key is
+	// under. An unrepaired location resolves to the slice's label on line 1.
+	if !strings.Contains(msg, "Driftfile:6:") {
+		t.Errorf("the error must be at the env attribute (line 6), got:\n  %s", msg)
 	}
-	if !strings.Contains(msg, "env") {
-		t.Errorf("the error must name the key, got:\n  %s", msg)
+	// The pulse it is in and the attribute, which are recoverable and are not in
+	// the leaf the library hands over.
+	if !strings.Contains(msg, `pulse "GET /ping": env:`) {
+		t.Errorf("the error must name the pulse and its env, got:\n  %s", msg)
 	}
 }
 
@@ -94,29 +105,34 @@ canvas: ./canvas
 // where it is must not be moved. `relocate` repairs the empty case only, and a
 // version that rewrote every location would scramble every other message in the
 // package while passing the test above.
+//
+// The pulse carries a valid env and a `response` the stub does not list, so the
+// refusal belongs to the pulse and must not drift onto its env.
 func TestAnOrdinaryErrorKeepsItsOwnLocation(t *testing.T) {
 	withSchema(t, relocateSchema)
-	root := demoProject(t, `
-name: demo
-atomic:
-  functions:
-    - name: get:ping
-      handler: GetPing
-      memory: 8MB
-      nonsense: true
-canvas: ./canvas
-`)
+	body := "slice \"demo\" { billing = \"monthly\" }\n" + // line 1
+		"element \"api\" {\n" + // line 2
+		"  pulse \"GET /ping\" {\n" + // line 3
+		"    handler  = \"GetPing\"\n" +
+		"    memory   = \"8MiB\"\n" +
+		"    env      = { MODE = \"fast\" }\n" + // line 6
+		"    response = \"text\"\n" + // line 7
+		"  }\n" +
+		"}\n"
 
-	_, err := ParseDriftfile(root + "/Driftfile")
+	_, err := ParseDriftfile(writeDriftfile(t, body, "atomic/api/"))
 	if err == nil {
 		t.Fatal("an undeclared key must be refused")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "/atomic/functions/0") {
-		t.Errorf("an ordinary error must keep pointing at its own instance, got:\n  %s", msg)
+	if !strings.Contains(msg, "Driftfile:3:") || !strings.Contains(msg, `pulse "GET /ping"`) {
+		t.Errorf("an ordinary error must keep pointing at its own instance, the pulse on line 3, got:\n  %s", msg)
 	}
-	if strings.Contains(msg, "/atomic/functions/0/env") {
-		t.Errorf("relocate moved an error that already had a location:\n  %s", msg)
+	if !strings.Contains(msg, "response") {
+		t.Errorf("the error should name the key the stub forbids, got:\n  %s", msg)
+	}
+	if strings.Contains(msg, "Driftfile:6:") {
+		t.Errorf("relocate moved an error that already had a location onto the env:\n  %s", msg)
 	}
 }
 

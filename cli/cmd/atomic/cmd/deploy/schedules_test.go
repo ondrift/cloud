@@ -80,7 +80,7 @@ func TestSetDeclaredSchedules_EmptyExpressionsAreDropped(t *testing.T) {
 	}
 }
 
-// The registry is replaced, not merged. Two `drift file apply` runs in one
+// The registry is replaced, not merged. Two `drift apply` runs in one
 // process (the test suite, or a future multi-slice deploy) must not leak the
 // first Driftfile's schedules into the second.
 func TestSetDeclaredSchedules_ReplacesRatherThanMerges(t *testing.T) {
@@ -114,7 +114,7 @@ func TestScheduleTriggerFor_BlankMethodDefaults(t *testing.T) {
 // All of them call scheduleTriggerFor with a key they also wrote, so they prove
 // the lookup works and prove nothing about WHICH key the deploy asks with. The
 // deploy asks through triggersFor, from a FunctionSpec — and it asked with the
-// route half of the name while `drift file apply` filed the schedule under the
+// route half of the name while `drift apply` filed the schedule under the
 // whole composite. Result: every declared cron in every Driftfile silently
 // dropped, deploy reporting success, found only by deploying one to alpha and
 // watching nothing happen.
@@ -124,7 +124,7 @@ func TestScheduleTriggerFor_BlankMethodDefaults(t *testing.T) {
 func TestADeclaredCronSurvivesTheWholeDeployPath(t *testing.T) {
 	t.Cleanup(func() { SetDeclaredSchedules(nil) })
 
-	// The key `drift file apply` publishes: the composite `method:route`, which
+	// The key `drift apply` publishes: the composite `method:route`, which
 	// is what normaliseFunctionIdentities writes into every entry.
 	SetDeclaredSchedules(map[string]string{"get:cronprobe": "*/1 * * * *"})
 

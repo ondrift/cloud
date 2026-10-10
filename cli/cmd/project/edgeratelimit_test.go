@@ -1,9 +1,10 @@
 package project
 
 import (
-	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,10 @@ type edgeStub struct {
 	live   map[string]string
 	refuse map[string]edgeReply
 }
+
+// edgeFreeDemo opens a Driftfile for the slice the edge stubs hold: the free
+// one, which a file declares as billing = "free".
+const edgeFreeDemo = "slice \"demo\" { billing = \"free\" }\n"
 
 type edgeReply struct {
 	status int
@@ -86,9 +91,7 @@ func (s *edgeStub) bodies(route string) []string {
 
 // edgeManifest is a manifest for calling one key's plan section directly.
 func edgeManifest(edge map[string]any) *Manifest {
-	m := &Manifest{slice: Node{"slice": "demo", "edge": edge}}
-	m.SetName("demo")
-	return m
+	return &Manifest{slice: Node{"slice": "demo", "edge": edge}}
 }
 
 func TestRateLimitRPM(t *testing.T) {
@@ -135,57 +138,132 @@ func TestRateLimitRPM(t *testing.T) {
 	}
 }
 
-// Absent, nothing happens and nothing is said: no route is called, by the
-// preflight, the apply or the plan.
-func TestEdgeRateLimit_AbsentCallsNothing(t *testing.T) {
-	_, rec := newEdgeStub(t)
-	m := edgeManifest(map[string]any{"egress": map[string]any{"mode": "open"}})
-	if err := preflightEdgeRateLimit(m); err != nil {
-		t.Errorf("an absent edge.rate_limit failed the preflight: %v", err)
+// resizeStub is a free slice that exists and is ready, recording the body of
+// every resize and every call to an `/ops/slice/edge/` route. Every other
+// `/ops/` route answers `{}`.
+type resizeStub struct {
+	mu      sync.Mutex
+	resizes []map[string]any
+	edge    []string
+}
+
+func newResizeStub(t *testing.T) *resizeStub {
+	t.Helper()
+	s := &resizeStub{}
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/ops/slice/get":
+			_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{}}`))
+		case r.URL.Path == "/ops/slice/status":
+			_, _ = w.Write([]byte(`{"ready":true}`))
+		case r.URL.Path == "/ops/slice/resize":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			s.mu.Lock()
+			s.resizes = append(s.resizes, body)
+			s.mu.Unlock()
+			_, _ = w.Write([]byte(`{}`))
+		case strings.HasPrefix(r.URL.Path, "/ops/slice/edge/"):
+			s.mu.Lock()
+			s.edge = append(s.edge, r.Method+" "+r.URL.Path)
+			s.mu.Unlock()
+			_, _ = w.Write([]byte(`{}`))
+		case strings.HasPrefix(r.URL.Path, "/ops/"):
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	compiledSchema = nil
+	t.Cleanup(func() { compiledSchema = nil })
+	return s
+}
+
+// rpm is the requests per minute the one resize carried.
+func (s *resizeStub) rpm(t *testing.T) float64 {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.resizes) != 1 {
+		t.Fatalf("%d resizes, want exactly one", len(s.resizes))
 	}
-	if err := applyEdgeRateLimit(m); err != nil {
-		t.Errorf("an absent edge.rate_limit failed the apply: %v", err)
+	cfg, _ := s.resizes[0]["config"].(map[string]any)
+	atomic, _ := cfg["atomic"].(map[string]any)
+	rpm, ok := atomic["MaxNumberOfRequestsPerMinute"].(float64)
+	if !ok {
+		t.Fatalf("the resize carried no requests-per-minute limit: %v", s.resizes[0])
 	}
-	var out bytes.Buffer
-	planEdgeRateLimit(m, &out)
-	if out.Len() != 0 {
-		t.Errorf("an absent edge.rate_limit printed a plan section: %q", out.String())
+	return rpm
+}
+
+// The declared rate reaches the slice as requests per minute, in the shape the
+// resize carries, and no edge route is called for it.
+func TestApply_PostsTheDeclaredRateLimitAsRequestsPerMinute(t *testing.T) {
+	s := newResizeStub(t)
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"edge {\n  rate_limit = \"1/s\"\n}\n")
+
+	if err := applyAgreeingAtZero(t); err != nil {
+		t.Fatalf("apply: %v", err)
 	}
-	if len(rec.hits) != 0 {
-		t.Errorf("an absent edge.rate_limit called %v", rec.hits)
+	if got := s.rpm(t); got != 60 {
+		t.Errorf("the resize carried %v requests per minute, want 60", got)
+	}
+	if len(s.edge) != 0 {
+		t.Errorf("a rate limit called %v", s.edge)
 	}
 }
 
-// The declared rate reaches the route as requests per minute, addressed to the
-// slice the file names, once.
-func TestApply_PostsTheDeclaredRateLimitAsRequestsPerMinute(t *testing.T) {
-	s, _ := newEdgeStub(t)
-	applyIn(t, "slice: demo\nedge:\n  rate_limit: 10/s\n")
+// A per-hour rate is converted to requests per minute.
+func TestApply_PostsAnHourlyRateAsRequestsPerMinute(t *testing.T) {
+	s := newResizeStub(t)
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"edge {\n  rate_limit = \"120/h\"\n}\n")
 
-	if err := runApply(t); err != nil {
+	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if got := s.bodies("rate-limit"); len(got) != 1 || got[0] != `{"rpm":600}` {
-		t.Errorf("posted %q, want one {\"rpm\":600}", got)
+	if got := s.rpm(t); got != 2 {
+		t.Errorf("the resize carried %v requests per minute, want 2", got)
 	}
-	for _, slice := range s.slices {
-		if slice != "demo" {
-			t.Errorf("an edge request was addressed to slice %q, want demo", slice)
+}
+
+// edge.rate_limit and limits.requests_per_minute are one limit, and a file that
+// writes both is refused before any route is called.
+func TestApply_RefusesTheRateLimitWrittenTwiceBeforeAnyRoute(t *testing.T) {
+	assertEdgeApplyRefuses(t,
+		"slice \"demo\" {\n  billing = \"free\"\n  limits {\n    requests_per_minute = 30\n  }\n}\n"+
+			"site \"/\" { dir = \"site\" }\nedge {\n  rate_limit = \"30/min\"\n}\n",
+		"edge.rate_limit and limits.requests_per_minute are one limit; write it in one place")
+}
+
+// assertEdgeApplyRefuses applies a Driftfile against a stub that fails the test
+// on any `/ops/` request, and asserts the apply is refused with an error that
+// says every one of wants.
+func assertEdgeApplyRefuses(t *testing.T, body string, wants ...string) {
+	t.Helper()
+	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/ops/") {
+			t.Errorf("apply called %s %s before refusing the file", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	withRealSchema(t)
+	applyIn(t, body, "site")
+
+	err := runApply(applyOptions{noEnvFile: true, answers: noAnswers(), out: os.Stdout, in: strings.NewReader("")})
+	if err == nil {
+		t.Fatal("a file that should be refused was applied")
+	}
+	for _, want := range wants {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not say %q", err, want)
 		}
 	}
-}
-
-// `atomic.rate_limit` was an ignored key. It is now the alias of
-// `edge.rate_limit`, so an old file sets the slice's rate limit.
-func TestApply_AtomicRateLimitReachesTheEdgeRoute(t *testing.T) {
-	s, _ := newEdgeStub(t)
-	applyIn(t, "slice: demo\natomic:\n  rate_limit: 120/h\n")
-
-	if err := runApply(t); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
-	if got := s.bodies("rate-limit"); len(got) != 1 || got[0] != `{"rpm":2}` {
-		t.Errorf("posted %q, want one {\"rpm\":2}", got)
+	for _, hit := range rec.hits {
+		if strings.Contains(hit, " /ops/") {
+			t.Errorf("a route was called before the refusal: %s", hit)
+		}
 	}
 }
 
@@ -193,9 +271,10 @@ func TestApply_AtomicRateLimitReachesTheEdgeRoute(t *testing.T) {
 // absent key leaves that part of the slice as it is.
 func TestApply_AbsentEdgeKeysCallNoEdgeRoute(t *testing.T) {
 	_, rec := newEdgeStub(t)
-	applyIn(t, "slice: demo\nedge:\n  egress:\n    mode: open\n")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"edge {\n  egress {\n    mode = \"open\"\n  }\n}\n")
 
-	if err := runApply(t); err != nil {
+	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if rec.count("GET /ops/slice/get") == 0 {
@@ -208,102 +287,59 @@ func TestApply_AbsentEdgeKeysCallNoEdgeRoute(t *testing.T) {
 	}
 }
 
-// The three keys are applied in deploy.go's order: rate limit, allow, hosts.
-func TestApply_PostsRateLimitAllowAndHostsInOrder(t *testing.T) {
+// The edge routes are applied in deploy.go's order: allow, hosts. The rate
+// limit rides the resize that comes before them.
+func TestApply_PostsAllowAndHostsInOrder(t *testing.T) {
 	s, _ := newEdgeStub(t)
-	applyIn(t, "slice: demo\nedge:\n  rate_limit: 600/min\n  allow: [\"203.0.113.0/24\"]\n"+
-		"  hosts:\n    - host: admin.example.com\n      slice: admin\n")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"edge {\n  rate_limit = \"60/min\"\n  allow      = [\"203.0.113.0/24\"]\n"+
+		"  hosts      = { \"admin.example.com\" = \"admin\" }\n}\n")
 
-	if err := runApply(t); err != nil {
+	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if got := strings.Join(s.order, ","); got != "rate-limit,allow,hosts" {
-		t.Errorf("routes were posted in the order %q, want rate-limit,allow,hosts", got)
+	if got := strings.Join(s.order, ","); got != "allow,hosts" {
+		t.Errorf("routes were posted in the order %q, want allow,hosts", got)
+	}
+	if n := len(s.bodies("rate-limit")); n != 0 {
+		t.Errorf("the rate limit was posted to its edge route %d time(s)", n)
 	}
 }
 
 // A rate below one request per minute cannot be held, and is refused before
 // anything is deployed.
 func TestApply_RefusesARateBelowOnePerMinuteBeforeAnyRoute(t *testing.T) {
-	assertApplyRefusesBeforeAnyRoute(t,
-		"slice: demo\ncanvas: ./site\nedge:\n  rate_limit: 30/h\n",
-		`edge.rate_limit: "30/h" is below one request per minute, the smallest rate a slice holds; `+
+	assertEdgeApplyRefuses(t,
+		edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  rate_limit = \"30/h\"\n}\n",
+		`"30/h" is below one request per minute, the smallest rate a slice holds; `+
 			`the smallest you can write is "1/min" (or "60/h")`)
 }
 
-// Above the tier's ceiling the server refuses, and the apply fails saying so
-// with the ceiling the server published.
-func TestApply_SurfacesTheRateLimitCeiling(t *testing.T) {
-	s, _ := newEdgeStub(t)
-	s.refuse["rate-limit"] = edgeReply{http.StatusUnprocessableEntity,
-		`{"error":"600 requests per minute is above the free tier's ceiling","ceiling":60}`}
-	applyIn(t, "slice: demo\nedge:\n  rate_limit: 600/min\n")
-
-	err := runApply(t)
-	if err == nil {
-		t.Fatal("an apply the server refused reported success")
-	}
-	for _, want := range []string{
-		"edge.rate_limit",
-		"600 requests per minute is above the free tier's ceiling",
-		"at most 60 requests per minute",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal %q does not say %q", err, want)
-		}
-	}
-}
-
-// The plan shows the live rate against the declared one, and posts nothing.
-func TestPlan_RateLimitShowsLiveAgainstDeclared(t *testing.T) {
-	s, rec := newEdgeStub(t)
-	s.live["rate-limit"] = `{"rpm":300,"ceiling":null}`
-	m := edgeManifest(map[string]any{"rate_limit": "10/s"})
-
-	var out bytes.Buffer
-	planEdgeRateLimit(m, &out)
-	for _, want := range []string{
-		"rate limit (edge.rate_limit)",
-		"live      300 requests per minute",
-		"declared  10/s = 600 requests per minute",
-		"changes",
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("the plan does not say %q:\n%s", want, out.String())
-		}
-	}
-	if rec.count("POST /ops/slice/edge/rate-limit") != 0 {
-		t.Error("the plan posted the rate limit")
-	}
-
-	s.live["rate-limit"] = `{"rpm":600,"ceiling":60}`
-	out.Reset()
-	planEdgeRateLimit(m, &out)
-	for _, want := range []string{"tier ceiling 60", "unchanged", "above the tier's ceiling of 60"} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("the plan does not say %q:\n%s", want, out.String())
-		}
-	}
-}
-
-// A plan writes nothing to any edge route, whatever the file declares.
+// A plan writes nothing to any edge route, whatever the file declares, and
+// shows the declared rate against the live one.
 func TestPlan_PostsNoEdgeRoute(t *testing.T) {
 	s, rec := newEdgeStub(t)
-	s.live["rate-limit"] = `{"rpm":300,"ceiling":null}`
 	s.live["allow"] = `{"cidrs":[]}`
 	s.live["hosts"] = `{"hosts":[]}`
-	applyIn(t, "slice: demo\nedge:\n  rate_limit: 600/min\n  allow: [\"203.0.113.0/24\"]\n"+
-		"  hosts:\n    - host: admin.example.com\n      slice: admin\n")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"edge {\n  rate_limit = \"60/min\"\n  allow      = [\"203.0.113.0/24\"]\n"+
+		"  hosts      = { \"admin.example.com\" = \"admin\" }\n}\n")
 
-	if err := runPlanCmd(t); err != nil {
+	out, err := edgeStdout(t, func() error { return runPlanCmd(t) })
+	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	for _, route := range []string{"rate-limit", "allow", "hosts"} {
+	for _, route := range []string{"allow", "hosts"} {
 		if rec.count("GET /ops/slice/edge/"+route) != 1 {
 			t.Errorf("the plan did not read the live %s", route)
 		}
+	}
+	for _, route := range []string{"rate-limit", "allow", "hosts"} {
 		if n := rec.count("POST /ops/slice/edge/" + route); n != 0 {
 			t.Errorf("A PLAN POSTED %s %d time(s)", route, n)
 		}
+	}
+	if !strings.Contains(out, "limits.requests_per_minute") || !strings.Contains(out, "0 → 60") {
+		t.Errorf("the plan does not show the declared rate against the live one:\n%s", out)
 	}
 }

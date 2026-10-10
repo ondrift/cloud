@@ -1,85 +1,56 @@
 package project
 
-// manifest.go is the Driftfile parser + validator.
+// manifest.go is the parsed Driftfile, as every reader downstream holds it.
 //
-// Implements the Driftfile manifest format (v2 — project-level). The
-// Driftfile *is* the project: the resource shape (name, retention,
-// atomic/backbone/canvas/domains) sits at the top level, with two optional
-// siblings — `environments` (per-environment config overrides) and `hooks`
-// (local pre/post-deploy commands).
+// The Driftfile is HCL (driftfile.go reads it, compile.go compiles it), and
+// what it compiles to is a DOCUMENT: the slice's resources as the platform's
+// schema describes them, with `hooks` and `tests` beside them. A Manifest is
+// that document, validated, plus where it came from.
 //
-// The parser does three things in one pass:
-//
-//   1. Decodes the YAML into the canonical shape, expanding the short-form
-//      sugars on the way (canvas-as-bare-string-or-list, and
-//      environments-as-bare-list) — at the top level AND inside each
-//      environment override block.
-//   2. Resolves `$ENVREF` shorthands in secrets to their literal
-//      values from the deployer's environment.
-//   3. Validates the document against the JSON Schema the PLATFORM serves
-//      (schema.go) — the only authority on what a legal Driftfile is — and
-//      then asks the filesystem the one question a schema cannot answer:
-//      do the paths this document names exist here? Errors from either
-//      collect into one ParseErrors return so the user sees the whole
-//      picture in a single block.
-//
-// Environment selection + merge (SelectEnvironment) happens AFTER parse,
-// driven by the deploy command, so a single parse serves every environment.
+// ParseDriftfile is the one way to get one. It compiles the file for one of
+// its environments (or its default slice), runs the passes that ask this
+// machine what the schema cannot (finishParse), and resolves every `$NAME`
+// secret reference from the environment, because what reads a Manifest sends
+// those values.
 //
 // What the parser does NOT do:
 //
-//   - Reach over the network. Live-slice diffing, cost calculation,
-//     and reconcile-rule classification all happen later, in the
-//     deploy command driver.
-//   - Apply defaults for envelope knobs. Omitted knobs are passed
-//     through as zero-valued strings; the API gateway resolves them
-//     to the slice envelope's defaults.
+//   - Reach over the network. Live-slice diffing and pricing happen in
+//     `drift plan` and `drift apply`.
+//   - Apply defaults for envelope knobs. Omitted knobs are passed through as
+//     zero values; the platform resolves them.
 
 import (
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/ondrift/cloud/cli/common"
-	"gopkg.in/yaml.v3"
-)
 
-// The Driftfile's rules are NOT here. The platform defines the format and serves
-// the schema; schema.go validates against it, and NamePattern() reads the one rule
-// the CLI needs for a value the document never contains (the derived slice name).
-//
-// A block of regexes lived here — name, size, memory, duration, timeout, rate,
-// cron — restating rules the schema already carries as `pattern` keywords. Two
-// definitions of one format do not stay in step: this binary accepted
-// `nosql: [widgets]` while the platform rejected it, because the local copy
-// answered first (#CLI-STANDARDUSAGE-ERF1CV).
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
+)
 
 // ─── The Driftfile, as the document the platform defines ─────────────
 
 // Manifest is a parsed Driftfile: the validated DOCUMENT plus where it came from.
 //
 // There are no Go types for `atomic`, `backbone`, `canvas` or anything else the
-// format contains, and that is the point (#CLI-STANDARDUSAGE-ERF1CV). A struct is
-// a definition of the format, and the platform already publishes one — serving the
-// schema exists so this side does not need a second. Seventeen types lived here;
-// keeping them meant a Driftfile could be legal on the platform and rejected by
-// this binary, which is exactly what happened to `nosql: [widgets]`.
-//
-// So the CLI holds the file as what it is. It reads the handful of values it
-// genuinely acts on locally — a directory to upload, a secret to send — through
-// total accessors, and passes everything else through untouched, including keys
-// this release has never heard of.
+// document contains. A struct would be a second definition of what the platform
+// already publishes as its schema, so the CLI holds the document as it is and
+// reads the handful of values it acts on locally (a directory to upload, a
+// secret to send) through total accessors.
 type Manifest struct {
-	// doc is the whole shorthand-expanded, schema-validated document.
+	// doc is the whole compiled, schema-validated document.
 	doc Node
 
-	// slice is the resource shape: the document root minus the three siblings
-	// that are about deployment rather than shape. SelectEnvironment replaces it
-	// with the environment-merged result.
+	// slice is the resource shape: the document root minus the siblings that
+	// are about deployment rather than shape, with every element's Pulses and
+	// Fields flattened into the two lists every reader consumes.
 	slice Node
 
 	// baseDir is the Driftfile's directory; relative paths resolve against it.
@@ -87,47 +58,24 @@ type Manifest struct {
 }
 
 // sliceSiblings are the root keys that are NOT part of the resource shape.
-// Everything else at the root is the slice, because Driftfile v2 inlines it.
-var sliceSiblings = []string{"environments", "hooks", "tests"}
+var sliceSiblings = []string{"hooks", "tests"}
 
-// Doc is the whole document, including keys this binary has no knowledge of.
+// Doc is the whole document.
 func (m *Manifest) Doc() Node { return m.doc }
 
-// Slice is the resolved resource shape — after an environment overlay, if one was
-// selected. Accessors are total, which is safe because the schema has already run.
+// Slice is the resource shape. Accessors are total, which is safe because the
+// schema has already run.
 func (m *Manifest) Slice() Node { return m.slice }
 
-// Raw is Doc under its previous name, kept so callers reading the untouched
-// document do not have to care which of the two they wanted.
-func (m *Manifest) Raw() Node { return m.doc }
-
-// sliceKey is the root key naming the slice this file is applied to. The key
-// walker rewrites the retired `name` onto it before anything reads the document,
-// so every reader below sees exactly this one.
+// sliceKey is the root key naming the slice this file is applied to.
 const sliceKey = "slice"
 
-// Name is the slice this file is applied to. SelectEnvironment rewrites it to
-// the derived per-environment name.
+// Name is the slice this file is applied to: the slice block's, or the
+// selected environment's.
 func (m *Manifest) Name() string { return m.slice.Str(sliceKey) }
-
-// SetName exists for SelectEnvironment, which derives `<slice>-<env>`. Nothing
-// else has any business renaming a slice.
-func (m *Manifest) SetName(name string) { m.slice[sliceKey] = name }
 
 // BaseDir is the directory the Driftfile was read from.
 func (m *Manifest) BaseDir() string { return m.baseDir }
-
-// EnvironmentNames lists the declared environments, sorted.
-func (m *Manifest) EnvironmentNames() []string {
-	names := m.doc.Keys("environments")
-	sort.Strings(names)
-	return names
-}
-
-// HasEnvironment reports whether `name` is declared.
-func (m *Manifest) HasEnvironment(name string) bool {
-	return m.doc.Sub("environments").Has(name)
-}
 
 // PreDeploy / PostDeploy are the local shell commands run around a deploy.
 func (m *Manifest) PreDeploy() []string  { return m.doc.Strings("hooks", "pre_deploy") }
@@ -145,84 +93,51 @@ func (p ParseErrors) Error() string {
 	return fmt.Sprintf("%d validation errors:\n  - %s", len(p), strings.Join(p, "\n  - "))
 }
 
-// ParseDriftfile reads a Driftfile from disk, expands shorthands,
-// resolves $ENVREF secrets, and validates everything against the
-// spec. baseDir is the directory containing the Driftfile and is
-// used as the resolution root for relative paths.
+// ParseDriftfile compiles the Driftfile at path for its default slice and
+// resolves its secret references. Relative paths resolve against the file's
+// directory.
 func ParseDriftfile(path string) (*Manifest, error) {
-	data, err := os.ReadFile(path) // #nosec G304 — CLI reads the user's manifest by design
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
-	}
-
-	// A Driftfile 2 is HCL, and the commands that read this YAML format do not
-	// read it. Said here, once, rather than as a YAML error about a file that
-	// was never meant to be YAML.
-	if IsFormat2(data) {
-		return nil, fmt.Errorf("%s is a Driftfile 2 (HCL): `drift plan` reads it, and the `drift file` commands read the YAML 1.x format", filepath.Base(path))
-	}
-
-	var m Manifest
-	m.baseDir = filepath.Dir(path)
-	if m.doc, err = decodeValidated(data); err != nil {
-		return nil, err
-	}
-	if err := finishParse(&m); err != nil {
-		return nil, err
-	}
-
-	// $ENVREF resolution is not validation — it substitutes a value from the
-	// deployer's environment, and reports the ones that are not set because a
-	// secret silently becoming the literal "$VAR" is a credential that is wrong
-	// in a way nothing downstream can detect.
-	if err := resolveSecretEnvRefs(&m); err != nil {
-		return nil, err
-	}
-	return &m, nil
+	return ParseDriftfileEnv(path, "")
 }
 
-// finishParse runs every pass that follows schema validation and precedes
-// secret resolution, on a document already validated. It is shared by both
-// formats: a Driftfile 2 compiles to the same document a YAML file decodes to,
-// and from here on the two are read by one set of passes.
+// ParseDriftfileEnv is ParseDriftfile for one of the file's environments: its
+// variables take that environment's values, and the manifest names that
+// environment's slice. env "" is the default slice.
+func ParseDriftfileEnv(path, env string) (*Manifest, error) {
+	c, err := CompileDriftfileEnv(path, env)
+	if err != nil {
+		return nil, err
+	}
+	// Resolving a reference is not validation: it substitutes a value from the
+	// deployer's environment, and reports the ones that are not set, because a
+	// secret silently becoming the literal "$VAR" is a credential that is wrong
+	// in a way nothing downstream can detect.
+	if err := resolveSecretEnvRefs(c.Manifest); err != nil {
+		return nil, err
+	}
+	return c.Manifest, nil
+}
+
+// finishParse runs every pass that follows schema validation on a compiled
+// document: the elements flattened, each Pulse's identity composed, the slots
+// checked against one another, and the questions only this machine can
+// answer.
 func finishParse(m *Manifest) error {
-	// The resource shape is the document root minus the three siblings that are
-	// about deployment rather than shape — Driftfile v2 inlines the slice.
-	// SelectEnvironment replaces this with the environment-merged result.
 	m.slice = m.doc.Clone()
 	for _, sibling := range sliceSiblings {
 		delete(m.slice, sibling)
 	}
 
-	// Retired keys, announced once each and rewritten where they have a target.
-	//
-	// Here, and not either side of here. AFTER validation, so the walker only
-	// ever sees a legal document. BEFORE checkLocalPaths, because that pass reads
-	// several of the very keys an alias rewrites and must see one spelling rather
-	// than two.
-	applyKeyDeprecations(m.doc, driftfileKeyDeprecations)
-	applyKeyDeprecations(m.slice, driftfileKeyDeprecations)
-
 	// Every element's Pulses and Fields, flattened into the two lists every
-	// reader consumes. On the slice alone: the document keeps the nested shape
-	// the environment merge reads, and each merged slice is flattened on its own
-	// (see elements.go).
-	if err := normaliseElements(m.slice, warnElementTag); err != nil {
+	// reader consumes. See elements.go.
+	if err := normaliseElements(m.slice); err != nil {
 		return err
 	}
 
-	// A function's identity, in whichever spelling it was written, resolved to
-	// the one string the platform books against.
-	//
-	// Beside the key walker rather than inside it: that pass RENAMES a key, and
-	// this is a SPLIT — `name` becomes `route` and `method`, and the composite
-	// has to be recomposed for every reader that already speaks it.
+	// A Pulse's identity, its route and method, composed into the one string
+	// the platform books against.
 	normaliseFunctionIdentities(m.doc)
 	normaliseFunctionIdentities(m.slice)
-
-	// The deprecated `concurrency: N`, said once: the slice decides the number,
-	// and FunctionSpec reads the count as `concurrent` above 1.
-	warnDeprecatedConcurrency(m.slice, concurrencyDeprecation.Warn)
 
 	// Two slots on one booking key, or a Field named like a Pulse route,
 	// anywhere in the slice. Refused here, before anything is built.
@@ -230,265 +145,55 @@ func finishParse(m *Manifest) error {
 		return err
 	}
 
-	// The one class of check the schema CANNOT own: whether the paths a valid
-	// document names actually exist on THIS machine. A schema describes the
-	// document; only the laptop knows if `atomic/get-menu/` is there. This is not
-	// a second opinion on the format — it never inspects a value's shape.
+	// The one class of check the schema CANNOT own: whether the files a valid
+	// document names hold what they must. A schema describes the document; only
+	// the laptop can open a seed file.
 	if errs := checkLocalPaths(m); len(errs) > 0 {
 		return errs
 	}
 
 	// The other class the schema cannot own: a reference from one part of the
-	// document to another. A queue-triggered function names a queue, and only
-	// `backbone.queues` declares one — the live slice carries a depth and no
-	// names, so the document is the only thing that can answer this.
+	// document to another. A queue-triggered Pulse names a queue, and only a
+	// `queue` block declares one.
 	//
 	// A warning, not a refusal: the slice creates an undeclared queue on its
-	// first push, so the function does fire and stopping the deploy would be
+	// first push, so the Pulse does fire and stopping the deploy would be
 	// wrong. See queuerefs.go.
 	for _, w := range checkQueueReferences(m) {
-		fmt.Fprintf(os.Stderr, "  %s %s\n", common.Hint("·"), w)
-	}
-
-	// A value written out in `backbone.secrets:` — which is a value in git.
-	//
-	// BEFORE the resolution ParseDriftfile runs after this pass, and that
-	// ordering is the whole check: once
-	// `$VAR` has been substituted every value is a literal, and a pass running
-	// after this point cannot tell the two apart at all.
-	for _, w := range checkHardcodedSecrets(m) {
 		fmt.Fprintf(os.Stderr, "  %s %s\n", common.Hint("·"), w)
 	}
 	return nil
 }
 
-// decodeValidated is the half of ParseDriftfile that reads the TEXT: placeholders
-// substituted, the YAML decoded, the short forms expanded, and the result
-// validated against the platform's schema. Nothing after it touches the bytes.
-func decodeValidated(data []byte) (Node, error) {
-	// Expand ${VAR} placeholders against the process environment before
-	// YAML parsing — the env-aware Driftfile feature. ${VAR} is the
-	// staging/prod overlay primitive: typically `slice.name: ${ENV}-myapp`
-	// resolved by `drift file apply --env=prod` setting ENV=prod.
-	// Distinct from `$VAR` (no braces) which is the secret-envref shape
-	// in slice.backbone.secrets — that path runs later, on already-parsed
-	// values, and is unaffected by this substitution.
-	expanded, err := substituteBraceVars(data)
-	if err != nil {
-		return nil, fmt.Errorf("Driftfile: %w", err)
-	}
-
-	var raw yaml.Node
-	if err := yaml.Unmarshal(expanded, &raw); err != nil {
-		return nil, fmt.Errorf("invalid YAML: %w", err)
-	}
-
-	// Rewrite the documented short forms into their canonical maps. This is a
-	// TRANSFORMATION, not a rule: it changes shape and never decides legality,
-	// which is why it can run before the only thing that does.
-	if err := expandShorthands(&raw); err != nil {
-		return nil, fmt.Errorf("Driftfile: %w", err)
-	}
-
-	// The document, which is what the platform defines and therefore what gets
-	// validated.
-	var doc Node
-	if err := raw.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("Driftfile: %w", err)
-	}
-
-	// ONE validation, and it is the only one. The platform defines the format;
-	// nothing here gets a second opinion on whether a document is legal.
-	if errs := validateAgainstSchema(doc); len(errs) > 0 {
-		return nil, errs
-	}
-	return doc, nil
-}
-
-// ValidateDriftfileSource validates Driftfile text against the platform's schema
-// exactly as ParseDriftfile does, without the passes that ask this machine's
-// filesystem or environment about the values. `drift file migrate` checks both
-// the file it was given and the file it writes with it.
-//
-// Like ParseDriftfile it validates nothing when no schema is cached; a caller
-// that must not claim a pass it cannot stand behind asks SchemaAvailable first.
-func ValidateDriftfileSource(data []byte) error {
-	_, err := decodeValidated(data)
-	return err
-}
-
-// checkHardcodedSecrets reports every `backbone.secrets:` entry written as a
-// literal rather than as a `$VAR` reference.
-//
-// # Why a literal there is worth a line, whatever it holds
-//
-// The Driftfile is the one file guaranteed to be in the repository, and
-// `backbone.secrets:` accepts a plain string with no constraint — so it is also
-// a legal place to write a live credential. The schema's own description names
-// the literal form FIRST, and the documentation shows it first, which is what
-// teaches the habit. Nothing anywhere said a word.
-//
-// A literal here is one of exactly two things, and both are worth saying:
-//
-//   - a CREDENTIAL, now committed, readable by everyone with repository access
-//     and present in the history after it is removed;
-//   - CONFIGURATION that is not secret at all — an app name, a region, a bucket
-//     — which belongs in `env:` instead.
-//
-// The second is not pedantry. `secrets:` is an isolation boundary: a reviewer
-// reading a diff can see which functions gained privilege, and that reading
-// holds only while the list carries credentials. The moment it also carries
-// addresses and feature flags, a new entry stops meaning "this function can now
-// read something secret".
-//
-// Naming both is what makes this warning actionable without a heuristic. Trying
-// to GUESS which literals look like credentials would be wrong in both
-// directions — a short passphrase reads as innocuous, a long product name reads
-// as high entropy — and a guess that is wrong either way teaches people to
-// ignore the line.
-//
-// A WARNING, NOT A REFUSAL. Literals are legal, documented, and in use; failing
-// the parse would break working manifests to make a point. This is the same
-// posture `checkQueueReferences` takes for the same reason.
-func checkHardcodedSecrets(m *Manifest) []string {
-	secrets := m.Slice().Sub("backbone", "secrets")
-	if len(secrets) == 0 {
-		return nil
-	}
-	var literal []string
-	for k, v := range secrets.StrMap() {
-		// `$VAR` is the referenced form and the one this points people at.
-		// Anything else is written out in the file.
-		if !strings.HasPrefix(v, "$") {
-			literal = append(literal, k)
-		}
-	}
-	if len(literal) == 0 {
-		return nil
-	}
-	sort.Strings(literal)
-
-	subject, verb := "secret", "is"
-	if len(literal) > 1 {
-		subject, verb = "secrets", "are"
-	}
-	return []string{
-		fmt.Sprintf("%s %s %s written out in the Driftfile, and so committed to your repository.",
-			subject, strings.Join(quoteAll(literal), ", "), verb),
-		"For a credential, reference it instead: `SECRET: $SECRET`, resolved from your " +
-			"environment or a sibling .env. Or leave it out and set it with " +
-			"`drift backbone secret set`.",
-		"For anything that is not secret, use `env:` rather than `secrets:`. That is what " +
-			"keeps a new `secrets:` entry meaning \"this function gained privilege\".",
-	}
-}
-
-// quoteAll renders names for a message, so a list reads as names rather than as
-// prose that happens to contain them.
-func quoteAll(names []string) []string {
-	out := make([]string, 0, len(names))
-	for _, n := range names {
-		out = append(out, fmt.Sprintf("%q", n))
-	}
-	return out
-}
-
-// checkLocalPaths verifies that every path the document names resolves on this
-// machine. It is the ONE pass that survived the schema taking over the format
-// (#CLI-STANDARDUSAGE-ERF1CV), and it survived for a reason that will not change:
-// a JSON Schema validates a document, and no document can state whether
-// `./canvas` exists in the directory the operator is standing in.
+// checkLocalPaths verifies that a NoSQL seed holds records that load. The
+// compiler refuses a missing path at the attribute that names it; whether a
+// seed's records can be ingested is the one question only reading the seed
+// answers.
 //
 // The distinction to hold on to when adding anything here: this may ask the
-// FILESYSTEM a question. It may never ask whether a value is well-formed — that
-// is the schema's, and duplicating it is the exact fault this card removed.
+// FILESYSTEM a question. It may never ask whether a value is well-formed: that
+// is the schema's.
 func checkLocalPaths(m *Manifest) ParseErrors {
 	var errs ParseErrors
-
-	// A function whose source directory is missing otherwise fails much later,
-	// inside the per-function build, as a compiler error about no input files.
-	//
-	// Only when a `dir` is actually declared. A function's `name` is its TRIGGER
-	// (`post:auth/challenge`), not a path — it identifies what the slice runs and
-	// what that booking costs, and deriving `atomic/<name>` from it asks the
-	// filesystem for a directory nobody wrote. It is wrong twice over: the name
-	// holds `/` and `:`, and the layout it assumes — one folder per function —
-	// is not the one most projects use. Without a `dir`, the directory comes
-	// from the function's element, which is checked when the element is built.
-	//
-	// A Field's `dir` is the same question, asked of `atomic.fields`. An entry
-	// declared inside an element, or given its element's `dir`, is named by its
-	// element: its index in the flattened list is not a position in the file.
-	for _, list := range []struct {
-		key, noun string
-		entries   []Node
-	}{
-		{pulsesKey, "pulse", PulseEntries(m.slice)},
-		{fieldsKey, "field", FieldEntries(m.slice)},
-	} {
-		for i, fn := range list.entries {
-			declared := fn.Str("dir")
-			if declared == "" {
-				continue // the element owns the directory; nothing to check here
-			}
-			dir := resolveBaseDir(m, declared)
-			if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-				where := fmt.Sprintf("atomic.%s[%d]", list.key, i)
-				if el := fn.Str("element"); el != "" {
-					where = fmt.Sprintf("element %q", el)
-				}
-				errs = append(errs, fmt.Sprintf("%s: %s %q declares dir %s, which is not a directory",
-					where, list.noun, fn.Str("name"), dir))
-			}
-		}
-	}
-
-	for i, site := range m.slice.Entries("dir", "canvas", "sites") {
-		dir := resolveBaseDir(m, site.Str("dir"))
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			errs = append(errs, fmt.Sprintf("canvas.sites[%d]: directory not found at %s", i, dir))
-		}
-	}
-
-	for i, c := range m.slice.Entries("slot", "backbone", "nosql") {
+	for _, c := range m.slice.Entries("slot", "backbone", "nosql") {
 		seed := c.Str("seed")
 		if seed == "" {
 			continue
 		}
 		seedPath := resolveBaseDir(m, seed)
 		if _, err := os.Stat(seedPath); err != nil {
-			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q seed file not found at %s", i, c.Str("slot"), seedPath))
+			errs = append(errs, fmt.Sprintf("nosql %q: seed file not found at %s", c.Str("slot"), seedPath))
 			continue
 		}
 		errs = append(errs, validateJSONLSeed(c.Str("slot"), seedPath)...)
 	}
 
-	for i, d := range m.slice.Entries("name", "backbone", "sql") {
-		dir := d.Str("migrations")
-		if dir == "" {
-			continue
-		}
-		p := resolveBaseDir(m, dir)
-		if info, err := os.Stat(p); err != nil || !info.IsDir() {
-			errs = append(errs, fmt.Sprintf("backbone.sql[%d]: %q migrations directory not found at %s", i, d.Str("name"), p))
-		}
-	}
-
-	for k, e := range m.slice.EntryMap("value", "backbone", "cache") {
-		if f := e.Str("file"); f != "" {
-			fp := resolveBaseDir(m, f)
-			if _, err := os.Stat(fp); err != nil {
-				errs = append(errs, fmt.Sprintf("cache %q file not found at %s", k, fp))
-			}
-		}
-	}
-
-	sort.Strings(errs) // map iteration above; a stable message order is testable
+	sort.Strings(errs) // a stable message order is testable
 	return errs
 }
 
 // validateJSONLSeed reads a seed file and reports the records that cannot be
-// loaded. Also filesystem-only: the schema knows the seed is a path string, and
+// loaded. Filesystem-only: the schema knows the seed is a path string, and
 // nothing more can be known about it without opening the file.
 func validateJSONLSeed(collection, path string) []string {
 	data, err := os.ReadFile(path) // #nosec G304 — CLI reads the user's manifest by design
@@ -520,43 +225,113 @@ func validateJSONLSeed(collection, path string) []string {
 	return errs
 }
 
-// ParseHooks decodes ONLY the `hooks:` block, with no validation and no schema.
-//
-// The deploy command calls it BEFORE the full parse so a `pre_deploy` build can
-// produce artifacts (a canvas/ dist directory, say) that the full parse then
-// validates. Hook command strings are left verbatim — `${VAR}` in a command is
-// expanded by the shell at run time, not at the YAML layer. A missing or garbled
-// `hooks:` block yields nothing, never an error, so a half-built project can still
-// run its build step.
-func ParseHooks(path string) (pre, post []string) {
-	doc, err := readDocument(path)
-	if err != nil {
-		return nil, nil
-	}
-	return doc.Strings("hooks", "pre_deploy"), doc.Strings("hooks", "post_deploy")
-}
+// ─── What runs before the compile ───────────────────────────────────
 
-// ParseTests decodes ONLY the `tests:` block, same posture as ParseHooks.
-func ParseTests(path string) []string {
-	doc, err := readDocument(path)
-	if err != nil {
-		return nil
-	}
-	return doc.Strings("tests", "e2e")
-}
-
-// readDocument reads a Driftfile as an untyped document with no validation.
-// Used by the cheap single-block parses above, which run before the real one.
-func readDocument(path string) (Node, error) {
+// ParseHooks reads a Driftfile's hooks without compiling the rest, so a
+// pre_deploy build can make what the compile then checks for: a site's folder,
+// a seed file.
+func ParseHooks(path string) (pre, post []string, err error) {
 	data, err := os.ReadFile(path) // #nosec G304 — the user's own manifest
+	if err != nil {
+		return nil, nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	file, ev, err := readDriftfile(path, data)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, h := range file.Hooks {
+		run, ok := ev.str(h.Run, "hook: run")
+		if !ok {
+			continue
+		}
+		switch h.Phase {
+		case "pre_deploy":
+			pre = append(pre, run)
+		case "post_deploy":
+			post = append(post, run)
+		}
+	}
+	if ev.diags.HasErrors() {
+		return nil, nil, diagError(ev.diags)
+	}
+	return pre, post, nil
+}
+
+// ParseTests reads a Driftfile's test commands without compiling the rest, so
+// `drift file test` can say there are none before it builds anything.
+func ParseTests(path string) ([]string, error) {
+	data, err := os.ReadFile(path) // #nosec G304 — the user's own manifest
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	file, ev, err := readDriftfile(path, data)
 	if err != nil {
 		return nil, err
 	}
-	var doc Node
-	if uerr := yaml.Unmarshal(data, &doc); uerr != nil {
-		return nil, uerr
+	var runs []string
+	for _, t := range file.Tests {
+		if run, ok := ev.str(t.Run, fmt.Sprintf("test %q: run", t.Name)); ok {
+			runs = append(runs, run)
+		}
 	}
-	return doc, nil
+	if ev.diags.HasErrors() {
+		return nil, diagError(ev.diags)
+	}
+	return runs, nil
+}
+
+// ParseProjectName reads ONLY the name of the slice a Driftfile is applied to,
+// for its default slice or one environment: no evaluation, no schema, no
+// secrets, so `drift file stop` and `logs` find the container without the
+// project's secrets being set.
+//
+// An environment's slice is the one its block names, when that is written as a
+// plain string, else `<slice>-<env>`, exactly as the compiler names it.
+func ParseProjectName(path, env string) (string, error) {
+	data, err := os.ReadFile(path) // #nosec G304 — CLI reads the user's manifest by design
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	if isYAML(data) {
+		return "", refuseYAML(path)
+	}
+	name := filepath.Base(path)
+	f, diags := hclsyntax.ParseConfig(data, name, hcl.InitialPos)
+	if diags.HasErrors() {
+		return "", diagError(diags)
+	}
+	blocks := f.Body.(*hclsyntax.Body).Blocks
+
+	base := ""
+	for _, b := range blocks {
+		if b.Type == "slice" && len(b.Labels) == 1 {
+			base = b.Labels[0]
+			break
+		}
+	}
+	if base == "" {
+		return "", fmt.Errorf(`%s names no slice: add slice "<name>" { billing = "monthly" }`, name)
+	}
+	if env == "" {
+		return base, nil
+	}
+
+	for _, b := range blocks {
+		if b.Type != "environment" || len(b.Labels) != 1 || b.Labels[0] != env {
+			continue
+		}
+		attr, ok := b.Body.Attributes["slice"]
+		if !ok {
+			return deriveSliceName(base, env), nil
+		}
+		v, d := attr.Expr.Value(nil)
+		if d.HasErrors() || v.IsNull() || !v.Type().Equals(cty.String) {
+			return "", fmt.Errorf("environment %q names its slice with an expression, which is only read by a full parse; "+
+				"write it as a string", env)
+		}
+		return v.AsString(), nil
+	}
+	return "", fmt.Errorf("there is no environment %q in %s", env, name)
 }
 
 // SchemaAvailable reports whether this machine holds the platform's Driftfile
@@ -566,139 +341,9 @@ func SchemaAvailable() bool {
 	return err == nil && sch != nil
 }
 
-// ─── Hooks (cheap pre-build parse) ──────────────────────────────────
-
-// ParseProjectName cheaply decodes ONLY the slice's identity — no validation,
-// no `${VAR}`/`$ENVREF` resolution — so commands that just need it (e.g.
-// `drift file stop`/`logs` finding the container) work without the project's
-// secrets being set in the environment.
-//
-// It accepts BOTH spellings itself rather than leaning on the key walker,
-// because it never runs the walker: that is the whole point of this function.
-// Reading only the current spelling here would leave every container started
-// from a `name:`-keyed file unstoppable except by hand.
-func ParseProjectName(path string) (string, error) {
-	data, err := os.ReadFile(path) // #nosec G304 — CLI reads the user's manifest by design
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
-	}
-	var wrapper struct {
-		Slice string `yaml:"slice"`
-		Name  string `yaml:"name"`
-	}
-	if err := yaml.Unmarshal(data, &wrapper); err != nil {
-		return "", fmt.Errorf("Driftfile: invalid YAML: %w", err)
-	}
-	// The current spelling wins when a document carries both, matching what the
-	// walker does with the pair.
-	identity := strings.TrimSpace(wrapper.Slice)
-	if identity == "" {
-		identity = strings.TrimSpace(wrapper.Name)
-	}
-	if identity == "" {
-		return "", fmt.Errorf("Driftfile names no slice — add `slice: <name>`")
-	}
-	return identity, nil
-}
-
-// ─── Environment selection + merge ──────────────────────────────────
-
-// SelectEnvironment resolves the deploy target for the chosen environment:
-// it validates `env` against the declared environments, deep-merges that
-// environment's overrides onto the base slice, and derives the slice name.
-// It mutates the manifest in place (m.Slice becomes the effective slice) and
-// returns the resolved environment name (empty for a single-environment
-// project). `explicit` is true when the user named an environment (positional
-// arg or --env), which makes "no environments declared" an error rather than
-// a silent fall-through.
-//
-// Resolution:
-//   - No environments declared: a bare-name single slice. An explicit env is
-//     an error (nothing to select).
-//   - env == "": default to `prod`/`production` if present, else error asking
-//     the user to pick one.
-//   - env names a declared environment: merge + derive name.
-//
-// Naming: `prod`/`production` (and the no-environments case) deploy under the
-// bare project name; every other environment deploys under `<name>-<env>`.
-func (m *Manifest) SelectEnvironment(env string, explicit bool) (string, error) {
-	names := m.EnvironmentNames()
-
-	if len(names) == 0 {
-		if explicit && env != "" {
-			return "", fmt.Errorf("this project declares no environments, so it can't deploy %q — add an `environments:` block, or drop the argument to deploy the single slice", env)
-		}
-		return "", nil
-	}
-
-	if env == "" {
-		switch {
-		case m.HasEnvironment("prod"):
-			env = "prod"
-		case m.HasEnvironment("production"):
-			env = "production"
-		default:
-			return "", fmt.Errorf("this project declares environments (%s) but no default — pick one: drift file apply <env>", strings.Join(names, ", "))
-		}
-	}
-	if !m.HasEnvironment(env) {
-		return "", fmt.Errorf("unknown environment %q — declared: %s", env, strings.Join(names, ", "))
-	}
-
-	base := m.Name()
-	m.slice = m.mergeEnvironment(env)
-
-	// The merge reads the document, whose elements are still nested, so the
-	// merged result is flattened here, after the overlay's lists have replaced
-	// the base's.
-	if err := normaliseElements(m.slice, warnElementTag); err != nil {
-		return "", err
-	}
-
-	// The overlay arrives as written, and a list REPLACES the base's. An
-	// overlay restating `atomic.functions` in the route/method spelling would
-	// otherwise reach every reader with no composite identity, so each function
-	// would deploy, book and report as "". The parse normalised the base; the
-	// merged result gets the same pass.
-	normaliseFunctionIdentities(m.slice)
-
-	// The overlay can introduce a Pulse or a Field, so the merged result is
-	// checked again for two slots on one key and a Field sharing a Pulse's name.
-	if err := checkSlotIdentities(m.slice); err != nil {
-		return "", err
-	}
-
-	// The merge re-reads the RAW document, where a `$VAR` secret is still the
-	// placeholder ParseDriftfile resolved. Resolve again — exactly once, on
-	// unresolved values, the same as for a project with no environments. Without
-	// it a deploy ships the literal "$VAR" as the secret's value, which nothing
-	// downstream can detect.
-	if err := resolveSecretEnvRefs(m); err != nil {
-		return "", err
-	}
-
-	m.SetName(deriveSliceName(base, env))
-
-	// The one name the schema cannot see: this is DERIVED (`<project>-<env>`) and
-	// never appears in the Driftfile, so no document validation catches a long
-	// project name plus `-staging` going over the limit.
-	//
-	// The rule still comes from the platform — NamePattern() reads it out of the
-	// fetched schema. Restating it here as a literal regex is what `nameRe` was,
-	// and a second copy of a platform rule is what let `nosql: [widgets]` be legal
-	// in this binary and illegal on the server. No schema, no check: the server is
-	// the final enforcer, and a guess is the thing being removed.
-	if re := NamePattern(); re != nil && !re.MatchString(m.Name()) {
-		return "", fmt.Errorf("derived slice name %q (project %q + environment %q) is not a "+
-			"valid slice name — shorten the project or environment name", m.Name(), base, env)
-	}
-	return env, nil
-}
-
-// deriveSliceName maps (project name, environment) to a slice name. The
-// production environment — and a single-environment project — own the bare
-// project name; every other environment gets a `-<env>` suffix so its slice
-// is a distinct, separately-billed instance.
+// deriveSliceName maps (slice name, environment) to the environment's slice.
+// The production environment owns the bare name; every other environment gets
+// a `-<env>` suffix, so its slice is a distinct, separately-billed instance.
 func deriveSliceName(base, env string) string {
 	if env == "" || env == "prod" || env == "production" {
 		return base
@@ -706,186 +351,12 @@ func deriveSliceName(base, env string) string {
 	return base + "-" + env
 }
 
-// mergeEnvironment resolves the slice for `env` by merging that environment's
-// overlay onto the base AS A DOCUMENT.
-//
-// It replaced four hand-written mergers that walked a typed Slice field by field.
-// That shape had two bugs, both live and both invisible
-// (#CLI-STANDARDUSAGE-T9914R):
-//
-//   - **A value could not be overridden to zero or false.** Every clause gated on
-//     truthiness — `if overlay.DeployHistory != 0` — so `deploy_history: 0` in an
-//     environments block was indistinguishable from an absent key and discarded.
-//   - **A merge could silently forget.** Overrides were applied clause by clause,
-//     so a new Driftfile field was not overridable until someone added one.
-//
-// DeepMerge keys off PRESENCE, and cannot fail to know about a field because it
-// does not know what a field is. There is no decode to follow it any more: the
-// result IS the slice.
-func (m *Manifest) mergeEnvironment(env string) Node {
-	base := m.doc.Clone()
-	for _, sibling := range sliceSiblings {
-		delete(base, sibling)
-	}
-	return DeepMerge(base, m.doc.Sub("environments", env))
-}
+// ─── Secret reference resolution ────────────────────────────────────
 
-func expandShorthands(root *yaml.Node) error {
-	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
-		return nil
-	}
-	doc := root.Content[0]
-	if doc.Kind != yaml.MappingNode {
-		return nil
-	}
-
-	// Top-level section sugars (atomic-as-list, canvas-as-string/list).
-	expandSectionShorthands(doc)
-
-	// environments: expand the bare-list form to a map, then run the same
-	// section sugars inside every (non-empty) environment override block.
-	if envNode := findChild(doc, "environments"); envNode != nil {
-		if envNode.Kind == yaml.SequenceNode {
-			expandEnvListToMap(envNode)
-		}
-		if envNode.Kind == yaml.MappingNode {
-			for i := 1; i < len(envNode.Content); i += 2 {
-				if body := envNode.Content[i]; body.Kind == yaml.MappingNode {
-					expandSectionShorthands(body)
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// expandSectionShorthands rewrites the atomic/canvas section sugars within one
-// mapping node (the Driftfile root, or an environment override block).
-func expandSectionShorthands(m *yaml.Node) {
-	if m.Kind != yaml.MappingNode {
-		return
-	}
-
-	// `atomic:` has NO short form, and expanding one here was the CLI holding a
-	// second opinion about the format. The schema defines `canvas` as a `oneOf`
-	// over string, list and object; `atomic` is the object alone.
-	//
-	// Rewriting a list into `{ functions: <list> }` cost twice over. A list of
-	// bare names cannot carry the memory every function must book, so the
-	// document it produced always failed validation — but at
-	// `/atomic/functions/0`, a path the user's file does not contain. And a list
-	// of MAPS produced a document that validated, so this binary accepted a shape
-	// the platform does not define. Without the rewrite the same file is refused
-	// at `/atomic`, which is where they wrote it.
-
-	// canvas short forms:
-	//   string   -> { sites: [string] }
-	//   sequence -> { sites: <seq> }
-	if canvasNode := findChild(m, "canvas"); canvasNode != nil {
-		switch canvasNode.Kind {
-		case yaml.ScalarNode:
-			path := canvasNode.Value
-			canvasNode.Kind = yaml.MappingNode
-			canvasNode.Tag = ""
-			canvasNode.Style = 0
-			canvasNode.Value = ""
-			canvasNode.Content = []*yaml.Node{
-				{Kind: yaml.ScalarNode, Value: "sites", Tag: "!!str"},
-				{
-					Kind: yaml.SequenceNode,
-					Content: []*yaml.Node{
-						{Kind: yaml.ScalarNode, Value: path, Tag: "!!str"},
-					},
-				},
-			}
-		case yaml.SequenceNode:
-			wrap := *canvasNode
-			canvasNode.Kind = yaml.MappingNode
-			canvasNode.Tag = ""
-			canvasNode.Style = 0
-			canvasNode.Content = []*yaml.Node{
-				{Kind: yaml.ScalarNode, Value: "sites", Tag: "!!str"},
-				&wrap,
-			}
-		}
-	}
-}
-
-// expandEnvListToMap rewrites `environments: [prod, staging]` into the
-// canonical `environments: { prod: {}, staging: {} }` — each named environment
-// inheriting the base shape unchanged.
-func expandEnvListToMap(node *yaml.Node) {
-	content := make([]*yaml.Node, 0, len(node.Content)*2)
-	for _, item := range node.Content {
-		if item.Kind != yaml.ScalarNode {
-			continue // be lenient; a malformed entry surfaces at validation
-		}
-		content = append(content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: item.Value, Tag: "!!str"},
-			&yaml.Node{Kind: yaml.MappingNode}, // empty override body
-		)
-	}
-	node.Kind = yaml.MappingNode
-	node.Tag = ""
-	node.Style = 0
-	node.Content = content
-}
-
-// findChild returns the value node for a given key in a mapping node,
-// or nil if the key isn't present.
-func findChild(m *yaml.Node, key string) *yaml.Node {
-	if m.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == key {
-			return m.Content[i+1]
-		}
-	}
-	return nil
-}
-
-// ─── Secret $ENVREF resolution ──────────────────────────────────────
-
-// braceVarRe matches ${NAME} placeholders. NAME is ASCII letters,
-// digits, and underscores starting with a letter or underscore — same
-// shape as POSIX shell variable names. Unmatched braces (e.g. `${`
-// without closing) are left alone.
-var braceVarRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-
-// substituteBraceVars replaces every `${VAR}` in data with
-// `os.Getenv("VAR")`. Returns an error listing every variable that
-// is referenced but not set, so the user sees every gap at once
-// instead of fixing them one at a time.
-func substituteBraceVars(data []byte) ([]byte, error) {
-	missing := map[string]struct{}{}
-	out := braceVarRe.ReplaceAllFunc(data, func(match []byte) []byte {
-		name := string(braceVarRe.FindSubmatch(match)[1])
-		val, ok := os.LookupEnv(name)
-		if !ok {
-			missing[name] = struct{}{}
-			return match
-		}
-		return []byte(val)
-	})
-	if len(missing) > 0 {
-		var names []string
-		for n := range missing {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-		return nil, fmt.Errorf("${VAR} placeholders reference unset variables: %s (provide them via the environment, a --secret KEY=value flag, or a .env file next to the Driftfile)", strings.Join(names, ", "))
-	}
-	return out, nil
-}
-
-// secretsMap holds the resolved secrets after $ENVREF substitution.
-// The Manifest's Secrets field still holds the *manifest* values
-// (with the literal "$NAME" string for envrefs); resolveSecretEnvRefs
-// converts them in place. This keeps the SDK's mental model simple:
-// after ParseDriftfile, what's in m.Slice().Sub("backbone", "secrets") is what
-// the platform should store.
+// resolveSecretEnvRefs replaces each `$NAME` secret reference in the slice
+// with the value of NAME in the environment, so what reads the Manifest holds
+// what the platform should store. Every reference that is not set is reported
+// at once.
 func resolveSecretEnvRefs(m *Manifest) error {
 	secrets := m.Slice().Sub("backbone", "secrets")
 	if len(secrets) == 0 {
@@ -896,12 +367,6 @@ func resolveSecretEnvRefs(m *Manifest) error {
 		if !strings.HasPrefix(v, "$") {
 			continue
 		}
-		// Quoted "$dollars" is a literal — it would already have lost
-		// the quotes by the time we see the string here, so we can't
-		// distinguish from a real envref. The spec's escape hatch
-		// ("To force a literal that starts with $, quote it") relies
-		// on the fact that a literal value is meant to BE that string.
-		// We treat all bare $-prefixed values as envrefs.
 		envName := strings.TrimPrefix(v, "$")
 		envVal, ok := os.LookupEnv(envName)
 		if !ok {
@@ -911,6 +376,7 @@ func resolveSecretEnvRefs(m *Manifest) error {
 		secrets[k] = envVal
 	}
 	if len(missing) > 0 {
+		sort.Strings(missing)
 		return ParseErrors(missing)
 	}
 	return nil

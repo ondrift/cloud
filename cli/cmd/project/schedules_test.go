@@ -129,10 +129,10 @@ func TestDeclaredSchedules_KeyedByFunctionName(t *testing.T) {
 // a name that appears in FunctionSpecs, which is what the deploy path looks up
 // by. A key that matches no spec can only ever miss.
 func TestTheScheduleKeyIsTheKeyTheDeployLooksUp(t *testing.T) {
-	// THE MODERN SPELLING, which is the whole point: `route` + `method`, no
-	// `name`. Every other test in this file writes the deprecated `name:`, which
-	// is why they all passed against a broken feature — a hand-written `name`
-	// happens to look like the composite the normaliser would have produced.
+	// The pair the compiler writes, which is the whole point: `route` +
+	// `method`, no `name`. A hand-written `name` happens to look like the
+	// composite the normaliser produces, so only a document without one proves
+	// the composition.
 	doc := Node{"slice": "lab", "atomic": map[string]any{"pulses": []any{
 		map[string]any{"route": "cronprobe", "method": "get", "handler": "GetCronprobe", "cron": "*/1 * * * *"},
 		map[string]any{"route": "menu", "method": "get", "handler": "GetMenu"},
@@ -163,14 +163,12 @@ func TestTheScheduleKeyIsTheKeyTheDeployLooksUp(t *testing.T) {
 // `drift atomic deploy` PUBLISHES THE SCHEDULES TOO.
 //
 // It reads a Driftfile — FunctionSpecsInDir walks up to the project manifest —
-// and for the whole life of the feature it read one and never published what it
-// found. So the same Driftfile produced a schedule under `drift file apply` and
-// none under `drift atomic deploy`, with nothing said either way.
-//
-// That is the exact failure `refuseScheduleComments` refuses the RETIRED
-// spelling for: "a schedule that exists depending on which deploy command you
-// typed is worse than one that does not exist."
+// and has to publish what it found, or the same Driftfile produces a schedule
+// under `drift apply` and none under `drift atomic deploy`, with nothing said
+// either way. A schedule that exists depending on which deploy command you typed
+// is worse than one that does not exist.
 func TestAtomicDeployPublishesTheDeclaredSchedules(t *testing.T) {
+	withRealSchema(t)
 	t.Cleanup(func() { atomic_cmd.SetDeclaredSchedules(nil) })
 	atomic_cmd.SetDeclaredSchedules(nil)
 
@@ -184,9 +182,9 @@ func TestAtomicDeployPublishesTheDeclaredSchedules(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "Driftfile"),
-		[]byte("slice: demo\natomic:\n  functions:\n"+
-			"    - route: tick\n      method: get\n      handler: GetTick\n      memory: 32MB\n"+
-			"      dir: atomic\n      cron: \"*/1 * * * *\"\n"), 0o600); err != nil {
+		[]byte("slice \"demo\" { billing = \"monthly\" }\n\nelement \"default\" {\n"+
+			"  pulse \"GET /tick\" {\n    handler = \"GetTick\"\n    memory = \"32MiB\"\n"+
+			"    cron = \"*/1 * * * *\"\n  }\n}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -200,7 +198,7 @@ func TestAtomicDeployPublishesTheDeclaredSchedules(t *testing.T) {
 	if got := atomic_cmd.DeclaredScheduleFor(specs[0].Name); got != "*/1 * * * *" {
 		t.Errorf("`drift atomic deploy` resolved %q and published no schedule for it (got %q).\n"+
 			"  The Driftfile declares one, so this command ships the function with its cron "+
-			"dropped — and `drift file apply` on the same file ships it with the cron.",
+			"dropped — and `drift apply` on the same file ships it with the cron.",
 			specs[0].Name, got)
 	}
 }

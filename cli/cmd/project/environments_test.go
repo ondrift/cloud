@@ -31,7 +31,7 @@ environment "staging" {
 func fixtureCopy(t *testing.T, edit func(string) string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := copyTree(filepath.Join(mustAbs(t, "testdata"), "driftfile2", "fxevm"), dir); err != nil {
+	if err := copyTree(filepath.Join(mustAbs(t, "testdata"), "fxevm"), dir); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "Driftfile")
@@ -47,7 +47,7 @@ func fixtureCopy(t *testing.T, edit func(string) string) string {
 	return path
 }
 
-func rpcMemory(c *Compiled2) int {
+func rpcMemory(c *Compiled) int {
 	for _, f := range c.Shape.Atomic.Functions {
 		if f.Name == "post:rpc" {
 			return f.MemoryBytes
@@ -56,15 +56,15 @@ func rpcMemory(c *Compiled2) int {
 	return -1
 }
 
-func TestEnv2_AnEnvironmentIsItsOwnSliceWithItsOwnValues(t *testing.T) {
+func TestEnvironment_AnEnvironmentIsItsOwnSliceWithItsOwnValues(t *testing.T) {
 	withRealSchema(t)
 	path := fixtureCopy(t, withEnvironments(""))
 
-	base, err := CompileDriftfile2(path)
+	base, err := CompileDriftfile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	staging, err := CompileDriftfile2Env(path, "staging")
+	staging, err := CompileDriftfileEnv(path, "staging")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestEnv2_AnEnvironmentIsItsOwnSliceWithItsOwnValues(t *testing.T) {
 	}
 }
 
-func TestEnv2_AnEnvironmentMayNameItsSliceAndBilling(t *testing.T) {
+func TestEnvironment_AnEnvironmentMayNameItsSliceAndBilling(t *testing.T) {
 	withRealSchema(t)
 	path := fixtureCopy(t, withEnvironments(`
 environment "demo" {
@@ -93,7 +93,7 @@ environment "demo" {
   billing = "monthly"
 }
 `))
-	c, err := CompileDriftfile2Env(path, "demo")
+	c, err := CompileDriftfileEnv(path, "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,16 +102,16 @@ environment "demo" {
 	}
 }
 
-func TestEnv2_AnUnknownEnvironmentIsRefusedNamingTheDeclaredOnes(t *testing.T) {
+func TestEnvironment_AnUnknownEnvironmentIsRefusedNamingTheDeclaredOnes(t *testing.T) {
 	withRealSchema(t)
 	path := fixtureCopy(t, withEnvironments(""))
-	_, err := CompileDriftfile2Env(path, "prod")
+	_, err := CompileDriftfileEnv(path, "prod")
 	if err == nil || !strings.Contains(err.Error(), `there is no environment "prod"`) || !strings.Contains(err.Error(), "staging") {
 		t.Fatalf("an unknown environment was not refused with the declared ones: %v", err)
 	}
 }
 
-func TestEnv2_AVariableWithNoValueIsAnErrorAtItsLine(t *testing.T) {
+func TestEnvironment_AVariableWithNoValueIsAnErrorAtItsLine(t *testing.T) {
 	withRealSchema(t)
 	// No default: staging sets it, the default slice does not.
 	path := fixtureCopy(t, func(s string) string {
@@ -125,10 +125,10 @@ environment "staging" {
 }
 `
 	})
-	if _, err := CompileDriftfile2Env(path, "staging"); err != nil {
+	if _, err := CompileDriftfileEnv(path, "staging"); err != nil {
 		t.Fatalf("staging sets the variable, and still: %v", err)
 	}
-	_, err := CompileDriftfile2(path)
+	_, err := CompileDriftfile(path)
 	if err == nil || !strings.Contains(err.Error(), `variable "rpc_memory" has no value here`) {
 		t.Fatalf("a variable nothing sets was not refused: %v", err)
 	}
@@ -137,10 +137,10 @@ environment "staging" {
 	}
 }
 
-func TestEnv2_PlanAndApplyAnEnvironmentAgainstItsOwnSlice(t *testing.T) {
+func TestEnvironment_PlanAndApplyAnEnvironmentAgainstItsOwnSlice(t *testing.T) {
 	p, deployed := applyFixture(t, "", withEnvironments(""))
 
-	out, err := runPlanCmd2(t, "--no-env-file", "staging")
+	out, err := planOutput(t, "--no-env-file", "staging")
 	if err != nil {
 		t.Fatalf("plan staging: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestEnv2_PlanAndApplyAnEnvironmentAgainstItsOwnSlice(t *testing.T) {
 	a.price = 480 // (32 + 64 + 32 + 32) MiB at 3 cents a MiB, as the fake quotes it
 	var aerr error
 	captureStdout(t, func() {
-		aerr = runApply2(applyOptions{noEnvFile: true, answers: a, env: "staging", out: os.Stdout, in: strings.NewReader("")})
+		aerr = runApply(applyOptions{noEnvFile: true, answers: a, env: "staging", out: os.Stdout, in: strings.NewReader("")})
 	})
 	if aerr != nil {
 		t.Fatalf("apply staging: %v", aerr)
@@ -168,13 +168,13 @@ func TestEnv2_PlanAndApplyAnEnvironmentAgainstItsOwnSlice(t *testing.T) {
 	}
 }
 
-func TestEnv2_APlanFileAppliesTheEnvironmentItWasPlannedFor(t *testing.T) {
+func TestEnvironment_APlanFileAppliesTheEnvironmentItWasPlannedFor(t *testing.T) {
 	p, _ := applyFixture(t, "", withEnvironments(""))
 	planFile := filepath.Join(t.TempDir(), "plan.json")
-	if _, err := runPlanCmd2(t, "--no-env-file", "--out", planFile, "staging"); err != nil {
+	if _, err := planOutput(t, "--no-env-file", "--out", planFile, "staging"); err != nil {
 		t.Fatalf("plan -out staging: %v", err)
 	}
-	if _, err := runApply2Test(t, noAnswers(), planFile); err != nil {
+	if _, err := runApplyTest(t, noAnswers(), planFile); err != nil {
 		t.Fatalf("apply plan.json: %v", err)
 	}
 	bodies := p.bodies["POST /ops/slice/create"]

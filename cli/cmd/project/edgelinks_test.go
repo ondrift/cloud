@@ -18,18 +18,13 @@ func TestEdgeLinks_AbsentDoesNothing(t *testing.T) {
 	if err := applyEdgeLinks(m); err != nil {
 		t.Errorf("an absent edge.links failed the apply: %v", err)
 	}
-	var out bytes.Buffer
-	planEdgeLinks(m, &out)
-	if out.Len() != 0 {
-		t.Errorf("an absent edge.links printed a plan line: %q", out.String())
-	}
 }
 
 // A slice cannot link to itself, and saying so before anything deploys beats
 // the platform's 400 after the rest of the file is live.
 func TestEdgeLinks_RefusesTheSliceItself(t *testing.T) {
 	assertApplyRefusesBeforeAnyRoute(t,
-		"slice: demo\ncanvas: ./site\nedge:\n  links: [billing, demo]\n",
+		edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  links = [\"billing\", \"demo\"]\n}\n",
 		`edge.links names "demo", the slice this file is applied to; a slice cannot link to itself`)
 }
 
@@ -57,9 +52,10 @@ func TestApply_LinksAddTheMissingAndRemoveTheUndeclared(t *testing.T) {
 			_, _ = w.Write([]byte(`{"removed":"` + r.URL.Query().Get("target") + `"}`))
 		}
 	})
-	applyIn(t, "slice: demo\ncanvas: ./site\nedge:\n  links: [billing, api]\n", "site")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  links = [\"billing\", \"api\"]\n}\n", "site")
 
-	if err := runApply(t); err != nil {
+	if err := runApplyRemoving(t, "link docs"); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if len(posted) != 1 || posted[0] != `{"target":"billing"}` {
@@ -85,9 +81,10 @@ func TestApply_AnEmptyLinksListRemovesEveryLink(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`{}`))
 	})
-	applyIn(t, "slice: demo\ncanvas: ./site\nedge:\n  links: []\n", "site")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  links = []\n}\n", "site")
 
-	if err := runApply(t); err != nil {
+	if err := runApplyRemoving(t, "link docs", "link api"); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if n := rec.count("DELETE /ops/slice/link"); n != 2 {
@@ -101,9 +98,10 @@ func TestApply_AnEmptyLinksListRemovesEveryLink(t *testing.T) {
 // Absent, the live links are left alone: not read, not touched.
 func TestApply_AbsentLinksCallNoLinkRoute(t *testing.T) {
 	rec := stubSliceWithEdge(t, func(w http.ResponseWriter, r *http.Request) {})
-	applyIn(t, "slice: demo\ncanvas: ./site\n", "site")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"site \"/\" { dir = \"site\" }\n", "site")
 
-	if err := runApply(t); err != nil {
+	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	for _, m := range []string{"GET", "POST", "DELETE"} {
@@ -128,9 +126,10 @@ func TestApply_LinksSurfaceTheRefusal(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"error":"no slice named 'ghost' in your account (links are same-user only)"}`))
 	})
-	applyIn(t, "slice: demo\ncanvas: ./site\nedge:\n  links: [ghost]\n", "site")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  links = [\"ghost\"]\n}\n", "site")
 
-	err := runApply(t)
+	err := applyAgreeingAtZero(t)
 	if err == nil {
 		t.Fatal("a refused link was reported as applied")
 	}
@@ -148,13 +147,14 @@ func TestPlan_LinksShowAddsAndRemoves(t *testing.T) {
 			_, _ = w.Write([]byte(`[{"target":"docs"},{"target":"api"}]`))
 		}
 	})
-	applyIn(t, "slice: demo\ncanvas: ./site\nedge:\n  links: [billing, api]\n", "site")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  links = [\"billing\", \"api\"]\n}\n", "site")
 
 	out, err := edgeStdout(t, func() error { return runPlanCmd(t) })
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	for _, want := range []string{"+ billing", "- docs", "· api"} {
+	for _, want := range []string{"+ link billing", "- link docs", "  link api"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the plan does not show %q:\n%s", want, out)
 		}
@@ -164,6 +164,19 @@ func TestPlan_LinksShowAddsAndRemoves(t *testing.T) {
 			t.Errorf("A PLAN ISSUED %d × %s /ops/slice/link", n, m)
 		}
 	}
+}
+
+// runApplyRemoving drives `drift apply` with the price agreed at 0 and each
+// named removal agreed to, because a link the file does not name is a removal
+// the apply asks about.
+func runApplyRemoving(t *testing.T, removals ...string) error {
+	t.Helper()
+	a := noAnswers()
+	a.price = 0
+	for _, r := range removals {
+		a.removes[r] = true
+	}
+	return runApply(applyOptions{noEnvFile: true, answers: a, out: os.Stdout, in: strings.NewReader("")})
 }
 
 // stubSliceWithEdge is a slice that exists and is ready, answering every route

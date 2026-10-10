@@ -1,6 +1,6 @@
 package project
 
-// apply2.go — `drift apply`: make the slice what its Driftfile 2 says.
+// apply.go — `drift apply`: make the slice what its Driftfile says.
 //
 // Apply does exactly what `drift plan` shows, and only that. It builds the same
 // plan, prints it, asks its questions, and then:
@@ -10,8 +10,8 @@ package project
 //     and, when the plan removes something, the slice's name. The platform
 //     refuses a resize whose answers no longer match, which is what makes the
 //     plan the thing that was agreed to.
-//  3. Deploys what the file declares, through the same pipeline a YAML file is
-//     applied with: Backbone, then Atomic and Canvas, then edge.
+//  3. Deploys what the file declares: Backbone, then Atomic and Canvas, then
+//     edge (deploy.go).
 //  4. Sets the API keys the file names, where their fingerprint differs.
 //
 // # Three questions
@@ -77,9 +77,7 @@ address. A plan file written by 'drift plan -out' carries the answers of the
 plan it records, and is refused if the Driftfile or the slice changed since.
 
 An environment's name applies the file to that environment's own slice, with
-its variables and its billing.
-
-A YAML Driftfile is applied by 'drift file apply'.`,
+its variables and its billing.`,
 		Example: "  drift apply\n" +
 			"  drift apply staging\n" +
 			"  drift apply --approve-price 768 --approve-remove \"pulse GET /bench\"\n" +
@@ -107,7 +105,7 @@ A YAML Driftfile is applied by 'drift file apply'.`,
 					env = args[0]
 				}
 			}
-			return runApply2(applyOptions{
+			return runApply(applyOptions{
 				overrides: append(append([]string{}, vars...), secrets...),
 				noEnvFile: noEnvFile,
 				answers:   a,
@@ -120,7 +118,7 @@ A YAML Driftfile is applied by 'drift file apply'.`,
 		},
 	}
 	cmd.Flags().StringArrayVar(&vars, "var", nil, "Set a variable env() reads: KEY=value (repeatable). Yields to the terminal's environment; beats the .env file.")
-	cmd.Flags().StringArrayVar(&secrets, "secret", nil, "The same as --var, under the name `drift file apply` uses.")
+	cmd.Flags().StringArrayVar(&secrets, "secret", nil, "The same as --var.")
 	cmd.Flags().BoolVar(&noEnvFile, "no-env-file", false, "Do not read the .env / .env.<env> file beside the Driftfile")
 	cmd.Flags().IntVar(&approve, "approve-price", 0, "Agree to the new monthly price, in cents: it must be the figure the plan quoted")
 	cmd.Flags().StringArrayVar(&removes, "approve-remove", nil, "Agree to remove a resource, by its address as the plan prints it (repeatable)")
@@ -156,8 +154,8 @@ type applyOptions struct {
 // without building and shipping the fixture's code.
 var deployInto = deployManifest
 
-// runApply2 is `drift apply`.
-func runApply2(o applyOptions) error {
+// runApply is `drift apply`.
+func runApply(o applyOptions) error {
 	if o.in == nil {
 		o.in = os.Stdin
 	}
@@ -168,9 +166,6 @@ func runApply2(o applyOptions) error {
 	data, err := os.ReadFile(path) // #nosec G304 — the user's own manifest
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
-	}
-	if !IsFormat2(data) {
-		return fmt.Errorf("%s is a YAML Driftfile: `drift file apply` applies it, and `drift apply` applies a Driftfile 2 (HCL)", filepath.Base(path))
 	}
 	dir := filepath.Dir(path)
 
@@ -189,8 +184,8 @@ func runApply2(o applyOptions) error {
 	sum.report()
 
 	// pre_deploy hooks build what the file then names, so they run before the
-	// compile checks those paths exist, as a YAML file's do.
-	pre, post, err := Format2Hooks(path)
+	// compile checks those paths exist.
+	pre, post, err := ParseHooks(path)
 	if err != nil {
 		return err
 	}
@@ -202,17 +197,23 @@ func runApply2(o applyOptions) error {
 	if !SchemaAvailable() {
 		return ErrNoSchema
 	}
-	c, err := CompileDriftfile2Env(path, o.env)
+	c, err := CompileDriftfileEnv(path, o.env)
 	if err != nil {
 		return err
-	}
-	for _, n := range c.Notices {
-		fmt.Fprintf(os.Stderr, "  %s %s\n", common.Hint("·"), n)
 	}
 	name := c.Manifest.Name()
 	if o.env != "" {
 		fmt.Fprintf(o.out, "  %s environment %s → slice %s\n", common.Hint("·"), o.env, common.Highlight(name))
 	}
+
+	// Everything that can refuse the file without the network, before the
+	// plan reads the slice: route collisions, two sites on one slug, and an
+	// edge key this CLI cannot apply. A refusal here is reached before
+	// anything is created, resized or deployed.
+	if _, _, err := preflightManifest(c.Manifest); err != nil {
+		return err
+	}
+
 	if err := os.Setenv(common.SliceEnv, name); err != nil {
 		return err
 	}
@@ -276,7 +277,7 @@ func runApply2(o applyOptions) error {
 		}
 	}
 
-	// 3: what runs on it, through the pipeline every Driftfile is applied by.
+	// 3: what runs on it.
 	if err := resolveSecretEnvRefs(c.Manifest); err != nil {
 		return err
 	}
@@ -304,7 +305,7 @@ func runApply2(o applyOptions) error {
 // resizeToFile resizes a slice to the file's shape with the plan's answers.
 // A refusal here means the slice moved after the plan: the answers were for
 // the plan, so they are not stretched to cover something else.
-func resizeToFile(name string, c *Compiled2, ack int, confirm string) error {
+func resizeToFile(name string, c *Compiled, ack int, confirm string) error {
 	err := slice.ResizeTo(name, c.Shape, ack, confirm)
 	var refused *slice.ResizeRefused
 	if errors.As(err, &refused) {
@@ -406,7 +407,7 @@ func euro(cents int) string { return fmt.Sprintf("€%d.%02d", cents/100, cents%
 
 // writeOnlyValuesSet refuses an apply that would send a write-only value its
 // environment does not hold, before anything is sent.
-func writeOnlyValuesSet(c *Compiled2) error {
+func writeOnlyValuesSet(c *Compiled) error {
 	var missing []string
 	for _, w := range c.WriteOnly {
 		if !envSet(w.Env) {
@@ -423,7 +424,7 @@ func writeOnlyValuesSet(c *Compiled2) error {
 
 // applyAPIKeys sets each key the file names where the slice holds none, or one
 // whose fingerprint is not this key's. An unchanged key is not rotated.
-func applyAPIKeys(c *Compiled2, p *planState, out io.Writer) error {
+func applyAPIKeys(c *Compiled, p *planState, out io.Writer) error {
 	wrote := false
 	for _, w := range c.WriteOnly {
 		if w.Kind != "api_key" {
@@ -579,35 +580,4 @@ func isPlanFile(arg string) bool {
 	}
 	info, err := os.Stat(arg)
 	return err == nil && !info.IsDir()
-}
-
-// ─── hooks ──────────────────────────────────────────────────────────────────
-
-// Format2Hooks reads a Driftfile 2's hooks without compiling the rest, so a
-// pre_deploy build can make what the compile then checks for.
-func Format2Hooks(path string) (pre, post []string, err error) {
-	data, err := os.ReadFile(path) // #nosec G304 — the user's own manifest
-	if err != nil {
-		return nil, nil, fmt.Errorf("read %s: %w", path, err)
-	}
-	file, ev, err := readFormat2(path, data)
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, h := range file.Hooks {
-		run, ok := ev.str(h.Run, "hook: run")
-		if !ok {
-			continue
-		}
-		switch h.Phase {
-		case "pre_deploy":
-			pre = append(pre, run)
-		case "post_deploy":
-			post = append(post, run)
-		}
-	}
-	if ev.diags.HasErrors() {
-		return nil, nil, diagError(ev.diags)
-	}
-	return pre, post, nil
 }

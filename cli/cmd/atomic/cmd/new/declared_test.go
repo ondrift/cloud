@@ -26,32 +26,38 @@ func inDir(t *testing.T, driftfile string) {
 	t.Cleanup(func() { _ = os.Chdir(prev) })
 }
 
-const scaffolded = `slice: acme
+// What `drift file new` writes, comments and all.
+const scaffolded = `# acme: a Drift project.
+slice "acme" {
+  billing = "free"
+}
 
-atomic:
-  functions:
-    - route: hello
-      method: get
-      handler: GetHello
+element "default" {
+  # A pulse answers one call with one result.
+  pulse "GET /hello" {
+    handler = "GetHello"
+    memory = "32MiB"
+  }
+}
 `
 
-// The case this exists for: `drift file new` wrote the entry, and its printed
+// The case this exists for: `drift file new` wrote the block, and its printed
 // hint sent the user here. Telling them to declare it again hands them a
-// duplicate of an entry three lines above — and two entries for one route is a
-// parse error, not a harmless repeat.
+// duplicate of a block three lines above, and two pulses on one trigger is a
+// compile error, not a harmless repeat.
 func TestDeclaredRouteFindsWhatFileNewScaffolded(t *testing.T) {
 	inDir(t, scaffolded)
 	if !declaredRoute("get", "hello", "", false) {
-		t.Error("the entry `drift file new` writes was not recognised, so following its own hint tells the user to paste a duplicate")
+		t.Error("the block `drift file new` writes was not recognised, so following its own hint tells the user to paste a duplicate")
 	}
 }
 
-// A function the Driftfile does not name must still get the snippet — that is
-// the normal path and the overwhelmingly common one.
-func TestDeclaredRouteIgnoresADifferentFunction(t *testing.T) {
+// A pulse the Driftfile does not name must still get the snippet: that is the
+// normal path and the overwhelmingly common one.
+func TestDeclaredRouteIgnoresADifferentPulse(t *testing.T) {
 	inDir(t, scaffolded)
 	if declaredRoute("post", "hello", "", false) {
-		t.Error("a different METHOD on the same route was treated as declared — get:hello and post:hello are different functions")
+		t.Error("a different METHOD on the same route was treated as declared: GET /hello and POST /hello are different pulses")
 	}
 	if declaredRoute("get", "goodbye", "", false) {
 		t.Error("a different route was treated as declared")
@@ -59,7 +65,7 @@ func TestDeclaredRouteIgnoresADifferentFunction(t *testing.T) {
 }
 
 // EVERY ambiguous answer is "not declared", because the snippet is the safe one.
-// A user shown an entry that already exists gets a lint error naming the
+// A user shown a block that already exists gets a lint error naming the
 // duplicate; a user never shown it has nothing to paste at all.
 func TestDeclaredRouteFailsOpen(t *testing.T) {
 	cases := []struct {
@@ -67,38 +73,41 @@ func TestDeclaredRouteFailsOpen(t *testing.T) {
 		body string
 	}{
 		{"no Driftfile at all", ""},
-		{"not YAML", "{{{ this is not yaml"},
-		{"no atomic block", "slice: acme\n"},
-		{"an empty function list", "slice: acme\natomic:\n  functions: []\n"},
-		{"the retired grammar, which names no route", "slice: acme\natomic:\n  functions:\n    - name: \"get:hello\"\n      handler: GetHello\n"},
+		{"not HCL", "{{{ this is not hcl"},
+		{"a YAML Driftfile", "slice: acme\natomic:\n  pulses:\n    - route: hello\n      method: get\n"},
+		{"no element", "slice \"acme\" { billing = \"free\" }\n"},
+		{"a pulse outside any element", "slice \"acme\" { billing = \"free\" }\npulse \"GET /hello\" {}\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			inDir(t, c.body)
 			if declaredRoute("get", "hello", "", false) {
-				t.Errorf("answered `already declared` for %s — the snippet is the safe answer whenever this cannot tell", c.name)
+				t.Errorf("answered `already declared` for %s: the snippet is the safe answer whenever this cannot tell", c.name)
 			}
 		})
 	}
 }
 
-// A queue function is `method: queue` with the QUEUE as its route, which is the
+// A queue pulse is labelled with QUEUE and the queue it drains, which is the
 // vocabulary the Driftfile uses and not the one the flags use.
-func TestDeclaredRouteUnderstandsAQueueFunction(t *testing.T) {
-	inDir(t, "slice: acme\natomic:\n  functions:\n    - route: jobs\n      method: queue\n      handler: ProcessJobs\n")
+func TestDeclaredRouteUnderstandsAQueuePulse(t *testing.T) {
+	inDir(t, "element \"default\" {\n  pulse \"QUEUE jobs\" {\n    handler = \"ProcessJobs\"\n  }\n}\n")
 	if !declaredRoute("queue", "process-jobs", "jobs", true) {
-		t.Error("a queue function is declared by its QUEUE name, not the function's name, and was not matched")
+		t.Error("a queue pulse is declared by its QUEUE name, not the pulse's name, and was not matched")
 	}
 	if declaredRoute("queue", "process-jobs", "other", true) {
 		t.Error("a different queue was treated as declared")
 	}
 }
 
-// The method comparison is case-insensitive: a Driftfile written `method: GET`
-// is the same function, and printing a duplicate for it would be the bug.
-func TestDeclaredRouteIsCaseInsensitiveOnMethod(t *testing.T) {
-	inDir(t, "slice: acme\natomic:\n  functions:\n    - route: hello\n      method: GET\n      handler: GetHello\n")
-	if !declaredRoute("get", "hello", "", false) {
-		t.Error("`method: GET` was not matched against `get`")
+// A pulse declared inside a named element is recognised too, so the user is
+// not handed a duplicate of it.
+func TestDeclaredRouteFindsAPulseInsideANamedElement(t *testing.T) {
+	inDir(t, "element \"ml\" {\n  pulse \"POST /train\" {\n    handler = \"post_train\"\n  }\n}\n")
+	if !declaredRoute("post", "train", "", false) {
+		t.Error("a pulse declared inside an element was not recognised")
+	}
+	if declaredRoute("get", "train", "", false) {
+		t.Error("a different method was treated as declared")
 	}
 }

@@ -34,11 +34,11 @@ import (
 // the flat source files directly under atomic/.
 const DefaultElementName = "default"
 
-// FunctionSpec is one `atomic.functions` entry, resolved.
+// FunctionSpec is one declared pulse or field, resolved.
 //
 // It is a plain struct rather than the manifest type because the manifest lives
 // in the project package, which imports this one. The project package reads the
-// document and fills these in; this package never parses YAML.
+// Driftfile and fills these in; this package never reads one.
 type FunctionSpec struct {
 	// Name is the identity exactly as the Driftfile writes it —
 	// "post:users" or "queue:orders". It is what the slice books.
@@ -430,7 +430,7 @@ func triggersFor(f ElementFunc) []TriggerSpec {
 //
 // out receives one line per slot, in the element's order, after every slot has
 // been attempted; nil writes nothing. The caller's writer rather than stdout,
-// because `drift file apply` buffers each section and prints it under its own
+// because `drift apply` buffers each section and prints it under its own
 // heading: a line written straight to stdout lands above that heading.
 func DeployGoElement(el Element, digest string, out io.Writer) error {
 	if len(el.Funcs) == 0 {

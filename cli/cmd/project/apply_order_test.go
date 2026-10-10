@@ -1,6 +1,7 @@
 package project
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -8,15 +9,69 @@ import (
 	"testing"
 )
 
+// liveAtFileShape is the live slice a Driftfile already describes: a monthly
+// slice holding exactly the shape the Driftfile in the working directory
+// compiles to. Applied against it, a file resizes nothing, so a test reads what
+// the deploy does and not what the resize does. The schema must be installed
+// (withRealSchema) and the files the Driftfile names must exist.
+func liveAtFileShape(t *testing.T) string {
+	t.Helper()
+	c, err := CompileDriftfile("Driftfile")
+	if err != nil {
+		t.Fatalf("compile the Driftfile the live slice is made from: %v", err)
+	}
+	raw, err := json.Marshal(map[string]any{"name": c.Manifest.Name(), "tier": "custom", "config": c.Shape})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// runApplyAgreeingToRemove drives `drift apply` on the Driftfile in the working
+// directory, with the price agreed at 0 and each of removes agreed to by its
+// address, as `--approve-remove` would.
+func runApplyAgreeingToRemove(t *testing.T, removes ...string) error {
+	t.Helper()
+	a := noAnswers()
+	a.price = 0
+	for _, r := range removes {
+		a.removes[r] = true
+	}
+	return runApply(applyOptions{noEnvFile: true, answers: a, out: os.Stdout, in: strings.NewReader("")})
+}
+
+const helloHandler = "function GetHello(req) { return [200, 'OK', {}]; }\nmodule.exports = { GetHello };\n"
+
+// orderDriftfile declares one Pulse that runs against a database and a queue
+// the same file declares.
+const orderDriftfile = `slice "demo" { billing = "monthly" }
+
+element "default" {
+  pulse "GET /hello" {
+    handler = "GetHello"
+    memory  = "32MiB"
+  }
+}
+
+queue "txs" {}
+
+sql "ledger" {
+  size   = "10MiB"
+  schema = "schema.sql"
+  seed   = "seed.sql"
+}
+`
+
 // orderProject lays out a project whose one Pulse runs against a database and a
-// queue the same Driftfile declares, beside a slice stub that holds its slot.
+// queue the same Driftfile declares, beside a slice stub that already holds the
+// file's shape.
 func orderProject(t *testing.T) *recorder {
 	t.Helper()
+	live := ""
 	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/ops/slice/get":
-			_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{"atomic":{"functions":[` +
-				`{"name":"get:hello","route":"hello","method":"get","memory_bytes":33554432}]}}}`))
+			_, _ = w.Write([]byte(live))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
 		case "/ops/backbone/sql/admin/list", "/ops/atomic/list", "/ops/slice/domain", "/ops/atomic/alert":
@@ -31,15 +86,11 @@ func orderProject(t *testing.T) *recorder {
 			_, _ = w.Write([]byte(`{}`))
 		}
 	})
-	applyIn(t, "slice: demo\n"+
-		"atomic:\n  pulses:\n"+
-		"    - route: hello\n      method: get\n      handler: GetHello\n      dir: atomic\n"+
-		"backbone:\n"+
-		"  queues:\n    - name: txs\n"+
-		"  sql:\n    - name: ledger\n      schema: schema.sql\n      seed: seed.sql\n",
-		"atomic")
+	// After the stub, which gives the test a HOME of its own.
+	withRealSchema(t)
+	applyIn(t, orderDriftfile, "atomic")
 	for path, body := range map[string]string{
-		filepath.Join("atomic", "hello.js"): "function GetHello(req) { return [200, 'OK', {}]; }\nmodule.exports = { GetHello };\n",
+		filepath.Join("atomic", "hello.js"): helloHandler,
 		"schema.sql":                        "CREATE TABLE IF NOT EXISTS txs (id TEXT);",
 		"seed.sql":                          "INSERT INTO txs VALUES ('genesis');",
 	} {
@@ -47,6 +98,7 @@ func orderProject(t *testing.T) *recorder {
 			t.Fatal(err)
 		}
 	}
+	live = liveAtFileShape(t)
 	return rec
 }
 
@@ -68,7 +120,7 @@ func (r *recorder) position(want string) int {
 // and the SQL schemas after all three, so a Field's first query met no table.
 func TestApply_AppliesBackboneBeforeAtomicDeploys(t *testing.T) {
 	rec := orderProject(t)
-	if err := runApplyYes(t); err != nil {
+	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -96,11 +148,11 @@ func TestApply_AppliesBackboneBeforeAtomicDeploys(t *testing.T) {
 // A Backbone failure stops the apply before Atomic: deploying the Pulse anyway
 // would start it against the very resource that just failed to apply.
 func TestApply_ABackboneFailureDeploysNoAtomic(t *testing.T) {
+	live := ""
 	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/ops/slice/get":
-			_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{"atomic":{"functions":[` +
-				`{"name":"get:hello","route":"hello","method":"get","memory_bytes":33554432}]}}}`))
+			_, _ = w.Write([]byte(live))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
 		case "/ops/backbone/queue/push":
@@ -110,15 +162,24 @@ func TestApply_ABackboneFailureDeploysNoAtomic(t *testing.T) {
 			_, _ = w.Write([]byte(`{}`))
 		}
 	})
-	applyIn(t, "slice: demo\natomic:\n  pulses:\n"+
-		"    - route: hello\n      method: get\n      handler: GetHello\n      dir: atomic\n"+
-		"backbone:\n  queues:\n    - name: txs\n", "atomic")
-	if err := os.WriteFile(filepath.Join("atomic", "hello.js"),
-		[]byte("function GetHello(req) { return [200, 'OK', {}]; }\nmodule.exports = { GetHello };\n"), 0o600); err != nil {
+	withRealSchema(t)
+	applyIn(t, `slice "demo" { billing = "monthly" }
+
+element "default" {
+  pulse "GET /hello" {
+    handler = "GetHello"
+    memory  = "32MiB"
+  }
+}
+
+queue "txs" {}
+`, "atomic")
+	if err := os.WriteFile(filepath.Join("atomic", "hello.js"), []byte(helloHandler), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	live = liveAtFileShape(t)
 
-	if err := runApplyYes(t); err == nil || !strings.Contains(err.Error(), "txs") {
+	if err := applyAgreeingAtZero(t); err == nil || !strings.Contains(err.Error(), "txs") {
 		t.Fatalf("a queue that failed to initialise must fail the apply naming it, got %v", err)
 	}
 	if n := rec.count("POST /ops/atomic"); n != 0 {
@@ -132,7 +193,7 @@ func TestApply_ABackboneFailureDeploysNoAtomic(t *testing.T) {
 func TestApply_EverySlotLinePrintsUnderItsHeading(t *testing.T) {
 	orderProject(t)
 	out := captureStdout(t, func() {
-		if err := runApplyYes(t); err != nil {
+		if err := applyAgreeingAtZero(t); err != nil {
 			t.Errorf("apply: %v", err)
 		}
 	})

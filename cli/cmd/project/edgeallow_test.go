@@ -1,13 +1,12 @@
 package project
 
 import (
-	"bytes"
 	"net/http"
 	"strings"
 	"testing"
 )
 
-// Absent, nothing happens: no route is called and the plan has no section.
+// Absent, nothing happens: no route is called.
 func TestEdgeAllow_AbsentCallsNothing(t *testing.T) {
 	_, rec := newEdgeStub(t)
 	m := edgeManifest(map[string]any{"egress": map[string]any{"mode": "open"}})
@@ -16,11 +15,6 @@ func TestEdgeAllow_AbsentCallsNothing(t *testing.T) {
 	}
 	if err := applyEdgeAllow(m); err != nil {
 		t.Errorf("an absent edge.allow failed the apply: %v", err)
-	}
-	var out bytes.Buffer
-	planEdgeAllow(m, &out)
-	if out.Len() != 0 {
-		t.Errorf("an absent edge.allow printed a plan section: %q", out.String())
 	}
 	if len(rec.hits) != 0 {
 		t.Errorf("an absent edge.allow called %v", rec.hits)
@@ -61,17 +55,18 @@ func TestEdgeAllow_PreflightRefusesWhatIsNotACIDR(t *testing.T) {
 
 // A bare address is refused before anything reaches the slice.
 func TestApply_RefusesABareAllowAddressBeforeAnyRoute(t *testing.T) {
-	assertApplyRefusesBeforeAnyRoute(t,
-		"slice: demo\ncanvas: ./site\nedge:\n  allow: [\"203.0.113.5\"]\n",
-		`edge.allow[0]: "203.0.113.5" is an address, not a range; write "203.0.113.5/32" to allow that one address`)
+	assertEdgeApplyRefuses(t,
+		edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  allow = [\"203.0.113.5\"]\n}\n",
+		"edge.allow", "203.0.113.5")
 }
 
 // The declared list reaches the route as written.
 func TestApply_PostsTheDeclaredAllowlist(t *testing.T) {
 	s, _ := newEdgeStub(t)
-	applyIn(t, "slice: demo\nedge:\n  allow: [\"203.0.113.0/24\", \"2001:db8::/32\"]\n")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"edge {\n  allow = [\"203.0.113.0/24\",\"2001:db8::/32\"]\n}\n")
 
-	if err := runApply(t); err != nil {
+	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	want := `{"cidrs":["203.0.113.0/24","2001:db8::/32"]}`
@@ -84,9 +79,10 @@ func TestApply_PostsTheDeclaredAllowlist(t *testing.T) {
 // an empty list rather than as null.
 func TestApply_AnEmptyAllowlistClearsIt(t *testing.T) {
 	s, _ := newEdgeStub(t)
-	applyIn(t, "slice: demo\nedge:\n  allow: []\n")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"edge {\n  allow = []\n}\n")
 
-	if err := runApply(t); err != nil {
+	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if got := s.bodies("allow"); len(got) != 1 || got[0] != `{"cidrs":[]}` {
@@ -98,41 +94,12 @@ func TestApply_AnEmptyAllowlistClearsIt(t *testing.T) {
 func TestApply_SurfacesTheAllowRefusal(t *testing.T) {
 	s, _ := newEdgeStub(t)
 	s.refuse["allow"] = edgeReply{http.StatusBadRequest, `{"error":"cidrs: 257 entries, at most 256"}`}
-	applyIn(t, "slice: demo\nedge:\n  allow: [\"203.0.113.0/24\"]\n")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"edge {\n  allow = [\"203.0.113.0/24\"]\n}\n")
 
-	err := runApply(t)
+	err := applyAgreeingAtZero(t)
 	if err == nil || !strings.Contains(err.Error(), "edge.allow") ||
 		!strings.Contains(err.Error(), "cidrs: 257 entries, at most 256") {
 		t.Errorf("apply returned %v, want the server's refusal under edge.allow", err)
-	}
-}
-
-// The plan shows what the declared list adds to and removes from the live one.
-func TestPlan_AllowShowsLiveAgainstDeclared(t *testing.T) {
-	s, rec := newEdgeStub(t)
-	s.live["allow"] = `{"cidrs":["198.51.100.0/24","203.0.113.0/24"]}`
-	m := edgeManifest(map[string]any{"allow": []any{"203.0.113.0/24", "2001:db8::/32"}})
-
-	var out bytes.Buffer
-	planEdgeAllow(m, &out)
-	for _, want := range []string{
-		"inbound allowlist (edge.allow)",
-		"+ 2001:db8::/32",
-		"- 198.51.100.0/24",
-		"= 203.0.113.0/24",
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("the plan does not say %q:\n%s", want, out.String())
-		}
-	}
-	if rec.count("POST /ops/slice/edge/allow") != 0 {
-		t.Error("the plan posted the allowlist")
-	}
-
-	s.live["allow"] = `{"cidrs":["203.0.113.0/24"]}`
-	out.Reset()
-	planEdgeAllow(edgeManifest(map[string]any{"allow": []any{}}), &out)
-	if !strings.Contains(out.String(), "every address reaches the slice") {
-		t.Errorf("the plan for an empty list does not say it opens the slice:\n%s", out.String())
 	}
 }

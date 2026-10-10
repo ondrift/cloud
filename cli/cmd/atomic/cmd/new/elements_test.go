@@ -4,67 +4,99 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
 )
 
-// A Pulse added to a named element is declared inside that element's block in
-// `atomic.elements`, not as a tagged top-level entry, and the snippet is YAML
-// that reads back as exactly that.
-func TestDeclarationSnippet_ANamedElementIsNested(t *testing.T) {
-	got := declarationSnippet("train", "post", "post_train", "apikey", "ml")
+// parsedSnippet is a snippet read back as HCL: the element it declares, the
+// pulse inside it, and each of the pulse's attributes as written.
+type parsedSnippet struct {
+	element, pulse string
+	attrs          map[string]string
+	apiKeyEnv      string
+}
 
-	for _, want := range []string{"atomic.elements", `"ml"`} {
-		if !strings.Contains(got.intro, want) {
-			t.Errorf("the intro must name %s, got %q", want, got.intro)
+func parseSnippet(t *testing.T, body string) parsedSnippet {
+	t.Helper()
+	f, diags := hclsyntax.ParseConfig([]byte(body), "snippet", hcl.InitialPos)
+	if diags.HasErrors() {
+		t.Fatalf("the snippet is not HCL: %v\n%s", diags, body)
+	}
+	blocks := f.Body.(*hclsyntax.Body).Blocks
+	if len(blocks) != 1 || blocks[0].Type != "element" || len(blocks[0].Labels) != 1 {
+		t.Fatalf("the snippet must be one element block, got:\n%s", body)
+	}
+	el := blocks[0]
+	if len(el.Body.Blocks) != 1 || el.Body.Blocks[0].Type != "pulse" || len(el.Body.Blocks[0].Labels) != 1 {
+		t.Fatalf("the element must hold one pulse block, got:\n%s", body)
+	}
+	p := el.Body.Blocks[0]
+	out := parsedSnippet{element: el.Labels[0], pulse: p.Labels[0], attrs: map[string]string{}}
+	for name, attr := range p.Body.Attributes {
+		v, d := attr.Expr.Value(nil)
+		if d.HasErrors() || !v.Type().Equals(cty.String) {
+			t.Fatalf("pulse attribute %s is not a string literal:\n%s", name, body)
+		}
+		out.attrs[name] = v.AsString()
+	}
+	for _, b := range p.Body.Blocks {
+		if b.Type != "auth" {
+			t.Fatalf("unexpected block %s in the pulse:\n%s", b.Type, body)
+		}
+		call, ok := b.Body.Attributes["api_key"].Expr.(*hclsyntax.FunctionCallExpr)
+		if !ok || call.Name != "env" || len(call.Args) != 1 {
+			t.Fatalf("the api_key is not env(\"NAME\"):\n%s", body)
+		}
+		v, _ := call.Args[0].Value(nil)
+		out.apiKeyEnv = v.AsString()
+	}
+	return out
+}
+
+// A Pulse added to a named element is declared inside that element's block,
+// with everything the compiler requires of it: its handler and its memory. An
+// API-key gate reads its key from a variable named for the route, never from a
+// literal.
+func TestDeclarationSnippet_ANamedElementHoldsThePulse(t *testing.T) {
+	got := declarationSnippet("train", "post", "post_train", "apikey", "ml")
+	if !strings.Contains(got.intro, `element "ml"`) {
+		t.Errorf("the intro must name the element, got %q", got.intro)
+	}
+	s := parseSnippet(t, got.body)
+	if s.element != "ml" || s.pulse != "POST /train" {
+		t.Errorf("the snippet declares pulse %q in element %q", s.pulse, s.element)
+	}
+	if s.attrs["handler"] != "post_train" || s.attrs["memory"] != snippetMemory || len(s.attrs) != 2 {
+		t.Errorf("the pulse reads back as %v", s.attrs)
+	}
+	if s.apiKeyEnv != "TRAIN_API_KEY" {
+		t.Errorf("the key is read from %q, want TRAIN_API_KEY", s.apiKeyEnv)
+	}
+}
+
+// The default element is `element "default"`, and a queue pulse is labelled
+// with QUEUE and its queue. A pulse with no gate has no auth block.
+func TestDeclarationSnippet_TheDefaultElementAndAQueuePulse(t *testing.T) {
+	for _, element := range []string{"", defaultElement} {
+		got := declarationSnippet("jobs", "queue", "QueueJobs", "none", element)
+		s := parseSnippet(t, got.body)
+		if s.element != defaultElement || s.pulse != "QUEUE jobs" || s.attrs["handler"] != "QueueJobs" || s.apiKeyEnv != "" {
+			t.Errorf("element %q: the snippet reads back as %+v", element, s)
 		}
 	}
-	if strings.Contains(got.body, "element:") {
-		t.Errorf("the snippet still tags the entry with element:\n%s", got.body)
-	}
-
-	var parsed []struct {
-		Name   string `yaml:"name"`
-		Pulses []struct {
-			Route, Method, Handler, Auth string
-		} `yaml:"pulses"`
-	}
-	if err := yaml.Unmarshal([]byte(got.body), &parsed); err != nil {
-		t.Fatalf("the snippet is not YAML: %v\n%s", err, got.body)
-	}
-	if len(parsed) != 1 || parsed[0].Name != "ml" || len(parsed[0].Pulses) != 1 {
-		t.Fatalf("the snippet must be one element holding one pulse, got %+v\n%s", parsed, got.body)
-	}
-	p := parsed[0].Pulses[0]
-	if p.Route != "train" || p.Method != "post" || p.Handler != "post_train" || p.Auth != "apikey" {
-		t.Errorf("the pulse reads back as %+v", p)
-	}
 }
 
-// The default element is the top-level list, as before.
-func TestDeclarationSnippet_TheDefaultElementIsTheTopLevelList(t *testing.T) {
-	got := declarationSnippet("jobs", "queue", "QueueJobs", "none", defaultElement)
-	if !strings.Contains(got.intro, "atomic.pulses") || strings.Contains(got.intro, "elements") {
-		t.Errorf("the default element's intro must name atomic.pulses alone, got %q", got.intro)
-	}
-	var parsed []map[string]string
-	if err := yaml.Unmarshal([]byte(got.body), &parsed); err != nil {
-		t.Fatalf("the snippet is not YAML: %v\n%s", err, got.body)
-	}
-	if len(parsed) != 1 || parsed[0]["route"] != "jobs" || parsed[0]["method"] != "queue" ||
-		parsed[0]["handler"] != "QueueJobs" || len(parsed[0]) != 3 {
-		t.Errorf("the default element's snippet is one bare pulse entry, got %+v", parsed)
-	}
-}
-
-// A Pulse already declared inside an element is recognised, so the user is not
-// handed a duplicate of it.
-func TestDeclaredRouteFindsAPulseInsideAnElement(t *testing.T) {
-	inDir(t, "slice: acme\natomic:\n  elements:\n    - name: ml\n      pulses:\n"+
-		"        - route: train\n          method: post\n          handler: post_train\n")
-	if !declaredRoute("post", "train", "", false) {
-		t.Error("a pulse declared inside an element was not recognised")
-	}
-	if declaredRoute("get", "train", "", false) {
-		t.Error("a different method was treated as declared")
+// A route's variable name keeps only what a variable name can hold.
+func TestAPIKeyVariable(t *testing.T) {
+	for route, want := range map[string]string{
+		"train":         "TRAIN_API_KEY",
+		"admin/reset":   "ADMIN_RESET_API_KEY",
+		"groups/:id":    "GROUPS_ID_API_KEY",
+		"send-email-v2": "SEND_EMAIL_V2_API_KEY",
+	} {
+		if got := apiKeyVariable(route); got != want {
+			t.Errorf("apiKeyVariable(%q) = %q, want %q", route, got, want)
+		}
 	}
 }

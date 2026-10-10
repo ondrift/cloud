@@ -113,7 +113,7 @@ func applyFixture(t *testing.T, live string, edit func(string) string) (*applyPl
 	withRealSchema(t)
 
 	dir := t.TempDir()
-	if err := copyTree(filepath.Join(mustAbs(t, "testdata"), "driftfile2", "fxevm"), dir); err != nil {
+	if err := copyTree(filepath.Join(mustAbs(t, "testdata"), "fxevm"), dir); err != nil {
 		t.Fatal(err)
 	}
 	if edit != nil {
@@ -135,7 +135,7 @@ func applyFixture(t *testing.T, live string, edit func(string) string) (*applyPl
 	return p, &deployed
 }
 
-func runApply2Test(t *testing.T, a applyAnswers, planFile string) (string, error) {
+func runApplyTest(t *testing.T, a applyAnswers, planFile string) (string, error) {
 	t.Helper()
 	if a.removes == nil {
 		a.removes = map[string]bool{}
@@ -145,7 +145,7 @@ func runApply2Test(t *testing.T, a applyAnswers, planFile string) (string, error
 	}
 	var err error
 	out := captureStdout(t, func() {
-		err = runApply2(applyOptions{noEnvFile: true, answers: a, planFile: planFile, out: os.Stdout, in: strings.NewReader("")})
+		err = runApply(applyOptions{noEnvFile: true, answers: a, planFile: planFile, out: os.Stdout, in: strings.NewReader("")})
 	})
 	return out, err
 }
@@ -159,7 +159,7 @@ func noAnswers() applyAnswers {
 func matchingLive(t *testing.T) string {
 	t.Helper()
 	withRealSchema(t)
-	c, err := CompileDriftfile2(filepath.Join(mustAbs(t, "testdata"), "driftfile2", "fxevm", "Driftfile"))
+	c, err := CompileDriftfile(filepath.Join(mustAbs(t, "testdata"), "fxevm", "Driftfile"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,9 +167,9 @@ func matchingLive(t *testing.T) string {
 	return string(live)
 }
 
-func TestApply2_ASliceThatIsTheFileIsDeployedWithoutAResize(t *testing.T) {
+func TestApply_ASliceThatIsTheFileIsDeployedWithoutAResize(t *testing.T) {
 	p, deployed := applyFixture(t, matchingLive(t), nil)
-	if _, err := runApply2Test(t, noAnswers(), ""); err != nil {
+	if _, err := runApplyTest(t, noAnswers(), ""); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if n := p.count("POST /ops/slice/resize") + p.count("POST /ops/slice/create"); n != 0 {
@@ -180,13 +180,13 @@ func TestApply2_ASliceThatIsTheFileIsDeployedWithoutAResize(t *testing.T) {
 	}
 }
 
-func TestApply2_APriceChangeStopsUntilTheQuotedFigureIsAgreed(t *testing.T) {
+func TestApply_APriceChangeStopsUntilTheQuotedFigureIsAgreed(t *testing.T) {
 	double := func(s string) string {
 		return strings.Replace(s, "concurrent = true\n    memory     = \"64MiB\"", "concurrent = true\n    memory     = \"128MiB\"", 1)
 	}
 	p, deployed := applyFixture(t, matchingLive(t), double)
 
-	_, err := runApply2Test(t, noAnswers(), "")
+	_, err := runApplyTest(t, noAnswers(), "")
 	if err == nil || !strings.Contains(err.Error(), "--approve-price 768") {
 		t.Fatalf("an unanswered price change was not refused with its flag: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestApply2_APriceChangeStopsUntilTheQuotedFigureIsAgreed(t *testing.T) {
 
 	a := noAnswers()
 	a.price = 700
-	if _, err := runApply2Test(t, a, ""); err == nil || !strings.Contains(err.Error(), "€7.68") {
+	if _, err := runApplyTest(t, a, ""); err == nil || !strings.Contains(err.Error(), "€7.68") {
 		t.Fatalf("a figure other than the quote was accepted: %v", err)
 	}
 	if p.count("POST /ops/slice/resize") != 0 {
@@ -204,7 +204,7 @@ func TestApply2_APriceChangeStopsUntilTheQuotedFigureIsAgreed(t *testing.T) {
 	}
 
 	a.price = 768
-	if _, err := runApply2Test(t, a, ""); err != nil {
+	if _, err := runApplyTest(t, a, ""); err != nil {
 		t.Fatalf("apply with the quoted figure: %v", err)
 	}
 	bodies := p.bodies["POST /ops/slice/resize"]
@@ -219,12 +219,12 @@ func TestApply2_APriceChangeStopsUntilTheQuotedFigureIsAgreed(t *testing.T) {
 	}
 }
 
-func TestApply2_EachRemovalAndEachDataLossIsNamedBeforeAnythingIsSent(t *testing.T) {
+func TestApply_EachRemovalAndEachDataLossIsNamedBeforeAnythingIsSent(t *testing.T) {
 	// The live testnode holds the free slice's placeholder storage, which the
 	// file does not name: removals, and each a loss of what it holds.
 	p, deployed := applyFixture(t, fxevmLive, nil)
 
-	_, err := runApply2Test(t, noAnswers(), "")
+	_, err := runApplyTest(t, noAnswers(), "")
 	if err == nil {
 		t.Fatal("removals and data losses went through unanswered")
 	}
@@ -245,7 +245,7 @@ func TestApply2_EachRemovalAndEachDataLossIsNamedBeforeAnythingIsSent(t *testing
 	for _, r := range []string{"sql database-1", "blobs bucket-01", "blobs bucket-02", "nosql default", "nosql collection-2", "queue queue-1", "slots", "pulse GET /bench"} {
 		a.removes[r] = true
 	}
-	_, err = runApply2Test(t, a, "")
+	_, err = runApplyTest(t, a, "")
 	if err == nil || !strings.Contains(err.Error(), "--allow-data-loss") || strings.Contains(err.Error(), "--approve-remove") {
 		t.Fatalf("with every removal agreed, the data losses are still asked, and only they: %v", err)
 	}
@@ -254,11 +254,11 @@ func TestApply2_EachRemovalAndEachDataLossIsNamedBeforeAnythingIsSent(t *testing
 	}
 }
 
-func TestApply2_ASliceThatDoesNotExistIsCreatedWithTheFilesShape(t *testing.T) {
+func TestApply_ASliceThatDoesNotExistIsCreatedWithTheFilesShape(t *testing.T) {
 	p, deployed := applyFixture(t, "", nil)
 	a := noAnswers()
 	a.price = 576
-	if _, err := runApply2Test(t, a, ""); err != nil {
+	if _, err := runApplyTest(t, a, ""); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	bodies := p.bodies["POST /ops/slice/create"]
@@ -276,7 +276,7 @@ func TestApply2_ASliceThatDoesNotExistIsCreatedWithTheFilesShape(t *testing.T) {
 	}
 }
 
-func TestApply2_AResizeTheSliceRefusesIsReportedAndNothingIsDeployed(t *testing.T) {
+func TestApply_AResizeTheSliceRefusesIsReportedAndNothingIsDeployed(t *testing.T) {
 	double := func(s string) string {
 		return strings.Replace(s, "concurrent = true\n    memory     = \"64MiB\"", "concurrent = true\n    memory     = \"128MiB\"", 1)
 	}
@@ -284,7 +284,7 @@ func TestApply2_AResizeTheSliceRefusesIsReportedAndNothingIsDeployed(t *testing.
 	p.refuse = `{"error":"price changed","price_change":{"current_monthly_cents":576,"new_monthly_cents":800}}`
 	a := noAnswers()
 	a.price = 768
-	_, err := runApply2Test(t, a, "")
+	_, err := runApplyTest(t, a, "")
 	if err == nil || !strings.Contains(err.Error(), "run `drift plan` again") {
 		t.Fatalf("a refused resize was not reported as the slice having moved: %v", err)
 	}
@@ -293,16 +293,16 @@ func TestApply2_AResizeTheSliceRefusesIsReportedAndNothingIsDeployed(t *testing.
 	}
 }
 
-func TestApply2_APlanFileAppliesWhatItRecordsAndRefusesWhenTheFileMoved(t *testing.T) {
+func TestApply_APlanFileAppliesWhatItRecordsAndRefusesWhenTheFileMoved(t *testing.T) {
 	double := func(s string) string {
 		return strings.Replace(s, "concurrent = true\n    memory     = \"64MiB\"", "concurrent = true\n    memory     = \"128MiB\"", 1)
 	}
 	p, deployed := applyFixture(t, matchingLive(t), double)
 	planFile := filepath.Join(t.TempDir(), "plan.json")
-	if _, err := runPlanCmd2(t, "--no-env-file", "--out", planFile); err != nil {
+	if _, err := planOutput(t, "--no-env-file", "--out", planFile); err != nil {
 		t.Fatalf("plan -out: %v", err)
 	}
-	if _, err := runApply2Test(t, noAnswers(), planFile); err != nil {
+	if _, err := runApplyTest(t, noAnswers(), planFile); err != nil {
 		t.Fatalf("apply plan.json: %v", err)
 	}
 	if got := p.bodies["POST /ops/slice/resize"]; len(got) != 1 || got[0]["acknowledge_monthly_cents"] != float64(768) {
@@ -318,7 +318,7 @@ func TestApply2_APlanFileAppliesWhatItRecordsAndRefusesWhenTheFileMoved(t *testi
 		t.Fatal(err)
 	}
 	before := len(p.writes)
-	_, err := runApply2Test(t, noAnswers(), planFile)
+	_, err := runApplyTest(t, noAnswers(), planFile)
 	if err == nil || !strings.Contains(err.Error(), "the Driftfile changed after the plan was made") {
 		t.Fatalf("a plan file for an older Driftfile was applied: %v", err)
 	}
@@ -327,11 +327,18 @@ func TestApply2_APlanFileAppliesWhatItRecordsAndRefusesWhenTheFileMoved(t *testi
 	}
 }
 
-func TestApply2_AYAMLDriftfileIsSentToDriftFileApply(t *testing.T) {
-	stubAPI(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+// A YAML Driftfile is refused before anything reaches the slice.
+func TestApply_AYAMLDriftfileIsRefused(t *testing.T) {
+	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	withRealSchema(t)
 	applyIn(t, "slice: demo\ncanvas:\n  sites:\n    - ./site\n", "site")
-	_, err := runApply2Test(t, noAnswers(), "")
-	if err == nil || !strings.Contains(err.Error(), "`drift file apply` applies it") {
-		t.Fatalf("a YAML Driftfile was not sent to drift file apply: %v", err)
+	_, err := runApplyTest(t, noAnswers(), "")
+	if err == nil || !strings.Contains(err.Error(), "the Driftfile is HCL now") {
+		t.Fatalf("a YAML Driftfile was not refused as YAML: %v", err)
+	}
+	for _, hit := range rec.hits {
+		if strings.Contains(hit, " /ops/") {
+			t.Errorf("a YAML Driftfile reached the slice: %s", hit)
+		}
 	}
 }

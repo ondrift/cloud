@@ -7,20 +7,20 @@ import (
 	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 )
 
-// On a slice, `drift file apply` creates every declared queue before any slot
-// runs, so a consumer polling one that nothing has pushed to reads it empty.
+// On a slice, `drift apply` creates every declared queue before any slot runs,
+// so a consumer polling one that nothing has pushed to reads it empty.
 // `drift atomic run` reads the Driftfile through FunctionSpecsInDir, and that
 // read has to publish the declared queues for the SDK's local store, or the
 // same consumer fails on a laptop.
 func TestFunctionSpecsInDir_PublishesTheDeclaredQueues(t *testing.T) {
-	withMigrateSchema(t)
+	withRealSchema(t)
 	root := t.TempDir()
 	mustMkdir(t, filepath.Join(root, "atomic"))
 	mustWrite(t, filepath.Join(root, "atomic", "main.go"),
 		"package main\n\nimport \"context\"\n\nfunc Sequencer(ctx context.Context) error { return nil }\n")
-	mustWrite(t, filepath.Join(root, "Driftfile"), "slice: demo\n"+
-		"atomic:\n  fields:\n    - name: sequencer\n      handler: Sequencer\n"+
-		"backbone:\n  queues:\n    - name: txs\n    - name: blocks\n")
+	mustWrite(t, filepath.Join(root, "Driftfile"), "slice \"demo\" { billing = \"monthly\" }\n"+
+		"element \"default\" {\n  field \"sequencer\" {\n    handler = \"Sequencer\"\n    memory = \"64MiB\"\n  }\n}\n"+
+		"queue \"txs\" {}\nqueue \"blocks\" {}\n")
 	t.Cleanup(func() { atomic_cmd.SetDeclaredQueues(nil) })
 
 	if _, err := FunctionSpecsInDir(filepath.Join(root, "atomic")); err != nil {

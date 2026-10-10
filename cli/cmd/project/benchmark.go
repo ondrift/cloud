@@ -9,9 +9,10 @@ package project
 // memory nobody uses; guessing low means the pool fills and invocations are
 // refused under load. Neither is discoverable by reading your own source.
 //
-// The booking lives on the slice, whose shape the resize form owns. This command
-// reports what to set and, with --apply, opens that form with the figures already
-// in it — so the number that gets bought is the one that was measured.
+// The booking is written in the Driftfile, beside what it books. This command
+// reports what to write; `drift size` writes it, and `drift plan` and
+// `drift apply` buy it, so the number that gets bought is the one that was
+// measured and shown.
 //
 // The platform has been measuring the answer all along. Every invocation's child
 // is reaped with wait4, which carries its peak RSS; the slice keeps the
@@ -37,7 +38,6 @@ import (
 	"sort"
 	"strings"
 
-	slice "github.com/ondrift/cloud/cli/cmd/slice"
 	"github.com/ondrift/cloud/cli/common"
 	"github.com/spf13/cobra"
 )
@@ -72,7 +72,6 @@ type sliceSizing struct {
 }
 
 func getBenchmarkCmd() *cobra.Command {
-	var apply, write bool
 	cmd := &cobra.Command{
 		Use:   "benchmark",
 		Short: "Measure what each pulse and field costs, and what it should book",
@@ -85,10 +84,10 @@ pulse invocation and samples every running field, and keeps the high-water mark
 per slot. A pulse nobody has called yet says so, rather than reporting a
 confidently small number.
 
-A booking is part of a slice's shape, which the resize form owns. --apply opens
-that form with the measured recommendations already filled in, so the price and
-the restart are shown before anything is bought.`),
-		Example: "  drift file benchmark\n  drift file benchmark --apply",
+A booking is written in the Driftfile. 'drift size' writes these
+recommendations into it, and 'drift plan' shows what they cost.`),
+		Example: "  drift file benchmark",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			manifestPath, err := requireDriftfile()
 			if err != nil {
@@ -98,79 +97,15 @@ the restart are shown before anything is bought.`),
 			if err != nil {
 				return err
 			}
-			rows, err := benchmarkFromSlice(m)
+			rows, err := sizingRows(declaredSlots(m))
 			if err != nil {
 				return err
 			}
-			renderSizing(cmd.OutOrStdout(), m.Name(), rows)
-
-			// A thin alias onto --apply, not a second path: the name is all that
-			// is left of it, and a name people have in their fingers is worth
-			// forwarding.
-			if write {
-				common.DeprecateFlag(cmd, "write", common.Deprecation{
-					Old: "drift file benchmark --write",
-					New: "drift file benchmark --apply",
-					Because: "A booking is a slice setting rather than a Driftfile one, and the " +
-						"manifest's `memory` key is not read; " +
-						"--apply opens the resize form with the measured figures filled in.",
-				})()
-				apply = true
-			}
-			if apply {
-				return applyBookings(cmd.OutOrStdout(), m.Name(), rows)
-			}
+			renderSizing(cmd.OutOrStdout(), rows)
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&apply, "apply", false,
-		"open the resize form with each function's booking set to the recommendation")
-	cmd.Flags().BoolVar(&write, "write", false,
-		"Deprecated: use --apply")
 	return cmd
-}
-
-// applyBookings opens the resize form with the measured recommendations in it.
-//
-// It does NOT write them anywhere itself. A booking is priced, billed, and
-// travels in the pod spec, so applying one buys a resize and replaces the pod.
-// The form is the one writer, and opening it pre-filled means the price and the
-// restart are disclosed to the person paying before they agree to either.
-//
-// A function the slice has never run is left alone. Its "recommendation" is the
-// floor rather than a measurement, and pre-filling that would look like advice
-// while being the absence of any.
-func applyBookings(w io.Writer, sliceName string, rows []sizingRow) error {
-	rec := measuredRecommendations(rows)
-	if len(rec) == 0 {
-		fmt.Fprintln(w, "  Nothing to apply: no function has been invoked yet, so there is no")
-		fmt.Fprintln(w, "  measurement to size from. Send some traffic and run this again.")
-		return nil
-	}
-
-	const op = "apply the measured bookings"
-	cfg, err := FetchSliceConfigRaw(sliceName, op)
-	if err != nil {
-		return err
-	}
-
-	changed := overlayBookings(cfg, rec)
-	if changed == 0 {
-		fmt.Fprintln(w, "  Every booking already matches its recommendation.")
-		return nil
-	}
-
-	fmt.Fprintf(w, "  Opening the resize form with %d booking(s) set to the recommendation.\n", changed)
-	fmt.Fprintln(w, "  Nothing is bought until you apply it.")
-
-	// The overlaid config is handed to the form as the shape to open on, so the
-	// recommendation is in the rows before anything is agreed to. A measurement
-	// is evidence for a booking, not authority to buy one.
-	shaped, ok := cfg.(map[string]any)
-	if !ok {
-		return fmt.Errorf("the slice's live config could not be read as a shape to open")
-	}
-	return slice.ResizeWithConfig(sliceName, shaped, 1)
 }
 
 // measuredRecommendations is the booking to set for each slot that has
@@ -187,63 +122,11 @@ func measuredRecommendations(rows []sizingRow) map[string]int64 {
 	return rec
 }
 
-// overlayBookings sets each recommended function's booking on the live config,
-// in place, and reports how many it changed.
-//
-// The config is the decoded JSON rather than a typed struct: the CLI forwards it
-// whole and never learns its shape, so a field it has no name for survives the
-// round trip. Separated from the fetch and from opening the form so the
-// substitution is testable without either.
-//
-// Matching is on the booking key — `method:route` — which is what the sizing
-// endpoint reports and what the runtime looks a pool up by. The two agreeing is
-// what makes a row matchable at all, and they have not always agreed.
-func overlayBookings(cfg any, rec map[string]int64) int {
-	root, ok := cfg.(map[string]any)
-	if !ok {
-		return 0
-	}
-	atomicNode, ok := root["atomic"].(map[string]any)
-	if !ok {
-		return 0
-	}
-	functions, ok := atomicNode["functions"].([]any)
-	if !ok {
-		return 0
-	}
-
-	changed := 0
-	for _, entry := range functions {
-		fn, ok := entry.(map[string]any)
-		if !ok {
-			continue
-		}
-		name, _ := fn["name"].(string)
-		want, found := rec[name]
-		if !found {
-			continue
-		}
-		// JSON numbers decode as float64, so an unchanged booking has to be
-		// compared as one rather than by ==-ing two different types.
-		if current, ok := fn["memory_bytes"].(float64); ok && int64(current) == want {
-			continue
-		}
-		fn["memory_bytes"] = want
-		changed++
-	}
-	return changed
-}
-
-// benchmarkFromSlice asks the deployed slice what its functions have cost.
-func benchmarkFromSlice(m *Manifest) ([]sizingRow, error) {
-	return sizingRows(declaredMemory(m))
-}
-
 // sizingRows asks the deployed slice what its functions have cost, one row per
-// slot it reports. declared holds a key for every slot the Driftfile names,
-// whichever format it is written in; it is what lets a row say "deployed, but
-// not in this Driftfile". `drift file benchmark` and `drift size` both read the
-// measurements here, so the two cannot disagree about a recommendation.
+// slot it reports. declared holds a key for every slot the Driftfile names; it
+// is what lets a row say "deployed, but not in this Driftfile". `drift file
+// benchmark` and `drift size` both read the measurements here, so the two
+// cannot disagree about a recommendation.
 func sizingRows(declared map[string]string) ([]sizingRow, error) {
 	resp, err := common.DoJSONRequest(http.MethodGet, common.APIBaseURL+"/ops/atomic/sizing", nil)
 	if err != nil {
@@ -285,19 +168,22 @@ func sizingRows(declared map[string]string) ([]sizingRow, error) {
 	return rows, nil
 }
 
-// declaredMemory maps each declared Pulse and Field to the memory it books.
+// declaredSlots holds a key for each declared Pulse and Field.
 //
 // Keyed by the booking key, which is the same `method:route` (or `field:<name>`)
 // the slice books and reports under — the two agreeing is what lets a row be
-// matched at all. They have not always agreed.
-func declaredMemory(m *Manifest) map[string]string { return declaredBookings(m) }
+// matched at all.
+func declaredSlots(m *Manifest) map[string]string {
+	out := map[string]string{}
+	for _, s := range AtomicSpecs(m) {
+		out[s.Name] = ""
+	}
+	return out
+}
 
-// renderSizing prints the table.
-//
-// sliceName is carried purely so the closing line can name the page these
-// figures are set on. A measurement is only useful where it can be applied, and
-// the reader is one click from applying it rather than one search.
-func renderSizing(w io.Writer, sliceName string, rows []sizingRow) {
+// renderSizing prints the table, and the command that writes it into the
+// Driftfile.
+func renderSizing(w io.Writer, rows []sizingRow) {
 	fmt.Fprintf(w, "\n  measured by the slice, on real traffic\n\n")
 	fmt.Fprintf(w, "  %-26s %8s %10s %9s %11s  %s\n",
 		"function", "calls", "peak", "booked", "recommend", "")
@@ -316,7 +202,7 @@ func renderSizing(w io.Writer, sliceName string, rows []sizingRow) {
 	fmt.Fprintln(w, "  `calls` is how many invocations back the peak: a figure from three calls of")
 	fmt.Fprintln(w, "  one code path is not the claim one from thousands is.")
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  Set these with `drift slice resize %s`, or apply them with --apply.\n", sliceName)
+	fmt.Fprintln(w, "  `drift size` writes these into the Driftfile; `drift plan` shows what they cost.")
 	fmt.Fprintln(w)
 }
 

@@ -1,13 +1,12 @@
 package project
 
 import (
-	"bytes"
 	"net/http"
 	"strings"
 	"testing"
 )
 
-// Absent, nothing happens: no route is called and the plan has no section.
+// Absent, nothing happens: no route is called.
 func TestEdgeHosts_AbsentCallsNothing(t *testing.T) {
 	_, rec := newEdgeStub(t)
 	m := edgeManifest(map[string]any{"egress": map[string]any{"mode": "open"}})
@@ -16,11 +15,6 @@ func TestEdgeHosts_AbsentCallsNothing(t *testing.T) {
 	}
 	if err := applyEdgeHosts(m); err != nil {
 		t.Errorf("an absent edge.hosts failed the apply: %v", err)
-	}
-	var out bytes.Buffer
-	planEdgeHosts(m, &out)
-	if out.Len() != 0 {
-		t.Errorf("an absent edge.hosts printed a plan section: %q", out.String())
 	}
 	if len(rec.hits) != 0 {
 		t.Errorf("an absent edge.hosts called %v", rec.hits)
@@ -34,11 +28,11 @@ func TestEdgeHosts_PreflightRefusesAnIncompleteEntry(t *testing.T) {
 		want  string
 	}{
 		{[]any{map[string]any{"host": "admin.example.com"}},
-			`edge.hosts[0]: an entry needs both "host" and "slice", such as {host: admin.example.com, slice: admin}`},
+			`edge.hosts[0]: an entry needs both a host and a slice, such as "admin.example.com" = "admin"`},
 		{[]any{map[string]any{"host": "a.example.com", "slice": "a"}, map[string]any{"slice": "b"}},
-			`edge.hosts[1]: an entry needs both "host" and "slice", such as {host: admin.example.com, slice: admin}`},
+			`edge.hosts[1]: an entry needs both a host and a slice, such as "admin.example.com" = "admin"`},
 		{[]any{"admin.example.com"},
-			`edge.hosts[0]: an entry needs both "host" and "slice", such as {host: admin.example.com, slice: admin}`},
+			`edge.hosts[0]: an entry needs both a host and a slice, such as "admin.example.com" = "admin"`},
 		{"admin.example.com",
 			`edge.hosts must be a list of {host, slice} entries`},
 	} {
@@ -51,17 +45,18 @@ func TestEdgeHosts_PreflightRefusesAnIncompleteEntry(t *testing.T) {
 
 // An incomplete entry is refused before anything reaches the slice.
 func TestApply_RefusesAnIncompleteHostBeforeAnyRoute(t *testing.T) {
-	assertApplyRefusesBeforeAnyRoute(t,
-		"slice: demo\ncanvas: ./site\nedge:\n  hosts:\n    - host: admin.example.com\n",
-		`edge.hosts[0]: an entry needs both "host" and "slice", such as {host: admin.example.com, slice: admin}`)
+	assertEdgeApplyRefuses(t,
+		edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  hosts = { \"admin.example.com\" = \"\" }\n}\n",
+		"edge.hosts", "slice")
 }
 
 // The declared hosts reach the route, the host lowercased.
 func TestApply_PostsTheDeclaredHosts(t *testing.T) {
 	s, _ := newEdgeStub(t)
-	applyIn(t, "slice: demo\nedge:\n  hosts:\n    - host: Admin.Example.com\n      slice: admin\n")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"edge {\n  hosts = { \"Admin.Example.com\" = \"admin\" }\n}\n")
 
-	if err := runApply(t); err != nil {
+	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	want := `{"hosts":[{"host":"admin.example.com","slice":"admin"}]}`
@@ -73,9 +68,10 @@ func TestApply_PostsTheDeclaredHosts(t *testing.T) {
 // An empty list clears the fronted hosts, and is sent as an empty list.
 func TestApply_AnEmptyHostsListClearsIt(t *testing.T) {
 	s, _ := newEdgeStub(t)
-	applyIn(t, "slice: demo\nedge:\n  hosts: []\n")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"edge {\n  hosts = {}\n}\n")
 
-	if err := runApply(t); err != nil {
+	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if got := s.bodies("hosts"); len(got) != 1 || got[0] != `{"hosts":[]}` {
@@ -90,36 +86,11 @@ func TestApply_SurfacesTheHostsRefusalVerbatim(t *testing.T) {
 	refusal := "admin.example.com is not a verified custom domain of this slice: " +
 		"run `drift slice domain add admin.example.com`, then `drift slice domain verify admin.example.com`"
 	s.refuse["hosts"] = edgeReply{http.StatusUnprocessableEntity, `{"error":"` + refusal + `"}`}
-	applyIn(t, "slice: demo\nedge:\n  hosts:\n    - host: admin.example.com\n      slice: admin\n")
+	withRealSchema(t)
+	applyIn(t, edgeFreeDemo+"edge {\n  hosts = { \"admin.example.com\" = \"admin\" }\n}\n")
 
-	err := runApply(t)
+	err := applyAgreeingAtZero(t)
 	if err == nil || !strings.Contains(err.Error(), "edge.hosts") || !strings.Contains(err.Error(), refusal) {
 		t.Errorf("apply returned %v, want the server's refusal verbatim under edge.hosts", err)
-	}
-}
-
-// The plan shows what the declared hosts add to and remove from the live ones.
-func TestPlan_HostsShowsLiveAgainstDeclared(t *testing.T) {
-	s, rec := newEdgeStub(t)
-	s.live["hosts"] = `{"hosts":[{"host":"old.example.com","slice":"legacy"},{"host":"admin.example.com","slice":"admin"}]}`
-	m := edgeManifest(map[string]any{"hosts": []any{
-		map[string]any{"host": "admin.example.com", "slice": "admin"},
-		map[string]any{"host": "docs.example.com", "slice": "docs"},
-	}})
-
-	var out bytes.Buffer
-	planEdgeHosts(m, &out)
-	for _, want := range []string{
-		"fronted hosts (edge.hosts)",
-		"+ docs.example.com → docs",
-		"- old.example.com → legacy",
-		"= admin.example.com → admin",
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("the plan does not say %q:\n%s", want, out.String())
-		}
-	}
-	if rec.count("POST /ops/slice/edge/hosts") != 0 {
-		t.Error("the plan posted the hosts")
 	}
 }

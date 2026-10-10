@@ -23,8 +23,7 @@ func fxevmSizing() []sizingRow {
 	}
 }
 
-// fixtureDir is the fxevm testnode, as an HCL Driftfile and as the YAML file
-// the same project is written in.
+// fixtureDir is the fxevm testnode: its Driftfile and the folders it names.
 func fixtureDir(t *testing.T) string {
 	t.Helper()
 	return fxevmFixture
@@ -32,7 +31,7 @@ func fixtureDir(t *testing.T) string {
 
 // fxevmFixture is absolute and resolved at package start, before any test
 // changes directory.
-var fxevmFixture, _ = filepath.Abs(filepath.Join("testdata", "driftfile2", "fxevm"))
+var fxevmFixture, _ = filepath.Abs(filepath.Join("testdata", "fxevm"))
 
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
@@ -48,9 +47,9 @@ func lines(b []byte) []string { return strings.Split(string(b), "\n") }
 // THE property of the command: the edit is the `memory` lines it recommends
 // changing and nothing else. Every comment, blank line and other attribute of
 // the file is still there, in place. Asserted on the lines themselves.
-func TestSize2_ChangesOnlyTheMemoryLinesItRecommends(t *testing.T) {
+func TestSize_ChangesOnlyTheMemoryLinesItRecommends(t *testing.T) {
 	src := mustRead(t, filepath.Join(fixtureDir(t), "Driftfile"))
-	res, err := ResizeDriftfile2(src, fxevmSizing())
+	res, err := ResizeDriftfile(src, fxevmSizing())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +87,7 @@ func TestSize2_ChangesOnlyTheMemoryLinesItRecommends(t *testing.T) {
 	if len(res.Left) != 1 || !strings.Contains(res.Left[0], "pulse POST /admin/reset: never invoked") {
 		t.Errorf("left = %q, want the never-invoked Pulse named with its reason", res.Left)
 	}
-	// The edited file is still a Driftfile 2 that compiles.
+	// The edited file still compiles.
 	withRealSchema(t)
 	dir := t.TempDir()
 	if err := copyTree(fixtureDir(t), dir); err != nil {
@@ -97,7 +96,7 @@ func TestSize2_ChangesOnlyTheMemoryLinesItRecommends(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "Driftfile"), res.Output, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := CompileDriftfile2(filepath.Join(dir, "Driftfile"))
+	c, err := CompileDriftfile(filepath.Join(dir, "Driftfile"))
 	if err != nil {
 		t.Fatalf("the edited file does not compile: %v", err)
 	}
@@ -113,8 +112,8 @@ func TestSize2_ChangesOnlyTheMemoryLinesItRecommends(t *testing.T) {
 // A booking that is not a plain size string is somebody's expression, and this
 // does not guess where its figure lives. A trailing comment on a booking it
 // does rewrite stays on its line.
-func TestSize2_LeavesAnExpressionAloneAndKeepsATrailingComment(t *testing.T) {
-	src := []byte(head2 + `variable "m" { default = "16MiB" }
+func TestSize_LeavesAnExpressionAloneAndKeepsATrailingComment(t *testing.T) {
+	src := []byte(`variable "m" { default = "16MiB" }
 slice "demo" { billing = "monthly" }
 element "api" {
   pulse "GET /a" {
@@ -127,7 +126,7 @@ element "api" {
   }
 }
 `)
-	res, err := ResizeDriftfile2(src, []sizingRow{
+	res, err := ResizeDriftfile(src, []sizingRow{
 		{Function: "get:a", Measurements: 5, Recommended: 32 * mib},
 		{Function: "get:b", Measurements: 5, PeakBytes: 4 * mib, Recommended: 16 * mib},
 	})
@@ -249,15 +248,15 @@ func TestSize_WritesTheFileAndAsksOnlyForTheMeasurement(t *testing.T) {
 	}
 }
 
-// A YAML Driftfile is not edited: the answer names the command that reports
-// the same measurements, and the file is as it was.
+// A YAML Driftfile is not edited: it is refused as every reader refuses one,
+// before the platform is asked anything, and the file is as it was.
 func TestSize_RefusesAYAMLDriftfile(t *testing.T) {
 	rec := sizingStub(t, fxevmSizing())
-	yamlText := mustRead(t, filepath.Join(fixtureDir(t), "Driftfile.yaml"))
+	yamlText := []byte("slice: fxevm-testnode\natomic:\n  elements: []\n")
 
 	dir, _, err := sizeIn(t, yamlText)
-	if err == nil || !strings.Contains(err.Error(), "is a YAML Driftfile") || !strings.Contains(err.Error(), "drift file benchmark") {
-		t.Fatalf("a YAML Driftfile was not refused with the command that reports the measurements: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "the Driftfile is HCL now") {
+		t.Fatalf("a YAML Driftfile was not refused as YAML: %v", err)
 	}
 	if got := mustRead(t, filepath.Join(dir, "Driftfile")); !bytes.Equal(got, yamlText) {
 		t.Error("the YAML Driftfile was changed")

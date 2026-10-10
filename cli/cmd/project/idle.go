@@ -195,15 +195,6 @@ func storageLabel(bytes int) string {
 	return "its " + sizeLabel(bytes) + " of declared storage"
 }
 
-// sizeLabel renders bytes in the unit a Driftfile writes them in.
-func sizeLabel(bytes int) string {
-	const mib = 1024 * 1024
-	if bytes >= mib {
-		return strconv.Itoa(bytes/mib) + " MB"
-	}
-	return strconv.Itoa(bytes/1024) + " KB"
-}
-
 // namedCount says how many of a declared set the Driftfile names, in words when
 // it names none.
 func namedCount(n int) string {

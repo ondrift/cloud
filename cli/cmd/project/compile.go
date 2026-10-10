@@ -1,19 +1,18 @@
 package project
 
-// compile2.go — a Driftfile 2, compiled to today's two payloads.
+// compile.go — a Driftfile, compiled to its two payloads.
 //
-//  1. The DOCUMENT: the same flattened Pulse/Field document a YAML 1.x
-//     Driftfile decodes to, validated against the same platform schema and run
-//     through the same passes (finishParse). FunctionSpecs, the build, the
-//     digests and every edge reader read it unchanged.
+//  1. The DOCUMENT: the flattened Pulse/Field document, validated against the
+//     platform's schema and run through finishParse. FunctionSpecs, the build,
+//     the digests and every edge reader read it.
 //  2. The SHAPE: a SliceConfig, the payload the platform prices, creates and
 //     resizes with. Each booking comes from the block it books, each storage
 //     size from the block it sizes, and the slice-wide limits from `limits`.
 //
 // Write-only values (secrets, API keys, site passwords) are compiled to
-// REFERENCES: the document carries `$NAME` exactly as a YAML file writes it,
-// and the value is read from the environment only by whatever sends it. No
-// value is ever in either payload, so neither can leak one.
+// REFERENCES: the document carries `$NAME`, and the value is read from the
+// environment only by whatever sends it. No value is ever in either payload,
+// so neither can leak one.
 //
 // # What the file leaves out
 //
@@ -52,27 +51,24 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
+	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 	"github.com/ondrift/cloud/cli/cmd/slice"
 	"github.com/ondrift/cloud/cli/common"
 )
 
-// Compiled2 is a Driftfile 2 compiled: the document, the shape, and what the
+// Compiled is a Driftfile compiled: the document, the shape, and what the
 // file says about money and write-only values.
-type Compiled2 struct {
+type Compiled struct {
 	Manifest *Manifest
 	Shape    SliceConfig
 	// Billing is "free" or "monthly".
 	Billing string
 	// WriteOnly lists every write-only value by reference, never by value.
 	WriteOnly []WriteOnlyRef
-	// Format is what `drift { format = ... }` says.
-	Format string
 	// Environments are the declared environment blocks, validated.
 	Environments []string
 	// Environment is the one this compile is for, or "" for the default slice.
 	Environment string
-	// Notices are said once, before the plan.
-	Notices []string
 	// Domains is how many custom domains the file declares.
 	Domains int
 	// Addresses maps each booking key to the address the plan prints it under
@@ -95,29 +91,29 @@ type docRange struct {
 }
 
 type compiler struct {
-	ev     *df2Eval
+	ev     *dfEval
 	base   string
 	doc    Node
 	ranges map[string]docRange
-	out    *Compiled2
+	out    *Compiled
 	crons  int
 }
 
-// CompileDriftfile2 reads and compiles the format-2 Driftfile at path, for its
-// default slice.
-func CompileDriftfile2(path string) (*Compiled2, error) {
-	return CompileDriftfile2Env(path, "")
+// CompileDriftfile reads and compiles the Driftfile at path, for its default
+// slice.
+func CompileDriftfile(path string) (*Compiled, error) {
+	return CompileDriftfileEnv(path, "")
 }
 
-// CompileDriftfile2Env compiles the file for one of its environments: its
+// CompileDriftfileEnv compiles the file for one of its environments: its
 // variables take the environment's values, and the result names the
 // environment's slice and billing. env "" is the default slice.
-func CompileDriftfile2Env(path, env string) (*Compiled2, error) {
+func CompileDriftfileEnv(path, env string) (*Compiled, error) {
 	data, err := os.ReadFile(path) // #nosec G304 — the user's own manifest
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	file, ev, err := readFormat2Env(path, data, env)
+	file, ev, err := readDriftfileEnv(path, data, env)
 	if err != nil {
 		return nil, err
 	}
@@ -126,15 +122,15 @@ func CompileDriftfile2Env(path, env string) (*Compiled2, error) {
 		base:   filepath.Dir(path),
 		doc:    Node{},
 		ranges: map[string]docRange{},
-		out:    &Compiled2{Addresses: map[string]string{}},
+		out:    &Compiled{Addresses: map[string]string{}},
 	}
 	c.compile(file)
 	if ev.diags.HasErrors() {
 		return nil, diagError(ev.diags)
 	}
 
-	// The document is held to the platform's own schema, exactly as a YAML
-	// file is, and every refusal is moved back to where this file wrote it.
+	// The document is held to the platform's own schema, and every refusal is
+	// moved back to where this file wrote it.
 	if errs := validateAgainstSchema(c.doc); len(errs) > 0 {
 		return nil, c.relocateSchemaErrors(errs)
 	}
@@ -151,8 +147,7 @@ func (c *compiler) at(ptr string, rng hcl.Range, what string) {
 	c.ranges[ptr] = docRange{rng: rng, what: what}
 }
 
-func (c *compiler) compile(f *df2File) {
-	c.compileDrift(f)
+func (c *compiler) compile(f *dfFile) {
 	c.compileSlice(f)
 	c.compileElements(f.Elements)
 	c.compileBackbone(f)
@@ -163,34 +158,13 @@ func (c *compiler) compile(f *df2File) {
 	c.compileLimits(f)
 }
 
-// ─── drift and slice ────────────────────────────────────────────────────────
+// ─── slice ──────────────────────────────────────────────────────────────────
 
-func (c *compiler) compileDrift(f *df2File) {
-	if len(f.Drift) > 1 {
-		c.ev.errorf(f.Drift[1].DefRange, "Duplicate drift block", "a Driftfile declares its format once.")
-	}
-	d := f.Drift[0]
-	v, ok := c.ev.str(d.Format, "format")
-	if !ok {
-		c.ev.errorf(d.DefRange, "Missing format", `the drift block says which format this file is: format = "%s".`, Format2Implemented)
-		return
-	}
-	if !format2Re.MatchString(v) {
-		c.ev.errorf(d.Format.Range(), "Unsupported format",
-			"format %q is not a Driftfile 2 format this CLI reads; it implements %s.", v, Format2Implemented)
-		return
-	}
-	c.out.Format = v
-	if v != Format2Implemented {
-		c.out.Notices = append(c.out.Notices, fmt.Sprintf(
-			"this file declares format %s and this CLI implements %s: keys it does not know are refused; `drift upgrade` reads them", v, Format2Implemented))
-	}
-}
-
-func (c *compiler) compileSlice(f *df2File) {
+func (c *compiler) compileSlice(f *dfFile) {
 	switch len(f.Slice) {
 	case 0:
-		c.ev.errorf(f.Drift[0].DefRange, "Missing slice block", `a Driftfile 2 names its slice: slice "my-app" { billing = "monthly" }.`)
+		start := hcl.Range{Filename: c.ev.file, Start: hcl.InitialPos, End: hcl.InitialPos}
+		c.ev.errorf(start, "Missing slice block", `a Driftfile names its slice: slice "my-app" { billing = "monthly" }.`)
 		return
 	case 1:
 	default:
@@ -200,8 +174,8 @@ func (c *compiler) compileSlice(f *df2File) {
 	s := f.Slice[0]
 	name, nameRange := s.Name, s.NameRange
 	if e := c.ev.env; e != nil {
-		// An environment is its own slice: the one it names, or the YAML
-		// format's `<slice>-<env>`.
+		// An environment is its own slice: the one it names, or
+		// `<slice>-<env>`.
 		c.out.Environment = e.name
 		name = deriveSliceName(s.Name, e.name)
 		if e.hasSlice {
@@ -257,7 +231,7 @@ func (c *compiler) compileSlice(f *df2File) {
 // the way people write a route, or QUEUE and the queue it drains.
 var pulseLabelRe = regexp.MustCompile(`^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /(.*)$|^QUEUE ([^ /]+)$`)
 
-func (c *compiler) compileElements(elements []df2Element) {
+func (c *compiler) compileElements(elements []dfElement) {
 	var list []any
 	seen := map[string]bool{}
 	slots := 0
@@ -317,9 +291,15 @@ func (c *compiler) compileElements(elements []df2Element) {
 }
 
 // checkDir refuses an element whose folder is not on this machine, at the
-// element's own position.
-func (c *compiler) checkDir(dir string, el df2Element, what string) {
-	if dir == "" {
+// element's own position. The element named "default" is ./atomic itself,
+// where `drift atomic new` writes without --element; every other is
+// ./atomic/<name>.
+func (c *compiler) checkDir(dir string, el dfElement, what string) {
+	switch {
+	case dir != "":
+	case el.Name == atomic_cmd.DefaultElementName:
+		dir = "atomic"
+	default:
 		dir = filepath.Join("atomic", el.Name)
 	}
 	p := dir
@@ -335,7 +315,7 @@ func (c *compiler) checkDir(dir string, el df2Element, what string) {
 	}
 }
 
-func (c *compiler) compilePulse(p df2Pulse, ptr string) Node {
+func (c *compiler) compilePulse(p dfPulse, ptr string) Node {
 	m := pulseLabelRe.FindStringSubmatch(p.Label)
 	what := fmt.Sprintf("pulse %q", p.Label)
 	c.at(ptr, p.LabelRange, what)
@@ -360,7 +340,7 @@ func (c *compiler) compilePulse(p df2Pulse, ptr string) Node {
 	}
 	c.optString(entry, "response", p.Response, ptr, what)
 	c.optString(entry, "stream", p.Stream, ptr, what)
-	c.optString(entry, "dir", p.Dir, ptr, what)
+	c.optDir(entry, p.Dir, ptr, what)
 	if cron, ok := c.ev.str(p.Cron, what+": cron"); ok {
 		entry["cron"] = cron
 		c.at(ptr+"/cron", p.Cron.Range(), what)
@@ -394,7 +374,7 @@ func (c *compiler) compilePulse(p df2Pulse, ptr string) Node {
 	return entry
 }
 
-func (c *compiler) compileField(f df2Field, ptr string) Node {
+func (c *compiler) compileField(f dfField, ptr string) Node {
 	what := fmt.Sprintf("field %q", f.Name)
 	c.at(ptr, f.NameRange, what)
 	entry := Node{"name": f.Name}
@@ -405,7 +385,7 @@ func (c *compiler) compileField(f df2Field, ptr string) Node {
 	} else if !present(f.Handler) {
 		c.ev.errorf(f.DefRange, "Missing handler", "%s names the callable it runs: handler = \"Sequencer\".", what)
 	}
-	c.optString(entry, "dir", f.Dir, ptr, what)
+	c.optDir(entry, f.Dir, ptr, what)
 	c.optEnvSecrets(entry, f.Env, f.Secrets, ptr, what)
 
 	key := "field:" + f.Name
@@ -415,7 +395,7 @@ func (c *compiler) compileField(f df2Field, ptr string) Node {
 		// the compiled floor binds now, as tier.ValidateAtomicMemory binds it.
 		if floor := CompiledMemoryFloor(); floor.Bytes > 0 && bytes < floor.Bytes {
 			c.ev.errorf(f.Memory.Range(), "Below the compiled floor",
-				"%s books %s; a Field runs Go, and a compiled slot needs at least %s.", what, sizeLabel2(bytes), sizeLabel2(floor.Bytes))
+				"%s books %s; a Field runs Go, and a compiled slot needs at least %s.", what, sizeLabel(bytes), sizeLabel(floor.Bytes))
 		}
 	}
 	return entry
@@ -430,7 +410,7 @@ func (c *compiler) booking(key, route, method string, expr hcl.Expression, def h
 		}
 		return 0
 	}
-	bytes, err := parseSize2(raw)
+	bytes, err := parseSize(raw)
 	if err != nil {
 		c.ev.errorf(expr.Range(), "Not a size", "%s: memory %s.", what, err)
 		return 0
@@ -451,8 +431,8 @@ func (c *compiler) booking(key, route, method string, expr hcl.Expression, def h
 }
 
 // memoryPattern is the platform's booking range, read from the schema's
-// `memory` pattern rather than restated: the same rule a YAML booking is held
-// to. Nil when this machine holds no schema; the plan refuses to run then.
+// `memory` pattern rather than restated. Nil when this machine holds no
+// schema; the plan refuses to run then.
 func memoryPattern() *regexp.Regexp {
 	raw, err := common.LocalDriftfileSchema()
 	if err != nil {
@@ -486,6 +466,16 @@ func (c *compiler) optString(entry Node, key string, expr hcl.Expression, ptr, w
 	}
 }
 
+// optDir reads a slot's own folder, when it names one, and refuses one that is
+// not on this machine at the attribute.
+func (c *compiler) optDir(entry Node, expr hcl.Expression, ptr, what string) {
+	if v, ok := c.ev.str(expr, what+": dir"); ok {
+		entry["dir"] = v
+		c.at(ptr+"/dir", expr.Range(), what)
+		c.checkPath(v, true, expr.Range(), what+": dir")
+	}
+}
+
 func (c *compiler) optEnvSecrets(entry Node, env, secrets hcl.Expression, ptr, what string) {
 	if m, ok := c.ev.strMap(env, what+": env"); ok {
 		n := map[string]any{}
@@ -503,7 +493,7 @@ func (c *compiler) optEnvSecrets(entry Node, env, secrets hcl.Expression, ptr, w
 
 // ─── backbone ───────────────────────────────────────────────────────────────
 
-func (c *compiler) compileBackbone(f *df2File) {
+func (c *compiler) compileBackbone(f *dfFile) {
 	bb := Node{}
 	sh := &c.out.Shape.Backbone
 
@@ -670,7 +660,7 @@ func (c *compiler) size(expr hcl.Expression, def hcl.Range, what string) int {
 		}
 		return 0
 	}
-	bytes, err := parseSize2(raw)
+	bytes, err := parseSize(raw)
 	if err != nil {
 		c.ev.errorf(expr.Range(), "Not a size", "%s: size %s.", what, err)
 		return 0
@@ -702,7 +692,7 @@ func (c *compiler) checkPath(p string, dir bool, rng hcl.Range, what string) {
 
 // ─── canvas, edge, hooks, tests, environments ───────────────────────────────
 
-func (c *compiler) compileSites(sites []df2Site) {
+func (c *compiler) compileSites(sites []dfSite) {
 	var list []any
 	for i, s := range sites {
 		ptr := fmt.Sprintf("/canvas/sites/%d", i)
@@ -717,8 +707,8 @@ func (c *compiler) compileSites(sites []df2Site) {
 		}
 		c.checkPath(dir, true, s.Dir.Range(), what+": dir")
 		e := map[string]any{"dir": dir}
-		// The root is written with no path, as `canvas: ./site` is: that is the
-		// spelling the slice stores under the slug `default`.
+		// The root is written with no path: that is the spelling the slice
+		// stores under the slug `default`.
 		if s.Path != "/" {
 			e["path"] = s.Path
 		}
@@ -729,7 +719,7 @@ func (c *compiler) compileSites(sites []df2Site) {
 	}
 }
 
-func (c *compiler) compileEdge(edges []df2Edge) {
+func (c *compiler) compileEdge(edges []dfEdge) {
 	if len(edges) == 0 {
 		return
 	}
@@ -773,7 +763,7 @@ func (c *compiler) compileEdge(edges []df2Edge) {
 		if v, ok := c.ev.str(e.RateLimit, "edge.rate_limit"); ok {
 			rpm, err := rateLimitRPM(v)
 			if err != nil {
-				c.ev.errorf(e.RateLimit.Range(), "Not a rate", "edge.rate_limit: %v.", err)
+				c.ev.errorf(e.RateLimit.Range(), "Not a rate", "%v.", err)
 			} else {
 				c.out.Shape.Atomic.MaxNumberOfRequestsPerMinute = rpm
 			}
@@ -817,7 +807,9 @@ func (c *compiler) compileEdge(edges []df2Edge) {
 			hosts = append(hosts, h)
 		}
 		sort.Strings(hosts)
-		var list []any
+		// Empty rather than nil: `hosts = {}` is a declaration that clears the
+		// slice's fronted hosts, and the document must carry it as an empty list.
+		list := []any{}
 		for _, h := range hosts {
 			list = append(list, map[string]any{"host": h, "slice": m[h]})
 		}
@@ -829,7 +821,7 @@ func (c *compiler) compileEdge(edges []df2Edge) {
 	}
 }
 
-func (c *compiler) compileHooksAndTests(hooks []df2Hook, tests []df2Test) {
+func (c *compiler) compileHooksAndTests(hooks []dfHook, tests []dfTest) {
 	h := map[string][]any{}
 	for _, hk := range hooks {
 		if hk.Phase != "pre_deploy" && hk.Phase != "post_deploy" {
@@ -864,7 +856,7 @@ func (c *compiler) compileHooksAndTests(hooks []df2Hook, tests []df2Test) {
 
 // compileEnvironments validates every environment block, whichever one the
 // file is compiled for: each is its own slice, planned and applied by name.
-func (c *compiler) compileEnvironments(envs []df2Environment) {
+func (c *compiler) compileEnvironments(envs []dfEnvironment) {
 	seen := map[string]bool{}
 	name := NamePattern()
 	for _, e := range envs {
@@ -909,33 +901,33 @@ const (
 // shapeLimit is one `limits` attribute and the SliceConfig scalar it writes.
 type shapeLimit struct {
 	name string
-	expr func(*df2Limits) hcl.Expression
+	expr func(*dfLimits) hcl.Expression
 	unit limitUnit
 	at   func(*SliceConfig) *int
 }
 
 // shapeLimits is the whole mapping from `limits` to the shape.
 var shapeLimits = []shapeLimit{
-	{"requests_per_minute", func(l *df2Limits) hcl.Expression { return l.RequestsPerMinute }, unitCount, func(c *SliceConfig) *int { return &c.Atomic.MaxNumberOfRequestsPerMinute }},
-	{"timeout", func(l *df2Limits) hcl.Expression { return l.Timeout }, unitSeconds, func(c *SliceConfig) *int { return &c.Atomic.MaxFunctionRuntimeInSeconds }},
-	{"log_retention", func(l *df2Limits) hcl.Expression { return l.LogRetention }, unitHours, func(c *SliceConfig) *int { return &c.Atomic.MaxNumberOfHoursForLogRetention }},
-	{"deploy_history", func(l *df2Limits) hcl.Expression { return l.DeployHistory }, unitCount, func(c *SliceConfig) *int { return &c.Atomic.MaxNumberOfDeploymentsInHistory }},
-	{"backup_retention", func(l *df2Limits) hcl.Expression { return l.BackupRetention }, unitDays, func(c *SliceConfig) *int { return &c.Backbone.BackupRetentionDays }},
-	{"scheduled_jobs", func(l *df2Limits) hcl.Expression { return l.ScheduledJobs }, unitCount, func(c *SliceConfig) *int { return &c.Atomic.MaxNumberOfScheduledJobs }},
-	{"atomic_storage", func(l *df2Limits) hcl.Expression { return l.AtomicStorage }, unitSize, func(c *SliceConfig) *int { return &c.Atomic.MaxStorageBytes }},
-	{"canvas_storage", func(l *df2Limits) hcl.Expression { return l.CanvasStorage }, unitSize, func(c *SliceConfig) *int { return &c.Canvas.TotalMaxSizeInBytes }},
-	{"realtime_connections", func(l *df2Limits) hcl.Expression { return l.RealtimeConnections }, unitCount, func(c *SliceConfig) *int { return &c.Backbone.Realtime.MaxConcurrentConnections }},
-	{"secrets", func(l *df2Limits) hcl.Expression { return l.Secrets }, unitCount, func(c *SliceConfig) *int { return &c.Backbone.Secrets.MaxCount }},
-	{"secret_size", func(l *df2Limits) hcl.Expression { return l.SecretSize }, unitSize, func(c *SliceConfig) *int { return &c.Backbone.Secrets.MaxSizeInBytesEach }},
-	{"locks", func(l *df2Limits) hcl.Expression { return l.Locks }, unitCount, func(c *SliceConfig) *int { return &c.Backbone.Locks.MaxConcurrent }},
-	{"blob_object_size", func(l *df2Limits) hcl.Expression { return l.BlobObjectSize }, unitSize, func(c *SliceConfig) *int { return &c.Backbone.Blobs.MaxSizeInBytesEach }},
-	{"queue_depth", func(l *df2Limits) hcl.Expression { return l.QueueDepth }, unitCount, func(c *SliceConfig) *int { return &c.Backbone.Queues.MaxDepthEach }},
-	{"vault_entry_size", func(l *df2Limits) hcl.Expression { return l.VaultEntrySize }, unitSize, func(c *SliceConfig) *int { return &c.Deed.Vault.MaxSizeInBytesEach }},
-	{"vault_entries", func(l *df2Limits) hcl.Expression { return l.VaultEntries }, unitCount, func(c *SliceConfig) *int { return &c.Deed.Vault.MaxEntriesPerUID }},
-	{"pocket_record_size", func(l *df2Limits) hcl.Expression { return l.PocketRecordSize }, unitSize, func(c *SliceConfig) *int { return &c.Deed.Pocket.MaxSizeInBytesEach }},
+	{"requests_per_minute", func(l *dfLimits) hcl.Expression { return l.RequestsPerMinute }, unitCount, func(c *SliceConfig) *int { return &c.Atomic.MaxNumberOfRequestsPerMinute }},
+	{"timeout", func(l *dfLimits) hcl.Expression { return l.Timeout }, unitSeconds, func(c *SliceConfig) *int { return &c.Atomic.MaxFunctionRuntimeInSeconds }},
+	{"log_retention", func(l *dfLimits) hcl.Expression { return l.LogRetention }, unitHours, func(c *SliceConfig) *int { return &c.Atomic.MaxNumberOfHoursForLogRetention }},
+	{"deploy_history", func(l *dfLimits) hcl.Expression { return l.DeployHistory }, unitCount, func(c *SliceConfig) *int { return &c.Atomic.MaxNumberOfDeploymentsInHistory }},
+	{"backup_retention", func(l *dfLimits) hcl.Expression { return l.BackupRetention }, unitDays, func(c *SliceConfig) *int { return &c.Backbone.BackupRetentionDays }},
+	{"scheduled_jobs", func(l *dfLimits) hcl.Expression { return l.ScheduledJobs }, unitCount, func(c *SliceConfig) *int { return &c.Atomic.MaxNumberOfScheduledJobs }},
+	{"atomic_storage", func(l *dfLimits) hcl.Expression { return l.AtomicStorage }, unitSize, func(c *SliceConfig) *int { return &c.Atomic.MaxStorageBytes }},
+	{"canvas_storage", func(l *dfLimits) hcl.Expression { return l.CanvasStorage }, unitSize, func(c *SliceConfig) *int { return &c.Canvas.TotalMaxSizeInBytes }},
+	{"realtime_connections", func(l *dfLimits) hcl.Expression { return l.RealtimeConnections }, unitCount, func(c *SliceConfig) *int { return &c.Backbone.Realtime.MaxConcurrentConnections }},
+	{"secrets", func(l *dfLimits) hcl.Expression { return l.Secrets }, unitCount, func(c *SliceConfig) *int { return &c.Backbone.Secrets.MaxCount }},
+	{"secret_size", func(l *dfLimits) hcl.Expression { return l.SecretSize }, unitSize, func(c *SliceConfig) *int { return &c.Backbone.Secrets.MaxSizeInBytesEach }},
+	{"locks", func(l *dfLimits) hcl.Expression { return l.Locks }, unitCount, func(c *SliceConfig) *int { return &c.Backbone.Locks.MaxConcurrent }},
+	{"blob_object_size", func(l *dfLimits) hcl.Expression { return l.BlobObjectSize }, unitSize, func(c *SliceConfig) *int { return &c.Backbone.Blobs.MaxSizeInBytesEach }},
+	{"queue_depth", func(l *dfLimits) hcl.Expression { return l.QueueDepth }, unitCount, func(c *SliceConfig) *int { return &c.Backbone.Queues.MaxDepthEach }},
+	{"vault_entry_size", func(l *dfLimits) hcl.Expression { return l.VaultEntrySize }, unitSize, func(c *SliceConfig) *int { return &c.Deed.Vault.MaxSizeInBytesEach }},
+	{"vault_entries", func(l *dfLimits) hcl.Expression { return l.VaultEntries }, unitCount, func(c *SliceConfig) *int { return &c.Deed.Vault.MaxEntriesPerUID }},
+	{"pocket_record_size", func(l *dfLimits) hcl.Expression { return l.PocketRecordSize }, unitSize, func(c *SliceConfig) *int { return &c.Deed.Pocket.MaxSizeInBytesEach }},
 }
 
-func (c *compiler) compileLimits(f *df2File) {
+func (c *compiler) compileLimits(f *dfFile) {
 	if len(f.Slice) != 1 {
 		return
 	}
@@ -953,7 +945,7 @@ func (c *compiler) compileLimits(f *df2File) {
 		}
 	}
 
-	var lim *df2Limits
+	var lim *dfLimits
 	if len(f.Slice[0].Limits) > 0 {
 		lim = &f.Slice[0].Limits[0]
 	}
@@ -1021,14 +1013,14 @@ func (c *compiler) limitValue(expr hcl.Expression, unit limitUnit, what string) 
 		return 0, false
 	}
 	if unit == unitSize {
-		b, err := parseSize2(raw)
+		b, err := parseSize(raw)
 		if err != nil {
 			c.ev.errorf(expr.Range(), "Not a size", "%s %s.", what, err)
 			return 0, false
 		}
 		return b, true
 	}
-	secs, err := parseDuration2(raw)
+	secs, err := parseDuration(raw)
 	if err != nil {
 		c.ev.errorf(expr.Range(), "Not a duration", "%s %s.", what, err)
 		return 0, false
@@ -1062,7 +1054,7 @@ func (c *compiler) relocateSchemaErrors(errs ParseErrors) error {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: "Invalid Driftfile", Detail: msg})
 			continue
 		}
-		key := strings.TrimPrefix(strings.TrimPrefix(loc, keyPrefix(c.ranges, best)), "/")
+		key := strings.TrimPrefix(strings.TrimPrefix(loc, blockPointer(c.ranges, best, loc)), "/")
 		detail := best.what
 		if key != "" {
 			detail += ": " + key
@@ -1076,25 +1068,31 @@ func (c *compiler) relocateSchemaErrors(errs ParseErrors) error {
 	return diagError(diags)
 }
 
-// keyPrefix finds the pointer a range was recorded under.
-func keyPrefix(ranges map[string]docRange, want docRange) string {
-	longest := ""
+// blockPointer is the pointer of the block a refusal belongs to: the shortest
+// one recorded for the same block that leads to loc. What follows it in loc is
+// the key the refusal is about, so an attribute's own refusal names the
+// attribute.
+func blockPointer(ranges map[string]docRange, want docRange, loc string) string {
+	shortest, found := "", false
 	for ptr, r := range ranges {
-		if r == want && len(ptr) >= len(longest) {
-			longest = ptr
+		if r.what != want.what || (loc != ptr && !strings.HasPrefix(loc, ptr+"/")) {
+			continue
+		}
+		if !found || len(ptr) < len(shortest) {
+			shortest, found = ptr, true
 		}
 	}
-	return longest
+	return shortest
 }
 
 // ─── units ──────────────────────────────────────────────────────────────────
 
-var size2Re = regexp.MustCompile(`^([0-9]+)(KiB|MiB|GiB)$`)
+var sizeRe = regexp.MustCompile(`^([0-9]+)(KiB|MiB|GiB)$`)
 
-// parseSize2 reads a Driftfile 2 size: whole KiB, MiB or GiB. "MB" is refused
+// parseSize reads a Driftfile size: whole KiB, MiB or GiB. "MB" is refused
 // rather than read as MiB, so a size means one number whoever reads it.
-func parseSize2(s string) (int, error) {
-	m := size2Re.FindStringSubmatch(s)
+func parseSize(s string) (int, error) {
+	m := sizeRe.FindStringSubmatch(s)
 	if m == nil {
 		return 0, fmt.Errorf("%q is not a size: write a whole number of KiB, MiB or GiB, e.g. \"64MiB\"", s)
 	}
@@ -1109,11 +1107,11 @@ func parseSize2(s string) (int, error) {
 	return n * scale, nil
 }
 
-var duration2Re = regexp.MustCompile(`^([0-9]+)(s|m|h|d)$`)
+var durationRe = regexp.MustCompile(`^([0-9]+)(s|m|h|d)$`)
 
-// parseDuration2 reads "30s", "24h", "3d" as seconds.
-func parseDuration2(s string) (int, error) {
-	m := duration2Re.FindStringSubmatch(s)
+// parseDuration reads "30s", "24h", "3d" as seconds.
+func parseDuration(s string) (int, error) {
+	m := durationRe.FindStringSubmatch(s)
 	if m == nil {
 		return 0, fmt.Errorf("%q is not a duration: write a whole number of s, m, h or d, e.g. \"24h\"", s)
 	}
@@ -1124,8 +1122,8 @@ func parseDuration2(s string) (int, error) {
 	return n * map[string]int{"s": 1, "m": 60, "h": 3600, "d": 86400}[m[2]], nil
 }
 
-// sizeLabel2 renders bytes the way a Driftfile 2 writes them.
-func sizeLabel2(b int) string {
+// sizeLabel renders bytes the way a Driftfile writes them.
+func sizeLabel(b int) string {
 	switch {
 	case b >= 1024*bytesPerMiB && b%(1024*bytesPerMiB) == 0:
 		return fmt.Sprintf("%dGiB", b/(1024*bytesPerMiB))

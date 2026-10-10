@@ -80,7 +80,7 @@ func writeRefusedMD(dir string, refs []Refusal) error {
 func writeReportMD(dir string, todos []string) error {
 	var b strings.Builder
 	b.WriteString("# REPORT — manual review needed before deploy\n\n")
-	b.WriteString("The transform scaffolds each movable function: its Driftfile entry, the handler\n")
+	b.WriteString("The transform scaffolds each movable function: its Driftfile block, the handler\n")
 	b.WriteString("name, and the Drift `(status, message, payload)` return are correct, and\n")
 	b.WriteString("the original body is preserved verbatim. What it does **not** do is guess how\n")
 	b.WriteString("your Azure bindings map to Drift SDK calls — those are marked with `TODO(drift)`\n")
@@ -95,17 +95,18 @@ func writeReportMD(dir string, todos []string) error {
 	return os.WriteFile(filepath.Join(dir, "REPORT.md"), []byte(b.String()), 0o644)
 }
 
-// writePlanMD renders what a subsequent `drift file apply` would create.
+// writePlanMD renders what a subsequent `drift apply` would create.
 func writePlanMD(dir string, m Manifest, driftfile string) error {
 	var b strings.Builder
-	b.WriteString("# PLAN — what `drift file apply` will create\n\n")
+	b.WriteString("# PLAN — what `drift apply` will create\n\n")
 	b.WriteString(fmt.Sprintf("Slice: **%s**\n\n", m.slug()))
 	b.WriteString(fmt.Sprintf("- %d Atomic function(s)\n", len(m.Functions)))
 	b.WriteString(fmt.Sprintf("- %d NoSQL collection(s)\n", len(m.Collections)))
 	b.WriteString(fmt.Sprintf("- %d secret(s)\n", len(m.Secrets)))
 	b.WriteString(fmt.Sprintf("- %d Canvas site(s)\n\n", len(m.Sites)))
-	b.WriteString("Generated Driftfile:\n\n```yaml\n")
+	b.WriteString("Generated Driftfile:\n\n```hcl\n")
 	b.WriteString(driftfile)
-	b.WriteString("\n```\n\nFrom this folder:\n\n```bash\ndrift file apply\n```\n")
+	b.WriteString("\n```\n\nFrom this folder, `drift plan` shows what applying it creates and what it costs, and\n" +
+		"`drift apply` applies it:\n\n```bash\ndrift plan\ndrift apply\n```\n")
 	return os.WriteFile(filepath.Join(dir, "PLAN.md"), []byte(b.String()), 0o644)
 }

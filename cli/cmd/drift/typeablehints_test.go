@@ -6,6 +6,7 @@ import (
 
 	account "github.com/ondrift/cloud/cli/cmd/account"
 	atomic_cmd_new "github.com/ondrift/cloud/cli/cmd/atomic/cmd/new"
+	"github.com/ondrift/cloud/cli/cmd/project"
 	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
@@ -29,9 +30,18 @@ var typeableHints = map[string][]string{
 	// command — caught by the flow suite (IDN-104), not by this test, because
 	// the text was inlined where nothing could ask about it.
 	"the not-logged-in error (DRIFT-1011)": common.NotLoggedInHints,
-	// Every apply of a Driftfile in a retired spelling ends its notice on this
-	// clause, so it is the most-printed pointer to a command the CLI has.
-	"the deprecation notice on drift file apply": {common.MigrateHint},
+	// Every reader answers a YAML Driftfile with this refusal, and it names
+	// what to run instead.
+	"the refusal of a YAML Driftfile": {yamlRefusal()},
+}
+
+// yamlRefusal is the message every reader gives a YAML Driftfile.
+func yamlRefusal() string {
+	err := project.RefuseYAML("Driftfile", []byte("slice: demo\n"))
+	if err == nil {
+		return "the YAML refusal is empty"
+	}
+	return err.Error()
 }
 
 func TestPrintedHintsNameRealCommands(t *testing.T) {

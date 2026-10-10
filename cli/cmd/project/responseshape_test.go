@@ -11,9 +11,10 @@ import "testing"
 // body — which is why the field is asserted at every hop rather than trusted at
 // any of them.
 func TestFunctionSpecCarriesTheDeclaredResponseShape(t *testing.T) {
-	m := planManifest(t, "slice: demo\natomic:\n  functions:\n"+
-		"    - route: token\n      method: post\n      handler: PostToken\n      response: json\n"+
-		"    - route: ping\n      method: get\n      handler: GetPing\n")
+	withRealSchema(t)
+	m := planManifest(t, "slice \"demo\" { billing = \"monthly\" }\n\nelement \"default\" {\n"+
+		"  pulse \"POST /token\" {\n    handler = \"PostToken\"\n    memory = \"16MiB\"\n    response = \"json\"\n  }\n"+
+		"  pulse \"GET /ping\" {\n    handler = \"GetPing\"\n    memory = \"16MiB\"\n  }\n}\n", "atomic/")
 
 	specs := FunctionSpecs(m)
 	if len(specs) != 2 {

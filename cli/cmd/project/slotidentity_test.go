@@ -1,25 +1,20 @@
 package project
 
 import (
-	"bytes"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/ondrift/cloud/cli/common"
 )
 
-// THE canvas test. Two sites written entirely with `path:` must produce two
-// DISTINCT slugs.
+// THE canvas test. Two sites written entirely with their mount paths must
+// produce two DISTINCT slugs.
 //
-// A reader that missed the rename would read "" for both, and an empty mount
+// A reader that missed the mount path would read "" for both, and an empty mount
 // path resolving to the root would give every site the slug "default" — the
 // second overwriting the first, and the prune then given a keep-list naming only
 // "default", removing every other site directory on the slice. One root site is
 // silently correct; two is silently destructive.
 func TestSlotIdentity_TwoPathSitesKeepDistinctSlugs(t *testing.T) {
-	m := parseSlots(t, canvasDriftfile("path", "/", "/admin"), "site-a", "site-b")
+	m := parseSlots(t, canvasDriftfile("/", "/admin"), "site-a", "site-b")
 
 	sites, err := canvasSites(m)
 	if err != nil {
@@ -37,54 +32,9 @@ func TestSlotIdentity_TwoPathSitesKeepDistinctSlugs(t *testing.T) {
 	}
 }
 
-// The retired spelling produces identical output, and says so once.
-func TestSlotIdentity_TheRetiredRouteKeyResolvesIdenticallyAndWarnsOnce(t *testing.T) {
-	common.ResetDeprecationState()
-	t.Cleanup(common.ResetDeprecationState)
-	var notices bytes.Buffer
-	restore := common.RedirectDeprecationWarnings(&notices)
-	defer restore()
-
-	m := parseSlots(t, canvasDriftfile("route", "/", "/admin"), "site-a", "site-b")
-	sites, err := canvasSites(m)
-	if err != nil {
-		t.Fatalf("the retired spelling must keep resolving: %v", err)
-	}
-	if len(sites) != 2 || sites[0].Slug != "default" || sites[1].Slug != "admin" {
-		t.Fatalf("the retired spelling resolved differently: %+v", sites)
-	}
-	if n := strings.Count(notices.String(), "canvas.sites[].route"); n != 1 {
-		t.Errorf("the retired key was announced %d times across 2 entries, want 1:\n%s",
-			n, notices.String())
-	}
-}
-
-// A bare-string entry carries no mount key at all, so it is the root — and it is
-// not deprecated, so it must say nothing.
-func TestSlotIdentity_ABareStringSiteIsTheRootAndIsSilent(t *testing.T) {
-	common.ResetDeprecationState()
-	t.Cleanup(common.ResetDeprecationState)
-	var notices bytes.Buffer
-	restore := common.RedirectDeprecationWarnings(&notices)
-	defer restore()
-
-	m := parseSlots(t, "slice: demo\ncanvas:\n  sites:\n    - ./site-a\n", "site-a")
-	sites, err := canvasSites(m)
-	if err != nil {
-		t.Fatalf("a bare-string site must resolve: %v", err)
-	}
-	if len(sites) != 1 || sites[0].Slug != "default" {
-		t.Fatalf("bare string resolved to %+v, want one site at slug default", sites)
-	}
-	if strings.Contains(notices.String(), "canvas.sites") {
-		t.Errorf("a bare-string entry declares no retired key and must be silent:\n%s",
-			notices.String())
-	}
-}
-
 // A collection entry names the slot it seeds.
 func TestSlotIdentity_ANosqlEntryNamesItsSlot(t *testing.T) {
-	m := parseSlots(t, "slice: demo\nbackbone:\n  nosql:\n    - slot: ops\n")
+	m := parseSlots(t, "slice \"demo\" { billing = \"monthly\" }\nnosql \"ops\" { size = \"5MiB\" }\n")
 
 	entries := m.Slice().Entries("slot", "backbone", "nosql")
 	if len(entries) != 1 || entries[0].Str("slot") != "ops" {
@@ -92,34 +42,24 @@ func TestSlotIdentity_ANosqlEntryNamesItsSlot(t *testing.T) {
 	}
 }
 
-// The retired nosql spelling still resolves — with its size, which stays
-// required in that branch — and warns once.
-func TestSlotIdentity_TheRetiredNosqlKeyResolvesAndWarnsOnce(t *testing.T) {
-	common.ResetDeprecationState()
-	t.Cleanup(common.ResetDeprecationState)
-	var notices bytes.Buffer
-	restore := common.RedirectDeprecationWarnings(&notices)
-	defer restore()
-
-	m := parseSlots(t, "slice: demo\nbackbone:\n  nosql:\n"+
-		"    - name: ops\n      size: 5MB\n      ttl: 30d\n"+
-		"    - name: events\n      size: 5MB\n")
+// Every collection resolves onto its slot in the order the file declares them,
+// and a ttl, which is a BEHAVIOUR rather than a capacity purchase, reaches the
+// entry. Losing it turns a TTL'd collection into kept-forever with nothing
+// reporting it.
+func TestSlotIdentity_ANosqlEntryKeepsItsTTLAndItsOrder(t *testing.T) {
+	m := parseSlots(t, "slice \"demo\" { billing = \"monthly\" }\n"+
+		"nosql \"ops\" {\n  size = \"5MiB\"\n  ttl  = \"30d\"\n}\n"+
+		"nosql \"events\" { size = \"5MiB\" }\n")
 
 	entries := m.Slice().Entries("slot", "backbone", "nosql")
 	if len(entries) != 2 {
 		t.Fatalf("got %d entries, want 2", len(entries))
 	}
 	if entries[0].Str("slot") != "ops" || entries[1].Str("slot") != "events" {
-		t.Errorf("the retired key did not resolve onto slot: %+v", entries)
+		t.Errorf("the entries did not resolve onto their slots in order: %+v", entries)
 	}
-	// ttl is a BEHAVIOUR, not a capacity purchase, and survives the rename. Losing
-	// it turns a TTL'd collection into kept-forever with nothing reporting it.
 	if entries[0].Str("ttl") != "30d" {
-		t.Errorf("ttl = %q, want 30d — it must survive the rename", entries[0].Str("ttl"))
-	}
-	if n := strings.Count(notices.String(), "backbone.nosql[].name"); n != 1 {
-		t.Errorf("the retired key was announced %d times across 2 entries, want 1:\n%s",
-			n, notices.String())
+		t.Errorf("ttl = %q, want 30d", entries[0].Str("ttl"))
 	}
 }
 
@@ -127,20 +67,19 @@ func TestSlotIdentity_TheRetiredNosqlKeyResolvesAndWarnsOnce(t *testing.T) {
 // collection it neither seeds nor expires, and demanding either would make the
 // reference form unwriteable.
 func TestSlotIdentity_ASlotAloneIsAValidEntry(t *testing.T) {
-	if _, err := tryParseSlots(t, "slice: demo\nbackbone:\n  nosql:\n    - slot: ops\n"); err != nil {
-		t.Fatalf("`{slot: ops}` with neither seed nor ttl must parse: %v", err)
+	if _, err := tryParseSlots(t, "slice \"demo\" { billing = \"monthly\" }\nnosql \"ops\" { size = \"5MiB\" }\n"); err != nil {
+		t.Fatalf("a nosql block with neither seed nor ttl must parse: %v", err)
 	}
 }
 
-// canvasDriftfile writes one site per mount path, under the given key.
-func canvasDriftfile(key string, paths ...string) string {
-	var b strings.Builder
-	b.WriteString("slice: demo\ncanvas:\n  sites:\n")
+// canvasDriftfile writes one site per mount path, each serving the next
+// ./site-<letter> folder.
+func canvasDriftfile(paths ...string) string {
+	body := "slice \"demo\" { billing = \"monthly\" }\n"
 	for i, p := range paths {
-		b.WriteString("    - dir: ./site-" + string(rune('a'+i)) + "\n")
-		b.WriteString("      " + key + ": \"" + p + "\"\n")
+		body += "site \"" + p + "\" { dir = \"site-" + string(rune('a'+i)) + "\" }\n"
 	}
-	return b.String()
+	return body
 }
 
 func parseSlots(t *testing.T, body string, dirs ...string) *Manifest {
@@ -152,17 +91,13 @@ func parseSlots(t *testing.T, body string, dirs ...string) *Manifest {
 	return m
 }
 
+// tryParseSlots parses body as a Driftfile with each of dirs made beside it.
 func tryParseSlots(t *testing.T, body string, dirs ...string) (*Manifest, error) {
 	t.Helper()
-	dir := t.TempDir()
+	withRealSchema(t)
+	var paths []string
 	for _, d := range dirs {
-		if err := os.MkdirAll(filepath.Join(dir, d), 0o750); err != nil {
-			t.Fatal(err)
-		}
+		paths = append(paths, strings.TrimSuffix(d, "/")+"/")
 	}
-	path := filepath.Join(dir, "Driftfile")
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return ParseDriftfile(path)
+	return ParseDriftfile(writeDriftfile(t, body, paths...))
 }

@@ -1,48 +1,26 @@
-// node.go — the Driftfile as data, for the one job that needs it.
+// node.go — the compiled Driftfile document, as data.
 //
-// # What this is used for
-//
-// The whole Driftfile. `Manifest` holds the document these types describe and
-// nothing else — there are no Go structs for `atomic`, `backbone` or `canvas`,
-// because the platform publishes the definition of the format and a second one
-// here could only disagree with it.
-//
-// The ENVIRONMENT OVERLAY is what forced the shape. `Manifest.mergeEnvironment`
-// merges an environment's block onto the base as a document, because two bugs are
-// unfixable in a typed merge and disappear in a document one:
-//
-//   - **Values that could not be overridden to zero.** Four hand-written mergers
-//     gated on `if overlay.X != ""` / `!= 0`, so `deploy_history: 0` or
-//     `wildcard: false` in an environment block was indistinguishable from an
-//     absent key and was discarded — the Driftfile said one thing and the slice
-//     was another, with no error anywhere. YAML gives key PRESENCE; a struct does
-//     not (#CLI-STANDARDUSAGE-T9914R).
-//   - **Merges that silently forgot.** Those mergers went field by field, so a new
-//     Driftfile field was not overridable until someone added a clause — no
-//     compiler error, no failing test. `mergeCanvas` covered two fields.
-//     DeepMerge cannot have that bug because it does not know what a field is.
+// `Manifest` holds the document the HCL Driftfile compiles to (compile.go):
+// the slice's resources as the platform's schema describes them. There are no
+// Go structs for `atomic`, `backbone` or `canvas` in it, because the platform
+// publishes the definition of that document and a second one here could only
+// disagree with it.
 //
 // # An unrecognised key is the SCHEMA's to refuse
 //
-// Nothing here rejects one. `ParseDriftfile` validates the document against the
+// Nothing here rejects one. The compile validates the document against the
 // schema the platform serves (`schema.go`), whose sections are
-// `additionalProperties: false` — so a typo is caught there, by the side that
-// defines what a key is.
-//
-// That is what lets an installed CLI carry a field it has never been taught: the
-// document holds it, the schema decides on it, and this binary passes it through
-// rather than failing on a name it does not recognise.
+// `additionalProperties: false`, so a key the platform does not accept is
+// refused there, by the side that defines what a key is.
 package project
 
 // Node is one object in the Driftfile document.
 //
 // Accessors are total — a missing or wrongly-typed path yields the zero value
-// rather than an error. That is safe for the overlay merge, which reads no values
-// (DeepMerge only walks keys), and it is why these accessors have no callers on the
-// deploy path: the typed parse is what reads values, and it errors properly.
-//
-// Anything that starts READING through these accessors needs validation in front of
-// it first, or a typo becomes a silent zero.
+// rather than an error. That is safe because every document read through them
+// has been compiled and validated first; anything that reads a Node from
+// anywhere else needs validation in front of it, or a typo becomes a silent
+// zero.
 type Node map[string]any
 
 // Get walks a path and returns the raw value, or nil.
@@ -62,8 +40,8 @@ func (n Node) Get(path ...string) any {
 }
 
 // Has reports whether a path is present — including when its value is the zero
-// value for its type. This is the distinction a struct could not make, and the
-// reason environment overrides can now set something back to 0 or false.
+// value for its type, which is how an empty `allow = []` is told apart from no
+// `allow` at all.
 func (n Node) Has(path ...string) bool {
 	if len(path) == 0 {
 		return false
@@ -82,7 +60,7 @@ func (n Node) Str(path ...string) string {
 	return s
 }
 
-// Int returns an integer value, or 0. YAML numbers decode as int, and JSON
+// Int returns an integer value, or 0. The compiler writes int, and JSON
 // round-trips can produce float64, so both are accepted.
 func (n Node) Int(path ...string) int {
 	switch v := n.Get(path...).(type) {
@@ -119,9 +97,7 @@ func (n Node) List(path ...string) []any {
 	return l
 }
 
-// Nodes returns a list of objects, skipping any element that is not one. Every
-// list the Driftfile takes has already been normalised by expandEntryShorthands
-// at parse time, so a bare string has become an object before this runs.
+// Nodes returns a list of objects, skipping any element that is not one.
 func (n Node) Nodes(path ...string) []Node {
 	raw := n.List(path...)
 	out := make([]Node, 0, len(raw))
@@ -173,7 +149,8 @@ func (n Node) Set(value any, path ...string) {
 	cur[path[len(path)-1]] = value
 }
 
-// Clone returns a deep copy, so a merge never mutates the document it read.
+// Clone returns a deep copy, so a pass that rewrites the slice never mutates the
+// document it read.
 func (n Node) Clone() Node {
 	out := make(Node, len(n))
 	for k, v := range n {
@@ -199,37 +176,8 @@ func cloneValue(v any) any {
 	}
 }
 
-// DeepMerge returns base with overlay applied on top.
-//
-// The rules, and why:
-//
-//   - A key PRESENT in overlay wins, whatever its value. Presence is the
-//     signal, not truthiness — that is what makes `deploy_history: 0` and
-//     `wildcard: false` expressible in an environment override, which the
-//     struct-based mergers could not do.
-//   - Two objects merge recursively, so an environment can override
-//     `atomic.rate_limit` without restating the rest of `atomic`.
-//   - A list REPLACES wholesale. An environment that lists functions means
-//     exactly those functions; element-wise merging of a list has no
-//     defensible identity rule and would surprise more than it helped. This
-//     matches what the old mergers did (`if len(overlay.X) > 0`), minus their
-//     inability to express an intentionally empty list.
-func DeepMerge(base, overlay Node) Node {
-	out := base.Clone()
-	for key, ov := range overlay {
-		if sub, ok := asNode(ov); ok {
-			if existing, ok := asNode(out[key]); ok {
-				out[key] = DeepMerge(existing, sub)
-				continue
-			}
-		}
-		out[key] = cloneValue(ov)
-	}
-	return out
-}
-
-// asNode accepts both shapes a decoded object arrives in: Node from our own
-// code, map[string]any from a YAML or JSON decode.
+// asNode accepts both shapes an object arrives in: Node from our own code,
+// map[string]any from the compiler or a JSON decode.
 func asNode(v any) (Node, bool) {
 	switch t := v.(type) {
 	case Node:
@@ -243,16 +191,10 @@ func asNode(v any) (Node, bool) {
 // Entries reads a list whose elements may be a bare STRING or a map, and yields
 // them uniformly as Nodes — a bare string becoming {scalarKey: value}.
 //
-// `backbone.queues` is a `oneOf` over string and object, so a reader has to cope
-// with both. `atomic.functions` takes objects alone — a function must book its
-// memory and a bare name cannot — and reading it through here costs nothing while
-// keeping one accessor for every list the format has.
-//
-// scalarKey is what a bare string MEANS for that list, which differs by section:
-// a function or queue string is a `name`, a canvas string is a `dir`, a cache
-// string is a `file`. Naming it at the call site keeps that knowledge with the
-// caller that has it, rather than in a table here that would need updating for
-// every new section.
+// The compiler writes `backbone.queues` as bare names and every other list as
+// objects; reading them all through here keeps one accessor for every list the
+// document has. scalarKey is what a bare string MEANS for that list: a queue's
+// is its `name`.
 func (n Node) Entries(scalarKey string, path ...string) []Node {
 	items := n.List(path...)
 	out := make([]Node, 0, len(items))
@@ -282,9 +224,8 @@ func (n Node) StrMap(path ...string) map[string]string {
 	return out
 }
 
-// EntryMap is Entries for a MAP whose VALUES may be a bare string or a map —
-// `backbone.cache`, where `menu: ./menu.json` is the short form of
-// `menu: {file: ./menu.json}`.
+// EntryMap is Entries for a MAP whose VALUES may be a bare string or a map,
+// such as `backbone.cache`.
 func (n Node) EntryMap(scalarKey string, path ...string) map[string]Node {
 	src := n.Sub(path...)
 	out := make(map[string]Node, len(src))

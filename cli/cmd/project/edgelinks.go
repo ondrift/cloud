@@ -3,7 +3,7 @@
 //
 // Present, the key is the whole truth: apply adds every declared link the
 // slice does not hold and removes every live link the file does not name, and
-// `--plan` shows both. Absent, the live links are left exactly as they are.
+// `drift plan` shows both. Absent, the live links are left exactly as they are.
 // An empty list is a declaration — no links — and removes them all.
 //
 // The calls are `drift slice link`'s, exported from cmd/slice, so the command
@@ -17,7 +17,6 @@ package project
 
 import (
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 
@@ -107,35 +106,4 @@ func applyEdgeLinks(m *Manifest) error {
 		fmt.Printf("  %s unlinked → %s %s\n", common.Check(), name, common.Hint("(not in edge.links)"))
 	}
 	return nil
-}
-
-// planEdgeLinks is the `--plan` section for `edge.links`: what would be added,
-// removed and kept. It reads the live links and writes nothing.
-func planEdgeLinks(m *Manifest, out io.Writer) {
-	if !m.Slice().Has("edge", "links") {
-		return
-	}
-	declared := declaredLinks(m)
-	fmt.Fprintf(out, "\n  links (edge.links)\n")
-	live, err := slice.ListLinks(m.Name())
-	if err != nil {
-		fmt.Fprintf(out, "    %s couldn't read the live links, so what would be removed is unknown: %v\n", common.Hint("!"), err)
-		for _, name := range declared {
-			fmt.Fprintf(out, "    %s %s\n", common.Hint("·"), name)
-		}
-		return
-	}
-	add, remove, keep := linkChanges(declared, live)
-	if len(add) == 0 && len(remove) == 0 {
-		fmt.Fprintf(out, "    %s\n", common.Hint("no change"))
-	}
-	for _, name := range add {
-		fmt.Fprintf(out, "    + %s\n", name)
-	}
-	for _, name := range remove {
-		fmt.Fprintf(out, "    - %s %s\n", name, common.Hint("(live, not in edge.links: would be removed)"))
-	}
-	for _, name := range keep {
-		fmt.Fprintf(out, "    · %s\n", name)
-	}
 }

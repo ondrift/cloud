@@ -1,6 +1,6 @@
 package project
 
-// freeenvelope.go — does a compiled Driftfile 2 shape fit the free slice?
+// freeenvelope.go — does a compiled Driftfile shape fit the free slice?
 //
 // `billing = "free"` asks for the free slice, and the platform provisions one
 // only when the shape is inside what the free slice grants. The plan answers
@@ -69,8 +69,8 @@ var freeSets = struct {
 
 const bytesPerMiB = 1024 * 1024
 
-// freeLimit is one scalar the preset pins, by the name the Driftfile 2 writes
-// it under and the reader that finds it on a shape.
+// freeLimit is one scalar the preset pins, by the name the Driftfile writes it
+// under and the reader that finds it on a shape.
 type freeLimit struct {
 	name string
 	at   func(*SliceConfig) *int
@@ -149,7 +149,7 @@ func freeEnvelopeViolation(c SliceConfig, domains int) error {
 		}
 		if sum > s.sum {
 			return fmt.Errorf("the %ss total %s, and the free slice grants %s across all of them",
-				s.noun, sizeLabel2(sum), sizeLabel2(s.sum))
+				s.noun, sizeLabel(sum), sizeLabel(s.sum))
 		}
 	}
 

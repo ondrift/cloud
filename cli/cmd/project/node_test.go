@@ -2,74 +2,14 @@ package project
 
 import "testing"
 
-// The two bugs the struct-based mergers had, pinned so they cannot come back.
-func TestDeepMergeFixesTheStructMergerBugs(t *testing.T) {
-	t.Run("a value can be overridden TO zero", func(t *testing.T) {
-		// The old mergers gated on `if overlay.DeployHistory != 0`, so this
-		// override was silently discarded and the base value survived.
-		base := Node{"atomic": Node{"deploy_history": 5}}
-		overlay := Node{"atomic": Node{"deploy_history": 0}}
-
-		got := DeepMerge(base, overlay)
-		if v := got.Int("atomic", "deploy_history"); v != 0 {
-			t.Errorf("deploy_history should be overridable to 0, got %d", v)
-		}
-	})
-
-	t.Run("a bool can be overridden to false", func(t *testing.T) {
-		base := Node{"domains": Node{"wildcard": true}}
-		overlay := Node{"domains": Node{"wildcard": false}}
-
-		if DeepMerge(base, overlay).Bool("domains", "wildcard") {
-			t.Error("wildcard should be overridable to false")
-		}
-	})
-
-	t.Run("a field nobody taught the merger about still merges", func(t *testing.T) {
-		// The whole class: the old mergeAtomic had a clause per field, so a
-		// field added without one was silently not merged. This merge does not
-		// know what a field is, so there is nothing to forget.
-		base := Node{"atomic": Node{"a_field_invented_after_this_code": "base"}}
-		overlay := Node{"atomic": Node{"a_field_invented_after_this_code": "overridden"}}
-
-		if got := DeepMerge(base, overlay).Str("atomic", "a_field_invented_after_this_code"); got != "overridden" {
-			t.Errorf("an unknown field must merge like any other, got %q", got)
-		}
-	})
-}
-
-func TestDeepMergeSemantics(t *testing.T) {
-	t.Run("nested objects merge rather than replace", func(t *testing.T) {
-		base := Node{"atomic": Node{"function_timeout": "64MB", "rate_limit": "100/min"}}
-		overlay := Node{"atomic": Node{"function_timeout": "256MB"}}
-
-		got := DeepMerge(base, overlay)
-		if v := got.Str("atomic", "function_timeout"); v != "256MB" {
-			t.Errorf("overlay should win: %q", v)
-		}
-		if v := got.Str("atomic", "rate_limit"); v != "100/min" {
-			t.Errorf("untouched sibling should survive: %q", v)
-		}
-	})
-
-	t.Run("lists replace wholesale", func(t *testing.T) {
-		base := Node{"atomic": Node{"functions": []any{Node{"name": "a"}, Node{"name": "b"}}}}
-		overlay := Node{"atomic": Node{"functions": []any{Node{"name": "only"}}}}
-
-		fns := DeepMerge(base, overlay).Nodes("atomic", "functions")
-		if len(fns) != 1 || fns[0].Str("name") != "only" {
-			t.Errorf("an environment listing functions means exactly those, got %v", fns)
-		}
-	})
-
-	t.Run("the base is not mutated", func(t *testing.T) {
-		base := Node{"atomic": Node{"function_timeout": "64MB"}}
-		DeepMerge(base, Node{"atomic": Node{"function_timeout": "256MB"}})
-
-		if v := base.Str("atomic", "function_timeout"); v != "64MB" {
-			t.Errorf("merging must not write through to the base, got %q", v)
-		}
-	})
+// A clone is deep: writing through it never reaches the document it copied.
+func TestNodeCloneIsDeep(t *testing.T) {
+	base := Node{"atomic": Node{"pulses": []any{Node{"name": "get:a"}}}}
+	c := base.Clone()
+	c.Sub("atomic").Nodes("pulses")[0]["name"] = "get:b"
+	if got := base.Sub("atomic").Nodes("pulses")[0].Str("name"); got != "get:a" {
+		t.Errorf("a write through the clone reached the original: %q", got)
+	}
 }
 
 func TestNodeAccessorsAreTotal(t *testing.T) {

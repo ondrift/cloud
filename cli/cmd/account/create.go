@@ -41,8 +41,9 @@ var usernameRe = regexp.MustCompile(`^[a-z0-9]{2,32}$`)
 // the only way this text can be known to be typeable — a printed string is not
 // a call, so nothing else notices when it names a command that does not exist.
 var FirstRunHints = []string{
-	"  1. Create your first slice (project)            :: 'drift slice create <name>'",
-	"  2. Deploy your app                              :: 'drift file apply'",
+	"  1. Write a Driftfile                            :: 'drift file new'",
+	"  2. See what it creates, and what it costs       :: 'drift plan'",
+	"  3. Create the slice and deploy                  :: 'drift apply'",
 	"\nManage slices                                    :: 'drift slice list'",
 	"Switch active slice                               :: 'drift slice use <name>'",
 }

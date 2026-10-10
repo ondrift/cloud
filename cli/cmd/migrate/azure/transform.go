@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -23,7 +22,7 @@ func getTransformCmd() *cobra.Command {
 		Short: "Turn an azure_export/ into a deployable drift_workspace/ (offline)",
 		Long: "Reads a snapshot and emits a Drift project: a Driftfile declaring every movable\n" +
 			"function, a Tier-A scaffold for each (Drift return; original body preserved\n" +
-			"verbatim with TODOs), Cosmos data remapped id→_id, secrets as $ENV refs, and\n" +
+			"verbatim with TODOs), Cosmos data remapped id→_id, secrets read with env(), and\n" +
 			"REFUSED.md / REPORT.md / PLAN.md. The generated Driftfile is validated before it's\n" +
 			"written. Entirely offline — no Azure, no Drift contact.",
 		Example: "  drift migrate azure transform -i ./azure_export -o ./drift_workspace",
@@ -38,7 +37,7 @@ func getTransformCmd() *cobra.Command {
 			}
 			fmt.Printf("\n%s  %d scaffold(s) · %d collection(s) · %d refused → %s\n",
 				common.Check(), res.scaffolds, len(m.Collections), len(res.refusals), common.Highlight(out))
-			fmt.Printf("  review %s, then: %s\n", common.BoldText("REPORT.md"), common.BoldText("cd "+out+" && drift file apply"))
+			fmt.Printf("  review %s, then: %s\n", common.BoldText("REPORT.md"), common.BoldText("cd "+out+" && drift plan"))
 			return nil
 		},
 	}
@@ -64,17 +63,17 @@ type driftFn struct {
 }
 type driftColl struct {
 	name, seed string
-	sizeMB     int // declared backbone.nosql[].size, computed from the migrated data (see collSizeMB)
+	sizeMB     int // the nosql block's size, computed from the migrated data (see collSizeMB)
 }
 
 // collSizeMB turns a migrated collection's actual seed byte count into a
-// declared `size` (now mandatory on every backbone.nosql[] entry) with real
-// headroom for post-migration growth: round up to the next whole MiB, then
-// double it, with a 5MB floor so even a near-empty collection gets enough
-// room for its first few real writes. This is a starting point, not a
-// considered capacity plan — buildDriftfile's generated Driftfile already
-// carries a "review before deploy" banner, and the caller adds a per-
-// collection TODO pointing at exactly that.
+// declared `size` (required on every nosql block) with real headroom for
+// post-migration growth: round up to the next whole MiB, then double it, with
+// a 5MiB floor so even a near-empty collection gets enough room for its first
+// few real writes. This is a starting point, not a considered capacity plan —
+// buildDriftfile's generated Driftfile already carries a "review before
+// deploy" banner, and the caller adds a per-collection TODO pointing at
+// exactly that.
 func collSizeMB(dataBytes int) int {
 	mb := max((dataBytes+1024*1024-1)/(1024*1024), 1)
 	return max(mb*2, 5)
@@ -139,22 +138,38 @@ func runTransform(inDir, outDir string, m Manifest) (transformResult, error) {
 		}
 		sizeMB := collSizeMB(len(transformed))
 		colls = append(colls, driftColl{coll.Name, seed, sizeMB})
-		todos = append(todos, fmt.Sprintf("%s: backbone.nosql size set to %dMB (2x the migrated data, min 5MB) — review and adjust for expected growth", coll.Name, sizeMB))
+		todos = append(todos, fmt.Sprintf("%s: nosql size set to %dMiB (2x the migrated data, min 5MiB) — review and adjust for expected growth", coll.Name, sizeMB))
 		if lossy {
 			todos = append(todos, fmt.Sprintf("%s: documents had an `id` field remapped to `_id` (Mongo key); original kept as `_azure_id`", coll.Name))
 		}
 	}
 
-	if len(m.Secrets) > 0 {
+	// An API-key gate reads its key from a variable. Azure's function keys are
+	// not exported, so each variable is named in .env.migrate unset, and
+	// `drift apply` refuses until it holds a key.
+	var keyVars []string
+	for _, fn := range fns {
+		if fn.trigger.Auth != "" && fn.trigger.Auth != "none" {
+			keyVars = append(keyVars, apiKeyVar(fn.slug))
+		}
+	}
+
+	if len(m.Secrets) > 0 || len(keyVars) > 0 {
 		var env strings.Builder
-		env.WriteString("# Secret values for `drift file apply` (referenced as $NAME in the Driftfile).\n")
+		env.WriteString("# Values `drift apply` reads, each named with env() in the Driftfile.\n")
 		for _, s := range m.Secrets {
 			env.WriteString(s.Name + "=" + s.Value + "\n")
+		}
+		for _, k := range keyVars {
+			env.WriteString("# " + k + "=\n")
+			todos = append(todos, fmt.Sprintf("%s: set the API key callers present, uncommented in .env.migrate", k))
 		}
 		if err := writeWS(outDir, ".env.migrate", []byte(env.String()), 0o600); err != nil {
 			return res, err
 		}
-		todos = append(todos, "secrets: fill in real values in .env.migrate (snapshot stored names; values only with --deref-secrets)")
+		if len(m.Secrets) > 0 {
+			todos = append(todos, "secrets: fill in real values in .env.migrate (snapshot stored names; values only with --deref-secrets)")
+		}
 	}
 
 	for _, site := range m.Sites {
@@ -189,11 +204,11 @@ func runTransform(inDir, outDir string, m Manifest) (transformResult, error) {
 		return res, err
 	}
 
-	// Validate in the same context `drift file apply` will run in: the
-	// Driftfile's `$NAME` secret refs resolve from the environment, which at
-	// deploy time is `source .env.migrate`. Seed any unset secret var from the
-	// value we just wrote (never clobbering a real one the operator already has)
-	// so the parser can resolve them.
+	// Validate in the same context `drift apply` will run in: the Driftfile's
+	// env() references resolve from the environment, which at deploy time is
+	// `source .env.migrate`. Seed any unset secret var from the value we just
+	// wrote (never clobbering a real one the operator already has) so the parser
+	// can resolve them.
 	for _, s := range m.Secrets {
 		if _, ok := os.LookupEnv(s.Name); !ok {
 			_ = os.Setenv(s.Name, s.Value)
@@ -275,50 +290,50 @@ func cosmosIDToMongo(jsonl []byte) (out []byte, lossy bool) {
 	return buf.Bytes(), lossy
 }
 
-// azureStartingMemory is what a migrated function books until it is measured.
+// azureStartingMemory is what a migrated pulse books until it is measured.
 //
-// 128MB is deliberately generous rather than tight: a migration that refuses
+// 128MiB is deliberately generous rather than tight: a migration that refuses
 // invocations on its first day reads as "Drift cannot run my workload", while
-// one that over-books reads as a number to lower once `drift file benchmark`
-// says what it should be. The first is a lost migration; the second is a
-// two-minute edit.
-const azureStartingMemory = "128MB"
+// one that over-books reads as a number to lower once `drift size` writes what
+// it should be. The first is a lost migration; the second is a two-minute edit.
+const azureStartingMemory = "128MiB"
+
+// apiKeyVar is the environment variable a migrated pulse's API key is read
+// from: its folder's name in capitals, `get-order` → GET_ORDER_API_KEY.
+func apiKeyVar(slug string) string {
+	return strings.ToUpper(strings.ReplaceAll(slug, "-", "_")) + "_API_KEY"
+}
 
 func buildDriftfile(name string, fns []driftFn, colls []driftColl, secrets []ManifestSecret) string {
 	var b strings.Builder
-	b.WriteString("# Generated by `drift migrate azure transform`. Review REPORT.md before deploy.\n")
-	b.WriteString("name: " + name + "\n")
+	b.WriteString("# Generated by `drift migrate azure transform`. Review REPORT.md before deploy.\n\n")
+	fmt.Fprintf(&b, "slice %q {\n  billing = \"monthly\"\n}\n", name)
 	if len(fns) > 0 {
-		b.WriteString("atomic:\n")
-		b.WriteString("  # Each function books its own memory, and there is no default. The\n")
-		b.WriteString("  # figures below are a STARTING POINT, not a measurement: an Azure\n")
-		b.WriteString("  # manifest says nothing about what these functions cost on Drift, and\n")
-		b.WriteString("  # nobody has run them here yet. Deploy, then `drift file benchmark`\n")
-		b.WriteString("  # and size each one from what it actually holds — over-booking is paid\n")
-		b.WriteString("  # for, and under-booking is refused under load.\n")
-		b.WriteString("  functions:\n")
+		b.WriteString("\n# Each pulse books its own memory, and there is no default. The figures\n")
+		b.WriteString("# below are a STARTING POINT, not a measurement: an Azure manifest says\n")
+		b.WriteString("# nothing about what these functions cost on Drift, and nobody has run them\n")
+		b.WriteString("# here yet. Deploy, then `drift size` writes each one from what it actually\n")
+		b.WriteString("# holds — over-booking is paid for, and under-booking is refused under load.\n")
+		b.WriteString("#\n")
+		b.WriteString("# Each migrated function is its own element, the folder it was scaffolded in.\n")
 		for _, fn := range fns {
-			b.WriteString(driftEntry(fn.trigger, fn.handler, fn.secrets, azureStartingMemory))
+			fmt.Fprintf(&b, "element %q {\n", fn.slug)
+			b.WriteString(driftPulse(fn.trigger, fn.handler, fn.secrets, azureStartingMemory, apiKeyVar(fn.slug)))
+			b.WriteString("}\n")
 		}
 	}
-	if len(colls) > 0 || len(secrets) > 0 {
-		b.WriteString("backbone:\n")
-		if len(colls) > 0 {
-			b.WriteString("  nosql:\n")
-			for _, c := range colls {
-				b.WriteString("    - name: " + c.name + "\n      size: " + strconv.Itoa(c.sizeMB) + "MB\n      seed: " + c.seed + "\n")
-			}
+	for _, c := range colls {
+		fmt.Fprintf(&b, "\nnosql %q {\n  size = \"%dMiB\"\n  seed = %q\n}\n", c.name, c.sizeMB, c.seed)
+	}
+	if len(secrets) > 0 {
+		names := make([]string, 0, len(secrets))
+		for _, s := range secrets {
+			names = append(names, s.Name)
 		}
-		if len(secrets) > 0 {
-			b.WriteString("  secrets:\n")
-			names := make([]string, 0, len(secrets))
-			for _, s := range secrets {
-				names = append(names, s.Name)
-			}
-			sort.Strings(names)
-			for _, n := range names {
-				b.WriteString("    " + n + ": $" + n + "\n")
-			}
+		sort.Strings(names)
+		b.WriteString("\n")
+		for _, n := range names {
+			fmt.Fprintf(&b, "secret %q {\n  value = env(%q)\n}\n", n, n)
 		}
 	}
 	return b.String()

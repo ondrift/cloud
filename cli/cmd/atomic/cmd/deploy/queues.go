@@ -1,8 +1,8 @@
-// queues.go — the Driftfile's declared `backbone.queues`, made to exist
-// wherever a function runs against a local Backbone.
+// queues.go — the Driftfile's declared queues, made to exist wherever a
+// function runs against a local Backbone.
 //
-// On a slice, `drift file apply` creates every declared queue before any slot
-// is deployed, so a consumer polling a declared queue that nothing has pushed
+// On a slice, `drift apply` creates every declared queue before any slot is
+// deployed, so a consumer polling a declared queue that nothing has pushed
 // to yet reads it empty. A queue nothing was ever pushed to and that nobody
 // declared does not exist, and the slice answers 404. A local run has to
 // answer the same way, or a Field that polls its queue from its first tick

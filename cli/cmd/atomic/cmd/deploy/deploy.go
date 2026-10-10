@@ -502,30 +502,19 @@ func parseTriggerComments(dir string) ([]TriggerSpec, error) {
 	return triggers, nil
 }
 
-// refuseScheduleComments fails the deploy when source still carries a
-// `// drift:schedule` comment, naming the Driftfile field that replaced it.
+// refuseScheduleComments fails the deploy when source carries a
+// `// drift:schedule` comment, naming the Driftfile attribute that declares a
+// schedule.
 //
-// # Why this REFUSES rather than working, and rather than being deleted quietly
+// # Why this REFUSES rather than ignoring the comment
 //
-// The comment used to produce a schedule TriggerSpec here — and only here. This
-// is the single-function path behind `drift atomic deploy`; `drift file apply`
-// builds through the element paths, which never read it. So the same comment on
-// the same source made a schedule under one command and vanished under the
-// other, with nothing said either way. A schedule that exists depending on which
-// deploy command you typed is worse than one that does not exist.
-//
-// It was also documented nowhere. `driftfile-spec.md` covers `drift:trigger`,
-// which IS supported on every path, and has never mentioned this.
-//
-// The Driftfile's `atomic.functions[].cron` replaced it: declared in the
-// manifest, honoured by every deploy path, and METERED — it travels on the
+// A schedule is a pulse's `cron` in the Driftfile: declared in the file,
+// honoured by every deploy path, and METERED, because it travels on the
 // artifact through the operator, which counts it against the slice's envelope
-// and bills it (tier.CentsPerScheduledJob). A comment-declared schedule
-// registered straight with the slice is one nobody is charged for.
-//
-// Deleting it silently would turn somebody's working schedule into nothing at
-// the next deploy, with no message. Refusing costs them one line moved into the
-// Driftfile and tells them exactly which line.
+// and bills it (tier.CentsPerScheduledJob). A comment in source declares
+// nothing, and ignoring it silently would leave whoever wrote it believing a
+// schedule runs. Refusing costs one line moved into the Driftfile and says
+// exactly which line.
 func refuseScheduleComments(dir string) error {
 	for _, f := range sourceFiles(dir) {
 		data, err := os.ReadFile(f) // #nosec G304 — CLI reads user's source file by design
@@ -538,12 +527,10 @@ func refuseScheduleComments(dir string) error {
 				continue
 			}
 			return fmt.Errorf(
-				"%s carries `// drift:schedule %s`, which no longer declares anything.\n"+
-					"       It only ever worked under `drift atomic deploy`, and was silently ignored by\n"+
-					"       `drift file apply` — so the schedule existed or not depending on which command\n"+
-					"       you ran. Declare it in the Driftfile instead, on this function:\n\n"+
-					"         cron: \"%s\"\n\n"+
-					"       That form is honoured by every deploy path, and is counted against the\n"+
+				"%s carries `// drift:schedule %s`, which declares nothing.\n"+
+					"       Declare the schedule in the Driftfile instead, on this pulse:\n\n"+
+					"         cron = \"%s\"\n\n"+
+					"       That is honoured by every deploy path, and is counted against the\n"+
 					"       slice's envelope rather than registered unmetered.",
 				filepath.Base(f), expr, expr)
 		}
@@ -686,8 +673,8 @@ func operatorSink(a FuncArtifact) error {
 	// The operator serializes atomic deploys per slice behind a non-blocking
 	// lock — that lock is what makes the function-quota check atomic (count →
 	// compare to limit → assign slot, all as one critical section). When
-	// `drift file apply` builds functions in parallel and they reach the
-	// deploy step together, the losers get 409 "another deploy in progress".
+	// `drift apply` builds functions in parallel and they reach the deploy
+	// step together, the losers get 409 "another deploy in progress".
 	// Retry those (with backoff) so they serialize through the lock instead of
 	// failing spuriously. A 429 (function limit reached) is a REAL rejection
 	// from inside that critical section — never retried; it surfaces as-is.
@@ -724,8 +711,8 @@ func operatorSink(a FuncArtifact) error {
 }
 
 // DeployFunction builds and deploys one declared function. It is exported so
-// `drift file apply` can call it directly without going through the cobra
-// command layer. When quiet is true, all per-function status chatter is
+// `drift apply` can call it directly without going through the cobra command
+// layer. When quiet is true, all per-function status chatter is
 // suppressed so the manifest deploy can render its own clean summary line for
 // each function.
 //
@@ -801,9 +788,8 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 			return fmt.Errorf("failed to parse trigger comments: %w", err)
 		}
 	}
-	// A `// drift:schedule` comment is refused rather than honoured — it worked
-	// on this path alone and was invisible to `drift file apply`. See
-	// refuseScheduleComments.
+	// A `// drift:schedule` comment is refused rather than ignored: a schedule
+	// is a pulse's `cron` in the Driftfile. See refuseScheduleComments.
 	if err := refuseScheduleComments(absFolder); err != nil {
 		return err
 	}
@@ -853,8 +839,8 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	}
 
 	// Content fingerprint of this function — its source AND its declaration —
-	// recorded with the deploy so a later `drift file apply` can skip it if
-	// nothing changed.
+	// recorded with the deploy so a later `drift apply` can skip it if nothing
+	// changed.
 	//
 	// Best-effort: on error we send "" — the deploy still succeeds, it just
 	// won't be skippable next time (an empty digest never matches, and

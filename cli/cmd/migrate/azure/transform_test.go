@@ -81,15 +81,20 @@ func TestPipeline_SnapshotToTransform(t *testing.T) {
 	}
 
 	// The Driftfile carries the whole declaration: the function's real Azure
-	// route (not a slug derived from its folder), the callable serving it, the
-	// seeded collection and the secrets.
+	// route (not a slug derived from its folder) in the element it was
+	// scaffolded in, the callable serving it, the seeded collection and the
+	// secrets, each read from the environment.
 	df := readFile(t, wsDir, "Driftfile")
 	for _, want := range []string{
-		`- name: "get:orders/:id"`,
-		"handler: get_orders_id",
-		"- name: orders",
-		"seed: backbone/nosql/orders.jsonl",
-		"STRIPE_KEY: $STRIPE_KEY",
+		`slice "orders"`,
+		`billing = "monthly"`,
+		`element "get-order"`,
+		`pulse "GET /orders/:id"`,
+		`handler = "get_orders_id"`,
+		`nosql "orders"`,
+		`seed = "backbone/nosql/orders.jsonl"`,
+		`secret "STRIPE_KEY"`,
+		`value = env("STRIPE_KEY")`,
 	} {
 		if strings.Contains(df, "nightly-report") {
 			t.Errorf("refused timer must not appear in the Driftfile:\n%s", df)
@@ -102,6 +107,25 @@ func TestPipeline_SnapshotToTransform(t *testing.T) {
 	if testing.Verbose() {
 		t.Logf("\n===== generated Driftfile =====\n%s\n===== atomic/get-order/get-order.py =====\n%s\n===== REPORT.md =====\n%s",
 			df, getOrder, readFile(t, wsDir, "REPORT.md"))
+	}
+}
+
+// A function Azure gates with a key reads its key from a variable named for
+// its folder, written env("NAME") in the Driftfile and left for the operator in
+// .env.migrate: Azure's function keys are not exported, and `drift apply`
+// refuses until the variable holds one.
+func TestBuildDriftfile_AKeyGatedFunctionReadsItsKeyFromAVariable(t *testing.T) {
+	df := buildDriftfile("orders", []driftFn{{
+		slug: "get-order", handler: "get_orders_id",
+		trigger: ManifestTrigger{Type: "http", Method: "get", Route: "orders/:id", Auth: "apikey"},
+	}}, nil, nil)
+	for _, want := range []string{
+		`element "get-order"`,
+		"    auth {\n      api_key = env(\"GET_ORDER_API_KEY\")\n    }\n",
+	} {
+		if !strings.Contains(df, want) {
+			t.Errorf("Driftfile missing %q:\n%s", want, df)
+		}
 	}
 }
 

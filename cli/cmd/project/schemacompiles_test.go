@@ -11,17 +11,16 @@ import (
 // `loadSchema` reports a compile failure as an error, and `SchemaAvailable()`
 // turns any error into "no schema". Everything downstream then behaves as if
 // this machine had never met the platform: `drift file lint` prints
-// ErrNoSchema and validates NOTHING, and `drift file apply` refuses outright.
-// One unusable regex anywhere in the document does that to every Driftfile on
-// the machine.
+// ErrNoSchema and validates NOTHING, and `drift plan` and `drift apply` refuse
+// outright. One unusable regex anywhere in the document does that to every
+// Driftfile on the machine.
 //
-// It has happened. A `propertyNames` pattern shipped with a negative lookahead;
-// Go's regexp is RE2 and has none, so the whole schema stopped compiling. The
-// platform now sweeps its own patterns (drift-common/driftfile), but that
-// sweep tests Go's `regexp` and this tests the JSON Schema COMPILER — a
-// document can satisfy the first and still fail the second on an unsupported
-// keyword or a bad `$ref`, and it is the second that decides whether the CLI
-// works.
+// A `propertyNames` pattern with a negative lookahead is one such regex: Go's
+// regexp is RE2 and has none. The platform sweeps its own patterns
+// (drift-common/driftfile), but that sweep tests Go's `regexp` and this tests
+// the JSON Schema COMPILER — a document can satisfy the first and still fail
+// the second on an unsupported keyword or a bad `$ref`, and it is the second
+// that decides whether the CLI works.
 //
 // Skipped rather than failed when the machine holds no schema: that is a fresh
 // checkout or an offline CI runner, and it is the condition
@@ -33,7 +32,7 @@ func TestTheCachedSchemaActuallyCompiles(t *testing.T) {
 	sch, err := loadSchema()
 	if err != nil {
 		t.Fatalf("the schema on this machine does not compile, so the CLI validates "+
-			"nothing and `drift file apply` refuses every manifest:\n  %v", err)
+			"nothing and `drift apply` refuses every Driftfile:\n  %v", err)
 	}
 	if sch == nil {
 		t.Skip("no schema cached on this machine; TestSchemaMustBePresentOrTheSuiteIsTheatre owns that complaint")

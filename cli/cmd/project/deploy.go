@@ -1,24 +1,12 @@
 package project
 
-// deploy.go is the apply driver. It reads a Driftfile, refuses if the slice it
-// names does not exist, checks the slice is ready, then applies Backbone, and
-// then Atomic and Canvas together, every declared resource via the api gateway.
+// deploy.go is the deploy pipeline `drift apply` runs once the slice holds the
+// Driftfile's shape: it checks the slice is ready, then applies Backbone, then
+// Atomic and Canvas together, then edge and labels, every declared resource via
+// the api gateway.
 //
-// It does NOT create, grow or price a slice. `drift slice create`/`resize`
-// declare what a slice IS; this file declares what runs on it. A slice that does
-// not exist is a refusal naming that command, because there is no shape here to
-// build one from.
-//
-// Flags:
-//   --plan                 Print what this file would deploy, and exit. Prices
-//                          nothing — there is no shape here to quote. Shared
-//                          with `drift file simulate`.
-//   --force                Redeploy every function even if its source is
-//                          unchanged.
-//   --yes                  Auto-confirm prompts. For CI use.
-//   --no-slice-reconcile   Deprecated, does nothing. Kept parsing so a script
-//   --billing-period-months  passing either is told what changed rather than
-//                          dying on an unknown flag.
+// It does NOT create, grow or price a slice. apply.go does that, from the
+// shape the Driftfile compiles to, before it deploys through here.
 
 import (
 	"bytes"
@@ -38,223 +26,22 @@ import (
 
 	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 	"github.com/ondrift/cloud/cli/common"
-
-	"github.com/spf13/cobra"
 )
 
 // driftfileName is the canonical filename. Per the spec, the CLI
 // looks for `./Driftfile` and nowhere else.
 const driftfileName = "Driftfile"
 
-// atomicForce, when set by --force, makes applyAtomic redeploy every function
-// regardless of whether its source digest matches what's already deployed.
-// Bound directly to the flag in getDeployCmd; read in applyAtomic, which runs
-// concurrently under applySliceTriad and can't easily take extra parameters.
+// atomicForce, when set by `drift apply --force`, makes applyAtomic redeploy
+// every slot regardless of whether its source digest matches what is already
+// deployed. Read in applyAtomic, which runs concurrently under
+// applySliceInOrder and can't easily take extra parameters.
 var atomicForce bool
-
-func getApplyCmd() *cobra.Command {
-	var (
-		planOnly        bool
-		noReconcile     bool
-		autoYes         bool
-		billingMonths   int
-		envName         string
-		secretOverrides []string
-		noEnvFile       bool
-	)
-
-	cmd := &cobra.Command{
-		// `apply` rather than `deploy`: a Driftfile is a destination, not a
-		// script, and the verb should say so — you apply the file to an
-		// environment. `deploy` still resolves, as a deprecated spelling.
-		Use:   "apply [environment]",
-		Short: "Apply a Driftfile to a slice (optionally for a named environment)",
-		Long: `Deploy every resource declared in the project's Driftfile.
-
-If the Driftfile declares environments, pass one as the positional argument to
-deploy that environment's merged shape (its overrides on top of the base);
-prod/production deploys under the bare project name, others under <name>-<env>.
-With no argument the deploy targets prod/production when declared, or the
-single slice otherwise.`,
-		Example: "  drift file apply\n  drift file apply staging\n  drift file apply prod --yes\n  drift file apply --plan",
-		Args:    cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			manifestPath, err := requireDriftfile()
-			if err != nil {
-				return err
-			}
-			projectDir := filepath.Dir(manifestPath)
-
-			// Environment selection: a positional argument is the primary
-			// selector; the --env flag is a fallback (and the legacy ${ENV}
-			// setter for projects that declare no environments).
-			positionalEnv := ""
-			if len(args) == 1 {
-				positionalEnv = args[0]
-			}
-			selectedEnv := positionalEnv
-			if selectedEnv == "" {
-				selectedEnv = envName
-			}
-
-			// Variable origin hierarchy (highest first): Driftfile-hardcoded
-			// literals > terminal environment > --secret/--env overrides >
-			// .env.<env> > .env. Applied before parsing so ${VAR}/$ENVREF
-			// resolve against it and hook shells inherit ENV. ENV binds to the
-			// selected environment.
-			overrides := secretOverrides
-			if selectedEnv != "" {
-				overrides = append([]string{"ENV=" + selectedEnv}, overrides...)
-			}
-			vars, err := applyVariableSources(projectDir, overrides, !noEnvFile, selectedEnv)
-			if err != nil {
-				return err
-			}
-			vars.report()
-
-			// Bring this machine's copy of the format up to date BEFORE
-			// validating against it. The refresh otherwise rides the first api
-			// call, which on this path comes after the parse — so a run validates
-			// against the previous format, succeeds, overwrites the cache on its
-			// way out, and the next identical invocation fails with nothing to
-			// explain what moved.
-			//
-			// Best-effort and silent, as everywhere else it is called: offline
-			// costs freshness and nothing more.
-			common.RefreshDriftfileSchema()
-
-			// Ahead of the hooks, not merely ahead of the parse. A format this
-			// binary cannot read makes the whole run pointless, and the hooks are
-			// the user's own build — refusing after it has run wastes the
-			// expensive part to say something that was knowable first.
-			if err := common.ReportDriftfileFormatSkew(os.Stderr); err != nil {
-				return err
-			}
-
-			// pre_deploy hooks run BEFORE the full parse so a build can produce
-			// the artifacts (e.g. a canvas dist dir) the parse then validates.
-			// Skipped in --plan (a dry run never builds).
-			preHooks, postHooks := ParseHooks(manifestPath)
-			if !planOnly {
-				if err := runHooks("pre_deploy", preHooks, projectDir); err != nil {
-					return err
-				}
-			}
-
-			m, err := ParseDriftfile(manifestPath)
-			if err != nil {
-				return err
-			}
-
-			// Merge the selected environment's overrides onto the base slice
-			// and derive its slice name. After this, m.Slice is the effective
-			// slice and every downstream step is environment-agnostic.
-			resolvedEnv, err := m.SelectEnvironment(selectedEnv, positionalEnv != "")
-			if err != nil {
-				return err
-			}
-			if resolvedEnv != "" {
-				fmt.Printf("  %s environment %s → slice %s\n", common.Hint("·"), resolvedEnv, common.Highlight(m.Name()))
-			}
-
-			// Everything that can refuse the file before the network is asked:
-			// route collisions, canvas slugs, the bookings the language refuses,
-			// and (except in --plan, which reports them instead) the edge keys.
-			els, berr, err := preflightManifest(m, !planOnly)
-			if err != nil {
-				return err
-			}
-
-			// Say once that a flag the caller passed does nothing, before the
-			// run behaves in a way they did not ask for.
-			if cmd.Flags().Changed("no-slice-reconcile") {
-				common.Deprecation{
-					Old:     "drift file apply --no-slice-reconcile",
-					Because: "Whether the slice exists is not something a flag can skip: this file is applied INTO a slice `drift slice create` made, so there is no shape here to reconcile.",
-				}.Warn()
-			}
-			if cmd.Flags().Changed("billing-period-months") {
-				common.Deprecation{
-					Old:     "drift file apply --billing-period-months",
-					Because: "Applying a file never buys a slice. Choose the billing period on the form `drift slice create` draws, where the slice is made.",
-				}.Warn()
-			}
-
-			// ONE read of the live slice, and it is the gate for everything
-			// below. `drift slice create` declares what a slice IS; this file
-			// declares what runs on it, so a slice that does not exist is a
-			// refusal naming that command rather than something to create
-			// from a manifest that does not describe a shape.
-			//
-			// CheckSliceReferences carries that refusal for a nil slice, and it
-			// runs BEFORE the reference checks it also owns — the missing-slice
-			// message is the specific one, and reporting "collection X is not
-			// declared" about a slice that does not exist sends the reader to
-			// fix the wrong thing.
-			liveSlice, err := FetchLiveSlice(m.Name())
-			if err != nil {
-				return err
-			}
-
-			// The same floor, against the bookings the slice shape holds. A
-			// Field writes no booking in this file, so this is where its own is
-			// first in hand.
-			if berr == nil && liveSlice != nil {
-				if err := CheckSlotBookings(m, els, liveSlice); err != nil {
-					return err
-				}
-			}
-
-			// In --plan mode nothing is deployed: say what exists and what this
-			// would apply into it, and stop.
-			if planOnly {
-				return runPlan(m, liveSlice)
-			}
-
-			// The deploy itself, which `drift apply` runs too: the reference
-			// reconcile, then Backbone, Atomic, Canvas and edge, then the reports.
-			// --yes answers the reconcile's question for CI and never its notice.
-			if err := deployChecked(m, liveSlice, autoYes, os.Stdout); err != nil {
-				return err
-			}
-
-			// post_deploy hooks run against the now-live slice (typically a
-			// smoke test). A failure leaves the slice deployed — it's already
-			// live — but returns non-zero so CI and the user see it.
-			if err := runHooks("post_deploy", postHooks, projectDir); err != nil {
-				fmt.Printf("\n  %s the slice is deployed and live, but a post_deploy hook failed\n", common.Cross())
-				return err
-			}
-
-			if siteURL := buildSiteURL(); siteURL != "" {
-				fmt.Printf("\n  %s  %s\n", common.Check(), siteURL)
-			}
-			fmt.Println()
-			return nil
-		},
-	}
-
-	cmd.Flags().BoolVar(&planOnly, "plan", false, "Print what this file would deploy, and exit")
-	cmd.Flags().BoolVar(&atomicForce, "force", false, "Redeploy every pulse and field even if its source is unchanged")
-	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm prompts (for CI)")
-
-	// Two flags that no longer have anything to act on: apply neither creates a
-	// slice nor buys one. They keep PARSING so a script that passes them does
-	// not die on "unknown flag", and each says once that it does nothing —
-	// deprecate, then remove, the same as any other user-facing name.
-	cmd.Flags().BoolVar(&noReconcile, "no-slice-reconcile", false, "Deprecated: does nothing")
-	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Deprecated: does nothing")
-	cmd.Flags().StringVar(&envName, "env", "", "Environment to deploy (same as the positional argument); also sets ${ENV}")
-	cmd.Flags().StringArrayVar(&secretOverrides, "secret", nil, "Override a variable for ${VAR}/$ENVREF resolution: KEY=value (repeatable). Yields to a variable already set in the environment; beats the .env file.")
-	cmd.Flags().BoolVar(&noEnvFile, "no-env-file", false, "Do not read the .env / .env.<env> file sitting next to the Driftfile")
-	return cmd
-}
 
 // preflightManifest is everything that can refuse a file before the network is
 // asked, returned with the build it read so the caller can hold the bookings to
-// the live slice. edge is false for --plan, which reports the edge keys instead
-// of refusing them.
-func preflightManifest(m *Manifest, edge bool) ([]atomic_cmd.Element, error, error) {
+// the live slice.
+func preflightManifest(m *Manifest) ([]atomic_cmd.Element, error, error) {
 	// Route collisions, before the slice diff and the cost-confirm, so a path
 	// clash fails at once rather than mid-deploy.
 	if err := checkRouteCollisions(m); err != nil {
@@ -267,9 +54,8 @@ func preflightManifest(m *Manifest, edge bool) ([]atomic_cmd.Element, error, err
 		return nil, nil, err
 	}
 
-	// A booking the function's LANGUAGE refuses. The api is the enforcing owner
-	// and answers 400, but after the cost-confirm and the upload, so the same
-	// verdict is reached here from the floor the schema publishes.
+	// The build, so the caller can hold each booking to the floor its LANGUAGE
+	// needs (CheckSlotBookings), which the Driftfile cannot say.
 	//
 	// A build failure is not reported here: applyAtomic surfaces a missing
 	// handler or a mixed-language element with the message built for it. A
@@ -280,35 +66,27 @@ func preflightManifest(m *Manifest, edge bool) ([]atomic_cmd.Element, error, err
 	if errors.Is(berr, atomic_cmd.ErrFieldLanguage) || errors.Is(berr, atomic_cmd.ErrConcurrency) {
 		return nil, nil, berr
 	}
-	if berr == nil {
-		if err := CheckCompiledBookings(m, els); err != nil {
-			return nil, nil, err
-		}
-	}
 
 	// The `edge` keys: one this CLI cannot apply refuses the file here, before
 	// anything reaches the slice, rather than after the rest of it is live.
-	if edge {
-		for _, preflight := range []func(*Manifest) error{
-			preflightEdgeRateLimit,
-			preflightEdgeSiteAuth,
-			preflightEdgeLinks,
-			preflightEdgeAllow,
-			preflightEdgeHosts,
-		} {
-			if err := preflight(m); err != nil {
-				return nil, nil, err
-			}
+	for _, preflight := range []func(*Manifest) error{
+		preflightEdgeSiteAuth,
+		preflightEdgeLinks,
+		preflightEdgeAllow,
+		preflightEdgeHosts,
+	} {
+		if err := preflight(m); err != nil {
+			return nil, nil, err
 		}
 	}
 	return els, berr, nil
 }
 
-// deployManifest applies a compiled Driftfile 2 into its slice, which exists and
-// holds the file's shape: the same preflight and the same deploy a YAML file is
-// applied with. The shape is the caller's; this deploys what runs on it.
+// deployManifest applies a compiled Driftfile into its slice, which exists and
+// holds the file's shape. The shape is the caller's; this deploys what runs on
+// it.
 func deployManifest(m *Manifest, out io.Writer) error {
-	els, berr, err := preflightManifest(m, true)
+	els, berr, err := preflightManifest(m)
 	if err != nil {
 		return err
 	}
@@ -331,8 +109,7 @@ func deployManifest(m *Manifest, out io.Writer) error {
 
 // deployChecked deploys a checked manifest into its slice: the reference
 // reconcile, Backbone, Atomic and Canvas, edge and labels, then the reports of
-// what the slice holds and the file does not name. Both `drift file apply` and
-// `drift apply` deploy through it.
+// what the slice holds and the file does not name.
 func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.Writer) error {
 	// Does the slice actually hold what the manifest names? A write to an
 	// undeclared collection or bucket is refused by the slice with a 400, at
@@ -405,10 +182,10 @@ func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.
 	if err := applyEgress(m); err != nil {
 		return err
 	}
-	// The rest of `edge`, one reconciler per key. Links come before hosts: a
-	// fronted host names a slice this one must already link.
+	// The rest of `edge`, one reconciler per key; the rate limit is part of the
+	// shape and was applied with the resize. Links come before hosts: a fronted
+	// host names a slice this one must already link.
 	for _, apply := range []func(*Manifest) error{
-		applyEdgeRateLimit,
 		applyEdgeSiteAuth,
 		applyEdgeLinks,
 		applyEdgeAllow,
@@ -468,127 +245,6 @@ func runHooks(phase string, cmds []string, dir string) error {
 		}
 	}
 	return nil
-}
-
-// ─── Plan mode ──────────────────────────────────────────────────────
-
-// runPlan answers the two questions an apply can be planned against: does the
-// referenced slice exist, and what would this file deploy into it.
-//
-// It PRICES NOTHING, deliberately. A YAML Driftfile does not declare a slice's
-// shape, so there is no shape here to quote — the slice form owns that and
-// shows the price of the shape that exists. A cost printed from this
-// file would be a second pricing model computed from a document that does not
-// describe what is being billed. A Driftfile 2 declares its shape, and
-// `drift plan` (plan2.go) prices it with the platform's quote.
-//
-// Shared with `drift file simulate` and with `drift plan` for a YAML file, so
-// every verb answers the same question.
-func runPlan(m *Manifest, live *LiveSlice) error {
-	fmt.Println()
-	if live == nil {
-		// The slice does not exist, so the next action is making one, and the
-		// message states the whole command rather than the verb.
-		return fmt.Errorf(
-			"slice %q does not exist — create it with `drift slice create %s`, then apply this file to it",
-			m.Name(), m.Name())
-	}
-
-	fmt.Printf("  %s → slice %s\n\n", common.Hint("apply"), common.Highlight(m.Name()))
-
-	specs := FunctionSpecs(m)
-	fmt.Printf("  pulses (%d)\n", len(specs))
-	for _, s := range specs {
-		fmt.Printf("    %s %s\n", common.Hint("·"), s.Name)
-	}
-	if fields := FieldSpecs(m); len(fields) > 0 {
-		fmt.Printf("\n  fields (%d)\n", len(fields))
-		for _, f := range fields {
-			_, name := f.Wire()
-			fmt.Printf("    %s %s\n", common.Hint("·"), name)
-		}
-	}
-
-	sites, err := canvasSites(m)
-	if err != nil {
-		return err
-	}
-	if len(sites) > 0 {
-		fmt.Printf("\n  sites (%d)\n", len(sites))
-		for _, s := range sites {
-			fmt.Printf("    %s %s → %s\n", common.Hint("·"), s.Dir, s.Route)
-		}
-	}
-
-	b := m.Slice().Sub("backbone")
-	for _, class := range []struct {
-		label, key, entryKey string
-	}{
-		{"collections", "nosql", "slot"},
-		{"buckets", "blobs", "name"},
-		{"databases", "sql", "name"},
-		{"queues", "queues", "name"},
-	} {
-		entries := b.Entries(class.entryKey, class.key)
-		if len(entries) == 0 {
-			continue
-		}
-		fmt.Printf("\n  %s (%d)\n", class.label, len(entries))
-		for _, e := range entries {
-			fmt.Printf("    %s %s\n", common.Hint("·"), e.Str(class.entryKey))
-		}
-	}
-
-	if domains := m.Slice().Entries("host", "edge", "domains"); len(domains) > 0 {
-		fmt.Printf("\n  domains (%d)\n", len(domains))
-		for _, d := range domains {
-			fmt.Printf("    %s %s\n", common.Hint("·"), d.Str("host"))
-		}
-	}
-
-	// The rest of `edge`, one section per key, each owned by its own file.
-	planEdgeRateLimit(m, os.Stdout)
-	planEdgeSiteAuth(m, os.Stdout)
-	planEdgeLinks(m, os.Stdout)
-	planEdgeAllow(m, os.Stdout)
-	planEdgeHosts(m, os.Stdout)
-
-	// The reference check, reported rather than enforced: a plan that refused
-	// would stop someone finding out what is missing, which is what they ran it
-	// to learn.
-	//
-	// THE READ-ONLY HALF. This called ReconcileSliceReferences' predecessor,
-	// which renames idle slots — so `--plan` and `drift file simulate` performed
-	// a real resize on the live slice and then printed "nothing was deployed".
-	//
-	// The idle report follows it ONLY when nothing is missing. A miss means
-	// the apply would either re-point idle slots to make room or refuse, so the
-	// slots unnamed now are not the ones unnamed after it, and listing them
-	// would describe a slice the apply does not leave behind. What the slice
-	// serves is not read here: that list is asked of the ACTIVE slice, which a
-	// plan does not set, so the slots are reported as unnamed rather than idle.
-	if rerr := CheckSliceReferences(m, live); rerr != nil {
-		fmt.Printf("\n  %s %v\n", common.Hint("!"), rerr)
-	} else {
-		ReportIdleDeclarations(m, live, nil, os.Stdout)
-	}
-
-	fmt.Printf("\n  %s\n", common.Hint("nothing was deployed — drop --plan to apply"))
-	return nil
-}
-
-// confirm prompts the user with [y/N]. autoYes short-circuits the
-// prompt — used by CI flags. Returns true if the user accepts.
-func confirm(autoYes bool, prompt string) bool {
-	if autoYes {
-		fmt.Printf("  %s [y/N] (auto-yes)\n", prompt)
-		return true
-	}
-	fmt.Printf("  %s [y/N] ", prompt)
-	var ans string
-	_, _ = fmt.Scanln(&ans)
-	ans = strings.ToLower(strings.TrimSpace(ans))
-	return ans == "y" || ans == "yes"
 }
 
 // waitForSliceReady polls /ops/slice/status until all components

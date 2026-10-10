@@ -72,7 +72,7 @@ func TestBuildElements_RefusesAConcurrencyTheSliceCannotHonour(t *testing.T) {
 				t.Fatalf("%s declared concurrent (%+v) was accepted", tc.spec.Name, tc.spec)
 			}
 			if !errors.Is(err, ErrConcurrency) {
-				t.Errorf("the refusal does not answer errors.Is(err, ErrConcurrency), so `drift file apply` "+
+				t.Errorf("the refusal does not answer errors.Is(err, ErrConcurrency), so `drift apply` "+
 					"would not report it before deploying anything: %v", err)
 			}
 			if !strings.Contains(err.Error(), tc.want) {
@@ -112,13 +112,13 @@ func TestBuildElements_AcceptsEveryConcurrencyTheSliceHonours(t *testing.T) {
 }
 
 // The CLI's bound on the deprecated count is a copy of the platform's,
-// published in the schema. The frozen copy of the schema this CLI implements is
-// byte-identical to the one the platform serves, so pinning to it pins to the
-// platform; and it carries `concurrent`, a boolean, beside the count.
+// published in the schema the platform serves, which this machine holds (CI
+// fetches it before the suite runs); and it carries `concurrent`, a boolean,
+// beside the count.
 func TestMaxPulseConcurrencyIsTheSchemasMaximum(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "project", "testdata", "migrate", "driftfile.schema.json"))
+	raw, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".drift", "driftfile.schema.json"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("no platform schema at ~/.drift/driftfile.schema.json (run any online drift command once): %v", err)
 	}
 	var doc struct {
 		Definitions struct {

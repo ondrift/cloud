@@ -41,8 +41,8 @@ func runLinkCmd(t *testing.T, args ...string) (string, error) {
 // The help points at the declarative way, so a reader of `--help` learns that
 // a Driftfile can own the list.
 func TestLink_HelpPointsAtEdgeLinks(t *testing.T) {
-	if !strings.Contains(getLinkCmd().Long, "edge.links") {
-		t.Errorf("`drift slice link --help` does not mention edge.links:\n%s", getLinkCmd().Long)
+	if !strings.Contains(getLinkCmd().Long, "`links` in its edge block") || !strings.Contains(getLinkCmd().Long, "`drift apply`") {
+		t.Errorf("`drift slice link --help` does not point at the Driftfile's links and `drift apply`:\n%s", getLinkCmd().Long)
 	}
 	if strings.Contains(getLinkCmd().Long, "reachable from your functions; everything") {
 		t.Error("the help still carries the old wording")

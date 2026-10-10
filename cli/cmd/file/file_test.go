@@ -10,16 +10,44 @@ import (
 
 	"github.com/ondrift/cloud/cli/cmd/project"
 	"github.com/ondrift/cloud/cli/common"
-	"gopkg.in/yaml.v3"
 )
 
-// The scaffold tests below round-trip through the real parser, and the parser's
-// only authority is the schema the platform serves. With none cached, that parse
-// checks nothing and the round trip proves nothing — this package went green on a
-// fresh CI runner for exactly that reason while `cmd/project` failed loudly.
-//
-// Same guard as `cmd/project`, for the same reason: make the absence loud rather
-// than let it read as a pass (#CLI-STANDARDUSAGE-ERF1CV).
+// realHome is HOME before any test replaces it: it holds the schema the
+// platform last served. CI fetches the live schema there before the suite runs.
+var realHome = os.Getenv("HOME")
+
+// realSchema is the platform's schema as this machine holds it.
+func realSchema(t *testing.T) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(realHome, ".drift", "driftfile.schema.json"))
+	if err != nil {
+		t.Fatalf("no platform schema at ~/.drift/driftfile.schema.json (run any online drift command once): %v", err)
+	}
+	return raw
+}
+
+// withServedSchema gives the test a scratch HOME holding the platform's schema,
+// so these tests never read a schema another test left behind.
+func withServedSchema(t *testing.T) {
+	t.Helper()
+	withSchemaBytes(t, realSchema(t))
+}
+
+func withSchemaBytes(t *testing.T, raw []byte) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".drift"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".drift", "driftfile.schema.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The scaffold tests below round-trip through the real compiler, which holds
+// the document to the schema the platform serves. With none cached, that check
+// validates nothing and the round trip proves nothing.
 func TestSchemaMustBePresentOrTheScaffoldTestsProveNothing(t *testing.T) {
 	if !project.SchemaAvailable() {
 		t.Fatal("no Driftfile schema on this machine, so the scaffold round trips below " +
@@ -31,115 +59,46 @@ func TestSchemaMustBePresentOrTheScaffoldTestsProveNothing(t *testing.T) {
 
 // ─── new ────────────────────────────────────────────────────────────────────
 
-// The scaffold's whole claim is that it produces a file that DEPLOYS, not one
-// that merely parses. So the test is a round trip through the real parser rather
-// than a string comparison: if `new` ever emits the technically-minimal file
-// again, the user's first command after `drift file new` is a validation error,
-// which is the failure this command exists to prevent.
-func TestNew_ScaffoldPassesTheRealParser(t *testing.T) {
-	// The format this binary implements, which the scaffold is written in;
-	// a machine whose cache predates `pulses` would refuse it for that alone.
-	withServedSchema(t)
+// starterProject writes the starter beside the folders it names, as a project
+// has them once `drift atomic new` has written the pulse's source.
+func starterProject(t *testing.T, canvasDir string) string {
+	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "site"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, d := range []string{"atomic", "site"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	path := filepath.Join(dir, "Driftfile")
-	if err := os.WriteFile(path, []byte(starterDriftfile("demo", "./site")), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(starterDriftfile("demo", canvasDir)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	m, err := project.ParseDriftfile(path)
-	if err != nil {
-		t.Fatalf("the scaffold does not survive the parser it is meant to precede:\n%v", err)
-	}
-	if m.Name() != "demo" {
-		t.Errorf("name = %q, want demo", m.Name())
-	}
+	return path
 }
 
-// THE SCAFFOLD TEACHES THE CURRENT GRAMMAR, and that is the whole of what this
-// asserts now.
-//
-// It used to assert the opposite — that every scaffolded function carries
-// `memory:` — which was right when memory was mandatory and became wrong when
-// the slice form took ownership of it. The file the scaffolder wrote then drew
-// three deprecation warnings from `drift file lint` in the same breath as being
-// called valid: `name:` at the top level, `functions[].name`, and
-// `functions[].memory`, whose own warning says the value is ignored. The first
-// file a new user ever sees taught the retired spelling.
-//
-// Asserted by PARSING, never by searching the text: the scaffold's comments
-// mention every key it explains, so a string match for "memory" is green on a
-// file that only documents it and red on one that merely describes it.
-func TestNew_ScaffoldUsesTheCurrentGrammar(t *testing.T) {
+// The scaffold's whole claim is that it produces a file that DEPLOYS, not one
+// that merely parses. So the test is a round trip through the real compiler
+// rather than a string comparison: the free billing it writes is held to the
+// free slice, and its one pulse is booked.
+func TestNew_ScaffoldCompiles(t *testing.T) {
 	withServedSchema(t)
-	dir := t.TempDir()
-	path := filepath.Join(dir, "Driftfile")
-	if err := os.WriteFile(path, []byte(starterDriftfile("demo", "")), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	m, err := project.ParseDriftfile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fns := project.PulseEntries(m.Slice())
-	if len(fns) == 0 {
-		t.Fatal("the scaffold declares no functions — `functions: []` is valid and " +
-			"teaches nothing; a first edit should be changing a real entry")
-	}
-	for i, fn := range fns {
-		if fn.Str("handler") == "" {
-			t.Errorf("scaffolded function %d names no handler, so nothing binds it to the source", i)
+	for _, canvas := range []string{"", "site"} {
+		c, err := project.CompileDriftfile(starterProject(t, canvas))
+		if err != nil {
+			t.Fatalf("the scaffold (canvas %q) does not survive the compiler it is meant to precede:\n%v", canvas, err)
 		}
-	}
-
-	// THE KEYS THE FILE ACTUALLY CONTAINS, read as raw YAML.
-	//
-	// Not through ParseDriftfile: that NORMALISES the current spelling back into
-	// the retired one — `route: hello` + `method: get` arrive as `name:
-	// get:hello` — which is right for the parser and useless for asking what the
-	// scaffolder wrote. The retired keys are the ones a linter flags in the user's
-	// file, so the user's file is what has to be inspected.
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc struct {
-		Slice  string `yaml:"slice"`
-		Name   string `yaml:"name"`
-		Atomic struct {
-			Pulses    []map[string]any `yaml:"pulses"`
-			Functions []map[string]any `yaml:"functions"`
-		} `yaml:"atomic"`
-	}
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		t.Fatal(err)
-	}
-
-	if doc.Slice == "" {
-		t.Error("the scaffold does not set `slice:` — that is the current key for the slice it deploys into")
-	}
-	if doc.Name != "" {
-		t.Errorf("the scaffold still writes the retired top-level `name: %q`", doc.Name)
-	}
-	if doc.Atomic.Functions != nil {
-		t.Error("the scaffold writes the retired `atomic.functions`; the list is `atomic.pulses`")
-	}
-	if len(doc.Atomic.Pulses) == 0 {
-		t.Error("the scaffold declares no `atomic.pulses`")
-	}
-	for i, fn := range doc.Atomic.Pulses {
-		if fn["route"] == nil || fn["method"] == nil {
-			t.Errorf("scaffolded function %d declares no route/method pair — that is the "+
-				"current identity, and `name: get:hello` is the retired one", i)
+		if c.Manifest.Name() != "demo" || c.Billing != "free" {
+			t.Errorf("slice %q on %q billing, want demo on free", c.Manifest.Name(), c.Billing)
 		}
-		if got, ok := fn["name"]; ok {
-			t.Errorf("scaffolded function %d uses the retired `name: %v` spelling", i, got)
+		specs := project.FunctionSpecs(c.Manifest)
+		if len(specs) != 1 || specs[0].Name != starterMethod+":"+starterRoute || specs[0].Handler == "" {
+			t.Errorf("the scaffold declares %+v, want one booked pulse with a handler", specs)
 		}
-		if got, ok := fn["memory"]; ok {
-			t.Errorf("scaffolded function %d sets memory: %v — the slice form owns that now, "+
-				"and the linter reports the value as ignored", i, got)
+		if f := c.Shape.Atomic.Functions; len(f) != 1 || f[0].MemoryBytes != 32<<20 {
+			t.Errorf("the scaffold books %+v, want its pulse at %s", f, starterMemory)
+		}
+		if sites := c.Manifest.Slice().Entries("dir", "canvas", "sites"); (canvas != "") != (len(sites) == 1) {
+			t.Errorf("canvas %q produced sites %+v", canvas, sites)
 		}
 	}
 }
@@ -161,69 +120,53 @@ func TestNew_RejectsNamesThePlatformWould(t *testing.T) {
 
 // The one that matters most. A formatter that eats comments is worse than no
 // formatter: the loss is silent, and it is noticed later, in a diff, by someone
-// else. This is why fmt walks the yaml.Node tree instead of re-marshalling a
-// struct — a struct round trip drops every comment in the file.
-func TestFmt_PreservesComments(t *testing.T) {
+// else.
+func TestFmt_PreservesCommentsAndOrder(t *testing.T) {
 	src := []byte(`# top of file
-name: demo
-# about atomic
-atomic:
-  function_timeout: 30s # inline note
+slice "demo" {
+  # how it is paid for
+  billing = "monthly" # inline note
+}
+queue "b" {}
+queue "a" {}
 `)
-	out, err := formatDriftfile(src)
+	out, err := formatDriftfile("Driftfile", src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"# top of file", "# about atomic", "# inline note"} {
+	for _, want := range []string{"# top of file", "# how it is paid for", "# inline note"} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("comment %q was dropped:\n%s", want, out)
 		}
 	}
+	if strings.Index(string(out), `queue "b"`) > strings.Index(string(out), `queue "a"`) {
+		t.Errorf("fmt reordered the blocks; the order is the person's:\n%s", out)
+	}
 }
 
-func TestFmt_OrdersKeysCanonically(t *testing.T) {
-	src := []byte(`environments:
-  prod: {}
-canvas: ./site
-atomic:
-  functions: []
-  function_timeout: 30s
-name: demo
-`)
-	out, err := formatDriftfile(src)
+// The canonical layout: two-space indentation and the `=` of neighbouring
+// attributes aligned.
+func TestFmt_LaysOutCanonically(t *testing.T) {
+	src := []byte("element \"api\" {\n    pulse \"GET /a\" {\n  handler = \"A\"\n      memory = \"16MiB\"\n    }\n}\n")
+	out, err := formatDriftfile("Driftfile", src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := string(out)
-	// Top level: name first, then the sections, then the deployment siblings.
-	assertOrder(t, got, "name:", "atomic:", "canvas:", "environments:")
-	// And one level down, so a section's diff is stable too.
-	assertOrder(t, got, "function_timeout:", "functions:")
-}
-
-// A key this CLI has never heard of must survive formatting. Dropping it would
-// silently delete part of the user's file, and rejecting it would make `fmt`
-// useless against any Driftfile written for a newer platform than this binary.
-func TestFmt_KeepsUnknownKeys(t *testing.T) {
-	src := []byte("name: demo\nsome_future_field: 42\n")
-	out, err := formatDriftfile(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(out), "some_future_field: 42") {
-		t.Errorf("an unrecognised key was dropped by formatting:\n%s", out)
+	want := "element \"api\" {\n  pulse \"GET /a\" {\n    handler = \"A\"\n    memory  = \"16MiB\"\n  }\n}\n"
+	if string(out) != want {
+		t.Errorf("fmt:\n got:\n%s\nwant:\n%s", out, want)
 	}
 }
 
 // Formatting twice must equal formatting once, or `--write` in a pre-commit hook
 // produces a diff on every run.
 func TestFmt_IsIdempotent(t *testing.T) {
-	src := []byte("environments:\n  prod: {}\nname: demo\natomic:\n  functions: []\n  function_timeout: 30s\n")
-	once, err := formatDriftfile(src)
+	src := []byte("slice \"demo\" {\nbilling=\"monthly\"\n  labels = { team = \"a\", tier=\"b\" }\n}\n")
+	once, err := formatDriftfile("Driftfile", src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	twice, err := formatDriftfile(once)
+	twice, err := formatDriftfile("Driftfile", once)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,49 +175,31 @@ func TestFmt_IsIdempotent(t *testing.T) {
 	}
 }
 
-// The short forms are the spec's, and a user chose them. Expanding them during a
-// formatting pass turns "tidy my file" into "restructure my file" and produces
-// exactly the large diff fmt exists to prevent.
-func TestFmt_DoesNotExpandShorthands(t *testing.T) {
-	src := []byte("name: demo\ncanvas: ./site\n")
-	out, err := formatDriftfile(src)
-	if err != nil {
-		t.Fatal(err)
+// A file that does not parse, or a YAML one, is refused rather than laid out:
+// formatting broken tokens would move the error the person is about to read.
+func TestFmt_RefusesWhatItCannotRead(t *testing.T) {
+	if _, err := formatDriftfile("Driftfile", []byte("slice: demo\n")); err == nil || !strings.Contains(err.Error(), "the Driftfile is HCL now") {
+		t.Errorf("a YAML Driftfile: got %v", err)
 	}
-	if !strings.Contains(string(out), "canvas: ./site") {
-		t.Errorf("the canvas short form was rewritten:\n%s", out)
-	}
-}
-
-func assertOrder(t *testing.T, doc string, needles ...string) {
-	t.Helper()
-	prev := -1
-	for _, n := range needles {
-		at := strings.Index(doc, n)
-		if at < 0 {
-			t.Fatalf("%q missing from:\n%s", n, doc)
-		}
-		if at < prev {
-			t.Errorf("%q appears before the key that should precede it:\n%s", n, doc)
-		}
-		prev = at
+	if _, err := formatDriftfile("Driftfile", []byte("slice \"demo\" {\n  billing = \n")); err == nil {
+		t.Error("a broken file was formatted")
 	}
 }
 
 // ─── lint ───────────────────────────────────────────────────────────────────
 
-// `lint` claims it validates "exactly as a deploy would", and a deploy also
+// `lint` claims it validates exactly as `drift plan` would, and a plan also
 // binds every declared handler to a callable. A Driftfile that lints green and
-// then fails at deploy is the one thing a CI gate exists to prevent, so the
-// handler check belongs here and not only in the deploy path.
+// then fails at apply is the one thing a CI gate exists to prevent.
 func TestLint_RefusesAHandlerThatIsNotThere(t *testing.T) {
+	withServedSchema(t)
 	dir := lintFixture(t, "GetPong") // the source declares GetPing
 
 	err := getLintCmd().RunE(nil, []string{dir})
 	if err == nil {
 		t.Fatal("a handler with no callable behind it must fail lint")
 	}
-	// The message has to name the function AND list what is actually there —
+	// The message has to name the pulse AND list what is actually there —
 	// "not found" is not actionable when the handler looks right.
 	for _, want := range []string{"get:ping", "GetPong", "GetPing"} {
 		if !strings.Contains(err.Error(), want) {
@@ -284,26 +209,59 @@ func TestLint_RefusesAHandlerThatIsNotThere(t *testing.T) {
 }
 
 func TestLint_PassesWhenTheHandlerResolves(t *testing.T) {
+	withServedSchema(t)
 	dir := lintFixture(t, "GetPing")
 
-	if err := getLintCmd().RunE(nil, []string{dir}); err != nil {
+	var out bytes.Buffer
+	restore := redirectStdout(t, &out)
+	err := getLintCmd().RunE(nil, []string{dir})
+	restore()
+	if err != nil {
 		t.Fatalf("a Driftfile whose handler resolves must lint clean, got:\n%v", err)
+	}
+	if !strings.Contains(out.String(), `is valid (slice "lintdemo")`) {
+		t.Errorf("lint does not say what it validated:\n%s", out.String())
 	}
 }
 
-// A Driftfile is legitimately linted on its own — handed over for review, or
-// sitting in a directory whose source has not been checked out. With no source
-// tree to check against, the handler check is skipped rather than reported:
-// calling that file invalid would refuse one that is fine.
-func TestLint_SkipsTheHandlerCheckWithNoSourceTree(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "Driftfile"),
-		[]byte(lintDriftfile("GetAnything")), 0o600); err != nil {
+// lint needs no secret's value: a CI gate runs without them, and the file
+// holds only references.
+func TestLint_NeedsNoSecretsValue(t *testing.T) {
+	withServedSchema(t)
+	dir := lintFixture(t, "GetPing")
+	src := lintDriftfile("GetPing") + "secret \"STRIPE_KEY\" { value = env(\"DRIFT_TEST_SURELY_UNSET\") }\n"
+	if err := os.WriteFile(filepath.Join(dir, "Driftfile"), []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
 	if err := getLintCmd().RunE(nil, []string{dir}); err != nil {
-		t.Fatalf("a Driftfile with no source beside it must still lint, got:\n%v", err)
+		t.Fatalf("lint asked for a secret's value: %v", err)
+	}
+}
+
+// A YAML Driftfile is refused as every reader refuses one.
+func TestLint_RefusesAYAMLDriftfile(t *testing.T) {
+	withServedSchema(t)
+	dir := lintFixture(t, "GetPing")
+	if err := os.WriteFile(filepath.Join(dir, "Driftfile"), []byte("slice: lintdemo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := getLintCmd().RunE(nil, []string{dir})
+	if err == nil || !strings.Contains(err.Error(), "the Driftfile is HCL now") {
+		t.Fatalf("a YAML Driftfile: got %v", err)
+	}
+}
+
+// An element whose folder is not on this machine is what `drift plan` would
+// refuse, so lint refuses it too, at the element.
+func TestLint_RefusesAnElementWithNoFolder(t *testing.T) {
+	withServedSchema(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Driftfile"), []byte(lintDriftfile("GetPing")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := getLintCmd().RunE(nil, []string{dir})
+	if err == nil || !strings.Contains(err.Error(), "atomic is not a directory") {
+		t.Fatalf("an element with no folder: got %v", err)
 	}
 }
 
@@ -351,48 +309,13 @@ func TestLint_WarnsButPassesWhenTheServedMinorIsAhead(t *testing.T) {
 	}
 }
 
-// The one-direction rule, at the command. A machine holding an OLDER format
-// than this binary implements is not a problem — this binary understands
-// everything that format can express — and saying anything would train people
-// to ignore the notice that matters.
-func TestLint_SaysNothingWhenThisBinaryIsAheadOfTheHeldFormat(t *testing.T) {
-	dir := lintFixture(t, "GetPing")
-	withCachedFormat(t, "1.0.0")
-
-	var notices bytes.Buffer
-	restore := redirectStderr(t, &notices)
-	err := getLintCmd().RunE(nil, []string{dir})
-	restore()
-
-	if err != nil {
-		t.Fatalf("an older held format must lint clean: %v", err)
-	}
-	if strings.Contains(notices.String(), "drift upgrade") {
-		t.Errorf("nothing should be said when this binary is ahead, got:\n%s", notices.String())
-	}
-}
-
 // withCachedFormat points this machine's schema cache at a temporary HOME whose
-// schema declares `version`.
-//
-// The document is permissive on purpose. Which schema the PARSE uses depends on
-// whether this package's compiled-schema memo is already warm, and these tests
-// are about the version comparison rather than about validation — so the
-// fixture Driftfile is one the real schema accepts too, and this copy accepts
-// anything, leaving both paths agreeing.
+// schema declares `version` and accepts any document: these tests are about the
+// version comparison, not about validation.
 func withCachedFormat(t *testing.T, version string) {
 	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".drift"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	doc := `{"$schema":"http://json-schema.org/draft-07/schema#","version":"` + version +
-		`","type":"object","additionalProperties":true}`
-	if err := os.WriteFile(filepath.Join(home, ".drift", "driftfile.schema.json"),
-		[]byte(doc), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	withSchemaBytes(t, []byte(`{"$schema":"http://json-schema.org/draft-07/schema#","version":"`+version+
+		`","type":"object","additionalProperties":true}`))
 }
 
 // redirectStderr captures what the command writes to os.Stderr. The notice goes
@@ -436,16 +359,15 @@ func bumpMinor(v string) string {
 	return parts[0] + "." + strconv.Itoa(minor+1) + ".0"
 }
 
-// 16MB, not 8: the fixture's source is Go, and a compiled function books at
-// least the compiled floor the schema publishes. At 8MB these tests would be
-// asserting a lint result on a Driftfile the platform refuses, which is the
-// opposite of what they exist to pin.
+// 16MiB, not 8: the fixture's source is Go, and a compiled pulse books at least
+// the compiled floor the schema publishes. At 8MiB these tests would be
+// asserting a lint result on a Driftfile the platform refuses.
 func lintDriftfile(handler string) string {
-	return "name: lintdemo\natomic:\n  functions:\n    - name: get:ping\n      handler: " +
-		handler + "\n      memory: 16MB\n"
+	return "slice \"lintdemo\" { billing = \"monthly\" }\n" +
+		"element \"default\" {\n  pulse \"GET /ping\" {\n    handler = \"" + handler + "\"\n    memory = \"16MiB\"\n  }\n}\n"
 }
 
-// lintFixture writes a one-function project whose source declares GetPing, and
+// lintFixture writes a one-pulse project whose source declares GetPing, and
 // whose Driftfile names whichever handler the caller asks for.
 func lintFixture(t *testing.T, handler string) string {
 	t.Helper()

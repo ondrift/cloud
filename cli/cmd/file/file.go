@@ -6,11 +6,9 @@
 //
 // # What it validates against
 //
-// `ParseDriftfile` — the same parse a deploy runs, so `lint` gives exactly the
-// answer a deploy would, minus the deploy. That parse has exactly one authority:
-// the JSON Schema the platform serves and this machine has cached. The CLI holds
-// no rules of its own to disagree with it, so a field the platform has added is
-// accepted here the moment the cached schema is refreshed, without a CLI release.
+// The same compile `drift plan` and `drift apply` run, so `lint` gives exactly
+// the answer they would, minus the slice. The document the file compiles to is
+// held to the JSON Schema the platform serves and this machine has cached.
 //
 // The cost of that is a dependency: with no schema ever fetched there is nothing
 // to validate against, and `lint` refuses rather than printing a ✓ it cannot
@@ -29,55 +27,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// GetCmd returns the `drift file` command group — everything you do with a
-// Driftfile, whether or not it touches a slice.
+// GetCmd returns the `drift file` command group: everything you do with a
+// Driftfile short of applying it.
 //
-// One noun, because the Driftfile IS the project: the resources and their sizes
-// are the whole declaration, so `project` and `file` addressed the same thing
-// under two names and cost a user the choice between them. The offline verbs
-// (lint, fmt, migrate, explain, new) and the ones that reach a slice (apply,
-// simulate, run, test, benchmark, stop, logs) live together for that reason.
+// The offline verbs (lint, fmt, explain, resolve, new) and the ones that run or
+// measure what it declares (run, test, benchmark, stop, logs) live together
+// here. Applying the file to its slice is `drift plan` and `drift apply`, at
+// the top level, because they are about the whole slice the file declares.
 //
 // `drift project` still resolves to this group, deprecated — see main.go.
 func GetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "file",
-		Short:   "Work on a Driftfile — lint it, apply it, run what it declares",
-		Long:    "Everything a Driftfile does: lint, format, migrate, explain and scaffold offline; apply, simulate, run, test, benchmark, stop and tail against a slice.",
-		Example: "  drift file lint\n  drift file apply\n  drift file simulate\n  drift file logs",
+		Short:   "Work on a Driftfile: lint it, run what it declares locally, measure it",
+		Long:    "Everything a Driftfile does short of applying it: lint, format, explain, resolve and scaffold offline; run, test, stop and tail it locally; benchmark it against its slice. `drift plan` and `drift apply` apply it.",
+		Example: "  drift file lint\n  drift file run\n  drift file explain pulse\n  drift file logs",
 		GroupID: "project",
 	}
-	cmd.AddCommand(getLintCmd(), getExplainCmd(), getResolveCmd(), getFmtCmd(), getMigrateCmd(), getNewCmd())
+	cmd.AddCommand(getLintCmd(), getExplainCmd(), getResolveCmd(), getFmtCmd(), getNewCmd())
 	cmd.AddCommand(project.Verbs()...)
-
-	// The two verbs that changed spelling in the move. Each keeps working and
-	// says once what to type instead. No RemoveAfter, for the reason in main.go:
-	// a version named here is a promise about a release nobody has planned.
-	apply, simulate := findVerb(cmd, "apply"), findVerb(cmd, "simulate")
-	cmd.AddCommand(
-		common.AliasCommand(apply, "deploy", common.Deprecation{
-			Old: "drift file deploy", New: "drift file apply",
-		}),
-		common.AliasCommand(simulate, "diff", common.Deprecation{
-			Old: "drift file diff", New: "drift file simulate",
-		}),
-	)
 	return cmd
-}
-
-// findVerb returns a registered subcommand by name, panicking if it is absent.
-//
-// Panics rather than returning an error: this runs at command-tree construction
-// with a name written three lines above, so a miss is a typo in this file and
-// not a condition any user can reach. A nil alias target would instead fail at
-// the moment someone typed the old spelling.
-func findVerb(parent *cobra.Command, name string) *cobra.Command {
-	for _, c := range parent.Commands() {
-		if c.Name() == name {
-			return c
-		}
-	}
-	panic("file: no subcommand named " + name)
 }
 
 // resolvePath turns an optional positional argument into a Driftfile path.
@@ -96,11 +65,10 @@ func resolvePath(args []string) (string, error) {
 		abs = filepath.Join(abs, "Driftfile")
 	}
 	if _, serr := os.Stat(abs); serr != nil {
-		// NAME THE COMMAND THAT WRITES ONE. "Deploy your app :: drift file apply"
-		// is the second line a new account is told to type, and in a fresh
-		// directory it lands here — so this message is the first wall of the
-		// product, and it used to end without a next step. Someone who has never
-		// seen a Driftfile cannot act on "pass a path".
+		// NAME THE COMMAND THAT WRITES ONE. In a fresh directory a new account
+		// lands here, so this message is the first wall of the product, and it
+		// used to end without a next step. Someone who has never seen a
+		// Driftfile cannot act on "pass a path".
 		return "", fmt.Errorf("no Driftfile at %s\n"+
 			"  run `drift file new` to write one, or pass the path to an existing file", abs)
 	}
@@ -113,9 +81,9 @@ func getLintCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "lint [path]",
 		Short: "Validate a Driftfile and exit non-zero if it is wrong",
-		Long: "Parses and validates a Driftfile exactly as a deploy would, without needing " +
-			"an account or a network. Exits non-zero on the first invalid file, so it can " +
-			"gate a CI job.",
+		Long: "Compiles and validates a Driftfile exactly as `drift plan` would, without needing " +
+			"an account, a network or the values of its secrets. Exits non-zero on an invalid " +
+			"file, so it can gate a CI job.",
 		Args: cobra.MaximumNArgs(1),
 		// SilenceUsage: a validation failure is the user's Driftfile being wrong,
 		// not them holding the command wrong, and printing the usage block after a
@@ -155,18 +123,19 @@ func getLintCmd() *cobra.Command {
 				return err
 			}
 
-			m, perr := project.ParseDriftfile(path)
+			c, perr := project.CompileDriftfile(path)
 			if perr != nil {
 				return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), perr)
 			}
+			m := c.Manifest
 
-			// The second half of "exactly as a deploy would": every declared
+			// The second half of "exactly as `drift plan` would": every declared
 			// handler has to resolve to a callable in its element.
 			//
 			// The schema cannot ask this — it validates a DOCUMENT, and whether
-			// `handler: PostUsers` is really in ./atomic is a question only this
-			// machine can answer. Without it a Driftfile lints green and then fails
-			// at deploy, which is the one thing a CI gate exists to prevent.
+			// `handler = "PostUsers"` is really in its element is a question only
+			// this machine can answer. Without it a Driftfile lints green and then
+			// fails at apply, which is the one thing a CI gate exists to prevent.
 			//
 			// Skipped when the source tree is absent rather than reported: a
 			// Driftfile is legitimately linted on its own — a manifest handed over
@@ -177,20 +146,20 @@ func getLintCmd() *cobra.Command {
 				if berr != nil {
 					return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), berr)
 				}
-				// The third half: a booking the schema accepts but the function's
+				// The third half: a booking the compiler accepts but the slot's
 				// LANGUAGE does not. Only reachable once the elements are built,
-				// because that is where the language was detected — the document
+				// because that is where the language was detected — the file
 				// never says it.
-				if cerr := project.CheckCompiledBookings(m, els); cerr != nil {
+				if cerr := project.CheckCompiledBookings(c, els); cerr != nil {
 					return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), cerr)
 				}
 			}
 
 			envs := ""
-			if n := len(m.EnvironmentNames()); n > 0 {
+			if n := len(c.Environments); n > 0 {
 				envs = fmt.Sprintf(", %d environment(s)", n)
 			}
-			fmt.Printf("%s %s is valid (project %q%s)\n",
+			fmt.Printf("%s %s is valid (slice %q%s)\n",
 				common.Hint("✓"), shortPath(path), m.Name(), envs)
 			return nil
 		},

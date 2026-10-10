@@ -12,9 +12,7 @@
 package project
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -44,7 +42,7 @@ func declaredHosts(m *Manifest) ([]frontedHost, error) {
 			Slice: strings.TrimSpace(n.Str("slice")),
 		}
 		if h.Host == "" || h.Slice == "" {
-			return nil, fmt.Errorf(`edge.hosts[%d]: an entry needs both "host" and "slice", such as {host: admin.example.com, slice: admin}`, i)
+			return nil, fmt.Errorf(`edge.hosts[%d]: an entry needs both a host and a slice, such as "admin.example.com" = "admin"`, i)
 		}
 		hosts = append(hosts, h)
 	}
@@ -82,30 +80,6 @@ func applyEdgeHosts(m *Manifest) error {
 		fmt.Printf("  %s fronted host: %s\n", common.Check(), h)
 	}
 	return nil
-}
-
-// planEdgeHosts is the `--plan` section for `edge.hosts`: what the declared
-// hosts add to and remove from the live ones.
-func planEdgeHosts(m *Manifest, out io.Writer) {
-	if !m.Slice().Has("edge", "hosts") {
-		return
-	}
-	fmt.Fprintf(out, "\n  fronted hosts (edge.hosts)\n")
-
-	hosts, err := declaredHosts(m)
-	if err != nil {
-		fmt.Fprintf(out, "    %s %v\n", common.Hint("!"), err)
-		return
-	}
-
-	var live struct {
-		Hosts []frontedHost `json:"hosts"`
-	}
-	body, lerr := callSliceEdge(m, http.MethodGet, "hosts", "read the fronted hosts", nil)
-	if lerr == nil {
-		lerr = json.Unmarshal(body, &live)
-	}
-	planListDiff(out, hostLines(live.Hosts), hostLines(hosts), lerr)
 }
 
 // hostLines renders each entry as `host → slice`, the form the plan compares.

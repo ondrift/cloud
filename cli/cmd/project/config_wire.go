@@ -10,13 +10,12 @@ package project
 //
 // The CLI decodes a live slice's `config` into these (FetchLiveSlice, api.go) so
 // it can SAY what a slice holds: which collections and buckets a manifest may
-// reference, what `drift file explain` prints, what a plan reports.
+// reference, what a plan reports.
 //
-// A Driftfile 2 declares the shape as well as what runs on it, and compile2.go
+// The Driftfile declares the shape as well as what runs on it, and compile.go
 // builds its shape in this same type. `drift plan` diffs the two field by
 // field and posts the compiled one to the platform's price quote, which writes
-// nothing. A YAML 1.x Driftfile still declares no shape, and nothing translates
-// one into this type.
+// nothing.
 //
 // Field names match the platform's encoded shape exactly: parent fields live
 // under lowercase JSON keys, while leaf fields use the Go field names, because

@@ -2,6 +2,7 @@ package azure
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -119,36 +120,46 @@ func driftHandlerName(t ManifestTrigger, fnName string) string {
 	return id
 }
 
-// driftEntry renders one Driftfile `atomic.functions` entry for a trigger: the
-// identity it answers on, the callable that serves it, the memory it starts
-// with, its gate, and the secrets it may read.
+// driftPulse renders one Driftfile pulse block for a trigger, indented to sit
+// inside its element: the trigger it answers on, the callable that serves it,
+// the memory it starts with, its gate, and the secrets it may read. keyVar is
+// the environment variable an API-key gate reads its key from.
 //
 // This is the whole declaration. Nothing is written into the scaffolded source,
 // which is exactly what makes a migrated project readable — the code that comes
 // out is the code that went in, and everything Drift needs to know about it is
 // in one file the operator can review before deploying.
-func driftEntry(t ManifestTrigger, handler string, secrets []string, memory string) string {
-	var sb strings.Builder
+func driftPulse(t ManifestTrigger, handler string, secrets []string, memory, keyVar string) string {
+	var label string
 	switch t.Type {
 	case "http":
-		sb.WriteString("    - name: \"" + t.Method + ":" + t.Route + "\"\n")
+		label = strings.ToUpper(t.Method) + " /" + t.Route
 	case "queue":
-		sb.WriteString("    - name: \"queue:" + t.Queue + "\"\n")
+		label = "QUEUE " + t.Queue
 	case "cron":
-		// A schedule is not an identity — it is something a function ALSO does.
-		// The migrated function keeps a POST route and gains the cron beside it.
-		sb.WriteString("    - name: \"post:" + handler + "\"\n")
+		// A schedule is not an identity — it is something a pulse ALSO does.
+		// The migrated pulse keeps a POST route and gains the cron beside it.
+		label = "POST /" + handler
 	}
-	sb.WriteString("      handler: " + handler + "\n")
-	sb.WriteString("      memory: " + memory + "\n")
-	if auth := t.Auth; auth != "" && auth != "none" {
-		sb.WriteString("      auth: " + auth + "\n")
-	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "  pulse %q {\n", label)
+	fmt.Fprintf(&sb, "    handler = %q\n", handler)
+	fmt.Fprintf(&sb, "    memory  = %q\n", memory)
 	if t.Type == "cron" && t.Schedule != "" {
-		sb.WriteString("      cron: \"" + t.Schedule + "\"\n")
+		fmt.Fprintf(&sb, "    cron    = %q\n", t.Schedule)
 	}
 	if len(secrets) > 0 {
-		sb.WriteString("      secrets: [" + strings.Join(secrets, ", ") + "]\n")
+		quoted := make([]string, len(secrets))
+		for i, s := range secrets {
+			quoted[i] = fmt.Sprintf("%q", s)
+		}
+		fmt.Fprintf(&sb, "    secrets = [%s]\n", strings.Join(quoted, ", "))
 	}
+	if auth := t.Auth; auth != "" && auth != "none" {
+		sb.WriteString("    auth {\n")
+		fmt.Fprintf(&sb, "      api_key = env(%q)\n", keyVar)
+		sb.WriteString("    }\n")
+	}
+	sb.WriteString("  }\n")
 	return sb.String()
 }

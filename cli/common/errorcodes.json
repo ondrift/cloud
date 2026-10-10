@@ -40,8 +40,8 @@
     {
       "code": "DRIFT-1007",
       "meaning": "The request to the platform timed out.",
-      "remedy": "The platform accepted the connection and did not answer in time. Retry; a deploy that timed out may still have landed, so check with `drift file simulate` before deploying again.",
-      "command": "drift file simulate"
+      "remedy": "The platform accepted the connection and did not answer in time. Retry; a deploy that timed out may still have landed, so check with `drift plan` before applying again.",
+      "command": "drift plan"
     },
     {
       "code": "DRIFT-1008",
@@ -58,8 +58,8 @@
     {
       "code": "DRIFT-1010",
       "meaning": "A compiled function booked less memory than its language runtime needs.",
-      "remedy": "Go and Rust carry a private runtime inside every invocation, so they floor at 16MB where the interpreted languages floor at 8MB. Raise the booking, or run `drift file benchmark` against a deployed slice to size it from what it actually holds.",
-      "command": "drift file benchmark"
+      "remedy": "Go and Rust carry a private runtime inside every invocation, so they floor at 16MiB where the interpreted languages floor at 8MiB. Raise its memory in the Driftfile, or run `drift size` against a deployed slice to size it from what it actually holds.",
+      "command": "drift size"
     },
     {
       "code": "DRIFT-1011",
