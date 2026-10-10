@@ -189,12 +189,12 @@ func driftfileVersionOf(raw []byte) string {
 // Bump it in the release that implements a format change.
 //
 // The format is the DOCUMENT the platform's schema describes, which the HCL
-// Driftfile compiles to (cmd/project/compile.go). The compiler writes only the
-// current keys of that document: elements holding their pulses and fields,
-// `edge`, `labels`, each pulse's `concurrent`. A key the schema carries for an
-// older spelling is never written, so the compile is valid against any schema
-// of this major that holds the keys it writes.
-const ImplementedDriftfileFormat = "1.23.0"
+// Driftfile compiles to (cmd/project/compile.go). Format 2 is that document and
+// nothing else: the keys the compiler writes, with the spellings no compiler
+// writes removed. The compiler writes no key format 1 lacked, so a binary
+// implementing 2 also compiles a document format 1 accepts, and while a machine
+// still holds format 1 it is told the schema is behind, never refused.
+const ImplementedDriftfileFormat = "2.0.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every
 // authenticated request.

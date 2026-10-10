@@ -1,7 +1,7 @@
 // references.go — does the slice actually hold what the manifest names?
 //
 // The Driftfile references resources by NAME because the code does:
-// `backbone.nosql: [{name: sessions}]` exists because something calls
+// `nosql "sessions"` exists because something calls
 // `NoSQL.Write("sessions", …)`. A write to a collection or bucket the slice
 // does not declare is refused by the slice with a 400, which lands at RUNTIME,
 // on a live slice, after the upload. This turns that into a refusal the

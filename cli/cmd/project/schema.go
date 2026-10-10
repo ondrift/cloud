@@ -415,12 +415,7 @@ func CompiledMemoryFloor() CompiledFloor {
 // So the rule is fetched with everything else. Returns nil when the schema has no
 // pattern for `name` or is not on this machine, and callers then skip the check
 // rather than inventing one: the server is the final enforcer either way, and a
-// guess is what this whole change removes.
-// It reads `slice`'s pattern and falls back to `name`'s. The fallback is not
-// belt-and-braces: this reads whatever schema the MACHINE holds, which can
-// predate the rename, and returning nil there would delete the one check the
-// schema cannot perform rather than fail it. Both keys carry the same pattern,
-// so either answer is the platform's rule.
+// guess is what this whole change removes. It reads `slice`'s pattern.
 func NamePattern() *regexp.Regexp {
 	raw, err := common.LocalDriftfileSchema()
 	if err != nil {
@@ -431,18 +426,12 @@ func NamePattern() *regexp.Regexp {
 			Slice struct {
 				Pattern string `json:"pattern"`
 			} `json:"slice"`
-			Name struct {
-				Pattern string `json:"pattern"`
-			} `json:"name"`
 		} `json:"properties"`
 	}
 	if jerr := json.Unmarshal(raw, &doc); jerr != nil {
 		return nil
 	}
 	pattern := doc.Properties.Slice.Pattern
-	if pattern == "" {
-		pattern = doc.Properties.Name.Pattern
-	}
 	if pattern == "" {
 		return nil
 	}
