@@ -141,12 +141,7 @@ the restart are shown before anything is bought.`),
 // floor rather than a measurement, and pre-filling that would look like advice
 // while being the absence of any.
 func applyBookings(w io.Writer, sliceName string, rows []sizingRow) error {
-	rec := map[string]int64{}
-	for _, r := range rows {
-		if r.Measurements > 0 && r.Recommended > 0 {
-			rec[r.Function] = r.Recommended
-		}
-	}
+	rec := measuredRecommendations(rows)
 	if len(rec) == 0 {
 		fmt.Fprintln(w, "  Nothing to apply: no function has been invoked yet, so there is no")
 		fmt.Fprintln(w, "  measurement to size from. Send some traffic and run this again.")
@@ -176,6 +171,20 @@ func applyBookings(w io.Writer, sliceName string, rows []sizingRow) error {
 		return fmt.Errorf("the slice's live config could not be read as a shape to open")
 	}
 	return slice.ResizeWithConfig(sliceName, shaped, 1)
+}
+
+// measuredRecommendations is the booking to set for each slot that has
+// something to base one on. A slot nothing has invoked is left out: its
+// "recommendation" is the floor rather than a measurement, and offering it
+// would look like advice while being the absence of any.
+func measuredRecommendations(rows []sizingRow) map[string]int64 {
+	rec := map[string]int64{}
+	for _, r := range rows {
+		if r.Measurements > 0 && r.Recommended > 0 {
+			rec[r.Function] = r.Recommended
+		}
+	}
+	return rec
 }
 
 // overlayBookings sets each recommended function's booking on the live config,
@@ -227,6 +236,15 @@ func overlayBookings(cfg any, rec map[string]int64) int {
 
 // benchmarkFromSlice asks the deployed slice what its functions have cost.
 func benchmarkFromSlice(m *Manifest) ([]sizingRow, error) {
+	return sizingRows(declaredMemory(m))
+}
+
+// sizingRows asks the deployed slice what its functions have cost, one row per
+// slot it reports. declared holds a key for every slot the Driftfile names,
+// whichever format it is written in; it is what lets a row say "deployed, but
+// not in this Driftfile". `drift file benchmark` and `drift size` both read the
+// measurements here, so the two cannot disagree about a recommendation.
+func sizingRows(declared map[string]string) ([]sizingRow, error) {
 	resp, err := common.DoJSONRequest(http.MethodGet, common.APIBaseURL+"/ops/atomic/sizing", nil)
 	if err != nil {
 		return nil, err
@@ -242,7 +260,6 @@ func benchmarkFromSlice(m *Manifest) ([]sizingRow, error) {
 		return nil, fmt.Errorf("read the slice's sizing report: %w", err)
 	}
 
-	declared := declaredMemory(m)
 	rows := make([]sizingRow, 0, len(s.Functions))
 	for _, f := range s.Functions {
 		r := sizingRow{

@@ -116,7 +116,7 @@ func runMigrate(out, errOut io.Writer, path string, write bool) error {
 
 	if !write {
 		patchName := strings.TrimPrefix(filepath.ToSlash(name), "/")
-		fmt.Fprint(out, unifiedDiff("a/"+patchName, "b/"+patchName, src, mig.Output))
+		fmt.Fprint(out, project.UnifiedDiff("a/"+patchName, "b/"+patchName, src, mig.Output))
 		fmt.Fprintf(errOut, "%s %s to rewrite in %s:\n", common.Hint("·"), plural(len(mig.Steps), "key", "keys"), name)
 		reportSteps(errOut, mig.Steps)
 		reportKept(errOut, mig.Kept)
