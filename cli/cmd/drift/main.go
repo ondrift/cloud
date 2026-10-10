@@ -138,9 +138,14 @@ func newRootCmd(shownVersion string) *cobra.Command {
 	applyCmd := project.GetApplyCmd()
 	applyCmd.GroupID = "project"
 
+	// `drift size`: the measured peaks written back into the Driftfile.
+	sizeCmd := project.GetSizeCmd()
+	sizeCmd.GroupID = "project"
+
 	rootCmd.AddCommand(
 		planCmd,
 		applyCmd,
+		sizeCmd,
 
 		// File (everything a Driftfile does — lint it, apply it, run it)
 		fileCmd,

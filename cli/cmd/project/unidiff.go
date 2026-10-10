@@ -1,8 +1,9 @@
-package file
+package project
 
 // unidiff.go: a unified diff of two versions of one file, in the format
 // `git apply` and `patch` read, so `drift file migrate > change.patch` is a
-// patch and not only a picture of one.
+// patch and not only a picture of one. `drift file migrate` and `drift size`
+// both show their change through it.
 //
 // A longest-common-subsequence over lines, after the common head and tail are
 // set aside: a Driftfile is a few hundred lines and a migration touches a few
@@ -21,8 +22,8 @@ type diffOp struct {
 	text string
 }
 
-// unifiedDiff renders the changes from a to b, or "" when there are none.
-func unifiedDiff(aName, bName string, a, b []byte) string {
+// UnifiedDiff renders the changes from a to b, or "" when there are none.
+func UnifiedDiff(aName, bName string, a, b []byte) string {
 	if string(a) == string(b) {
 		return ""
 	}
