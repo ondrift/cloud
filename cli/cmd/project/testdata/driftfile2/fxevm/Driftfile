@@ -1,0 +1,93 @@
+# The fxevm testnode, as a Driftfile 2: the one file that declares what runs on
+# the slice AND its shape. Its limits are the ones isrand/fxevm-testnode has
+# live; its storage is what the testnode uses, so the free slice's placeholder
+# collections, buckets, queue and database are not in it.
+drift {
+  format = "2.0"
+}
+
+slice "fxevm-testnode" {
+  billing = "monthly"
+
+  limits {
+    requests_per_minute  = 60000
+    timeout              = "30s"
+    log_retention        = "24h"
+    deploy_history       = 1
+    backup_retention     = "3d"
+    scheduled_jobs       = 1
+    atomic_storage       = "100MiB"
+    canvas_storage       = "50MiB"
+    realtime_connections = 50
+    secrets              = 5
+    secret_size          = "1KiB"
+    locks                = 100000
+    blob_object_size     = "5MiB"
+    queue_depth          = 1000
+    vault_entry_size     = "4KiB"
+    vault_entries        = 100
+    pocket_record_size   = "16KiB"
+  }
+}
+
+element "evm" {
+  dir = "atomic/evm"
+
+  # JSON-RPC multiplexes on a body field, so the whole node answers here.
+  pulse "POST /rpc" {
+    handler    = "PostRPC"
+    response   = "json"
+    concurrent = true
+    memory     = "64MiB"
+  }
+
+  pulse "POST /admin/reset" {
+    handler  = "PostReset"
+    response = "json"
+    memory   = "32MiB"
+    auth {
+      api_key = env("RESET_KEY")
+    }
+  }
+
+  # The chain's single writer.
+  field "sequencer" {
+    handler = "Sequencer"
+    memory  = "64MiB"
+  }
+}
+
+element "bench" {
+  dir = "atomic/bench"
+
+  pulse "GET /bench" {
+    handler  = "GetBench"
+    response = "json"
+    memory   = "32MiB"
+  }
+}
+
+sql "chain" {
+  size   = "256MiB"
+  schema = "backbone/chain.sql"
+  seed   = "backbone/genesis.sql"
+}
+
+queue "txs" {
+  depth = 1000
+}
+
+site "/" {
+  dir = "canvas"
+}
+
+edge {
+  site_auth {
+    realm = "fxevm testnode"
+    user "drift" { password = env("EXPLORER_PASS") }
+  }
+}
+
+test "oz-parity" {
+  run = "make -C ../fxevm-source hardhat-tests"
+}

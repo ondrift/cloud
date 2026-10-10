@@ -155,12 +155,37 @@ func ParseDriftfile(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
+	// A Driftfile 2 is HCL, and the commands that read this YAML format do not
+	// read it. Said here, once, rather than as a YAML error about a file that
+	// was never meant to be YAML.
+	if IsFormat2(data) {
+		return nil, fmt.Errorf("%s is a Driftfile 2 (HCL): `drift plan` reads it, and the `drift file` commands read the YAML 1.x format", filepath.Base(path))
+	}
+
 	var m Manifest
 	m.baseDir = filepath.Dir(path)
 	if m.doc, err = decodeValidated(data); err != nil {
 		return nil, err
 	}
+	if err := finishParse(&m); err != nil {
+		return nil, err
+	}
 
+	// $ENVREF resolution is not validation — it substitutes a value from the
+	// deployer's environment, and reports the ones that are not set because a
+	// secret silently becoming the literal "$VAR" is a credential that is wrong
+	// in a way nothing downstream can detect.
+	if err := resolveSecretEnvRefs(&m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// finishParse runs every pass that follows schema validation and precedes
+// secret resolution, on a document already validated. It is shared by both
+// formats: a Driftfile 2 compiles to the same document a YAML file decodes to,
+// and from here on the two are read by one set of passes.
+func finishParse(m *Manifest) error {
 	// The resource shape is the document root minus the three siblings that are
 	// about deployment rather than shape — Driftfile v2 inlines the slice.
 	// SelectEnvironment replaces this with the environment-merged result.
@@ -183,7 +208,7 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	// the environment merge reads, and each merged slice is flattened on its own
 	// (see elements.go).
 	if err := normaliseElements(m.slice, warnElementTag); err != nil {
-		return nil, err
+		return err
 	}
 
 	// A function's identity, in whichever spelling it was written, resolved to
@@ -202,15 +227,15 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	// Two slots on one booking key, or a Field named like a Pulse route,
 	// anywhere in the slice. Refused here, before anything is built.
 	if err := checkSlotIdentities(m.slice); err != nil {
-		return nil, err
+		return err
 	}
 
 	// The one class of check the schema CANNOT own: whether the paths a valid
 	// document names actually exist on THIS machine. A schema describes the
 	// document; only the laptop knows if `atomic/get-menu/` is there. This is not
 	// a second opinion on the format — it never inspects a value's shape.
-	if errs := checkLocalPaths(&m); len(errs) > 0 {
-		return nil, errs
+	if errs := checkLocalPaths(m); len(errs) > 0 {
+		return errs
 	}
 
 	// The other class the schema cannot own: a reference from one part of the
@@ -221,27 +246,20 @@ func ParseDriftfile(path string) (*Manifest, error) {
 	// A warning, not a refusal: the slice creates an undeclared queue on its
 	// first push, so the function does fire and stopping the deploy would be
 	// wrong. See queuerefs.go.
-	for _, w := range checkQueueReferences(&m) {
+	for _, w := range checkQueueReferences(m) {
 		fmt.Fprintf(os.Stderr, "  %s %s\n", common.Hint("·"), w)
 	}
 
 	// A value written out in `backbone.secrets:` — which is a value in git.
 	//
-	// BEFORE the resolution below, and that ordering is the whole check: once
+	// BEFORE the resolution ParseDriftfile runs after this pass, and that
+	// ordering is the whole check: once
 	// `$VAR` has been substituted every value is a literal, and a pass running
 	// after this point cannot tell the two apart at all.
-	for _, w := range checkHardcodedSecrets(&m) {
+	for _, w := range checkHardcodedSecrets(m) {
 		fmt.Fprintf(os.Stderr, "  %s %s\n", common.Hint("·"), w)
 	}
-
-	// $ENVREF resolution is not validation — it substitutes a value from the
-	// deployer's environment, and reports the ones that are not set because a
-	// secret silently becoming the literal "$VAR" is a credential that is wrong
-	// in a way nothing downstream can detect.
-	if err := resolveSecretEnvRefs(&m); err != nil {
-		return nil, err
-	}
-	return &m, nil
+	return nil
 }
 
 // decodeValidated is the half of ParseDriftfile that reads the TEXT: placeholders

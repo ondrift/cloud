@@ -1,0 +1,216 @@
+{
+  "billing": "monthly",
+  "document": {
+    "atomic": {
+      "elements": [
+        {
+          "dir": "atomic/evm",
+          "fields": [
+            {
+              "handler": "Sequencer",
+              "name": "sequencer"
+            }
+          ],
+          "name": "evm",
+          "pulses": [
+            {
+              "concurrent": true,
+              "handler": "PostRPC",
+              "method": "post",
+              "response": "json",
+              "route": "rpc"
+            },
+            {
+              "auth": "apikey",
+              "handler": "PostReset",
+              "method": "post",
+              "response": "json",
+              "route": "admin/reset"
+            }
+          ]
+        },
+        {
+          "dir": "atomic/bench",
+          "name": "bench",
+          "pulses": [
+            {
+              "handler": "GetBench",
+              "method": "get",
+              "response": "json",
+              "route": "bench"
+            }
+          ]
+        }
+      ]
+    },
+    "backbone": {
+      "queues": [
+        "txs"
+      ],
+      "sql": [
+        {
+          "name": "chain",
+          "schema": "backbone/chain.sql",
+          "seed": "backbone/genesis.sql"
+        }
+      ]
+    },
+    "canvas": {
+      "sites": [
+        {
+          "dir": "canvas"
+        }
+      ]
+    },
+    "edge": {
+      "site_auth": {
+        "realm": "fxevm testnode",
+        "users": [
+          {
+            "password": "$EXPLORER_PASS",
+            "user": "drift"
+          }
+        ]
+      }
+    },
+    "slice": "fxevm-testnode",
+    "tests": {
+      "e2e": [
+        "make -C ../fxevm-source hardhat-tests"
+      ]
+    }
+  },
+  "slots": [
+    {
+      "Name": "post:rpc",
+      "Handler": "PostRPC",
+      "Element": "evm",
+      "Dir": "atomic/evm",
+      "Auth": "",
+      "Response": "json",
+      "Concurrent": true
+    },
+    {
+      "Name": "post:admin/reset",
+      "Handler": "PostReset",
+      "Element": "evm",
+      "Dir": "atomic/evm",
+      "Auth": "apikey",
+      "Response": "json",
+      "Concurrent": false
+    },
+    {
+      "Name": "get:bench",
+      "Handler": "GetBench",
+      "Element": "bench",
+      "Dir": "atomic/bench",
+      "Auth": "",
+      "Response": "json",
+      "Concurrent": false
+    },
+    {
+      "Name": "field:sequencer",
+      "Handler": "Sequencer",
+      "Element": "evm",
+      "Dir": "atomic/evm",
+      "Auth": "",
+      "Response": "",
+      "Concurrent": false
+    }
+  ],
+  "shape": {
+    "canvas": {
+      "TotalMaxSizeInBytes": 52428800
+    },
+    "atomic": {
+      "MaxNumberOfFunctions": 4,
+      "MaxFunctionRuntimeInSeconds": 30,
+      "MaxNumberOfDeploymentsInHistory": 1,
+      "MaxNumberOfHoursForLogRetention": 24,
+      "MaxNumberOfRequestsPerMinute": 60000,
+      "MaxNumberOfScheduledJobs": 1,
+      "MaxFunctionMemoryBytes": 0,
+      "MaxStorageBytes": 104857600,
+      "functions": [
+        {
+          "name": "post:rpc",
+          "memory_bytes": 67108864,
+          "route": "rpc",
+          "method": "post"
+        },
+        {
+          "name": "post:admin/reset",
+          "memory_bytes": 33554432,
+          "route": "admin/reset",
+          "method": "post"
+        },
+        {
+          "name": "field:sequencer",
+          "memory_bytes": 67108864,
+          "route": "sequencer",
+          "method": "field"
+        },
+        {
+          "name": "get:bench",
+          "memory_bytes": 33554432,
+          "route": "bench",
+          "method": "get"
+        }
+      ]
+    },
+    "backbone": {
+      "secrets": {
+        "MaxCount": 5,
+        "MaxSizeInBytesEach": 1024
+      },
+      "blobs": {
+        "MaxSizeInBytesEach": 5242880,
+        "buckets": null
+      },
+      "nosql": {
+        "collections": null
+      },
+      "sql": {
+        "MaxDatabases": 1,
+        "databases": {
+          "chain": 268435456
+        }
+      },
+      "queues": {
+        "MaxDepthEach": 1000,
+        "queues": {
+          "txs": 1000
+        }
+      },
+      "realtime": {
+        "MaxConcurrentConnections": 50
+      },
+      "locks": {
+        "MaxConcurrent": 100000
+      },
+      "backup_retention_days": 3
+    },
+    "deed": {
+      "vault": {
+        "MaxSizeInBytesEach": 4096,
+        "MaxEntriesPerUID": 100
+      },
+      "pocket": {
+        "MaxSizeInBytesEach": 16384
+      }
+    },
+    "labels": null
+  },
+  "write_only": [
+    {
+      "Address": "pulse POST /admin/reset",
+      "Kind": "api_key",
+      "Env": "RESET_KEY"
+    },
+    {
+      "Address": "site_auth drift",
+      "Kind": "site_password",
+      "Env": "EXPLORER_PASS"
+    }
+  ]
+}

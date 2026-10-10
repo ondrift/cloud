@@ -15,6 +15,7 @@ import (
 	file "github.com/ondrift/cloud/cli/cmd/file"
 	migrate "github.com/ondrift/cloud/cli/cmd/migrate"
 	portal "github.com/ondrift/cloud/cli/cmd/portal"
+	project "github.com/ondrift/cloud/cli/cmd/project"
 	slice "github.com/ondrift/cloud/cli/cmd/slice"
 	upgrade "github.com/ondrift/cloud/cli/cmd/upgrade"
 	"github.com/ondrift/cloud/cli/common"
@@ -130,7 +131,14 @@ func newRootCmd(shownVersion string) *cobra.Command {
 	// what to type rather than when to panic.
 	fileCmd := file.GetCmd()
 
+	// `drift plan`: what applying the Driftfile would change, at the top level
+	// because it is about the whole slice the file declares.
+	planCmd := project.GetPlanCmd()
+	planCmd.GroupID = "project"
+
 	rootCmd.AddCommand(
+		planCmd,
+
 		// File (everything a Driftfile does — lint it, apply it, run it)
 		fileCmd,
 		common.AliasCommand(fileCmd, "project", common.Deprecation{
