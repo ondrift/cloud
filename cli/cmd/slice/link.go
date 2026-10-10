@@ -15,7 +15,7 @@
 // Same-user only (the target must be a slice you own). This widens to
 // "same Drift Team" when Teams land — the CLI surface won't change.
 //
-// `edge.links` in the Driftfile is the declarative way: `drift file apply`
+// `links` in the Driftfile's edge block is the declarative way: `drift apply`
 // adds the links it names and removes the ones it does not, through the same
 // calls exported here.
 package slice
@@ -126,8 +126,8 @@ func getLinkCmd() *cobra.Command {
 			"(e.g. an app → your own observability slice). The call travels " +
 			"in-cluster through the slice runtime; it never crosses the public " +
 			"internet, and everything else stays subject to your egress posture.\n\n" +
-			"To declare links in the Driftfile instead, list them under `edge.links`: " +
-			"`drift file apply` then adds the links it names and removes the ones it " +
+			"To declare links in the Driftfile instead, list them as `links` in its edge " +
+			"block: `drift apply` then adds the links it names and removes the ones it " +
 			"does not.",
 		Example: "  drift slice link add c12\n" +
 			"  drift slice link list\n" +

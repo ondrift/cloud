@@ -28,15 +28,18 @@ func TestApply_SaysWhenTheSliceDeclaresASlotTheDriftfileDoesNotName(t *testing.T
 	rec := stubAPI(t, idleSliceStub("custom", slots))
 	applyWithFunctions(t, routes)
 
+	// The apply brings the slice to the file's shape, so the sixth slot is a
+	// removal it is told to make. The stub keeps answering with the six slots it
+	// was given, which is the slice as the report reads it after the deploy.
 	var err error
-	out := captureStdout(t, func() { err = runApply(t) })
+	out := captureStdout(t, func() { err = runApplyAgreeingToRemove(t, "pulse GET /slot-6") })
 
 	if err != nil {
 		t.Fatalf("the apply must succeed, there is room, and the report must not change that: %v\n%s", err, out)
 	}
 	for _, want := range []string{
 		"This slice declares 6 atomic slots and your Driftfile names 5.",
-		"get:slot-6 is idle, and you are paying for its 16 MB booking.",
+		"get:slot-6 is idle, and you are paying for its 16MiB booking.",
 		"Run `drift slice resize demo` to release it.",
 	} {
 		if !strings.Contains(out, want) {
@@ -53,15 +56,20 @@ func TestApply_SaysWhenTheSliceDeclaresASlotTheDriftfileDoesNotName(t *testing.T
 		t.Errorf("the report must come after the apply finished:\n%s", out)
 	}
 
-	// It reports. Nothing it does may reach a route that changes a slice.
-	for _, forbidden := range []string{
-		"POST /ops/slice/resize",
-		"POST /ops/slice/create",
-		"POST /ops/slice/price",
-	} {
-		if n := rec.count(forbidden); n != 0 {
-			t.Errorf("the apply issued %d × %q: the idle report reports, and `drift slice resize` acts", n, forbidden)
-		}
+	// It reports. The apply sizes the slice once, before it deploys anything;
+	// nothing the report does afterwards may reach a route that changes a slice.
+	if n := rec.count("POST /ops/slice/create"); n != 0 {
+		t.Errorf("the apply issued %d × POST /ops/slice/create for a slice that exists", n)
+	}
+	resized := rec.position("POST /ops/slice/resize")
+	deployed := rec.position("POST /ops/atomic")
+	if n := rec.count("POST /ops/slice/resize"); n != 1 || resized > deployed {
+		t.Errorf("the slice must be resized once, before the deploy (resize at %d, deploy at %d, %d resizes)",
+			resized, deployed, n)
+	}
+	// The last thing the apply does is read the slice for the report.
+	if n := len(rec.hits); n == 0 || rec.hits[n-1] != "GET /ops/slice/get" {
+		t.Errorf("the apply must end on the read the report is made from, got %v", rec.hits)
 	}
 }
 
@@ -73,7 +81,7 @@ func TestApply_SaysNothingWhenTheSetsAreEqual(t *testing.T) {
 	applyWithFunctions(t, routes)
 
 	var err error
-	out := captureStdout(t, func() { err = runApply(t) })
+	out := captureStdout(t, func() { err = applyAgreeingAtZero(t) })
 
 	if err != nil {
 		t.Fatalf("apply: %v\n%s", err, out)
@@ -115,7 +123,7 @@ func TestReportIdle_WithoutTheServingListASlotIsUnnamedNotIdle(t *testing.T) {
 	ReportIdleDeclarations(m, live, nil, &out)
 
 	got := out.String()
-	if !strings.Contains(got, "get:slot-2 is not named by your Driftfile, and you are paying for its 16 MB booking.") {
+	if !strings.Contains(got, "get:slot-2 is not named by your Driftfile, and you are paying for its 16MiB booking.") {
 		t.Errorf("the slot must be reported as unnamed:\n%s", got)
 	}
 	if strings.Contains(got, "is idle") {
@@ -123,17 +131,34 @@ func TestReportIdle_WithoutTheServingListASlotIsUnnamedNotIdle(t *testing.T) {
 	}
 }
 
-// The parse folds every spelling of an identity onto the booking key the slice
-// stores, and the comparison happens after it: the retired `name:` string (whose
-// branch still requires its `memory:`), the route and method pair, and the
-// retired NoSQL `name:` all match the slot they always matched. A false idle
-// here would tell the tenant to release the function they are running.
-func TestReportIdle_EverySpellingOfAnIdentityMatchesItsSlot(t *testing.T) {
-	m := parseSlots(t, "slice: demo\natomic:\n  functions:\n"+
-		"    - name: get:ping\n      handler: GetPing\n      memory: 16MB\n"+
-		"    - route: users\n      method: post\n      handler: PostUsers\n"+
-		"    - name: queue:orders\n      handler: HandleOrders\n      memory: 16MB\n"+
-		"backbone:\n  nosql:\n    - name: ops\n      size: 5MB\n  queues:\n    - name: orders\n")
+// The compile folds every identity a Driftfile declares onto the booking key the
+// slice stores, and the comparison happens after it: a pulse labelled with its
+// method and route, a pulse labelled QUEUE and the queue it drains, and a nosql
+// collection all match the slot they book. A false idle here would tell the
+// tenant to release the function they are running.
+func TestReportIdle_EveryDeclaredIdentityMatchesItsSlot(t *testing.T) {
+	withRealSchema(t)
+	m := planManifest(t, `slice "demo" { billing = "monthly" }
+
+element "default" {
+  pulse "GET /ping" {
+    handler = "GetPing"
+    memory  = "16MiB"
+  }
+  pulse "POST /users" {
+    handler = "PostUsers"
+    memory  = "16MiB"
+  }
+  pulse "QUEUE orders" {
+    handler = "HandleOrders"
+    memory  = "16MiB"
+  }
+}
+
+nosql "ops" { size = "5MiB" }
+
+queue "orders" {}
+`, "atomic/")
 	live := idleLive("custom", []string{"get:ping", "post:users", "queue:orders"})
 	live.Config.Backbone.NoSQL.Collections = map[string]int{"ops": 5 << 20}
 
@@ -141,7 +166,7 @@ func TestReportIdle_EverySpellingOfAnIdentityMatchesItsSlot(t *testing.T) {
 	ReportIdleDeclarations(m, live, deployedSet(), &out)
 
 	if out.Len() != 0 {
-		t.Errorf("every declared name is named in the retired spelling, so nothing is idle:\n%s", out.String())
+		t.Errorf("every declared identity names its slot, so nothing is idle:\n%s", out.String())
 	}
 }
 
@@ -161,11 +186,11 @@ func TestReportIdle_NamesEachUnnamedStorageClass(t *testing.T) {
 
 	for _, want := range []string{
 		"This slice declares 2 collections and your Driftfile names 1.",
-		"sessions is not named by your Driftfile, and you are paying for its 20 MB of declared storage.",
+		"sessions is not named by your Driftfile, and you are paying for its 20MiB of declared storage.",
 		"This slice declares 2 buckets and your Driftfile names 1.",
-		"avatars is not named by your Driftfile, and you are paying for its 10 MB of declared storage.",
+		"avatars is not named by your Driftfile, and you are paying for its 10MiB of declared storage.",
 		"This slice declares 2 databases and your Driftfile names 1.",
-		"audit is not named by your Driftfile, and you are paying for its 10 MB of declared storage.",
+		"audit is not named by your Driftfile, and you are paying for its 10MiB of declared storage.",
 		"This slice declares 1 queue and your Driftfile names none of them.",
 		"emails is not named by your Driftfile; queues are not billed, so this one is free.",
 		"Run `drift slice resize demo` to release them.",
@@ -185,7 +210,7 @@ func TestReportIdle_NamesEachUnnamedStorageClass(t *testing.T) {
 }
 
 // A queue-triggered function names the queue it drains, whether or not the
-// file also lists it under `backbone.queues`. Reporting it would call a queue
+// file also declares it with a `queue` block. Reporting it would call a queue
 // with a live consumer unnamed.
 func TestReportIdle_AQueueATriggerDrainsIsNamed(t *testing.T) {
 	m := manifestNaming([]string{"queue:orders"}, nil, nil, nil)
@@ -217,8 +242,8 @@ func TestReportIdle_AFreeSliceIsNotTold(t *testing.T) {
 	}
 }
 
-// --plan says what the apply would say, from the same two numbers, and writes
-// nothing to get there.
+// `drift plan` names the slot the slice holds and the Driftfile does not as a
+// removal, with the flag that agrees to it, and writes nothing to get there.
 func TestPlan_ReportsTheUnnamedSlotAndChangesNothing(t *testing.T) {
 	rec := stubAPI(t, idleSliceStub("custom", []string{"get:ping", "get:slot-2"}))
 	applyWithFunctions(t, []string{"ping"})
@@ -230,40 +255,20 @@ func TestPlan_ReportsTheUnnamedSlotAndChangesNothing(t *testing.T) {
 		t.Fatalf("a plan must not fail: %v", err)
 	}
 	for _, want := range []string{
-		"This slice declares 2 atomic slots and your Driftfile names 1.",
-		"get:slot-2 is not named by your Driftfile",
-		"Run `drift slice resize demo` to release it.",
-		"nothing was deployed",
+		"- pulse GET /slot-2",
+		"Removes   pulse GET /slot-2",
+		`--approve-remove "pulse GET /slot-2"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the plan must say %q, got:\n%s", want, out)
 		}
 	}
-	for _, forbidden := range []string{"POST /ops/slice/resize", "POST /ops/atomic", "POST /ops/canvas"} {
+	for _, forbidden := range []string{
+		"POST /ops/slice/resize", "POST /ops/slice/create", "POST /ops/atomic", "POST /ops/canvas",
+	} {
 		if n := rec.count(forbidden); n != 0 {
 			t.Errorf("a plan issued %d × %q", n, forbidden)
 		}
-	}
-}
-
-// A plan whose Driftfile names a slot the slice lacks says THAT, and no idle
-// list beside it: the apply would re-point an idle slot or refuse, so the slots
-// unnamed now are not the ones unnamed after it.
-func TestPlan_AMissIsReportedWithoutAnIdleList(t *testing.T) {
-	stubAPI(t, idleSliceStub("custom", []string{"get:slot-1", "get:slot-2"}))
-	applyWithFunctions(t, []string{"ping"})
-
-	var err error
-	out := captureStdout(t, func() { err = runPlanCmd(t) })
-
-	if err != nil {
-		t.Fatalf("a plan must not fail: %v", err)
-	}
-	if !strings.Contains(out, `pulse "get:ping"`) {
-		t.Fatalf("the plan must report the miss, or this proves nothing:\n%s", out)
-	}
-	if strings.Contains(out, "This slice declares") {
-		t.Errorf("an idle list beside a miss describes a slice the apply does not leave:\n%s", out)
 	}
 }
 
@@ -301,22 +306,24 @@ func idleSliceStub(tier string, slots []string) http.HandlerFunc {
 	}
 }
 
-// applyWithFunctions lays out a project declaring one interpreted GET function
-// per route, each with its handler on disk.
+// applyWithFunctions lays out a project declaring one interpreted GET Pulse per
+// route, each booking 16MiB with its handler on disk. It installs the platform
+// schema, so it is called after the stub, which gives the test a HOME of its own.
 func applyWithFunctions(t *testing.T, routes []string) {
 	t.Helper()
 	var doc, src strings.Builder
-	doc.WriteString("slice: demo\natomic:\n  functions:\n")
+	doc.WriteString("slice \"demo\" { billing = \"monthly\" }\n\nelement \"default\" {\n")
 	var exports []string
 	for _, r := range routes {
 		handler := "Get" + strings.ToUpper(r[:1]) + r[1:]
-		doc.WriteString("    - route: " + r + "\n      method: get\n      handler: " + handler +
-			"\n      dir: atomic\n")
+		doc.WriteString("  pulse \"GET /" + r + "\" {\n    handler = \"" + handler + "\"\n    memory  = \"16MiB\"\n  }\n")
 		src.WriteString("function " + handler + "(req) { return [200, 'OK', {}]; }\n")
 		exports = append(exports, handler)
 	}
+	doc.WriteString("}\n")
 	src.WriteString("module.exports = { " + strings.Join(exports, ", ") + " };\n")
 
+	withRealSchema(t)
 	applyIn(t, doc.String(), "atomic")
 	if err := os.WriteFile(filepath.Join(".", "atomic", "handlers.js"), []byte(src.String()), 0o600); err != nil {
 		t.Fatal(err)

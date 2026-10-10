@@ -230,9 +230,9 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	}
 
 	// ---- assemble + write ----
-	// The source carries no Drift-specific marking. What this function is —
-	// its trigger, its gate, the memory it books — is declared in the
-	// Driftfile, and the handler name is the only thing binding the two.
+	// The source carries no Drift-specific marking. What this pulse is — its
+	// trigger, its gate, the memory it books — is declared in the Driftfile,
+	// and the handler name is the only thing binding the two.
 	funcName := HandlerName(funcMethod, name, lang)
 	source := strings.NewReplacer("{{FUNC}}", funcName).Replace(sourceTemplate(lang, shape))
 
@@ -294,32 +294,24 @@ func runNew(name, lang, method, queue, auth, element string) error {
 		fmt.Printf("   %s\n", f)
 	}
 
-	// The function does not exist until the Driftfile says so: the manifest is
-	// what the slice is contracted to run, and a function nobody declared is one
-	// the platform cannot size, price or admit work against.
+	// The pulse does not exist until the Driftfile says so: the file is what
+	// the slice is contracted to run, and a pulse nobody declared is one the
+	// platform cannot size, price or admit work against.
 	//
-	// PRINTED IN THE CURRENT GRAMMAR, which `drift file new` also writes. It used
-	// to print `name: get:hello` plus a `memory:` figure — both retired spellings,
-	// which `drift file lint` flags the moment the user pastes them. Two
-	// scaffolders agreeing with each other and disagreeing with the linter is
-	// worse than either being wrong alone: it teaches the retired form as the
-	// house style.
 	// ALREADY DECLARED IS A DIFFERENT MESSAGE, and this is the case `drift file
 	// new` creates on purpose. That scaffolder writes a Driftfile declaring
-	// `route: hello, method: get` and prints the command that produces its
-	// source — which is this one. Telling the user who followed that hint to
-	// "declare it in your Driftfile" sends them to paste a duplicate of an entry
-	// already three lines above, and a second entry for one route is a parse
-	// error rather than a no-op.
+	// `pulse "GET /hello"` and prints the command that produces its source —
+	// which is this one. Telling the user who followed that hint to "declare it
+	// in your Driftfile" sends them to paste a duplicate of a block already
+	// three lines above, and a second pulse on one trigger is a compile error
+	// rather than a no-op.
 	//
 	// So the two commands point at each other rather than each assuming the
 	// other half of the round trip: file new names this command, and this
-	// command recognises the entry that command wrote.
+	// command recognises the block that command wrote.
 	if declaredRoute(funcMethod, name, queue, isQueue) {
 		fmt.Printf("\nAlready declared in your Driftfile — nothing to add.\n")
-		fmt.Printf("\nThen:\n")
-		fmt.Printf("\tdrift file apply      # ship it\n")
-		fmt.Printf("\tdrift file benchmark  # what it has actually cost, once it has served traffic\n")
+		printNext()
 		return nil
 	}
 
@@ -332,54 +324,74 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	for _, line := range strings.Split(strings.TrimSuffix(snippet.body, "\n"), "\n") {
 		fmt.Printf("    %s\n", line)
 	}
-	fmt.Printf("\nThen:\n")
-	fmt.Printf("\tdrift file apply      # ship it\n")
-	fmt.Printf("\tdrift file benchmark  # what it has actually cost, once it has served traffic\n")
+	printNext()
 	return nil
 }
 
+// printNext names what follows declaring a pulse.
+func printNext() {
+	fmt.Printf("\nThen:\n")
+	fmt.Printf("\tdrift plan            # what applying it creates, and what it costs\n")
+	fmt.Printf("\tdrift apply           # ship it\n")
+	fmt.Printf("\tdrift size            # book what it has actually cost, once it has served traffic\n")
+}
+
 // snippet is the Driftfile declaration `drift atomic new` prints: the sentence
-// saying where it goes, and the YAML to paste there.
+// saying where it goes, and the HCL to paste there.
 type snippet struct {
 	intro string
 	body  string
 }
 
-// declarationSnippet is the entry declaring a new Pulse, in the element it was
-// added to. A Pulse is declared inside the element its handler lives in, so a
-// named element's snippet is that element's block in `atomic.elements`, holding
-// the entry; the default element's is the bare entry for `atomic.pulses`.
-func declarationSnippet(route, method, handler, auth, element string) snippet {
-	var entry strings.Builder
-	fmt.Fprintf(&entry, "- route: %s\n", route)
-	fmt.Fprintf(&entry, "  method: %s\n", method)
-	fmt.Fprintf(&entry, "  handler: %s\n", handler)
-	if auth != "" && auth != "none" {
-		fmt.Fprintf(&entry, "  auth: %s\n", auth)
-	}
+// snippetMemory is what a new pulse books until it is measured: above the
+// floor a compiled language needs, so the snippet is not refused by the
+// language it was scaffolded in. `drift size` replaces it with what the slice
+// measured.
+const snippetMemory = "32MiB"
 
-	if element == "" || element == defaultElement {
-		return snippet{
-			intro: "Declare it in your Driftfile, under atomic.pulses:",
-			body:  entry.String(),
-		}
+// declarationSnippet is the block declaring a new Pulse, inside the element it
+// was added to. A Pulse is declared inside the element its handler lives in,
+// so the snippet is that element's block holding the pulse.
+func declarationSnippet(route, method, handler, auth, element string) snippet {
+	if element == "" {
+		element = defaultElement
 	}
-	var body strings.Builder
-	fmt.Fprintf(&body, "- name: %s\n", element)
-	body.WriteString("  pulses:\n")
-	for _, line := range strings.Split(strings.TrimSuffix(entry.String(), "\n"), "\n") {
-		body.WriteString("    " + line + "\n")
+	var b strings.Builder
+	fmt.Fprintf(&b, "element %q {\n", element)
+	fmt.Fprintf(&b, "  pulse %q {\n", pulseLabel(method, route))
+	fmt.Fprintf(&b, "    handler = %q\n", handler)
+	fmt.Fprintf(&b, "    memory  = %q\n", snippetMemory)
+	if auth != "" && auth != "none" {
+		b.WriteString("    auth {\n")
+		fmt.Fprintf(&b, "      api_key = env(%q)\n", apiKeyVariable(route))
+		b.WriteString("    }\n")
 	}
+	b.WriteString("  }\n")
+	b.WriteString("}\n")
 	return snippet{
-		intro: fmt.Sprintf("Declare it in your Driftfile, in the %q element under atomic.elements "+
-			"(add the element if it is not there yet, or just its pulses entry if it is):", element),
-		body: body.String(),
+		intro: fmt.Sprintf("Declare it in your Driftfile, inside element %q (add the element if it is not "+
+			"there yet, or just the pulse block if it is):", element),
+		body: b.String(),
 	}
 }
 
+// apiKeyVariable is the environment variable a new pulse's API key is read
+// from: its route in capitals, `admin/reset` → ADMIN_RESET_API_KEY.
+func apiKeyVariable(route string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(route) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else if b.Len() > 0 && !strings.HasSuffix(b.String(), "_") {
+			b.WriteByte('_')
+		}
+	}
+	return strings.TrimSuffix(b.String(), "_") + "_API_KEY"
+}
+
 // HandlerName is the callable the scaffolder writes and names in the Driftfile
-// entry it prints. It is a STARTING POINT — the manifest binds the two, so
-// renaming the function only means editing `handler:` beside it.
+// block it prints. It is a STARTING POINT — the Driftfile binds the two, so
+// renaming the function only means editing `handler` beside it.
 //
 // Exported because `drift file new` scaffolds a Driftfile declaring a handler
 // and prints the `drift atomic new` command that writes it. The two must name

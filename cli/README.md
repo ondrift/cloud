@@ -25,12 +25,15 @@ go build -o drift ./cmd/drift
 
 ```bash
 drift account create                   # sign up (email verification)
-drift slice create my-app              # draw the slice's shape in the terminal
-drift slice use my-app                 # make it the active slice
-drift atomic new hello -l go -m get    # scaffold a function
-drift atomic deploy ./hello            # deploy it
-drift project deploy                   # …or deploy a whole app from a Driftfile
+drift file new                         # write a Driftfile: the slice, its shape, one pulse
+drift atomic new hello -l go -m get    # write the source the pulse declares
+drift plan                             # what applying it creates, and what it costs
+drift apply                            # create the slice and deploy
 ```
+
+The Driftfile is one HCL file declaring the whole slice: what runs on it and its
+shape, every booking beside what it books. `drift file explain` describes every
+block it can hold.
 
 ## Commands
 
@@ -97,16 +100,22 @@ drift project deploy                   # …or deploy a whole app from a Driftfi
 |---------|-------------|
 | `drift canvas deploy <dir>` | Deploy a static site, served same-origin with your functions. |
 
-### Projects
+### The Driftfile
 
 | Command | Description |
 |---------|-------------|
-| `drift project deploy [env]` | Deploy an entire application from its `Driftfile`. Functions whose source is unchanged since the last deploy are skipped automatically; pass `--force` to redeploy everything. |
-| `drift project run [env]` | Build and run the whole project locally in Docker — no account, no cloud. The "run it locally" half of the two-button story. |
-| `drift project test [env]` | Run the project locally (same as `project run`) and run its Driftfile-declared `tests.e2e` commands against it, always tearing the instance down afterward. |
-| `drift project stop [env]` | Stop the local run. |
-| `drift project logs [env]` | Tail logs from the local run. |
-| `drift project diff` | Preview what a deploy would change (never shrinks a slice). |
+| `drift plan [env]` | Compare the Driftfile with the live slice: every difference, the monthly price before and after (quoted by the platform), whether the slice restarts, and what a removal could lose. Changes nothing. `--out plan.json` records it. |
+| `drift apply [env \| plan.json]` | Make the slice what the Driftfile says: create or resize it, asking before the price moves, before anything is removed and before any data could be lost, then deploy. Pulses and fields whose source is unchanged are skipped; `--force` redeploys everything. |
+| `drift size` | Write what each pulse and field has measured into the Driftfile's `memory` lines, shown as a diff. |
+| `drift file new` | Write a starter Driftfile. |
+| `drift file lint` | Validate the Driftfile exactly as `drift plan` would, offline and without its secrets. |
+| `drift file explain [block]` | Describe a block or attribute of the Driftfile format. |
+| `drift file resolve [--env]` | Print what the file provisions: every booking, size and limit. |
+| `drift file fmt [--write]` | Lay the file out canonically, keeping its comments. |
+| `drift file run [env]` | Build and run the whole project locally in Docker — no account, no cloud. |
+| `drift file test [env]` | Run the project locally and run its `test` commands against it, always tearing the instance down afterward. |
+| `drift file stop [env]` / `logs [env]` | Stop or tail the local run. |
+| `drift file benchmark` | What each pulse and field has cost, measured by the slice, and what it should book. |
 
 ### Migrate — leave another cloud
 

@@ -1,11 +1,7 @@
-# The fxevm testnode, as a Driftfile 2: the one file that declares what runs on
-# the slice AND its shape. Its limits are the ones isrand/fxevm-testnode has
-# live; its storage is what the testnode uses, so the free slice's placeholder
-# collections, buckets, queue and database are not in it.
-drift {
-  format = "2.0"
-}
-
+# The fxevm testnode: the one file that declares what runs on the slice AND its
+# shape. Its limits are the ones isrand/fxevm-testnode has live; its storage is
+# what the testnode uses, so the free slice's placeholder collections, buckets,
+# queue and database are not in it.
 slice "fxevm-testnode" {
   billing = "monthly"
 

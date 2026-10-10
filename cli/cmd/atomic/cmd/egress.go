@@ -10,10 +10,10 @@
 //	          cluster — purely a "did I spell it right" tool.
 //
 // There is intentionally no `add`/`remove`. The Driftfile is the
-// single source of truth — users edit `edge.egress.hosts`
-// and run `drift file apply`. The deploy reconcile path
-// invokes `refresh` automatically when the egress section
-// changes (see cli/cmd/project/deploy.go).
+// single source of truth: users edit the `egress` block inside
+// `edge` and run `drift apply`. The deploy reconcile path
+// invokes `refresh` automatically when the egress declaration
+// changes (see cli/cmd/project/egress.go).
 package atomic_cmd
 
 import (
@@ -44,17 +44,20 @@ func Egress() *cobra.Command {
 		GroupID: "operations",
 		Long: `Show or refresh the slice's outbound egress allowlist.
 
-The Driftfile's edge.egress block is the source of truth:
+The Driftfile's egress block, inside edge, is the source of truth:
 
-  edge:
-    egress:
-      mode: allowlist          # open | allowlist
-      hosts:
-        - api.stripe.com
-        - hooks.slack.com
-        - smtp.sendgrid.net:587
+  edge {
+    egress {
+      mode  = "allowlist"      # open | allowlist
+      hosts = [
+        "api.stripe.com",
+        "hooks.slack.com",
+        "smtp.sendgrid.net:587",
+      ]
+    }
+  }
 
-To change the list, edit your Driftfile and run 'drift file apply'.
+To change the list, edit your Driftfile and run 'drift apply'.
 This command exists for inspection, ad-hoc refresh, and local pattern
 testing.`,
 		Example: "  drift atomic egress list\n" +
@@ -143,7 +146,7 @@ func getEgressTestCmd() *cobra.Command {
 			match := matchHostAgainstList(target, v.DeclaredHosts)
 			if match == "" {
 				fmt.Printf("✗  %s is NOT on the allowlist.\n", target)
-				fmt.Printf("    Add it to your Driftfile under edge.egress.hosts and run 'drift file apply'.\n")
+				fmt.Printf("    Add it to the egress hosts in your Driftfile's edge block and run 'drift apply'.\n")
 				return fmt.Errorf("not on allowlist")
 			}
 			fmt.Printf("✔  %s matches %q on the allowlist.\n", target, match)

@@ -22,8 +22,8 @@ func getUseCmd() *cobra.Command {
 		// it exists so a mistyped name is caught ONCE rather than answered three
 		// different ways by the next three subcommands — and on a `Run` handler
 		// it could only be printed, leaving the process to exit 0. A script doing
-		// `drift slice use staging && drift file apply` deployed into whatever
-		// slice was selected before.
+		// `drift slice use staging && drift atomic deploy ./atomic` would deploy
+		// into whatever slice was selected before.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
@@ -87,7 +87,7 @@ func getUseCmd() *cobra.Command {
 func unknownSliceMessage(name string, existing []string) string {
 	if len(existing) == 0 {
 		return fmt.Sprintf("No slice named '%s' — and this account has no slices yet.\n"+
-			"Create one with 'drift slice create <name>' or 'drift file apply'.\n", name)
+			"Create one with 'drift slice create <name>', or write a Driftfile and run 'drift apply'.\n", name)
 	}
 	sort.Strings(existing)
 	var b strings.Builder

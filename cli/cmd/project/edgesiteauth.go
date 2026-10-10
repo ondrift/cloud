@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -178,59 +177,6 @@ func applyEdgeSiteAuth(m *Manifest) error {
 		}
 	}
 	return nil
-}
-
-// planEdgeSiteAuth is the `--plan` section for `edge.site_auth`: who would be
-// let in, who would be shut out, and any password variable the apply would
-// refuse on. It reads the live gate and writes nothing.
-func planEdgeSiteAuth(m *Manifest, out io.Writer) {
-	if !m.Slice().Has("edge", "site_auth") {
-		return
-	}
-	fmt.Fprintf(out, "\n  site gate (edge.site_auth)\n")
-	realm, entries, err := declaredSiteAuth(m)
-	if err != nil {
-		fmt.Fprintf(out, "    %s %v\n", common.Hint("!"), err)
-		return
-	}
-
-	live, liveErr := fetchSiteAuth(m.Name())
-	if liveErr != nil {
-		fmt.Fprintf(out, "    %s couldn't read the live gate, so who would be removed is unknown: %v\n",
-			common.Hint("!"), liveErr)
-	}
-	liveUsers := map[string]bool{}
-	for _, u := range live.Users {
-		liveUsers[u.Name] = true
-	}
-
-	switch {
-	case liveErr != nil:
-	case !live.Enabled:
-		fmt.Fprintf(out, "    %s\n", common.Hint("the gate is off: it would be turned on"))
-	case live.Realm != realm:
-		fmt.Fprintf(out, "    realm %s → %s\n", realmOrNone(live.Realm), realmOrNone(realm))
-	}
-
-	declared := siteAuthConfig{}
-	for _, e := range entries {
-		declared.Users = append(declared.Users, siteAuthUser{Name: e.User})
-		if live.Enabled && liveUsers[e.User] {
-			fmt.Fprintf(out, "    · %s %s\n", e.User, common.Hint("(password set again from $"+e.Env+")"))
-		} else {
-			fmt.Fprintf(out, "    + %s %s\n", e.User, common.Hint("(password from $"+e.Env+")"))
-		}
-	}
-	if liveErr == nil {
-		for _, name := range removedSiteAuthUsers(declared, live) {
-			fmt.Fprintf(out, "    - %s %s\n", name, common.Hint("(would be removed)"))
-		}
-	}
-	for _, e := range entries {
-		if p := unreadablePassword(e); p != "" {
-			fmt.Fprintf(out, "    %s %s: apply would refuse\n", common.Hint("!"), p)
-		}
-	}
 }
 
 // fetchSiteAuth reads slice's live gate: realm and user names, never a digest.

@@ -1,11 +1,11 @@
 package project
 
 // test.go — `drift file test`: start the project locally (the same
-// mechanism `drift file run` uses), run the Driftfile's declared
-// `tests.e2e` commands against it, and always tear the local instance down
-// afterward. The "test before you ship" half of the local-first promise —
-// no account, no cloud, e2e against the real running app before
-// `drift file apply` ever touches Drift.
+// mechanism `drift file run` uses), run the Driftfile's declared `test`
+// commands against it, and always tear the local instance down afterward. The
+// "test before you ship" half of the local-first promise — no account, no
+// cloud, e2e against the real running app before `drift apply` ever touches
+// Drift.
 
 import (
 	"fmt"
@@ -28,10 +28,9 @@ func getTestCmd() *cobra.Command {
 		Use:   "test [environment]",
 		Short: "Run the project locally and run its declared e2e tests against it",
 		Long: `Build and run the project locally (same as 'drift file run'), wait for
-it to be healthy, then run every command declared under the Driftfile's
-tests.e2e — same shape and semantics as hooks.pre_deploy/post_deploy. The
-instance's local URL rides in as DRIFT_TEST_URL, so a test command knows
-where to point (the port is picked at runtime, never fixed).
+it to be healthy, then run the command of every test block in the Driftfile,
+the way a hook runs. The instance's local URL rides in as DRIFT_TEST_URL, so a
+test command knows where to point (the port is picked at runtime, never fixed).
 
 The local instance is always torn down afterward, whether the tests pass,
 fail, or error out.`,
@@ -44,9 +43,13 @@ fail, or error out.`,
 			}
 			projectDir := filepath.Dir(manifestPath)
 
-			tests := ParseTests(manifestPath)
+			tests, err := ParseTests(manifestPath)
+			if err != nil {
+				return err
+			}
 			if len(tests) == 0 {
-				return fmt.Errorf("no tests declared — add a `tests:` block to your Driftfile:\n\n  tests:\n    e2e:\n      - npx playwright test\n")
+				return fmt.Errorf("no tests declared — add a test block to your Driftfile:\n\n" +
+					"  test \"e2e\" {\n    run = \"npx playwright test\"\n  }\n")
 			}
 
 			selectedEnv := envName
@@ -55,7 +58,7 @@ fail, or error out.`,
 			}
 			// persist=false: a test run's data shouldn't tether to a volume
 			// that outlives the container this command tears down below.
-			app, container, url, err := startLocal(selectedEnv, len(args) == 1, hostPort, false, noEnvFile)
+			app, container, url, err := startLocal(selectedEnv, hostPort, false, noEnvFile)
 			if err != nil {
 				return err
 			}
@@ -75,7 +78,7 @@ fail, or error out.`,
 			if err := os.Setenv("DRIFT_TEST_URL", url); err != nil {
 				return err
 			}
-			if err := runHooks("tests.e2e", tests, projectDir); err != nil {
+			if err := runHooks("test", tests, projectDir); err != nil {
 				return err
 			}
 			fmt.Printf("\n  %s all tests passed\n\n", common.Check())

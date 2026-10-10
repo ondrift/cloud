@@ -33,32 +33,42 @@ func normalise(s string) string { return s }
 	return root
 }
 
-const demoDriftfile = `
-name: demo
-atomic:
-  functions:
-    - name: get:ping
-      handler: GetPing
-      memory: 8MB
-    - name: post:users
-      handler: PostUsers
-      memory: 32MB
-      auth: apikey
-      secrets: [STRIPE_KEY]
-    - name: queue:orders
-      handler: HandleOrder
-      memory: 64MB
-    - name: post:invoices
-      handler: PostInvoices
-      memory: 48MB
-      element: billing
-canvas: ./canvas
+const demoDriftfile = `slice "demo" { billing = "monthly" }
+
+element "default" {
+  pulse "GET /ping" {
+    handler = "GetPing"
+    memory = "8MiB"
+  }
+  pulse "POST /users" {
+    handler = "PostUsers"
+    memory = "32MiB"
+    secrets = ["STRIPE_KEY"]
+    auth {
+      api_key = env("USERS_KEY")
+    }
+  }
+  pulse "QUEUE orders" {
+    handler = "HandleOrder"
+    memory = "64MiB"
+  }
+}
+
+element "billing" {
+  pulse "POST /invoices" {
+    handler = "PostInvoices"
+    memory = "48MiB"
+  }
+}
+
+site "/" { dir = "canvas" }
 `
 
 // The manifest is the whole declaration, and this is the seam that proves it:
 // a Driftfile in, deployable functions out, with the gate and the secrets
 // carried through and the source consulted only to locate each handler.
 func TestFunctionSpecs_ResolveTheWholeDeclaration(t *testing.T) {
+	withRealSchema(t)
 	root := demoProject(t, demoDriftfile)
 	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
 	if err != nil {
@@ -103,6 +113,7 @@ func TestFunctionSpecs_ResolveTheWholeDeclaration(t *testing.T) {
 // the file that declares it — across two elements, and for a queue function
 // that has no route at all.
 func TestFunctionSpecs_BuildIntoElements(t *testing.T) {
+	withRealSchema(t)
 	root := demoProject(t, demoDriftfile)
 	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
 	if err != nil {
@@ -138,67 +149,33 @@ func TestFunctionSpecs_BuildIntoElements(t *testing.T) {
 
 // --- declared configuration -------------------------------------------------
 
-// A schema stub that permits `env:` alongside the keys the fixture uses. It has
-// to be a stub rather than the machine's cached schema: this laptop's cache
-// predates the field, `atomicEntry` is `additionalProperties: false`, and a test
-// depending on when a cache last turned over is a test that fails on someone
-// else's machine for a reason that is not about the code.
-const envSchema = `{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "properties": {
-    "name": {"type": "string"},
-    "canvas": {},
-    "atomic": {
-      "type": "object",
-      "properties": {
-        "functions": {"type": "array", "items": {"$ref": "#/definitions/atomicEntry"}}
-      }
-    }
-  },
-  "definitions": {
-    "atomicEntry": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "name": {"type": "string"},
-        "handler": {"type": "string"},
-        "memory": {"type": "string"},
-        "element": {"type": "string"},
-        "auth": {"type": "string"},
-        "secrets": {"type": "array", "items": {"type": "string"}},
-        "env": {"type": "object", "additionalProperties": {"type": "string"}}
-      }
-    }
-  }
-}`
+const envDriftfile = `slice "demo" { billing = "monthly" }
 
-const envDriftfile = `
-name: demo
-atomic:
-  functions:
-    - name: get:ping
-      handler: GetPing
-      memory: 8MB
-      env:
-        REGION: eu-central
-        LOG_LEVEL: debug
-    - name: post:users
-      handler: PostUsers
-      memory: 32MB
-      secrets: [STRIPE_KEY]
-canvas: ./canvas
+element "default" {
+  pulse "GET /ping" {
+    handler = "GetPing"
+    memory = "8MiB"
+    env = { REGION = "eu-central", LOG_LEVEL = "debug" }
+  }
+  pulse "POST /users" {
+    handler = "PostUsers"
+    memory = "32MiB"
+    secrets = ["STRIPE_KEY"]
+  }
+}
+
+site "/" { dir = "canvas" }
 `
 
 // THE seam this exists for, and the one that was missing when the other four
-// owners were already done: a Driftfile's `env:` reaching FunctionSpec.
+// owners were already done: a Driftfile's `env` reaching FunctionSpec.
 //
 // It is worth a test precisely because failing it is silent. Every other owner
 // on the path drops an unknown field without complaint, so a manifest declaring
-// `env:` would lint clean, deploy clean, and leave the variable simply absent
+// `env` would lint clean, deploy clean, and leave the variable simply absent
 // inside the function with nothing anywhere naming it.
 func TestFunctionSpecs_CarryDeclaredEnv(t *testing.T) {
-	withSchema(t, envSchema)
+	withRealSchema(t)
 	root := demoProject(t, envDriftfile)
 	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
 	if err != nil {
@@ -238,58 +215,34 @@ func TestFunctionSpecs_CarryDeclaredEnv(t *testing.T) {
 
 // concurrencyDriftfile declares `concurrent` on a top-level Pulse and on a
 // Pulse inside an element, and leaves it out of a third.
-const concurrencyDriftfile = `
-slice: demo
-atomic:
-  pulses:
-    - route: users
-      method: post
-      handler: PostUsers
-      concurrent: true
-    - route: ping
-      method: get
-      handler: GetPing
-  elements:
-    - name: billing
-      pulses:
-        - route: invoices
-          method: post
-          handler: PostInvoices
-          concurrent: true
+const concurrencyDriftfile = `slice "demo" { billing = "monthly" }
+
+element "default" {
+  pulse "POST /users" {
+    handler = "PostUsers"
+    memory = "16MiB"
+    concurrent = true
+  }
+  pulse "GET /ping" {
+    handler = "GetPing"
+    memory = "16MiB"
+  }
+}
+
+element "billing" {
+  pulse "POST /invoices" {
+    handler = "PostInvoices"
+    memory = "16MiB"
+    concurrent = true
+  }
+}
 `
 
-// deprecatedConcurrencyDriftfile is concurrencyDriftfile as Driftfile 1.22.0
-// wrote it, with a count, plus a Pulse at 1.
-const deprecatedConcurrencyDriftfile = `
-slice: demo
-atomic:
-  pulses:
-    - route: users
-      method: post
-      handler: PostUsers
-      concurrency: 16
-    - route: ping
-      method: get
-      handler: GetPing
-      concurrency: 1
-  elements:
-    - name: billing
-      pulses:
-        - route: invoices
-          method: post
-          handler: PostInvoices
-          concurrency: 4
-`
-
-// withFormatSchema validates against the schema this binary implements, the
-// frozen copy of the platform's.
+// withFormatSchema validates against the platform's schema, as a laptop that
+// has met the api holds it.
 func withFormatSchema(t *testing.T) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("testdata", "migrate", "driftfile.schema.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	withSchema(t, string(raw))
+	withRealSchema(t)
 }
 
 // parseNoting parses a project's Driftfile and returns what it was told about
@@ -331,58 +284,22 @@ func TestFunctionSpecs_CarryDeclaredConcurrency(t *testing.T) {
 	}
 }
 
-// THE DEPRECATION PATH. A Driftfile written for 1.22.0 still validates and
-// deploys: `concurrency` above 1 reads as concurrent, at 1 as not, and the run
-// says once, naming both spellings, that the slice decides the number.
-func TestFunctionSpecs_ReadTheDeprecatedConcurrencyAsConcurrent(t *testing.T) {
-	withFormatSchema(t)
-	m, notices := parseNoting(t, demoProject(t, deprecatedConcurrencyDriftfile))
-	got := map[string]bool{}
-	for _, s := range FunctionSpecs(m) {
-		got[s.Name] = s.IsConcurrent()
-	}
-	for name, want := range map[string]bool{"post:users": true, "post:invoices": true, "get:ping": false} {
-		if c, ok := got[name]; !ok || c != want {
-			t.Errorf("%s concurrent = %v (declared: %v), want %v; all: %v", name, c, ok, want, got)
-		}
-	}
-	if _, err := atomic_cmd.BuildElements(FunctionSpecs(m)); err != nil {
-		t.Errorf("Go Pulses written with the deprecated count were refused: %v", err)
-	}
-	if strings.Count(notices, "\n") != 1 {
-		t.Errorf("want one notice for three Pulses, got %q", notices)
-	}
-	for _, want := range []string{
-		`"atomic.pulses[].concurrency" is deprecated`,
-		`Use "atomic.pulses[].concurrent" instead`,
-		"The slice decides how many calls",
-	} {
-		if !strings.Contains(notices, want) {
-			t.Errorf("the notice never says %q: %q", want, notices)
-		}
-	}
-	if strings.Contains(notices, "—") {
-		t.Errorf("the notice carries an em dash: %q", notices)
-	}
-}
-
-// A Python element's Pulse declared `concurrent: true` passes the schema,
+// A Python element's Pulse declared `concurrent = true` passes the schema,
 // which cannot see the language, and is refused before anything builds,
-// naming the rule; the error is one `drift file apply` reports before
+// naming the rule; the error is one `drift apply` reports before
 // deploying anything.
 func TestFunctionSpecs_ConcurrencyOnAPythonPulseIsRefusedBeforeBuilding(t *testing.T) {
 	withFormatSchema(t)
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "Driftfile"), `
-slice: demo
-atomic:
-  elements:
-    - name: py
-      pulses:
-        - route: rpc
-          method: post
-          handler: post_rpc
-          concurrent: true
+	mustWrite(t, filepath.Join(root, "Driftfile"), `slice "demo" { billing = "monthly" }
+
+element "py" {
+  pulse "POST /rpc" {
+    handler = "post_rpc"
+    memory = "16MiB"
+    concurrent = true
+  }
+}
 `)
 	mustWrite(t, filepath.Join(root, "atomic", "py", "api.py"), "def post_rpc(body, req):\n    return {}\n")
 	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
@@ -398,29 +315,24 @@ atomic:
 	}
 }
 
-// The schema this binary implements refuses what it can see: a concurrent
-// Pulse on a stream, in either spelling, a count above the maximum, and either
-// key of the wrong type.
+// The compiler and the schema refuse what they can see: a concurrent Pulse on
+// a stream, and `concurrent` as a number.
 func TestParseDriftfile_TheSchemaRefusesAConcurrencyItCanSee(t *testing.T) {
 	withFormatSchema(t)
 	pulse := func(entry string) string {
-		return "\nslice: demo\natomic:\n  pulses:\n    - route: ping\n      method: get\n      handler: GetPing\n      " + entry + "\n"
+		return "slice \"demo\" { billing = \"monthly\" }\n\nelement \"default\" {\n  pulse \"GET /ping\" {\n" +
+			"    handler = \"GetPing\"\n    memory = \"16MiB\"\n    " + entry + "\n  }\n}\n"
 	}
-	// The controls: the same Pulse concurrent, in both spellings, is
-	// accepted, so a refusal below is about the value and not the fixture.
-	for _, entry := range []string{"concurrent: true", "concurrent: false", "concurrency: 16"} {
+	// The controls: the same Pulse concurrent or not is accepted, so a refusal
+	// below is about the value and not the fixture.
+	for _, entry := range []string{"concurrent = true", "concurrent = false"} {
 		if _, err := ParseDriftfile(filepath.Join(demoProject(t, pulse(entry)), "Driftfile")); err != nil {
 			t.Fatalf("a Pulse declaring %s was refused: %v", entry, err)
 		}
 	}
 	for name, entry := range map[string]string{
-		"concurrent with a stream":  "stream: sse\n      concurrent: true",
-		"a count with a stream":     "stream: sse\n      concurrency: 2",
-		"a count above the maximum": "concurrency: 65",
-		"a count of zero":           "concurrency: 0",
-		"a count as a string":       `concurrency: "16"`,
-		"concurrent as a string":    `concurrent: "true"`,
-		"concurrent as a number":    "concurrent: 16",
+		"concurrent with a stream": "stream = \"sse\"\n    concurrent = true",
+		"concurrent as a number":   "concurrent = 16",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ParseDriftfile(filepath.Join(demoProject(t, pulse(entry)), "Driftfile")); err == nil {
@@ -454,15 +366,15 @@ const floorSchema = `{
 // checkFixture parses a project and runs the floor check over its elements.
 func checkFixture(t *testing.T, root string) error {
 	t.Helper()
-	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
+	c, err := CompileDriftfile(filepath.Join(root, "Driftfile"))
 	if err != nil {
-		t.Fatalf("ParseDriftfile: %v", err)
+		t.Fatalf("CompileDriftfile: %v", err)
 	}
-	els, err := atomic_cmd.BuildElements(FunctionSpecs(m))
+	els, err := atomic_cmd.BuildElements(FunctionSpecs(c.Manifest))
 	if err != nil {
 		t.Fatalf("BuildElements: %v", err)
 	}
-	return CheckCompiledBookings(m, els)
+	return CheckCompiledBookings(c, els)
 }
 
 // THE case this exists for: the Driftfile printed in the getting-started
@@ -496,7 +408,7 @@ func TestCheckCompiledBookings_RefusesACompiledFunctionUnderTheFloor(t *testing.
 // the test above would pass for a check that refused everything.
 func TestCheckCompiledBookings_AcceptsACompiledFunctionAtTheFloor(t *testing.T) {
 	withSchema(t, floorSchema)
-	root := demoProject(t, strings.Replace(demoDriftfile, "memory: 8MB", "memory: 16MB", 1))
+	root := demoProject(t, strings.Replace(demoDriftfile, `memory = "8MiB"`, `memory = "16MiB"`, 1))
 
 	if err := checkFixture(t, root); err != nil {
 		t.Fatalf("a Go function booked at the floor was refused: %v", err)
@@ -512,13 +424,14 @@ func TestCheckCompiledBookings_LeavesInterpretedBookingsAlone(t *testing.T) {
 	withSchema(t, floorSchema)
 
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "Driftfile"), `
-name: demo
-atomic:
-  functions:
-    - name: get:ping
-      handler: get_ping
-      memory: 8MB
+	mustWrite(t, filepath.Join(root, "Driftfile"), `slice "demo" { billing = "monthly" }
+
+element "default" {
+  pulse "GET /ping" {
+    handler = "get_ping"
+    memory = "8MiB"
+  }
+}
 `)
 	mustWrite(t, filepath.Join(root, "atomic", "api.py"), "def get_ping(req):\n    return {}\n")
 
@@ -547,7 +460,8 @@ func TestCheckCompiledBookings_SkipsWhenTheSchemaPublishesNoFloor(t *testing.T) 
 // A handler the manifest names and the source lacks fails the deploy BEFORE
 // anything is built or uploaded, and the message names the file it looked in.
 func TestFunctionSpecs_MissingHandlerFailsBeforeAnythingShips(t *testing.T) {
-	root := demoProject(t, strings.Replace(demoDriftfile, "handler: GetPing", "handler: GetPong", 1))
+	withRealSchema(t)
+	root := demoProject(t, strings.Replace(demoDriftfile, `handler = "GetPing"`, `handler = "GetPong"`, 1))
 	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
 	if err != nil {
 		t.Fatalf("ParseDriftfile: %v", err)
@@ -568,6 +482,7 @@ func TestFunctionSpecs_MissingHandlerFailsBeforeAnythingShips(t *testing.T) {
 // `drift atomic deploy <dir>` ships a subset of the manifest, never something
 // the manifest has never heard of.
 func TestFunctionSpecsInDir_SelectsOneElement(t *testing.T) {
+	withRealSchema(t)
 	root := demoProject(t, demoDriftfile)
 
 	cwd, err := os.Getwd()

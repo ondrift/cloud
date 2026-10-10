@@ -58,16 +58,10 @@ func CheckSliceReferences(m *Manifest, live *LiveSlice) error {
 //
 // # This is the writing one, and CheckSliceReferences is the reading one
 //
-// They were a single function, and `drift file simulate` / `drift file apply
-// --plan` called it. So a DRY RUN PERFORMED A REAL RESIZE — it printed "nothing
-// was deployed" under a line reporting the rename it had just made on the live
-// slice. The rename is small and reversible, which is exactly why nobody
-// noticed; a plan that writes is wrong at any size.
-//
-// The split is the fix. A caller that is only looking asks the question; a
-// caller that is applying asks for the repair by name. There is no flag,
-// because a boolean parameter is how the two readings end up back in one
-// function.
+// A caller that is only looking asks the question; a caller that is applying
+// asks for the repair by name, so a dry run can never perform a rename on the
+// live slice. There is no flag, because a boolean parameter is how the two
+// readings end up back in one function.
 //
 // # THE SLOT IS OFTEN ALREADY THERE, and only the name differs
 //

@@ -275,10 +275,9 @@ func (m *model) settingsLines() []string {
 	return out
 }
 
-// itemizedBillLines renders the active slice's current monthly cost breakdown —
-// the same shape as `drift file apply`'s itemized bill (cmd/project's
-// LineItem/renderLineItems), fetched via the /ops/slice/price endpoint the
-// slice form prices against (see fetchDocPrice).
+// itemizedBillLines renders the active slice's current monthly cost breakdown,
+// fetched via the /ops/slice/price endpoint the slice form and `drift plan`
+// price against (see fetchDocPrice).
 func (m *model) itemizedBillLines() []string {
 	out := []string{dim("Itemized bill")}
 	if m.priceErr != "" {

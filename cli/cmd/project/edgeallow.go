@@ -9,9 +9,7 @@
 package project
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 
@@ -75,33 +73,6 @@ func applyEdgeAllow(m *Manifest) error {
 	}
 	fmt.Printf("  %s inbound allowlist: %d range%s\n", common.Check(), len(cidrs), pluralS(len(cidrs)))
 	return nil
-}
-
-// planEdgeAllow is the `--plan` section for `edge.allow`: what the declared list
-// adds to and removes from the live one, compared in canonical form.
-func planEdgeAllow(m *Manifest, out io.Writer) {
-	if !m.Slice().Has("edge", "allow") {
-		return
-	}
-	fmt.Fprintf(out, "\n  inbound allowlist (edge.allow)\n")
-
-	cidrs, err := declaredAllow(m)
-	if err != nil {
-		fmt.Fprintf(out, "    %s %v\n", common.Hint("!"), err)
-		return
-	}
-
-	var live struct {
-		CIDRs []string `json:"cidrs"`
-	}
-	body, lerr := callSliceEdge(m, http.MethodGet, "allow", "read the inbound allowlist", nil)
-	if lerr == nil {
-		lerr = json.Unmarshal(body, &live)
-	}
-	planListDiff(out, canonicalCIDRs(live.CIDRs), canonicalCIDRs(cidrs), lerr)
-	if len(cidrs) == 0 {
-		fmt.Fprintf(out, "    %s the list is empty: every address reaches the slice\n", common.Hint("·"))
-	}
 }
 
 // canonicalCIDRs writes each range as its network, so 203.0.113.7/24 and

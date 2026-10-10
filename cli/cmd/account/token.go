@@ -50,7 +50,7 @@ Use one by putting it in the environment — no login, and nothing written to di
 
     export DRIFT_TOKEN=drift_pat_...
     export DRIFT_SLICE=my-slice
-    drift file apply`,
+    drift apply`,
 		Example: "  drift account token create ci --scope slice:read --scope slice:write\n" +
 			"  drift account token list\n" +
 			"  drift account token revoke ci",

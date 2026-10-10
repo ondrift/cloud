@@ -18,20 +18,16 @@ import (
 
 // The two lists Atomic's work is declared in, under `atomic`.
 //
-// `pulses` is the request/response unit, one call and one result; the retired
-// `functions` is renamed onto it by the key walker before anything here reads
-// the document, so no reader in this package names the old key. `fields` is the
-// long-running worker the slice keeps exactly one of. Both hold every element's
-// entries by the time anything here reads them: elements.go flattens
+// `pulses` is the request/response unit, one call and one result. `fields` is
+// the long-running worker the slice keeps exactly one of. Both hold every
+// element's entries by the time anything here reads them: elements.go flattens
 // `atomic.elements` into them, each entry carrying its element.
 const (
 	pulsesKey = "pulses"
 	fieldsKey = "fields"
 )
 
-// PulseEntries is every `atomic.pulses` entry of a resolved document, read after
-// the key walker, so a file still written with `atomic.functions` reads the
-// same.
+// PulseEntries is every `atomic.pulses` entry of a resolved document.
 func PulseEntries(doc Node) []Node { return doc.Entries("name", "atomic", pulsesKey) }
 
 // FieldEntries is every `atomic.fields` entry of a resolved document.
@@ -50,20 +46,16 @@ func FunctionSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
 	specs := make([]atomic_cmd.FunctionSpec, 0, len(entries))
 	for _, fn := range entries {
 		specs = append(specs, atomic_cmd.FunctionSpec{
-			Name:     fn.Str("name"),
-			Handler:  fn.Str("handler"),
-			Element:  fn.Str("element"),
-			Dir:      entryDir(m, fn),
-			Auth:     fn.Str("auth"),
-			Stream:   fn.Str("stream"),
-			Response: fn.Str("response"),
-			Secrets:  fn.Strings("secrets"),
-			Env:      fn.StrMap("env"),
-			// Read from every Pulse, top level or flattened out of an element.
-			// The deprecated count is kept as written, so a refusal names what
-			// the Driftfile says; the spec reads it as concurrent above 1.
-			Concurrent:  fn.Bool("concurrent"),
-			Concurrency: fn.Int("concurrency"),
+			Name:       fn.Str("name"),
+			Handler:    fn.Str("handler"),
+			Element:    fn.Str("element"),
+			Dir:        entryDir(m, fn),
+			Auth:       fn.Str("auth"),
+			Stream:     fn.Str("stream"),
+			Response:   fn.Str("response"),
+			Secrets:    fn.Strings("secrets"),
+			Env:        fn.StrMap("env"),
+			Concurrent: fn.Bool("concurrent"),
 		})
 	}
 	return specs
@@ -116,48 +108,24 @@ func entryDir(m *Manifest, entry Node) string {
 	return dir
 }
 
-// declaredBookings maps every declared slot, Pulse or Field, by the booking key
-// the slice books it under, to the `memory` its entry writes.
-//
-// A Field writes none: its booking is the slice shape's, chosen on the form
-// `drift slice resize` draws, so its value here is always "". It is still in
-// the map, because the map is also what says a slot is declared at all.
-func declaredBookings(m *Manifest) map[string]string {
-	out := map[string]string{}
-	for _, fn := range PulseEntries(m.Slice()) {
-		if name := fn.Str("name"); name != "" {
-			out[name] = fn.Str("memory")
-		}
-	}
-	for _, f := range FieldEntries(m.Slice()) {
-		if name := f.Str("name"); name != "" {
-			out[atomic_cmd.FieldKey(name)] = ""
-		}
-	}
-	return out
-}
-
-// CheckCompiledBookings is CheckSlotBookings with no live slice: the offline
-// check `drift file lint` can make, from the bookings a Driftfile still writes.
-func CheckCompiledBookings(m *Manifest, elements []atomic_cmd.Element) error {
-	return CheckSlotBookings(m, elements, nil)
+// CheckCompiledBookings is CheckSlotBookings against the bookings the Driftfile
+// writes: the offline check `drift file lint` makes.
+func CheckCompiledBookings(c *Compiled, elements []atomic_cmd.Element) error {
+	return CheckSlotBookings(c.Manifest, elements, &LiveSlice{Config: c.Shape})
 }
 
 // CheckSlotBookings refuses a compiled Pulse or Field booked under the floor its
 // own language runtime needs, on this machine, before anything is uploaded.
 //
-// The booking is the slot's on the live slice when one is given, because the
-// slice shape owns every booking; a Field writes none in the Driftfile, so the
-// live slot is the only place its booking exists. Without a live slice the check
-// reads what a Pulse's entry still writes, and a Field is not checked until one
-// is in hand.
+// The bookings are the given slice's: the live one, or the shape the Driftfile
+// compiles to. A slot it does not book is not checked.
 //
-// This is the half of the booking rule the schema cannot state. `pattern` already
-// refuses anything outside 8MB-256MB offline; the compiled floor needs the
-// LANGUAGE, and the Driftfile never says what language a function is written in —
-// it is detected from the source beside it. So the bound is read from the schema
-// (CompiledMemoryFloor) and applied here, where `elements` has already bound each
-// function to the element whose language was detected.
+// This is the half of the booking rule the schema cannot state. The compiler
+// already refuses a booking outside the platform's range; the compiled floor
+// needs the LANGUAGE, and the Driftfile never says what language a slot is
+// written in: it is detected from the source beside it. So the bound is read from
+// the schema (CompiledMemoryFloor) and applied here, where `elements` has already
+// bound each slot to the element whose language was detected.
 //
 // Why it is worth catching here at all, given the api refuses it anyway: a
 // booking under the floor does not fail cleanly at run time. The reservation
@@ -174,10 +142,9 @@ func CheckSlotBookings(m *Manifest, elements []atomic_cmd.Element, live *LiveSli
 		return nil
 	}
 
-	// The written booking, by slot, read from the manifest rather than the spec
-	// because a FunctionSpec carries what it takes to BUILD a slot, and memory
-	// is not one of those things. The live slot's booking replaces it.
-	declared := declaredBookings(m)
+	// The booking, by slot, read from the slice rather than the spec because a
+	// FunctionSpec carries what it takes to BUILD a slot, and memory is not one
+	// of those things.
 	booked := map[string]int{}
 	if live != nil {
 		for _, s := range live.Config.Atomic.Functions {
@@ -193,24 +160,11 @@ func CheckSlotBookings(m *Manifest, elements []atomic_cmd.Element, live *LiveSli
 			continue
 		}
 		for _, f := range el.Funcs {
-			bytes, label := booked[f.Spec.Name], ""
-			if bytes > 0 {
-				label = sizeLabel(bytes)
-			} else {
-				raw := declared[f.Spec.Name]
-				if raw == "" {
-					continue // no booking in hand: the slice form or the api says so
-				}
-				parsed, err := parseSizeBytes(raw)
-				if err != nil {
-					continue
-				}
-				bytes, label = parsed, raw
+			bytes := booked[f.Spec.Name]
+			if bytes == 0 || bytes >= floor.Bytes {
+				continue // no booking in hand, or enough
 			}
-			if bytes >= floor.Bytes {
-				continue
-			}
-			bad = append(bad, fmt.Sprintf("  %s booked %s, in %s", f.Spec.Name, label, el.Lang))
+			bad = append(bad, fmt.Sprintf("  %s booked %s, in %s", f.Spec.Name, sizeLabel(bytes), el.Lang))
 		}
 	}
 	if len(bad) == 0 {
@@ -221,8 +175,8 @@ func CheckSlotBookings(m *Manifest, elements []atomic_cmd.Element, live *LiveSli
 			"A compiled language carries a private language runtime inside every invocation, "+
 			"and the pool is charged what an invocation is measured to cost — that runtime "+
 			"included. The interpreted languages share one language server each and can book "+
-			"as little as 8MB.\n"+
-			"Raise each of them to %s or higher with `drift slice resize`, or run `drift file benchmark` against a "+
+			"as little as 8MiB.\n"+
+			"Raise each one's memory in the Driftfile to %s or higher, or run `drift size` against a "+
 			"deployed slice to size them from what they actually hold.",
 		floor.Declared, len(bad), strings.Join(bad, "\n"), floor.Declared)
 }
@@ -273,19 +227,14 @@ func FunctionSpecsInDir(dir string) ([]atomic_cmd.FunctionSpec, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := m.SelectEnvironment("", false); err != nil {
-		return nil, err
-	}
 
 	// THE SCHEDULES THIS MANIFEST DECLARES, published for the deploy that is
 	// about to read them.
 	//
-	// Without this line `drift atomic deploy` shipped every function with its
-	// `cron:` dropped — the schedule registry was empty because only `drift file
-	// apply` had ever filled it, so the same Driftfile produced a schedule under
-	// one command and none under the other, silently. That is the exact failure
-	// `refuseScheduleComments` exists to prevent for the RETIRED spelling, and
-	// the supported one had it.
+	// Without this line `drift atomic deploy` shipped every pulse with its
+	// `cron` dropped: the schedule registry was empty because only the full
+	// apply ever filled it, so the same Driftfile produced a schedule under one
+	// command and none under the other, silently.
 	//
 	// It belongs here because this is the function that reads the Driftfile on
 	// the single-directory path. `atomic deploy` is documented as deploying "a

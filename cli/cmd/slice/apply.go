@@ -1,6 +1,6 @@
 package slice
 
-// apply2.go — what `drift apply` asks of a slice's shape: make one from a
+// apply.go: what `drift apply` asks of a slice's shape: make one from a
 // Driftfile's compiled shape, or bring one to it.
 //
 // Both go through the same endpoints the form and `resize --config` use, so the

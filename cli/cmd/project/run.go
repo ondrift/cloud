@@ -64,7 +64,7 @@ DRIFT_RUN_HOST_BUILD=1 to use your host toolchains instead (faster, no pulls).`,
 			if len(args) == 1 {
 				selectedEnv = args[0]
 			}
-			app, container, url, err := startLocal(selectedEnv, len(args) == 1, hostPort, persist, noEnvFile)
+			app, container, url, err := startLocal(selectedEnv, hostPort, persist, noEnvFile)
 			if err != nil {
 				return err
 			}
@@ -81,12 +81,12 @@ DRIFT_RUN_HOST_BUILD=1 to use your host toolchains instead (faster, no pulls).`,
 	return cmd
 }
 
-// startLocal is `drift file run`'s actual work, extracted so `drift
-// project test` can start the same local instance, run tests against it, and
-// tear it down — without duplicating the build → bake → launch → health-poll
-// sequence. Returns the app name, container name, and base URL of the now-
-// running (and confirmed healthy) instance.
-func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noEnvFile bool) (app, container, url string, err error) {
+// startLocal is `drift file run`'s actual work, extracted so `drift file test`
+// can start the same local instance, run tests against it, and tear it down —
+// without duplicating the build → bake → launch → health-poll sequence. Returns
+// the app name, container name, and base URL of the now-running (and confirmed
+// healthy) instance.
+func startLocal(selectedEnv string, hostPort int, persist, noEnvFile bool) (app, container, url string, err error) {
 	if err := requireDocker(); err != nil {
 		return "", "", "", err
 	}
@@ -96,8 +96,9 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 	}
 	projectDir := filepath.Dir(manifestPath)
 
-	// Same variable origin hierarchy as deploy: ENV-bind + .env.<env> +
-	// .env, so ${VAR}/$ENVREF and hook shells resolve identically.
+	// Same variable origin hierarchy as `drift apply`: ENV bound to the
+	// environment, then .env.<env> and .env, so env() and hook shells resolve
+	// identically.
 	overrides := []string{}
 	if selectedEnv != "" {
 		overrides = append(overrides, "ENV="+selectedEnv)
@@ -110,16 +111,16 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 
 	// pre_deploy hooks first (e.g. a frontend build that produces the
 	// canvas dir the parse then validates).
-	preHooks, _ := ParseHooks(manifestPath)
+	preHooks, _, err := ParseHooks(manifestPath)
+	if err != nil {
+		return "", "", "", err
+	}
 	if err := runHooks("pre_deploy", preHooks, projectDir); err != nil {
 		return "", "", "", err
 	}
 
-	m, err := ParseDriftfile(manifestPath)
+	m, err := ParseDriftfileEnv(manifestPath, selectedEnv)
 	if err != nil {
-		return "", "", "", err
-	}
-	if _, err := m.SelectEnvironment(selectedEnv, envExplicit); err != nil {
 		return "", "", "", err
 	}
 	app = m.Name()
@@ -176,8 +177,8 @@ func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noE
 	if out, err := exec.Command("docker", runArgs...).CombinedOutput(); err != nil {
 		return "", "", "", fmt.Errorf("docker create failed: %s", string(out))
 	}
-	// The declared queues exist before the slice starts, as `drift file apply`
-	// makes them exist on a slice before any slot is deployed.
+	// The declared queues exist before the slice starts, as `drift apply` makes
+	// them exist on a slice before any slot is deployed.
 	if err := seedDeclaredQueues(container, image, DeclaredQueues(m)); err != nil {
 		_ = exec.Command("docker", "rm", "-f", container).Run()
 		return "", "", "", err
@@ -222,7 +223,8 @@ func localRunArgs(m *Manifest, container, image string, port int, persist bool, 
 	// Declared secrets ride in as DRIFT_SECRET_<NAME>; the slice seeds them
 	// into its AES-encrypted store at boot (standalone only) and the runner
 	// then injects each declared secret into its function. Values are already
-	// $ENVREF-resolved. Docker-native `-e SECRET=…` — no admin port exposed.
+	// resolved from their env() references. Docker-native `-e SECRET=…` — no
+	// admin port exposed.
 	// (Visible to `docker inspect` on this host, the user's own machine; the
 	// SAT itself is never passed this way.)
 	for name, val := range m.Slice().Sub("backbone", "secrets") {
@@ -392,15 +394,9 @@ func manifestAppName(env string) (string, error) {
 		return "", err
 	}
 	// Cheap name-only parse — `stop`/`logs` must not require the project's
-	// secrets to be set just to find the container. The env suffix is applied
-	// exactly as `run` derives it (deriveSliceName), so the names always match:
-	// "", "prod" and "production" map to the bare name; every other env to
-	// "<name>-<env>".
-	base, err := ParseProjectName(mp)
-	if err != nil {
-		return "", err
-	}
-	return deriveSliceName(base, env), nil
+	// secrets to be set just to find the container. It names the environment's
+	// slice exactly as the compile `run` makes does, so the names always match.
+	return ParseProjectName(mp, env)
 }
 
 // layoutCanvas writes the slice's on-disk canvas format under dir:

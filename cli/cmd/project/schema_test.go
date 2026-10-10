@@ -52,74 +52,81 @@ func TestSchemaMustBePresentOrTheSuiteIsTheatre(t *testing.T) {
 	}
 }
 
-// THE test for this change.
+// The schema validates the COMPILED document, and a document it describes is
+// accepted whatever else it could have allowed.
 //
-// The CLI used to reject a Driftfile carrying a field it had not been taught —
-// `ParseDriftfile` re-decoded with `KnownFields(true)` — so every format addition
-// needed a CLI release before anyone could use it. That coupling is what serving
-// the schema was meant to remove, and for a while nothing read the schema.
-//
-// Here the platform's schema permits a field this binary has no struct for. The
-// parse must SUCCEED: legality is the platform's call, and a value this CLI does
-// not act on is none of its business (#CLI-STANDARDUSAGE-ERF1CV).
-// Note on what is validated: the SHORTHAND-EXPANDED document, not the bytes the
-// user typed. `canvas: ./canvas` is an object by the time the schema sees it, which
-// is why the real schema accepts both forms for those keys. Validating the raw
-// document instead would make error locations match the user's file exactly, and is
-// worth revisiting — it is a separate decision from who owns the format.
-func TestSchema_AcceptsAFieldThisBinaryPredates(t *testing.T) {
+// The Driftfile is HCL, and the reader's block structs decide which blocks and
+// attributes a file may hold: a field the platform's schema adds is invisible to
+// this binary until a block for it exists, so the property that the schema alone
+// decides what is legal no longer holds for the file. It still holds for the
+// document the compiler writes, which is what this stub describes: `slice` and
+// `canvas`, and nothing else.
+func TestSchema_ValidatesTheCompiledDocument(t *testing.T) {
 	withSchema(t, `{
 	  "$schema": "http://json-schema.org/draft-07/schema#",
 	  "type": "object",
-	  "required": ["name"],
+	  "required": ["slice"],
 	  "additionalProperties": false,
 	  "properties": {
-	    "name":            {"type": "string"},
-	    "canvas":          {"type": ["string", "object"]},
-	    "a_future_field":  {"type": "string"}
+	    "slice":  {"type": "string"},
+	    "canvas": {"type": "object"}
 	  }
 	}`)
 
-	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, "Driftfile"), "name: hello\ncanvas: ./canvas\na_future_field: whatever\n")
-	mustMkdir(t, filepath.Join(dir, "canvas"))
+	path := writeDriftfile(t, "slice \"hello\" { billing = \"monthly\" }\nsite \"/\" { dir = \"canvas\" }\n", "canvas/")
 
-	m, err := ParseDriftfile(filepath.Join(dir, "Driftfile"))
+	m, err := ParseDriftfile(path)
 	if err != nil {
-		t.Fatalf("a field the SCHEMA allows was rejected, so the platform still cannot "+
-			"add a field without a CLI release:\n%v", err)
+		t.Fatalf("a document the schema describes was refused:\n%v", err)
 	}
 	if m.Name() != "hello" {
 		t.Errorf("name = %q, want hello", m.Name())
 	}
-	// And it survives in the document, so nothing downstream has silently dropped it.
-	if got := m.Raw().Str("a_future_field"); got != "whatever" {
-		t.Errorf("the unknown field was dropped from the document: %q", got)
+	if sites := m.Slice().Entries("dir", "canvas", "sites"); len(sites) != 1 || sites[0].Str("dir") != "canvas" {
+		t.Errorf("the site did not reach the document: %+v", sites)
 	}
 }
 
-// The other half: the schema is the authority for rejection too. A field NEITHER
-// side knows is refused, because the schema says additionalProperties: false —
-// not because this binary has a struct without it.
+// The schema is the authority for rejection: a key the compiled document carries
+// and the schema forbids is refused because the schema says
+// additionalProperties: false, and the refusal is moved back to the block of the
+// file that produced it.
 func TestSchema_RejectsWhatTheSchemaRejects(t *testing.T) {
 	withSchema(t, `{
 	  "$schema": "http://json-schema.org/draft-07/schema#",
 	  "type": "object",
-	  "required": ["name"],
+	  "required": ["slice"],
 	  "additionalProperties": false,
-	  "properties": {"name": {"type": "string"}, "canvas": {"type": ["string", "object"]}}
+	  "properties": {
+	    "slice":  {"type": "string"},
+	    "canvas": {
+	      "type": "object",
+	      "properties": {
+	        "sites": {
+	          "type": "array",
+	          "items": {
+	            "type": "object",
+	            "additionalProperties": false,
+	            "properties": {"dir": {"type": "string"}}
+	          }
+	        }
+	      }
+	    }
+	  }
 	}`)
 
-	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, "Driftfile"), "name: hello\ncanvas: ./canvas\nnmae: typo\n")
-	mustMkdir(t, filepath.Join(dir, "canvas"))
-
-	_, err := ParseDriftfile(filepath.Join(dir, "Driftfile"))
+	body := "slice \"hello\" { billing = \"monthly\" }\n" + // line 1
+		"site \"/\" { dir = \"canvas\" }\n" + // line 2
+		"site \"/admin\" { dir = \"canvas\" }\n" // line 3: its path is the key the schema forbids
+	_, err := ParseDriftfile(writeDriftfile(t, body, "canvas/"))
 	if err == nil {
 		t.Fatal("a key the schema forbids was accepted")
 	}
-	if !contains(err.Error(), "nmae") {
+	if !contains(err.Error(), "path") {
 		t.Errorf("the error should name the offending key, got: %v", err)
+	}
+	if !contains(err.Error(), "Driftfile:3:") || contains(err.Error(), "Driftfile:2:") {
+		t.Errorf("the refusal should be at the site that carries the key (line 3), got: %v", err)
 	}
 }
 
@@ -134,10 +141,8 @@ func TestSchema_AbsentIsReportedNotFaked(t *testing.T) {
 		t.Fatal("SchemaAvailable() is true with no schema on disk")
 	}
 
-	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, "Driftfile"), "name: hello\ncanvas: ./canvas\n")
-	mustMkdir(t, filepath.Join(dir, "canvas"))
-	if _, err := ParseDriftfile(filepath.Join(dir, "Driftfile")); err != nil {
+	path := writeDriftfile(t, "slice \"hello\" { billing = \"monthly\" }\nsite \"/\" { dir = \"canvas\" }\n", "canvas/")
+	if _, err := ParseDriftfile(path); err != nil {
 		t.Errorf("parsing must still work offline on a never-online machine: %v", err)
 	}
 }

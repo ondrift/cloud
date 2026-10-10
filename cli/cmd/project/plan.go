@@ -1,14 +1,12 @@
 package project
 
-// plan2.go — `drift plan`: what applying this Driftfile would do to the slice.
+// plan.go — `drift plan`: what applying this Driftfile would do to the slice.
 //
-// For a Driftfile 2 the plan is a real diff. It compiles the file, reads the
-// live slice (its shape, the code each slot runs, its sites, secrets, keys and
-// edge), asks the platform to price the compiled shape, and prints every
-// difference with what it costs, whether the slice restarts, and what it
-// removes. A slice that does not exist yet is "would create", priced.
-//
-// For a YAML 1.x Driftfile it is `drift file apply --plan`, unchanged.
+// The plan is a real diff. It compiles the file, reads the live slice (its
+// shape, the code each slot runs, its sites, secrets, keys and edge), asks the
+// platform to price the compiled shape, and prints every difference with what
+// it costs, whether the slice restarts, and what it removes. A slice that does
+// not exist yet is "would create", priced.
 //
 // # Read-only, and checked
 //
@@ -16,7 +14,7 @@ package project
 // which quotes a shape and writes nothing (the platform's own handler says so:
 // it does not touch the database, record usage, or bind a quote). The live
 // slice is the state, so there is nothing local to write either.
-// TestPlan2_IssuesNoWriteButThePriceQuote holds every request to that.
+// TestPlan_IssuesNoWriteButThePriceQuote holds every request to that.
 
 import (
 	"bytes"
@@ -53,8 +51,7 @@ func GetPlanCmd() *cobra.Command {
 added, changed and removed, the monthly price before and after (quoted by the
 platform), whether the slice restarts, and what data a removal could lose.
 
-Nothing is changed. A Driftfile 2 (HCL) is diffed against the live slice; a YAML
-Driftfile prints what 'drift file apply --plan' prints.`,
+Nothing is changed.`,
 		Example: "  drift plan\n  drift plan staging\n  drift plan --var RESET_KEY=...",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -67,10 +64,6 @@ Driftfile prints what 'drift file apply --plan' prints.`,
 				return fmt.Errorf("read %s: %w", path, err)
 			}
 			overrides := append(append([]string{}, vars...), secrets...)
-
-			if !IsFormat2(data) {
-				return planFormat1(args, overrides, noEnvFile)
-			}
 			env := ""
 			if len(args) == 1 {
 				env = args[0]
@@ -86,15 +79,12 @@ Driftfile prints what 'drift file apply --plan' prints.`,
 			if !SchemaAvailable() {
 				return ErrNoSchema
 			}
-			c, err := CompileDriftfile2Env(path, env)
+			c, err := CompileDriftfileEnv(path, env)
 			if err != nil {
 				return err
 			}
 			if env != "" {
 				fmt.Printf("  %s environment %s → slice %s\n", common.Hint("·"), env, common.Highlight(c.Manifest.Name()))
-			}
-			for _, n := range c.Notices {
-				fmt.Fprintf(os.Stderr, "  %s %s\n", common.Hint("·"), n)
 			}
 
 			// Every read below names this file's slice. The ones that resolve a
@@ -120,27 +110,9 @@ Driftfile prints what 'drift file apply --plan' prints.`,
 	}
 	cmd.Flags().StringVar(&outFile, "out", "", "Write the plan to this file, for `drift apply <file>` to apply exactly it")
 	cmd.Flags().StringArrayVar(&vars, "var", nil, "Set a variable env() reads: KEY=value (repeatable). Yields to the terminal's environment; beats the .env file.")
-	cmd.Flags().StringArrayVar(&secrets, "secret", nil, "The same as --var, under the name `drift file apply` uses.")
+	cmd.Flags().StringArrayVar(&secrets, "secret", nil, "The same as --var.")
 	cmd.Flags().BoolVar(&noEnvFile, "no-env-file", false, "Do not read the .env / .env.<env> file beside the Driftfile")
 	return cmd
-}
-
-// planFormat1 is `drift plan` for a YAML Driftfile: exactly what
-// `drift file apply --plan` does, through that command, so the two cannot
-// differ.
-func planFormat1(args, overrides []string, noEnvFile bool) error {
-	apply := getApplyCmd()
-	argv := append([]string{"--plan"}, args...)
-	for _, o := range overrides {
-		argv = append(argv, "--secret", o)
-	}
-	if noEnvFile {
-		argv = append(argv, "--no-env-file")
-	}
-	apply.SetArgs(argv)
-	apply.SilenceUsage = true
-	apply.SilenceErrors = true
-	return apply.Execute()
 }
 
 // ─── what the plan reads ────────────────────────────────────────────────────
@@ -155,7 +127,7 @@ type liveAPIKey struct {
 // fact with the error that read it, so a fact that could not be read is said
 // to be unknown rather than shown as absent.
 type planState struct {
-	c    *Compiled2
+	c    *Compiled
 	user string
 
 	live *LiveSlice // nil: the slice does not exist
@@ -189,7 +161,7 @@ type planState struct {
 }
 
 // gatherPlan reads the live slice. Every read is a GET but the price quote.
-func gatherPlan(c *Compiled2) (*planState, error) {
+func gatherPlan(c *Compiled) (*planState, error) {
 	m := c.Manifest
 	p := &planState{c: c, user: common.GetUsername()}
 
@@ -348,7 +320,7 @@ func fetchSecretNames() ([]string, error) {
 // The slice stores a key under the path `drift atomic auth set` was given,
 // and its gate accepts two spellings: `<element>/<route>` and the bare route.
 // Its list matches the stored path exactly, so both are asked.
-func fetchAPIKeys(c *Compiled2) (map[string][]liveAPIKey, error) {
+func fetchAPIKeys(c *Compiled) (map[string][]liveAPIKey, error) {
 	elementOf := map[string]string{}
 	for _, p := range PulseEntries(c.Manifest.Slice()) {
 		elementOf[p.Str("name")] = p.Str("element")
@@ -397,7 +369,7 @@ func keyFingerprint(key string) string {
 }
 
 // bookingKeyOf finds the booking key an address was compiled from.
-func bookingKeyOf(c *Compiled2, address string) string {
+func bookingKeyOf(c *Compiled, address string) string {
 	for k, a := range c.Addresses {
 		if a == address {
 			return k
@@ -436,7 +408,7 @@ func (d *planDiff) add(mark, address, format string, args ...any) {
 
 // addressOf renders a booking key the way the file addresses it, for a slot
 // the file names and for one only the live slice has.
-func addressOf(c *Compiled2, key string) string {
+func addressOf(c *Compiled, key string) string {
 	if a, ok := c.Addresses[key]; ok {
 		return a
 	}
@@ -478,7 +450,7 @@ func (p *planState) diff() *planDiff {
 		}
 		switch {
 		case inFile && !inLive:
-			d.add("+", addr, "books %s, and deploys", sizeLabel2(w.MemoryBytes))
+			d.add("+", addr, "books %s, and deploys", sizeLabel(w.MemoryBytes))
 		case !inFile && inLive:
 			d.removes = append(d.removes, addr)
 			switch {
@@ -492,7 +464,7 @@ func (p *planState) diff() *planDiff {
 		default:
 			var changes []string
 			if w.MemoryBytes != h.MemoryBytes {
-				changes = append(changes, fmt.Sprintf("memory %s → %s", sizeLabel2(h.MemoryBytes), sizeLabel2(w.MemoryBytes)))
+				changes = append(changes, fmt.Sprintf("memory %s → %s", sizeLabel(h.MemoryBytes), sizeLabel(w.MemoryBytes)))
 				if w.MemoryBytes < h.MemoryBytes {
 					d.removes = append(d.removes, addr+" (booking shrinks)")
 				}
@@ -527,7 +499,7 @@ func (p *planState) diff() *planDiff {
 				}
 				return fmt.Sprintf("%d messages", v)
 			}
-			return sizeLabel2(v)
+			return sizeLabel(v)
 		}
 		for _, name := range unionKeys(set.want, set.have) {
 			w, inFile := set.want[name]
@@ -848,7 +820,7 @@ func (p *planState) diffEdge(d *planDiff, creating bool) {
 			have = append(have, strings.ToLower(strings.TrimSpace(h.Host)))
 		}
 		// A domain the file does not name stays attached: apply adds what is
-		// declared and reports the rest, as it does for a YAML file.
+		// declared and reports the rest.
 		var known []string
 		for _, h := range have {
 			for _, w := range want {
@@ -880,7 +852,7 @@ func planLimits() []planLimit {
 		var f func(int) string
 		switch l.unit {
 		case unitSize:
-			f = func(v int) string { return sizeLabel2(v) }
+			f = func(v int) string { return sizeLabel(v) }
 		case unitSeconds:
 			f = func(v int) string { return fmt.Sprintf("%ds", v) }
 		case unitHours:
@@ -891,6 +863,24 @@ func planLimits() []planLimit {
 			f = func(v int) string { return fmt.Sprint(v) }
 		}
 		out = append(out, planLimit{"limits." + l.name, l.at, f})
+	}
+	return out
+}
+
+// LimitLine is one scalar of a compiled shape, named and formatted as the
+// plan prints it.
+type LimitLine struct {
+	Name, Value string
+}
+
+// ShapeLimits is every scalar of a compiled shape that is not zero, as the
+// plan prints it: the slot and database counts, then the `limits` table.
+func ShapeLimits(c *Compiled) []LimitLine {
+	var out []LimitLine
+	for _, l := range planLimits() {
+		if v := *l.at(&c.Shape); v != 0 {
+			out = append(out, LimitLine{l.name, l.format(v)})
+		}
 	}
 	return out
 }

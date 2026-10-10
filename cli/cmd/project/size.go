@@ -1,14 +1,13 @@
 package project
 
-// size2.go: `drift size`, the measured peaks written back into the Driftfile.
+// size.go: `drift size`, the measured peaks written back into the Driftfile.
 //
-// `drift file benchmark` reports what each Pulse and Field has cost and opens
-// the resize form with the recommendation in it. A Driftfile 2 holds each
-// booking on the block it books, so the recommendation belongs there: this
-// edits the `memory` line of every Pulse and Field the slice recommends a
-// different size for, and shows the change. The edit then goes through
-// `drift plan` and apply like any other, so a recommendation is never bought
-// without being seen.
+// `drift file benchmark` reports what each Pulse and Field has cost. The
+// Driftfile holds each booking on the block it books, so the recommendation
+// belongs there: this edits the `memory` line of every Pulse and Field the
+// slice recommends a different size for, and shows the change. The edit then
+// goes through `drift plan` and apply like any other, so a recommendation is
+// never bought without being seen.
 //
 // # The measurement is benchmark's
 //
@@ -62,9 +61,9 @@ type SizeResult struct {
 	Left []string
 }
 
-// ResizeDriftfile2 rewrites the `memory` of each Pulse and Field in src that
+// ResizeDriftfile rewrites the `memory` of each Pulse and Field in src that
 // rows recommend a different size for.
-func ResizeDriftfile2(src []byte, rows []sizingRow) (*SizeResult, error) {
+func ResizeDriftfile(src []byte, rows []sizingRow) (*SizeResult, error) {
 	f, diags := hclwrite.ParseConfig(src, driftfileName, hcl.InitialPos)
 	if diags.HasErrors() {
 		return nil, diagError(diags)
@@ -143,7 +142,7 @@ func (r *SizeResult) size(body *hclwrite.Body, key, address string, byKey map[st
 		r.Left = append(r.Left, address+": its memory is not a plain size string, so the figure is set elsewhere; change it there")
 		return
 	}
-	current, err := parseSize2(string(toks[1].Bytes))
+	current, err := parseSize(string(toks[1].Bytes))
 	if err != nil {
 		r.Left = append(r.Left, address+": its memory is not a size this can read ("+err.Error()+")")
 		return
@@ -155,7 +154,7 @@ func (r *SizeResult) size(body *hclwrite.Body, key, address string, byKey map[st
 	case int64(current) == rec:
 		return
 	}
-	body.SetAttributeValue("memory", cty.StringVal(sizeLabel2(int(rec))))
+	body.SetAttributeValue("memory", cty.StringVal(sizeLabel(int(rec))))
 	r.Changes = append(r.Changes, SizeChange{
 		Address: address, From: current, To: int(rec), Peak: row.PeakBytes, Calls: row.Measurements,
 	})
@@ -173,10 +172,7 @@ stay as they are; the change is shown as a diff.
 
 The file is changed and nothing else: run 'drift plan' to see what the new
 bookings cost, and apply them as any other edit. A pulse nobody has called yet
-is left alone, because there is nothing to size it from.
-
-This edits an HCL Driftfile, which holds each booking beside what it books. A
-YAML Driftfile is not edited; 'drift file benchmark' reports the measurements.`,
+is left alone, because there is nothing to size it from.`,
 		Example: "  drift size\n  drift size --dry-run",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -197,11 +193,7 @@ func runSize(out io.Writer, path string, dryRun bool) error {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 	name := filepath.Base(path)
-	if !IsFormat2(src) {
-		return fmt.Errorf("%s is a YAML Driftfile, and `drift size` edits an HCL Driftfile, which holds each "+
-			"booking beside what it books. `drift file benchmark` reports the same measurements", name)
-	}
-	file, _, err := readFormat2(path, src)
+	file, _, err := readDriftfile(path, src)
 	if err != nil {
 		return err
 	}
@@ -235,13 +227,13 @@ func runSize(out io.Writer, path string, dryRun bool) error {
 		return nil
 	}
 
-	res, err := ResizeDriftfile2(src, rows)
+	res, err := ResizeDriftfile(src, rows)
 	if err != nil {
 		return err
 	}
-	// What is written is read back as a Driftfile 2 first; a result that does
-	// not parse is never put in place of the file.
-	if _, _, err := readFormat2(path, res.Output); err != nil {
+	// What is written is read back first; a result that does not parse is
+	// never put in place of the file.
+	if _, _, err := readDriftfile(path, res.Output); err != nil {
 		return fmt.Errorf("the edited Driftfile does not read back, so nothing was written; this is a bug in drift size:\n\n%w", err)
 	}
 	renderSize(out, name, src, res)
@@ -265,7 +257,7 @@ func renderSize(out io.Writer, name string, src []byte, res *SizeResult) {
 	fmt.Fprintln(out)
 	for _, c := range res.Changes {
 		fmt.Fprintf(out, "  ~ %-30s memory %s → %s   (peak %s over %d calls)\n", c.Address,
-			sizeLabel2(c.From), sizeLabel2(c.To), megabytesOrDash(c.Peak), c.Calls)
+			sizeLabel(c.From), sizeLabel(c.To), megabytesOrDash(c.Peak), c.Calls)
 	}
 	for _, l := range res.Left {
 		fmt.Fprintf(out, "    %s\n", l)

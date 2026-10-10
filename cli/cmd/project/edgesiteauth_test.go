@@ -1,7 +1,6 @@
 package project
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -19,17 +18,51 @@ func TestEdgeSiteAuth_AbsentDoesNothing(t *testing.T) {
 	if err := applyEdgeSiteAuth(m); err != nil {
 		t.Errorf("an absent edge.site_auth failed the apply: %v", err)
 	}
-	var out bytes.Buffer
-	planEdgeSiteAuth(m, &out)
-	if out.Len() != 0 {
-		t.Errorf("an absent edge.site_auth printed a plan line: %q", out.String())
-	}
 }
 
 // siteAuthFile is a Driftfile gating the site for alice and bob.
-const siteAuthFile = "slice: demo\ncanvas: ./site\nedge:\n  site_auth:\n    realm: Staging\n    users:\n" +
-	"      - user: alice\n        password: $SITE_PASS_ALICE\n" +
-	"      - user: bob\n        password: $SITE_PASS_BOB\n"
+const siteAuthFile = `slice "demo" { billing = "monthly" }
+
+site "/" { dir = "site" }
+
+edge {
+  site_auth {
+    realm = "Staging"
+    user "alice" { password = env("SITE_PASS_ALICE") }
+    user "bob" { password = env("SITE_PASS_BOB") }
+  }
+}
+`
+
+// siteAuthSlice lays out body as the working directory's project, beside a
+// monthly slice that already holds the file's shape. `auth` answers the
+// site-auth gate's route, which is the part each test decides.
+func siteAuthSlice(t *testing.T, body string, auth http.HandlerFunc) *recorder {
+	t.Helper()
+	live := ""
+	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ops/slice/get":
+			_, _ = w.Write([]byte(live))
+		case "/ops/slice/status":
+			_, _ = w.Write([]byte(`{"ready":true}`))
+		case "/ops/slice/auth":
+			auth(w, r)
+		case "/ops/atomic/list", "/ops/backbone/secret/list":
+			_, _ = w.Write([]byte(`[]`))
+		case "/ops/canvas":
+			_, _ = w.Write([]byte(`{"sites":[]}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	})
+	// After the stub, which gives the test a HOME of its own.
+	withRealSchema(t)
+	applyIn(t, body, "site")
+	live = liveAtFileShape(t)
+	return rec
+}
 
 // THE WHOLE TRUTH. The live gate lets alice and carol in; the file names alice
 // and bob. What is sent is exactly the file's set, with each password read from
@@ -38,10 +71,7 @@ func TestApply_SiteAuthSetsExactlyTheDeclaredUsers(t *testing.T) {
 	t.Setenv("SITE_PASS_ALICE", "alice-secret")
 	t.Setenv("SITE_PASS_BOB", "bob-secret")
 	var sent []map[string]any
-	rec := stubSliceWithEdge(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/ops/slice/auth" {
-			return
-		}
+	rec := siteAuthSlice(t, siteAuthFile, func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("X-Slice"); got != "demo" {
 			t.Errorf("%s /ops/slice/auth acted on slice %q, want demo", r.Method, got)
 		}
@@ -58,11 +88,11 @@ func TestApply_SiteAuthSetsExactlyTheDeclaredUsers(t *testing.T) {
 			_, _ = w.Write([]byte(`{"enabled":true,"realm":"Staging","users":[{"name":"alice"},{"name":"bob"}]}`))
 		}
 	})
-	applyIn(t, siteAuthFile, "site")
 
-	out, err := edgeStdout(t, func() error { return runApply(t) })
+	var err error
+	out := captureStdout(t, func() { err = runApplyAgreeingToRemove(t, "site_auth carol") })
 	if err != nil {
-		t.Fatalf("apply: %v", err)
+		t.Fatalf("apply: %v\n%s", err, out)
 	}
 	if len(sent) != 1 {
 		t.Fatalf("%d gate writes, want exactly one", len(sent))
@@ -82,6 +112,28 @@ func TestApply_SiteAuthSetsExactlyTheDeclaredUsers(t *testing.T) {
 	}
 	if !strings.Contains(out, "carol") {
 		t.Errorf("the apply did not say carol was removed:\n%s", out)
+	}
+}
+
+// A user the live gate holds and the file does not name is a removal, and an
+// apply that was not told it may remove carol sends nothing at all: the gate
+// is not rewritten around the person who was never asked.
+func TestApply_SiteAuthRemovingAUserNeedsAnAnswer(t *testing.T) {
+	t.Setenv("SITE_PASS_ALICE", "alice-secret")
+	t.Setenv("SITE_PASS_BOB", "bob-secret")
+	rec := siteAuthSlice(t, siteAuthFile, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"enabled":true,"users":[{"name":"alice"},{"name":"carol"}]}`))
+		}
+	})
+
+	var err error
+	out := captureStdout(t, func() { err = applyAgreeingAtZero(t) })
+	if err == nil || !strings.Contains(err.Error(), `--approve-remove "site_auth carol"`) {
+		t.Fatalf("an unanswered removal of carol was not refused with its flag: %v\n%s", err, out)
+	}
+	if n := rec.count("POST /ops/slice/auth"); n != 0 {
+		t.Errorf("the gate was written %d × before the removal was agreed", n)
 	}
 }
 
@@ -126,6 +178,24 @@ func TestEdgeSiteAuth_RefusesALiteralWithoutPrintingIt(t *testing.T) {
 	}
 }
 
+// The same refusal where the file is read: a Driftfile that writes the password
+// instead of env("NAME") does not compile, and the message neither carries the
+// password nor loses the user it belongs to.
+func TestCompile_RefusesALiteralSitePasswordWithoutPrintingIt(t *testing.T) {
+	withRealSchema(t)
+	_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+
+		"edge {\n  site_auth {\n    user \"alice\" { password = \"hunter2\" }\n  }\n}\n"))
+	if err == nil {
+		t.Fatal("a literal password compiled")
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("the refusal printed the password: %v", err)
+	}
+	if !strings.Contains(err.Error(), `"alice"`) {
+		t.Errorf("the refusal does not name the user: %v", err)
+	}
+}
+
 // Two entries for one user cannot both be the truth, and the platform refuses
 // the write after everything else is live. Refused first, here.
 func TestEdgeSiteAuth_RefusesADuplicateUser(t *testing.T) {
@@ -146,10 +216,10 @@ func TestEdgeSiteAuth_RefusesADuplicateUser(t *testing.T) {
 // Absent, the gate is left exactly as it is: not read, not written, not
 // removed.
 func TestApply_AbsentSiteAuthCallsNoAuthRoute(t *testing.T) {
-	rec := stubSliceWithEdge(t, func(w http.ResponseWriter, r *http.Request) {})
-	applyIn(t, "slice: demo\ncanvas: ./site\n", "site")
+	rec := siteAuthSlice(t, "slice \"demo\" { billing = \"monthly\" }\nsite \"/\" { dir = \"site\" }\n",
+		func(w http.ResponseWriter, r *http.Request) {})
 
-	if err := runApply(t); err != nil {
+	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	for _, m := range []string{"GET", "POST", "DELETE"} {
@@ -168,18 +238,25 @@ func TestPlan_SiteAuthShowsUsersAndNeverAPassword(t *testing.T) {
 	if err := os.Unsetenv("SITE_PASS_BOB"); err != nil {
 		t.Fatal(err)
 	}
-	rec := stubSliceWithEdge(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/ops/slice/auth" && r.Method == http.MethodGet {
+	rec := siteAuthSlice(t, siteAuthFile, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(`{"enabled":true,"realm":"Old","users":[{"name":"alice"},{"name":"carol"}]}`))
 		}
 	})
-	applyIn(t, siteAuthFile, "site")
 
-	out, err := edgeStdout(t, func() error { return runPlanCmd(t) })
+	var err error
+	out := captureStdout(t, func() { err = runPlanCmd(t) })
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	for _, want := range []string{"edge.site_auth", "· alice", "+ bob", "- carol", "Old → Staging", "$SITE_PASS_BOB, which is not set"} {
+	for _, want := range []string{
+		"site_auth",
+		"site_auth alice",
+		"! site_auth bob",
+		"- site_auth carol",
+		"realm Old → Staging",
+		"$SITE_PASS_BOB is not set here",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the plan does not show %q:\n%s", want, out)
 		}

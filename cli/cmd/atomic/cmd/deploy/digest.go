@@ -1,8 +1,8 @@
 // digest.go — content-addressed fingerprinting for atomic functions.
 //
-// `drift file apply` skips functions whose source hasn't changed. To do
-// that safely it needs a stable fingerprint of a function's deploy inputs that
-// it can compare against the digest the platform recorded at the last deploy.
+// `drift apply` skips functions whose source hasn't changed. To do that safely
+// it needs a stable fingerprint of a function's deploy inputs that it can
+// compare against the digest the platform recorded at the last deploy.
 //
 // The digest is computed entirely client-side; the platform stores and returns
 // it as an opaque token (see core/common/db/atomic.go). It has two halves, and
@@ -12,7 +12,7 @@
 //     plus the element grouping. FunctionDigest and ElementDigest.
 //   - the DECLARATION digest — everything the Driftfile entry tells the
 //     operator: the gate, the secrets, the env, the reply shape, the stream mode
-//     and the declared `cron:`. DeclarationDigest.
+//     and the declared `cron`. DeclarationDigest.
 //
 // # Why the declaration is in here, when it once deliberately was not
 //
@@ -24,10 +24,9 @@
 // The reasoning is right and the premise is false. A function whose digest
 // matches is SKIPPED — `elementUnchanged` drops the whole element before
 // anything is staged, built or uploaded — so there is no deploy on which to send
-// the gate. Changing `auth: none` to `auth: apikey` and re-applying therefore
-// left the function open, with the deploy printing `(unchanged)` beside it. The
-// same held for secrets, env, the response shape, and the `cron:` a schedule is
-// declared by.
+// the gate. Adding an API-key gate and re-applying would leave the function
+// open, with the deploy printing `(unchanged)` beside it. The same holds for
+// secrets, env, the response shape, and the `cron` a schedule is declared by.
 //
 // Hashing the declaration costs what the old comment wanted to avoid — a
 // manifest-only edit now rebuilds code that did not change — and that is the
@@ -56,9 +55,8 @@ import (
 // changes, so a changed algorithm can never read as "unchanged" against
 // digests written by an older CLI — every function re-deploys exactly once.
 //
-// v2 folds the DECLARATION in beside the source. Under v1 a manifest-only change
-// — a gate, a secret, a `cron:` — read as unchanged and was skipped, so it never
-// reached the operator at all.
+// v2 folds the DECLARATION in beside the source, so a change to the file alone
+// (a gate, a secret, a `cron`) reaches the operator.
 const digestVersion = "drift-fn-digest-v2"
 
 // digestSkipDirs are build/runtime artefact directories that must never
@@ -368,8 +366,8 @@ func DeployedFunctions() ([]DeployedFunction, error) {
 }
 
 // DeployedDigests returns function_name -> last-deployed source digest for the
-// active slice. `drift file apply` uses it to skip functions whose source
-// is unchanged. Records with no recorded digest (deployed by an older CLI, or
+// active slice. `drift apply` uses it to skip functions whose source is
+// unchanged. Records with no recorded digest (deployed by an older CLI, or
 // after a rollback / snapshot restore) are omitted, so they always redeploy.
 func DeployedDigests() (map[string]string, error) {
 	fns, err := DeployedFunctions()

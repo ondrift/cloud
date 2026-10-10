@@ -7,15 +7,11 @@ import (
 	"testing"
 )
 
-// A `// drift:schedule` comment produced a schedule TriggerSpec on the
-// single-function path and NOTHING on the element paths `drift file apply`
-// builds through. So the same comment on the same source made a schedule under
-// one command and vanished under the other, silently, with nothing said either
-// way. A schedule that exists depending on which command you typed is worse than
-// one that does not exist.
-//
-// It is refused now, naming the Driftfile field that replaced it.
-func TestRefuseScheduleComments_NamesTheDriftfileFieldThatReplacedIt(t *testing.T) {
+// A `// drift:schedule` comment declares nothing, and ignoring it silently
+// would leave whoever wrote it believing a schedule runs. It is refused,
+// naming the Driftfile attribute that declares a schedule, in the spelling the
+// file writes it.
+func TestRefuseScheduleComments_NamesTheDriftfileAttribute(t *testing.T) {
 	for _, c := range []struct{ name, source string }{
 		{"go", "package main\n\n// drift:schedule */5 * * * *\nfunc Handler() {}\n"},
 		{"python", "# drift:schedule 0 15 * * *\ndef handler():\n    pass\n"},
@@ -33,8 +29,8 @@ func TestRefuseScheduleComments_NamesTheDriftfileFieldThatReplacedIt(t *testing.
 			continue
 		}
 		msg := err.Error()
-		if !strings.Contains(msg, "cron:") {
-			t.Errorf("%s: the refusal must name the Driftfile field that replaced it.\ngot: %s", c.name, msg)
+		if !strings.Contains(msg, "cron = \"") || strings.Contains(msg, "cron:") {
+			t.Errorf("%s: the refusal must name the Driftfile attribute as the file writes it.\ngot: %s", c.name, msg)
 		}
 		// The expression itself, so the fix is a copy rather than a re-derivation.
 		if !strings.Contains(msg, "* * *") {

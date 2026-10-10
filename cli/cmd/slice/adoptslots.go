@@ -2,24 +2,13 @@ package slice
 
 // adoptslots.go — renaming a slot the slice holds and nothing uses.
 //
-// # The first hour ended here, and the slot was always there
+// # A slot that exists under another name
 //
 // A fresh free slice holds five function slots named `get:slot-1` … `get:slot-5`
 // — placeholders, in the platform's own vocabulary, for a tenant to type over.
-// `drift file new` scaffolds `route: hello`. So `drift file apply` refused:
-//
-//	your Driftfile names a resource that slice "hello" does not have:
-//	  - function "get:hello"
-//	Add them with `drift slice resize hello`, then deploy again.
-//
-// and `drift slice resize` draws a form, which needs a terminal. The first hour
-// could not be completed without one, and no script, CI job or SDK consumer
-// could provision a slice's shape at all.
-//
-// The refusal was correct and the remedy was a form for a change that is not
-// what forms are for. The slot EXISTS, at the right size, doing nothing. Only
-// the name differs, and the pricing page already says renaming is free and that
-// nothing about a free slice is compared by name.
+// When the deploy's reference reconcile finds a slot the Driftfile names that
+// the slice does not hold, and an idle placeholder of the right size, the slot
+// EXISTS, doing nothing: only the name differs, and renaming is free.
 //
 // # Why this is allowed to skip the form, and why it may not skip the PERSON
 //

@@ -17,7 +17,7 @@ import (
 // one.
 //
 // It was invisible: applyEgress prints the error as a hint and returns nil, so
-// `drift file apply` reports `Done!` on the line underneath. Nothing failed,
+// `drift apply` reports `Done!` on the line underneath. Nothing failed,
 // nothing retried, and the allowlist was simply never refreshed.
 
 func TestRefreshEgress_DeclaresItsContentType(t *testing.T) {
@@ -98,9 +98,8 @@ func TestRefreshEgress_RemovingAnAllowlistSaysSoExplicitly(t *testing.T) {
 	}
 }
 
-// The declaration is read from `edge.egress`, where the key walker lands the
-// retired `atomic.egress` too. A reader of the old spelling would see an open
-// slice for every file written either way.
+// The declaration is read from `edge.egress`, the block a Driftfile writes it
+// in. A reader of any other key would see an open slice for every file.
 func TestDesiredEgress_ReadsEdgeEgress(t *testing.T) {
 	m := &Manifest{slice: Node{"edge": map[string]any{"egress": map[string]any{
 		"mode": "Allowlist", "hosts": []any{"api.stripe.com"},
@@ -123,13 +122,16 @@ func TestDesiredEgress_ReadsEdgeEgress(t *testing.T) {
 // allowlistedSliceStub is a slice that exists, is ready, and holds an egress
 // allowlist, so an apply that moves it back to open is visible as a refresh
 // carrying `"mode":"open"`. It returns the recorder and the refresh bodies.
+//
+// The slice is a monthly one, so a monthly Driftfile is applied to it rather than
+// refused as a move off the free slice.
 func allowlistedSliceStub(t *testing.T) (*recorder, *[]string) {
 	t.Helper()
 	var refreshes []string
 	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/ops/slice/get":
-			_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{}}`))
+			_, _ = w.Write([]byte(`{"name":"demo","tier":"custom","config":{}}`))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
 		case "/ops/atomic/egress":
@@ -142,8 +144,8 @@ func allowlistedSliceStub(t *testing.T) (*recorder, *[]string) {
 			_, _ = w.Write([]byte(`{}`))
 		}
 	})
-	compiledSchema = nil
-	t.Cleanup(func() { compiledSchema = nil })
+	// After the stub, which gives the test a HOME of its own.
+	withRealSchema(t)
 	return rec, &refreshes
 }
 
@@ -172,9 +174,9 @@ func TestApplyEgress_AbsentLeavesTheLiveSettingAsItIs(t *testing.T) {
 // to an allowlisted slice, calls no egress route.
 func TestApply_AbsentEgressCallsNoEgressRoute(t *testing.T) {
 	rec, refreshes := allowlistedSliceStub(t)
-	applyIn(t, "slice: demo\nedge:\n  rate_limit: 600/min\n")
+	applyIn(t, "slice \"demo\" { billing = \"monthly\" }\nedge { rate_limit = \"600/min\" }\n")
 
-	if err := runApply(t); err != nil {
+	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if rec.count("GET /ops/slice/get") == 0 {
@@ -190,18 +192,17 @@ func TestApply_AbsentEgressCallsNoEgressRoute(t *testing.T) {
 	}
 }
 
-// A present `mode: open` is a declaration, and moves an allowlisted slice back
-// to open, under either spelling.
+// A present `mode = "open"` is a declaration, and moves an allowlisted slice
+// back to open; so is an egress block that states no mode at all.
 func TestApply_ADeclaredOpenEgressStillSetsOpen(t *testing.T) {
 	for _, body := range []string{
-		"slice: demo\nedge:\n  egress:\n    mode: open\n",
-		"slice: demo\natomic:\n  egress:\n    mode: open\n",
-		"slice: demo\nedge:\n  egress: {}\n",
+		"slice \"demo\" { billing = \"monthly\" }\nedge {\n  egress {\n    mode = \"open\"\n  }\n}\n",
+		"slice \"demo\" { billing = \"monthly\" }\nedge {\n  egress {}\n}\n",
 	} {
 		_, refreshes := allowlistedSliceStub(t)
 		applyIn(t, body)
 
-		if err := runApply(t); err != nil {
+		if err := applyAgreeingAtZero(t); err != nil {
 			t.Fatalf("apply of %q: %v", body, err)
 		}
 		if len(*refreshes) != 1 || !strings.Contains((*refreshes)[0], `"mode":"open"`) {

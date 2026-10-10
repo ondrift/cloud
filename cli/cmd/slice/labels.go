@@ -2,18 +2,15 @@ package slice
 
 // labels.go — writing the tenant's own labels onto a slice.
 //
-// # Why a deploy is allowed to call this, when it may not resize
+// # Why a deploy writes labels without asking
 //
-// `drift file apply` must never change what a slice COSTS or what it HOLDS.
-// That rule is why it refuses a Driftfile naming more functions than the slice
-// has, instead of growing one, and why there is no prompt on that path that
-// could be answered into a larger bill.
-//
-// A label is neither. It has no price — `plan.PriceConfig` charges for scheduled
-// jobs, realtime connections, booked function memory and storage bytes, and a
-// label is none of them — and it destroys nothing: no limit moves, no declared
-// set shrinks, no route stops answering. So the Driftfile can own labels outright
-// without apply acquiring the power it was deliberately denied.
+// `drift apply` asks before anything that changes what a slice COSTS or what it
+// HOLDS: the price, each removal, each loss of data. A label is none of those.
+// It has no price — `plan.PriceConfig` charges for scheduled jobs, realtime
+// connections, booked function memory and storage bytes, and a label is none of
+// them — and it destroys nothing: no limit moves, no declared set shrinks, no
+// route stops answering. So the deploy writes the Driftfile's labels outright,
+// with no question to answer.
 //
 // # A labels-only PATCH, which is what makes it possible at all
 //

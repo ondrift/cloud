@@ -6,8 +6,9 @@ package portal
 //                      slice's shape in the terminal.
 //   From a Driftfile → a minimal directory explorer to locate a Driftfile,
 //                      then SUSPEND the dashboard and run the real
-//                      `drift file apply` (full build/upload pipeline,
-//                      streaming output), then re-enter.
+//                      `drift apply` (it asks before the price and any removal,
+//                      then builds and uploads, streaming output), then
+//                      re-enter.
 //
 // A slice is the remote envelope (what the sidebar lists); a Driftfile is the
 // local declarative project that provisions + fills one. Reuse the proven
@@ -132,7 +133,7 @@ const (
 
 // explorer modes — what "select" ultimately does.
 const (
-	exDriftfile = iota // a Driftfile → drift file apply (provision a slice)
+	exDriftfile = iota // a Driftfile → drift apply (create or resize its slice, then deploy)
 	exFnDeploy         // a directory  → drift atomic deploy <dir>
 	exFnNew            // a directory  → drift atomic new (scaffold there)
 )
@@ -440,13 +441,13 @@ func (m *model) createSliceForm() {
 		func() { m.active = common.GetActiveSlice(); m.loadSlices() })
 }
 
-// deployDriftfile suspends the dashboard, runs the real `drift file apply`
-// in dir, then re-enters with a fresh slice list.
+// deployDriftfile suspends the dashboard, runs the real `drift apply` in dir,
+// then re-enters with a fresh slice list.
 func (m *model) deployDriftfile(dir string) {
 	m.explorer = nil
-	cmd := exec.Command(driftExe(), "file", "apply") // #nosec G204 -- our own binary, fixed args
+	cmd := exec.Command(driftExe(), "apply") // #nosec G204 -- our own binary, fixed args
 	cmd.Dir = dir
-	m.suspendAndRun("drift file apply  "+abbrevHome(dir), cmd,
+	m.suspendAndRun("drift apply  "+abbrevHome(dir), cmd,
 		"deployed "+filepath.Base(dir), "✗ deploy failed (see output above)",
 		func() { m.active = common.GetActiveSlice(); m.loadSlices() })
 }

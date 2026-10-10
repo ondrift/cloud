@@ -352,20 +352,22 @@ func TestApplySQL_ASchemaWithoutMigrationsIsUnchanged(t *testing.T) {
 	}
 }
 
-// A migrations directory is a path the document names, so its absence is
-// reported at parse time with every other missing path.
-func TestCheckLocalPaths_ReportsAMissingMigrationsDirectory(t *testing.T) {
-	root := t.TempDir()
-	m := sqlManifest(root, map[string]any{"name": "orders", "migrations": "./migrations"})
+// A migrations directory is a path the file names, so its absence is reported
+// at parse time, at the attribute that names it, with every other missing path.
+func TestParseDriftfile_ReportsAMissingMigrationsDirectory(t *testing.T) {
+	withRealSchema(t)
+	body := "slice \"demo\" { billing = \"monthly\" }\n" +
+		"sql \"orders\" {\n  size       = \"10MiB\"\n  migrations = \"./migrations\"\n}\n"
+	path := writeDriftfile(t, body)
 
-	errs := checkLocalPaths(m)
-	if len(errs) != 1 || !strings.Contains(errs[0], "migrations") {
-		t.Fatalf("got %v, want one error naming the missing migrations directory", errs)
+	_, err := ParseDriftfile(path)
+	if err == nil || !strings.Contains(err.Error(), "migrations") || !strings.Contains(err.Error(), "Driftfile:4:") {
+		t.Fatalf("got %v, want one error naming the missing migrations directory at line 4", err)
 	}
 
-	mustMkdir(t, filepath.Join(root, "migrations"))
-	if errs := checkLocalPaths(m); len(errs) != 0 {
-		t.Errorf("the directory exists, so nothing must be reported: %v", errs)
+	mustMkdir(t, filepath.Join(filepath.Dir(path), "migrations"))
+	if _, err := ParseDriftfile(path); err != nil {
+		t.Errorf("the directory exists, so nothing must be reported: %v", err)
 	}
 }
 
@@ -392,7 +394,8 @@ func TestParse_CarriesSQLMigrationsThrough(t *testing.T) {
 	root := t.TempDir()
 	mustMkdir(t, filepath.Join(root, "migrations"))
 	mustWrite(t, filepath.Join(root, "Driftfile"),
-		"slice: demo\nbackbone:\n  sql:\n    - name: orders\n      migrations: ./migrations\n")
+		"slice \"demo\" { billing = \"monthly\" }\n"+
+			"sql \"orders\" {\n  size       = \"10MiB\"\n  migrations = \"./migrations\"\n}\n")
 	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
 	if err != nil {
 		t.Fatalf("a Driftfile declaring migrations does not parse under %s: %v", doc.Version, err)

@@ -10,7 +10,7 @@ import (
 
 // Every language's function process carries the declared queues, so the SDK's
 // in-process store creates them before the function's first queue call, as
-// `drift file apply` creates them on a slice.
+// `drift apply` creates them on a slice.
 func TestProcessEnv_CarriesTheDeclaredQueues(t *testing.T) {
 	t.Cleanup(func() { atomic_cmd.SetDeclaredQueues(nil) })
 	r := &devRunner{srcDir: t.TempDir(), port: 3000}

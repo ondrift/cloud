@@ -1,25 +1,24 @@
 package project
 
-// driftfile2.go — Driftfile 2: the HCL format, read into blocks.
+// driftfile.go — the Driftfile: HCL, read into blocks.
 //
-// A Driftfile 2 is one HCL file that declares the whole slice: what runs on it
+// A Driftfile is one HCL file that declares the whole slice: what runs on it
 // (elements, their Pulses and Fields, Backbone, sites, edge) AND its shape (each
 // booking beside what it books, each storage size beside what it sizes, and the
-// slice's limits). The YAML 1.x format keeps working beside it, unchanged.
+// slice's limits).
 //
-// This file reads the TEXT: which format a file is, its blocks, and the small
-// expression language. compile2.go turns the blocks into today's two payloads,
-// the flattened Pulse/Field document every 1.x reader consumes and the
-// SliceConfig the platform prices. plan2.go diffs those against the live slice.
+// This file reads the TEXT: its blocks and the small expression language.
+// compile.go turns the blocks into the two payloads, the flattened Pulse/Field
+// document every reader consumes and the SliceConfig the platform prices.
+// plan.go diffs those against the live slice.
 //
-// # Detection is by the file, never by a flag
+// # A YAML Driftfile is refused, by its first tokens
 //
-// A file is format 2 when its first tokens are `drift {`. A YAML 1.x Driftfile
-// is a mapping and its first line is a `key:` pair, so it can never begin that
-// way; anything else is read as YAML exactly as before. Detecting on the tokens
-// rather than on a clean parse means a format-2 file with a syntax error is
-// reported as HCL, at its line and column, instead of as a YAML error about a
-// file that was never meant to be YAML.
+// The Driftfile was YAML before it was HCL, and a YAML file is not read. It is
+// recognised by its first tokens, a `key:` pair, which no HCL file begins
+// with, and refused with one message saying the format changed. Recognising it
+// by the tokens rather than by a failed parse means the person reads why the
+// file is not accepted, instead of an HCL syntax error about a colon.
 //
 // # Expressions stay small
 //
@@ -47,18 +46,10 @@ import (
 	"github.com/zclconf/go-cty/cty/function"
 )
 
-// Format2Implemented is the Driftfile 2 format this binary reads. A file
-// declaring a later MINOR is still read, with a notice; a later MAJOR is not
-// format 2 at all.
-const Format2Implemented = "2.0"
-
-// format2Re is what `drift { format = ... }` must say for a file to be read
-// as format 2.
-var format2Re = regexp.MustCompile(`^2\.(0|[1-9][0-9]*)$`)
-
-// IsFormat2 reports whether a Driftfile's text is format 2: its first tokens,
-// past comments and blank lines, are `drift {`.
-func IsFormat2(data []byte) bool {
+// isYAML reports whether a Driftfile's text is YAML: its first tokens, past
+// comments and blank lines, are a `key:` pair, or a `---` document marker.
+// HCL begins with a block or an attribute, never with either.
+func isYAML(data []byte) bool {
 	toks, _ := hclsyntax.LexConfig(data, driftfileName, hcl.InitialPos)
 	var sig []hclsyntax.Token
 	for _, t := range toks {
@@ -66,13 +57,34 @@ func IsFormat2(data []byte) bool {
 			continue
 		}
 		sig = append(sig, t)
-		if len(sig) == 2 {
+		if len(sig) == 3 {
 			break
 		}
 	}
-	return len(sig) == 2 &&
-		sig[0].Type == hclsyntax.TokenIdent && string(sig[0].Bytes) == "drift" &&
-		sig[1].Type == hclsyntax.TokenOBrace
+	switch {
+	case len(sig) >= 2 && sig[0].Type == hclsyntax.TokenIdent && sig[1].Type == hclsyntax.TokenColon:
+		return true
+	case len(sig) == 3 && sig[0].Type == hclsyntax.TokenMinus && sig[1].Type == hclsyntax.TokenMinus &&
+		sig[2].Type == hclsyntax.TokenMinus:
+		return true
+	}
+	return false
+}
+
+// RefuseYAML is refuseYAML for a reader outside this package: the refusal
+// when data is YAML, and nil otherwise.
+func RefuseYAML(path string, data []byte) error {
+	if isYAML(data) {
+		return refuseYAML(path)
+	}
+	return nil
+}
+
+// refuseYAML is the one answer to a YAML Driftfile, wherever it is read.
+func refuseYAML(path string) error {
+	return fmt.Errorf("%s is written in YAML, and the Driftfile is HCL now: this CLI reads no YAML Driftfile.\n"+
+		"  Rewrite it in HCL. `drift file new` writes a starter, and `drift file explain` lists every block it can hold",
+		filepath.Base(path))
 }
 
 // ─── the blocks ─────────────────────────────────────────────────────────────
@@ -83,42 +95,36 @@ func IsFormat2(data []byte) bool {
 // block or attribute, a missing or extra label, and a duplicated attribute are
 // refused by it, at their positions.
 
-type df2File struct {
-	Drift        []df2Drift       `hcl:"drift,block"`
-	Slice        []df2Slice       `hcl:"slice,block"`
-	Elements     []df2Element     `hcl:"element,block"`
-	SQL          []df2SQL         `hcl:"sql,block"`
-	NoSQL        []df2NoSQL       `hcl:"nosql,block"`
-	Blobs        []df2Blobs       `hcl:"blobs,block"`
-	Queues       []df2Queue       `hcl:"queue,block"`
-	Caches       []df2Cache       `hcl:"cache,block"`
-	Secrets      []df2Secret      `hcl:"secret,block"`
-	Sites        []df2Site        `hcl:"site,block"`
-	Edge         []df2Edge        `hcl:"edge,block"`
-	Variables    []df2Variable    `hcl:"variable,block"`
-	Environments []df2Environment `hcl:"environment,block"`
-	Hooks        []df2Hook        `hcl:"hook,block"`
-	Tests        []df2Test        `hcl:"test,block"`
+type dfFile struct {
+	Slice        []dfSlice       `hcl:"slice,block"`
+	Elements     []dfElement     `hcl:"element,block"`
+	SQL          []dfSQL         `hcl:"sql,block"`
+	NoSQL        []dfNoSQL       `hcl:"nosql,block"`
+	Blobs        []dfBlobs       `hcl:"blobs,block"`
+	Queues       []dfQueue       `hcl:"queue,block"`
+	Caches       []dfCache       `hcl:"cache,block"`
+	Secrets      []dfSecret      `hcl:"secret,block"`
+	Sites        []dfSite        `hcl:"site,block"`
+	Edge         []dfEdge        `hcl:"edge,block"`
+	Variables    []dfVariable    `hcl:"variable,block"`
+	Environments []dfEnvironment `hcl:"environment,block"`
+	Hooks        []dfHook        `hcl:"hook,block"`
+	Tests        []dfTest        `hcl:"test,block"`
 }
 
-type df2Drift struct {
-	Format   hcl.Expression `hcl:"format,optional"`
-	DefRange hcl.Range      `hcl:",def_range"`
-}
-
-type df2Slice struct {
+type dfSlice struct {
 	Name      string         `hcl:"name,label"`
 	NameRange hcl.Range      `hcl:"name,label_range"`
 	Billing   hcl.Expression `hcl:"billing,optional"`
 	Labels    hcl.Expression `hcl:"labels,optional"`
-	Limits    []df2Limits    `hcl:"limits,block"`
+	Limits    []dfLimits     `hcl:"limits,block"`
 	DefRange  hcl.Range      `hcl:",def_range"`
 }
 
-// df2Limits is the slice-wide part of the shape: everything a slice has that
+// dfLimits is the slice-wide part of the shape: everything a slice has that
 // no single block in the file owns. Each attribute maps to one SliceConfig
-// scalar; compile2.go's shapeLimits table is where that mapping lives.
-type df2Limits struct {
+// scalar; compile.go's shapeLimits table is where that mapping lives.
+type dfLimits struct {
 	RequestsPerMinute   hcl.Expression `hcl:"requests_per_minute,optional"`
 	Timeout             hcl.Expression `hcl:"timeout,optional"`
 	LogRetention        hcl.Expression `hcl:"log_retention,optional"`
@@ -139,16 +145,16 @@ type df2Limits struct {
 	DefRange            hcl.Range      `hcl:",def_range"`
 }
 
-type df2Element struct {
+type dfElement struct {
 	Name      string         `hcl:"name,label"`
 	NameRange hcl.Range      `hcl:"name,label_range"`
 	Dir       hcl.Expression `hcl:"dir,optional"`
-	Pulses    []df2Pulse     `hcl:"pulse,block"`
-	Fields    []df2Field     `hcl:"field,block"`
+	Pulses    []dfPulse      `hcl:"pulse,block"`
+	Fields    []dfField      `hcl:"field,block"`
 	DefRange  hcl.Range      `hcl:",def_range"`
 }
 
-type df2Pulse struct {
+type dfPulse struct {
 	Label      string         `hcl:"trigger,label"`
 	LabelRange hcl.Range      `hcl:"trigger,label_range"`
 	Handler    hcl.Expression `hcl:"handler,optional"`
@@ -160,16 +166,16 @@ type df2Pulse struct {
 	Secrets    hcl.Expression `hcl:"secrets,optional"`
 	Memory     hcl.Expression `hcl:"memory,optional"`
 	Dir        hcl.Expression `hcl:"dir,optional"`
-	Auth       []df2Auth      `hcl:"auth,block"`
+	Auth       []dfAuth       `hcl:"auth,block"`
 	DefRange   hcl.Range      `hcl:",def_range"`
 }
 
-type df2Auth struct {
+type dfAuth struct {
 	APIKey   hcl.Expression `hcl:"api_key,optional"`
 	DefRange hcl.Range      `hcl:",def_range"`
 }
 
-type df2Field struct {
+type dfField struct {
 	Name      string         `hcl:"name,label"`
 	NameRange hcl.Range      `hcl:"name,label_range"`
 	Handler   hcl.Expression `hcl:"handler,optional"`
@@ -180,7 +186,7 @@ type df2Field struct {
 	DefRange  hcl.Range      `hcl:",def_range"`
 }
 
-type df2SQL struct {
+type dfSQL struct {
 	Name       string         `hcl:"name,label"`
 	NameRange  hcl.Range      `hcl:"name,label_range"`
 	Size       hcl.Expression `hcl:"size,optional"`
@@ -190,7 +196,7 @@ type df2SQL struct {
 	DefRange   hcl.Range      `hcl:",def_range"`
 }
 
-type df2NoSQL struct {
+type dfNoSQL struct {
 	Name      string         `hcl:"name,label"`
 	NameRange hcl.Range      `hcl:"name,label_range"`
 	Size      hcl.Expression `hcl:"size,optional"`
@@ -200,21 +206,21 @@ type df2NoSQL struct {
 	DefRange  hcl.Range      `hcl:",def_range"`
 }
 
-type df2Blobs struct {
+type dfBlobs struct {
 	Name      string         `hcl:"name,label"`
 	NameRange hcl.Range      `hcl:"name,label_range"`
 	Size      hcl.Expression `hcl:"size,optional"`
 	DefRange  hcl.Range      `hcl:",def_range"`
 }
 
-type df2Queue struct {
+type dfQueue struct {
 	Name      string         `hcl:"name,label"`
 	NameRange hcl.Range      `hcl:"name,label_range"`
 	Depth     hcl.Expression `hcl:"depth,optional"`
 	DefRange  hcl.Range      `hcl:",def_range"`
 }
 
-type df2Cache struct {
+type dfCache struct {
 	Key      string         `hcl:"key,label"`
 	File     hcl.Expression `hcl:"file,optional"`
 	Value    hcl.Expression `hcl:"value,optional"`
@@ -222,62 +228,62 @@ type df2Cache struct {
 	DefRange hcl.Range      `hcl:",def_range"`
 }
 
-type df2Secret struct {
+type dfSecret struct {
 	Name      string         `hcl:"name,label"`
 	NameRange hcl.Range      `hcl:"name,label_range"`
 	Value     hcl.Expression `hcl:"value,optional"`
 	DefRange  hcl.Range      `hcl:",def_range"`
 }
 
-type df2Site struct {
+type dfSite struct {
 	Path      string         `hcl:"path,label"`
 	PathRange hcl.Range      `hcl:"path,label_range"`
 	Dir       hcl.Expression `hcl:"dir,optional"`
 	DefRange  hcl.Range      `hcl:",def_range"`
 }
 
-type df2Edge struct {
-	Egress    []df2Egress    `hcl:"egress,block"`
-	Domains   []df2Domain    `hcl:"domain,block"`
+type dfEdge struct {
+	Egress    []dfEgress     `hcl:"egress,block"`
+	Domains   []dfDomain     `hcl:"domain,block"`
 	RateLimit hcl.Expression `hcl:"rate_limit,optional"`
-	SiteAuth  []df2SiteAuth  `hcl:"site_auth,block"`
+	SiteAuth  []dfSiteAuth   `hcl:"site_auth,block"`
 	Links     hcl.Expression `hcl:"links,optional"`
 	Allow     hcl.Expression `hcl:"allow,optional"`
 	Hosts     hcl.Expression `hcl:"hosts,optional"`
 	DefRange  hcl.Range      `hcl:",def_range"`
 }
 
-type df2Egress struct {
+type dfEgress struct {
 	Mode     hcl.Expression `hcl:"mode,optional"`
 	Hosts    hcl.Expression `hcl:"hosts,optional"`
 	DefRange hcl.Range      `hcl:",def_range"`
 }
 
-type df2Domain struct {
+type dfDomain struct {
 	Host     string         `hcl:"host,label"`
 	Wildcard hcl.Expression `hcl:"wildcard,optional"`
 	DefRange hcl.Range      `hcl:",def_range"`
 }
 
-type df2SiteAuth struct {
+type dfSiteAuth struct {
 	Realm    hcl.Expression `hcl:"realm,optional"`
-	Users    []df2User      `hcl:"user,block"`
+	Users    []dfUser       `hcl:"user,block"`
 	DefRange hcl.Range      `hcl:",def_range"`
 }
 
-type df2User struct {
+type dfUser struct {
 	Name     string         `hcl:"name,label"`
 	Password hcl.Expression `hcl:"password,optional"`
 	DefRange hcl.Range      `hcl:",def_range"`
 }
 
-type df2Variable struct {
+type dfVariable struct {
 	Name     string         `hcl:"name,label"`
 	Default  hcl.Expression `hcl:"default,optional"`
 	DefRange hcl.Range      `hcl:",def_range"`
 }
 
-type df2Environment struct {
+type dfEnvironment struct {
 	Name      string         `hcl:"name,label"`
 	NameRange hcl.Range      `hcl:"name,label_range"`
 	Slice     hcl.Expression `hcl:"slice,optional"`
@@ -286,14 +292,14 @@ type df2Environment struct {
 	DefRange  hcl.Range      `hcl:",def_range"`
 }
 
-type df2Hook struct {
+type dfHook struct {
 	Phase      string         `hcl:"phase,label"`
 	PhaseRange hcl.Range      `hcl:"phase,label_range"`
 	Run        hcl.Expression `hcl:"run,optional"`
 	DefRange   hcl.Range      `hcl:",def_range"`
 }
 
-type df2Test struct {
+type dfTest struct {
 	Name     string         `hcl:"name,label"`
 	Run      hcl.Expression `hcl:"run,optional"`
 	DefRange hcl.Range      `hcl:",def_range"`
@@ -301,10 +307,10 @@ type df2Test struct {
 
 // ─── reading the text ───────────────────────────────────────────────────────
 
-// readFormat2 parses a format-2 file into its blocks and the evaluation
-// context its expressions run in, for the default slice.
-func readFormat2(path string, data []byte) (*df2File, *df2Eval, error) {
-	return readFormat2Env(path, data, "")
+// readDriftfile parses a Driftfile into its blocks and the evaluation context
+// its expressions run in, for the default slice.
+func readDriftfile(path string, data []byte) (*dfFile, *dfEval, error) {
+	return readDriftfileEnv(path, data, "")
 }
 
 // selectedEnv is the environment a file is read for: its name, the slice it
@@ -316,14 +322,17 @@ type selectedEnv struct {
 	hasSlice, hasBilling bool
 }
 
-// readFormat2Env parses a format-2 file for one environment, or for the
-// default slice when env is "". The context needs the variables, and the
-// variables are themselves blocks, so they are read first on their own; an
-// environment sets variables, so the environments are read with them.
+// readDriftfileEnv parses a Driftfile for one environment, or for the default
+// slice when env is "". The context needs the variables, and the variables are
+// themselves blocks, so they are read first on their own; an environment sets
+// variables, so the environments are read with them.
 //
 // A variable's value is the selected environment's, else its default. One
 // with neither is an error at the variable, naming where it could be set.
-func readFormat2Env(path string, data []byte, env string) (*df2File, *df2Eval, error) {
+func readDriftfileEnv(path string, data []byte, env string) (*dfFile, *dfEval, error) {
+	if isYAML(data) {
+		return nil, nil, refuseYAML(path)
+	}
 	name := filepath.Base(path)
 	f, diags := hclsyntax.ParseConfig(data, name, hcl.InitialPos)
 	if diags.HasErrors() {
@@ -331,18 +340,7 @@ func readFormat2Env(path string, data []byte, env string) (*df2File, *df2Eval, e
 	}
 	body := f.Body.(*hclsyntax.Body)
 
-	// The first block is `drift`, and it says which format this is. Checked
-	// on the syntax tree, where blocks keep their source order.
-	if len(body.Blocks) == 0 || body.Blocks[0].Type != "drift" {
-		return nil, nil, diagError(hcl.Diagnostics{{
-			Severity: hcl.DiagError,
-			Summary:  "The first block must be drift",
-			Detail:   `A Driftfile 2 begins with drift { format = "2.0" }, so the format is stated by the file rather than guessed.`,
-			Subject:  body.Range().Ptr(),
-		}})
-	}
-
-	ev := &df2Eval{dir: filepath.Dir(path)}
+	ev := &dfEval{dir: filepath.Dir(path), file: name}
 
 	// Variables and environments first, with no `var` of their own: a default
 	// or an environment's value is a literal or an env()/file() call, and one
@@ -365,7 +363,7 @@ func readFormat2Env(path string, data []byte, env string) (*df2File, *df2Eval, e
 		if blk.Labels[0] != env || env == "" {
 			continue
 		}
-		var e df2Environment
+		var e dfEnvironment
 		if d := gohcl.DecodeBody(blk.Body, ev.ctx, &e); d.HasErrors() {
 			ev.diags = append(ev.diags, d...)
 			continue
@@ -404,7 +402,7 @@ func readFormat2Env(path string, data []byte, env string) (*df2File, *df2Eval, e
 		if blk.Type != "variable" {
 			continue
 		}
-		var v df2Variable
+		var v dfVariable
 		if d := gohcl.DecodeBody(blk.Body, ev.ctx, &v); d.HasErrors() {
 			ev.diags = append(ev.diags, d...)
 			continue
@@ -442,7 +440,7 @@ func readFormat2Env(path string, data []byte, env string) (*df2File, *df2Eval, e
 	}
 	ev.vars = vars
 
-	var file df2File
+	var file dfFile
 	if d := gohcl.DecodeBody(f.Body, ev.ctx, &file); d.HasErrors() {
 		return nil, nil, diagError(d)
 	}
@@ -451,18 +449,21 @@ func readFormat2Env(path string, data []byte, env string) (*df2File, *df2Eval, e
 
 // ─── evaluation ─────────────────────────────────────────────────────────────
 
-// df2Eval evaluates attribute expressions and collects every diagnostic, so a
+// dfEval evaluates attribute expressions and collects every diagnostic, so a
 // file with five mistakes is reported once with all five.
-type df2Eval struct {
-	ctx   *hcl.EvalContext
-	dir   string
+type dfEval struct {
+	ctx *hcl.EvalContext
+	dir string
+	// file is the Driftfile's name, for a diagnostic that belongs to the whole
+	// file rather than to one block in it.
+	file  string
 	vars  map[string]cty.Value
 	diags hcl.Diagnostics
 	// env is the environment the file is read for; nil for the default slice.
 	env *selectedEnv
 }
 
-func (e *df2Eval) errorf(rng hcl.Range, summary, format string, args ...any) {
+func (e *dfEval) errorf(rng hcl.Range, summary, format string, args ...any) {
 	r := rng
 	e.diags = append(e.diags, &hcl.Diagnostic{
 		Severity: hcl.DiagError,
@@ -487,7 +488,7 @@ func present(expr hcl.Expression) bool {
 
 // value evaluates an attribute converted to want, and reports whether it was
 // written. An error is recorded at the attribute and reads as absent.
-func (e *df2Eval) value(expr hcl.Expression, want cty.Type, what string) (cty.Value, bool) {
+func (e *dfEval) value(expr hcl.Expression, want cty.Type, what string) (cty.Value, bool) {
 	if !present(expr) {
 		return cty.NilVal, false
 	}
@@ -511,7 +512,7 @@ func (e *df2Eval) value(expr hcl.Expression, want cty.Type, what string) (cty.Va
 	return cv, true
 }
 
-func (e *df2Eval) str(expr hcl.Expression, what string) (string, bool) {
+func (e *dfEval) str(expr hcl.Expression, what string) (string, bool) {
 	v, ok := e.value(expr, cty.String, what)
 	if !ok {
 		return "", false
@@ -519,7 +520,7 @@ func (e *df2Eval) str(expr hcl.Expression, what string) (string, bool) {
 	return v.AsString(), true
 }
 
-func (e *df2Eval) integer(expr hcl.Expression, what string) (int, bool) {
+func (e *dfEval) integer(expr hcl.Expression, what string) (int, bool) {
 	v, ok := e.value(expr, cty.Number, what)
 	if !ok {
 		return 0, false
@@ -533,7 +534,7 @@ func (e *df2Eval) integer(expr hcl.Expression, what string) (int, bool) {
 	return int(n), true
 }
 
-func (e *df2Eval) boolean(expr hcl.Expression, what string) (bool, bool) {
+func (e *dfEval) boolean(expr hcl.Expression, what string) (bool, bool) {
 	v, ok := e.value(expr, cty.Bool, what)
 	if !ok {
 		return false, false
@@ -541,7 +542,7 @@ func (e *df2Eval) boolean(expr hcl.Expression, what string) (bool, bool) {
 	return v.True(), true
 }
 
-func (e *df2Eval) strList(expr hcl.Expression, what string) ([]string, bool) {
+func (e *dfEval) strList(expr hcl.Expression, what string) ([]string, bool) {
 	v, ok := e.value(expr, cty.List(cty.String), what)
 	if !ok {
 		return nil, false
@@ -554,7 +555,7 @@ func (e *df2Eval) strList(expr hcl.Expression, what string) ([]string, bool) {
 	return out, true
 }
 
-func (e *df2Eval) strMap(expr hcl.Expression, what string) (map[string]string, bool) {
+func (e *dfEval) strMap(expr hcl.Expression, what string) (map[string]string, bool) {
 	v, ok := e.value(expr, cty.Map(cty.String), what)
 	if !ok {
 		return nil, false
@@ -576,7 +577,7 @@ func (e *df2Eval) strMap(expr hcl.Expression, what string) (map[string]string, b
 // The value is not read here. A plan compares write-only values by their
 // presence and, where the platform shows one, a fingerprint; it never needs
 // the value in the document, and keeping it out keeps it out of every output.
-func (e *df2Eval) envReference(expr hcl.Expression, what string) (string, bool) {
+func (e *dfEval) envReference(expr hcl.Expression, what string) (string, bool) {
 	if !present(expr) {
 		return "", false
 	}
@@ -602,7 +603,7 @@ func (e *df2Eval) envReference(expr hcl.Expression, what string) (string, bool) 
 }
 
 // functions is the whole function library: env(), file() and sha256().
-func (e *df2Eval) functions() map[string]function.Function {
+func (e *dfEval) functions() map[string]function.Function {
 	return map[string]function.Function{
 		// env reads a variable through today's precedence: the terminal, then
 		// --var/--secret, then .env.<env>, then .env. applyVariableSources has

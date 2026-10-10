@@ -99,16 +99,17 @@ func TestEnvSpecificFilePrecedence(t *testing.T) {
 	}
 }
 
-// Tier 1 (hardcoded literal) vs a $ENVREF resolved from the lowest tier (.env),
-// end-to-end through ParseDriftfile.
-func TestHardcodedAndRefSecrets(t *testing.T) {
+// A secret's env() reference resolves from the lowest tier (.env) when nothing
+// above it sets the variable, end-to-end through ParseDriftfile.
+func TestASecretReferenceResolvesFromTheEnvFile(t *testing.T) {
+	withRealSchema(t)
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, ".env"), []byte("DB_PASSWORD=fromfile\n"), 0o600)
 	t.Cleanup(func() { os.Unsetenv("DB_PASSWORD") })
 
 	df := filepath.Join(dir, "Driftfile")
 	_ = os.WriteFile(df, []byte(
-		"name: app\nbackbone:\n  secrets:\n    LITERAL: hardcoded123\n    DB_PASS: $DB_PASSWORD\n"), 0o600)
+		"slice \"app\" { billing = \"monthly\" }\nsecret \"DB_PASS\" { value = env(\"DB_PASSWORD\") }\n"), 0o600)
 
 	if _, err := applyVariableSources(dir, nil, true, ""); err != nil {
 		t.Fatal(err)
@@ -117,11 +118,7 @@ func TestHardcodedAndRefSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secs := m.Slice().StrMap("backbone", "secrets")
-	if secs["LITERAL"] != "hardcoded123" {
-		t.Errorf("LITERAL = %q, want hardcoded123 (hardcoded, tier 1)", secs["LITERAL"])
-	}
-	if secs["DB_PASS"] != "fromfile" {
-		t.Errorf("DB_PASS = %q, want fromfile (resolved from .env, tier 4)", secs["DB_PASS"])
+	if got := m.Slice().StrMap("backbone", "secrets")["DB_PASS"]; got != "fromfile" {
+		t.Errorf("DB_PASS = %q, want fromfile (resolved from .env, tier 4)", got)
 	}
 }

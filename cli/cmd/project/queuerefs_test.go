@@ -51,53 +51,63 @@ func TestCheckQueueReferences_NamesAnUndeclaredQueue(t *testing.T) {
 // rather than refusing it, so the function genuinely fires — refusing the parse
 // would break a setup that works.
 func TestParse_AnUndeclaredQueueIsAWarningRatherThanARefusal(t *testing.T) {
-	p := writeManifest(t, `
-slice: demo
-atomic:
-  functions:
-    - route: orders
-      method: queue
-      handler: HandleOrder
+	withRealSchema(t)
+	p := writeManifest(t, `slice "demo" { billing = "monthly" }
+
+element "default" {
+  pulse "QUEUE orders" {
+    handler = "HandleOrder"
+    memory = "16MiB"
+  }
+}
 `)
-	if _, err := ParseDriftfile(p); err != nil {
+	m, err := ParseDriftfile(p)
+	if err != nil {
 		t.Fatalf("an undeclared queue must not fail the parse — the trigger still fires: %v", err)
+	}
+	if w := checkQueueReferences(m); len(w) != 1 {
+		t.Errorf("the parse accepted it, and the gap must still be reported once, got %v", w)
 	}
 }
 
-// The control: the same manifest with the queue declared parses clean. Both
-// spellings of a queue entry are accepted by the schema, so both are pinned —
-// without this the test above passes for a check that refuses every trigger.
-func TestParse_AcceptsADeclaredQueueInEitherSpelling(t *testing.T) {
-	for _, decl := range []string{
-		"  queues:\n    - orders\n",
-		"  queues:\n    - name: orders\n",
-	} {
-		p := writeManifest(t, `
-slice: demo
-atomic:
-  functions:
-    - route: orders
-      method: queue
-      handler: HandleOrder
-backbone:
-`+decl)
-		if _, err := ParseDriftfile(p); err != nil {
-			t.Errorf("a declared queue must parse clean, spelling %q gave: %v", decl, err)
-		}
+// The control: the same manifest with the queue declared parses clean, and the
+// reference check has nothing to report. Without this the test above passes for
+// a check that refuses every trigger.
+func TestParse_AcceptsADeclaredQueue(t *testing.T) {
+	withRealSchema(t)
+	p := writeManifest(t, `slice "demo" { billing = "monthly" }
+
+element "default" {
+  pulse "QUEUE orders" {
+    handler = "HandleOrder"
+    memory = "16MiB"
+  }
+}
+
+queue "orders" {}
+`)
+	m, err := ParseDriftfile(p)
+	if err != nil {
+		t.Fatalf("a declared queue must parse clean, got: %v", err)
+	}
+	if w := checkQueueReferences(m); len(w) != 0 {
+		t.Errorf("a declared queue was reported as undeclared: %v", w)
 	}
 }
 
 // The other control: an HTTP function is not a queue consumer, so a manifest
 // with no queues at all is fine. Without this the check could refuse every
-// project that declares no `backbone.queues`.
+// project that declares no `queue` block.
 func TestParse_AnHTTPFunctionNeedsNoQueue(t *testing.T) {
-	p := writeManifest(t, `
-slice: demo
-atomic:
-  functions:
-    - route: ping
-      method: get
-      handler: GetPing
+	withRealSchema(t)
+	p := writeManifest(t, `slice "demo" { billing = "monthly" }
+
+element "default" {
+  pulse "GET /ping" {
+    handler = "GetPing"
+    memory = "16MiB"
+  }
+}
 `)
 	if _, err := ParseDriftfile(p); err != nil {
 		t.Errorf("an HTTP function declares no queue and must parse clean, got: %v", err)
@@ -111,18 +121,18 @@ func TestParse_TheQueueCheckMakesNoNetworkCall(t *testing.T) {
 	previous := common.APIBaseURL
 	common.APIBaseURL = "http://127.0.0.1:1"
 	t.Cleanup(func() { common.APIBaseURL = previous })
-	t.Setenv("HOME", t.TempDir())
+	withRealSchema(t)
 
-	p := writeManifest(t, `
-slice: demo
-atomic:
-  functions:
-    - route: orders
-      method: queue
-      handler: HandleOrder
-backbone:
-  queues:
-    - orders
+	p := writeManifest(t, `slice "demo" { billing = "monthly" }
+
+element "default" {
+  pulse "QUEUE orders" {
+    handler = "HandleOrder"
+    memory = "16MiB"
+  }
+}
+
+queue "orders" {}
 `)
 	if _, err := ParseDriftfile(p); err != nil {
 		t.Errorf("the parse dialled something, or refused for another reason: %v", err)

@@ -62,8 +62,8 @@ var (
 	compiledFrom   []byte
 )
 
-// validateAgainstSchema checks the shorthand-expanded document against the
-// platform's schema and returns one error per violation, in document order.
+// validateAgainstSchema checks the compiled document against the platform's
+// schema and returns one error per violation, in document order.
 func validateAgainstSchema(doc map[string]any) ParseErrors {
 	sch, err := loadSchema()
 	if err != nil {
@@ -73,10 +73,10 @@ func validateAgainstSchema(doc map[string]any) ParseErrors {
 		return nil // no schema on this machine; caller decides whether that is fatal
 	}
 
-	// The validator works on the JSON data model, and a YAML decode yields Go
-	// types it does not accept (notably map[any]any and int). A JSON round trip
-	// is the honest conversion rather than a hand-written walk that would have to
-	// know about every type YAML can produce.
+	// The validator works on the JSON data model, and the compiled document
+	// holds Go types it does not accept (Node, int). A JSON round trip is the
+	// honest conversion rather than a hand-written walk that would have to know
+	// about every type the document can hold.
 	raw, merr := json.Marshal(doc)
 	if merr != nil {
 		return ParseErrors{fmt.Sprintf("Driftfile: cannot be represented as JSON for validation: %v", merr)}

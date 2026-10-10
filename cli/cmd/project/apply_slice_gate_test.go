@@ -8,270 +8,8 @@ import (
 	"testing"
 )
 
-// THE assertion for "apply stops creating slices", and it is about what the CLI
-// DID rather than what it returned.
-//
-// A returned error proves nothing on its own: apply could refuse AND still have
-// posted a create on the way there, and the refusal would read like a
-// well-behaved gate while a slice had already been bought. So the recorder is
-// the subject — zero calls to any slice-mutating endpoint.
-func TestApply_RefusesAMissingSliceAndCreatesNothing(t *testing.T) {
-	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		// The slice does not exist. Everything else would be a bug to reach.
-		if r.URL.Path == "/ops/slice/get" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{}`))
-	})
-	applyIn(t, "slice: ghost\ncanvas:\n  sites:\n    - ./site\n", "site")
-
-	err := runApply(t)
-	if err == nil {
-		t.Fatal("applying into a slice that does not exist must be refused — the " +
-			"slice form owns what a slice is, and this file cannot create one")
-	}
-	// The slice by name, and the command that makes one. Asserted as the whole
-	// command rather than as a brand word: what owns a slice's shape has been
-	// called more than one thing, and what the reader needs is something to run.
-	if !strings.Contains(strings.ToLower(err.Error()), "ghost") {
-		t.Errorf("the refusal should name the slice, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "drift slice create ghost") {
-		t.Errorf("the refusal should name the command that creates a slice, got: %v", err)
-	}
-
-	// The point of the card. Any of these means apply still provisions.
-	for _, forbidden := range []string{
-		"POST /ops/slice/create",
-		"POST /ops/slice/resize",
-		"POST /ops/slice/price",
-	} {
-		if n := rec.count(forbidden); n != 0 {
-			t.Errorf("apply issued %d × %q against a slice it had already refused", n, forbidden)
-		}
-	}
-}
-
-// The control, and it is what stops the test above passing for the wrong
-// reason: with the slice PRESENT, apply gets past the gate and does its work.
-// Without this, deleting the whole apply body would keep the refusal test green.
-func TestApply_ProceedsWhenTheSliceExists(t *testing.T) {
-	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/ops/slice/get":
-			_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{}}`))
-		case "/ops/slice/status":
-			_, _ = w.Write([]byte(`{"ready":true}`))
-		default:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
-		}
-	})
-	applyIn(t, "slice: demo\ncanvas:\n  sites:\n    - ./site\n", "site")
-
-	// The deploy itself may still fail against a stub that answers `{}` to
-	// everything; what matters is that it got PAST the existence gate and
-	// uploaded the site.
-	_ = runApply(t)
-
-	if rec.count("GET /ops/slice/get") == 0 {
-		t.Error("apply never read the live slice, so nothing gated it")
-	}
-	if rec.count("POST /ops/canvas") == 0 {
-		t.Error("apply stopped before deploying, so the refusal test above would " +
-			"pass even with the whole apply body removed")
-	}
-	// And it still creates nothing: a slice that exists is not resized either.
-	if n := rec.count("POST /ops/slice/create"); n != 0 {
-		t.Errorf("apply created a slice that already existed (%d calls)", n)
-	}
-}
-
-// The readiness poll has to survive the create and grow branches that used to
-// own it. Without it the triad fires at a runner that is still coming up and
-// every one of Atomic, Backbone and Canvas fails with "runner unreachable",
-// which reads as a platform fault and is really an ordering problem.
-func TestApply_ChecksReadinessBeforeDeploying(t *testing.T) {
-	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/ops/slice/get":
-			_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{}}`))
-		case "/ops/slice/status":
-			_, _ = w.Write([]byte(`{"ready":true}`))
-		default:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
-		}
-	})
-	applyIn(t, "slice: demo\ncanvas:\n  sites:\n    - ./site\n", "site")
-
-	_ = runApply(t)
-
-	if rec.count("GET /ops/slice/status") == 0 {
-		t.Error("apply deployed without checking the slice was ready — the poll was " +
-			"dropped with the branches that used to own it")
-	}
-}
-
-// A PLAN WRITES NOTHING. It said "nothing was deployed" and had just resized the
-// live slice.
-//
-// `--plan` and `drift file simulate` ran the reference check, and the check
-// renamed idle slots to make room — a repair that belongs to apply. The rename
-// is small, cheap and reversible, which is exactly why it went unnoticed: the
-// plan even printed what it had done, one line above the line claiming it had
-// done nothing.
-//
-// The slice here holds one slot under a name the manifest does not use, and the
-// manifest names one the slice does not have — the precise shape that triggers
-// the rename. Asserting on the RECORDER rather than on the output, because the
-// question is what the command did to the slice, not what it said.
-func TestPlan_ReportsWhatIsMissingAndChangesNothing(t *testing.T) {
-	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/ops/slice/get" {
-			_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{"atomic":{"functions":[` +
-				`{"name":"get:slot-1","route":"slot-1","method":"get","memory_bytes":33554432}]}}}`))
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{}`))
-	})
-	applyIn(t, "slice: demo\natomic:\n  functions:\n"+
-		"    - route: hello\n      method: get\n      handler: GetHello\n      memory: 32MB\n      dir: atomic\n",
-		"atomic")
-	if err := os.WriteFile(filepath.Join(".", "atomic", "hello.js"),
-		[]byte("function GetHello(req) { return [200, 'OK', {}]; }\nmodule.exports = { GetHello };\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := runPlanCmd(t); err != nil {
-		t.Fatalf("a plan must not fail: %v", err)
-	}
-
-	// It read the slice — otherwise it had nothing to compare and this proves
-	// nothing.
-	if rec.count("GET /ops/slice/get") == 0 {
-		t.Fatal("the plan never read the live slice, so it compared nothing")
-	}
-	// And it wrote nothing at all. Every mutating endpoint, not just resize:
-	// whatever a future plan reaches for, a plan may not change a slice.
-	for _, forbidden := range []string{
-		"POST /ops/slice/resize",
-		"POST /ops/slice/create",
-		"POST /ops/atomic",
-		"POST /ops/canvas",
-	} {
-		if n := rec.count(forbidden); n != 0 {
-			t.Errorf("A PLAN ISSUED %d × %q. It reports what would change and changes "+
-				"nothing — `drift file simulate` is the same code path.", n, forbidden)
-		}
-	}
-}
-
-// A SLOT RENAME IS A CHANGE TO WHAT THE SLICE DECLARES, so an apply may not make
-// one on its own — it shows it and asks first.
-//
-// It used to rename and then report it, in the past tense, in the middle of a
-// deploy's output. A deploy is for what RUNS on a slice; the slice's own shape is
-// `drift slice resize`'s subject, and the only reason this repair lives here at
-// all is that re-pointing a slot the slice already holds costs nothing and
-// destroys nothing.
-//
-// Asserted on the RECORDER, not on the error: refusing while having already
-// posted the resize is exactly the failure that would read like a well-behaved
-// gate. Stdin is closed under `go test`, so the prompt reads empty — and empty
-// must mean no, because "nobody answered" is not agreement.
-func TestApply_ASlotRenameIsNotMadeWithoutAgreement(t *testing.T) {
-	rec := stubAPI(t, slotAdoptionStub)
-	applyWithOneFunction(t)
-
-	err := runApply(t)
-	if err == nil {
-		t.Fatal("apply continued past a slot rename nobody agreed to")
-	}
-	if n := rec.count("POST /ops/slice/resize"); n != 0 {
-		t.Errorf("apply reshaped the slice %d × without agreement — the question was "+
-			"asked after the fact", n)
-	}
-	// And it deployed nothing: the slice does not hold the slot the manifest
-	// names, so proceeding would deploy into a pool no invocation reaches.
-	if n := rec.count("POST /ops/atomic"); n != 0 {
-		t.Errorf("apply deployed %d function(s) into a slot the slice does not declare", n)
-	}
-}
-
-// --yes is the CI path: it skips the QUESTION, never the notice, and it is the
-// only way an unattended run may re-point a slot.
-//
-// This is the control for the test above — without it, deleting the adoption
-// entirely would keep that one green.
-func TestApply_YesAgreesToTheSlotRename(t *testing.T) {
-	rec := stubAPI(t, slotAdoptionStub)
-	applyWithOneFunction(t)
-
-	_ = runApplyYes(t)
-
-	if n := rec.count("POST /ops/slice/resize"); n != 1 {
-		t.Errorf("--yes issued %d resizes, want exactly 1 — the rename is what it agreed to", n)
-	}
-}
-
-// slotAdoptionStub is a slice holding ONE placeholder slot and nothing else, so a
-// manifest naming `get:hello` is one rename away from fitting. That is the
-// commonest first-hour shape: `drift slice create` ships `slot-1`, `drift file
-// new` scaffolds `hello`.
-func slotAdoptionStub(w http.ResponseWriter, r *http.Request) {
-	switch r.URL.Path {
-	case "/ops/slice/get":
-		_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{"atomic":{"functions":[` +
-			`{"name":"get:slot-1","route":"slot-1","method":"get","memory_bytes":33554432}]}}}`))
-	case "/ops/slice/status":
-		_, _ = w.Write([]byte(`{"ready":true}`))
-	default:
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{}`))
-	}
-}
-
-// applyWithOneFunction lays out a project declaring a single function the stub
-// slice does not name.
-func applyWithOneFunction(t *testing.T) {
-	t.Helper()
-	applyIn(t, "slice: demo\natomic:\n  functions:\n"+
-		"    - route: hello\n      method: get\n      handler: GetHello\n      memory: 32MB\n      dir: atomic\n",
-		"atomic")
-	if err := os.WriteFile(filepath.Join(".", "atomic", "hello.js"),
-		[]byte("function GetHello(req) { return [200, 'OK', {}]; }\nmodule.exports = { GetHello };\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// runApplyYes drives the real command with --yes, so the flag wiring is under
-// test alongside the body.
-func runApplyYes(t *testing.T) error {
-	t.Helper()
-	cmd := getApplyCmd()
-	cmd.SetArgs([]string{"--yes"})
-	cmd.SilenceErrors = true
-	cmd.SilenceUsage = true
-	return cmd.Execute()
-}
-
-// runPlanCmd drives the real command with --plan, so the flag wiring is under
-// test alongside the body.
-func runPlanCmd(t *testing.T) error {
-	t.Helper()
-	cmd := getApplyCmd()
-	cmd.SetArgs([]string{"--plan"})
-	cmd.SilenceErrors = true
-	cmd.SilenceUsage = true
-	return cmd.Execute()
-}
-
 // applyIn writes a Driftfile and its named directories into a temp dir and makes
-// that the working directory, because `drift file apply` reads ./Driftfile.
+// that the working directory, because `drift apply` reads ./Driftfile.
 func applyIn(t *testing.T, body string, dirs ...string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -286,16 +24,35 @@ func applyIn(t *testing.T, body string, dirs ...string) {
 	t.Chdir(dir)
 }
 
-// assertApplyRefusesBeforeAnyRoute applies a Driftfile through the real command
+// applyAgreeingAtZero drives `drift apply` on the Driftfile in the working
+// directory, with nobody at a terminal and the price agreed at 0: what a stub
+// that answers `{}` to /ops/slice/price quotes. A plan that asks anything else
+// (a removal, a data loss, another price) is refused, as it would be in CI.
+func applyAgreeingAtZero(t *testing.T) error {
+	t.Helper()
+	a := noAnswers()
+	a.price = 0
+	return runApply(applyOptions{noEnvFile: true, answers: a, out: os.Stdout, in: strings.NewReader("")})
+}
+
+// runPlanCmd drives `drift plan` through the real command, so the flag wiring
+// is under test alongside the body.
+func runPlanCmd(t *testing.T) error {
+	t.Helper()
+	cmd := GetPlanCmd()
+	cmd.SetArgs([]string{"--no-env-file"})
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	return cmd.Execute()
+}
+
+// assertApplyRefusesBeforeAnyRoute applies a Driftfile through `drift apply`
 // against a stub that fails the test on any `/ops/` request, and asserts the
 // apply is refused with exactly `want`.
 //
-// The recorder is the subject, as in the gate tests above: a refusal that
-// arrives after the functions, data and sites are live reads the same as one
-// that arrives first, and only the second leaves the slice as it was.
-//
-// No schema is cached in the stub's HOME and the compiled one is cleared, so the
-// document reaches the preflight whatever schema an earlier test compiled.
+// The recorder is the subject: a refusal that arrives after the slice is
+// created or resized reads the same as one that arrives first, and only the
+// second leaves the slice as it was.
 func assertApplyRefusesBeforeAnyRoute(t *testing.T, body, want string) {
 	t.Helper()
 	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -304,11 +61,11 @@ func assertApplyRefusesBeforeAnyRoute(t *testing.T, body, want string) {
 		}
 		w.WriteHeader(http.StatusNotFound)
 	})
-	compiledSchema = nil
-	t.Cleanup(func() { compiledSchema = nil })
+	// After the stub, which gives the test a HOME of its own.
+	withRealSchema(t)
 	applyIn(t, body, "site")
 
-	err := runApply(t)
+	err := runApply(applyOptions{noEnvFile: true, answers: noAnswers(), out: os.Stdout, in: strings.NewReader("")})
 	if err == nil || err.Error() != want {
 		t.Fatalf("apply returned %v, want the refusal %q", err, want)
 	}
@@ -319,13 +76,19 @@ func assertApplyRefusesBeforeAnyRoute(t *testing.T, body, want string) {
 	}
 }
 
-// runApply drives the real command, so the flag wiring and the RunE body are
-// both under test rather than a hand-called helper.
-func runApply(t *testing.T) error {
-	t.Helper()
-	cmd := getApplyCmd()
-	cmd.SetArgs(nil)
-	cmd.SilenceErrors = true
-	cmd.SilenceUsage = true
-	return cmd.Execute()
+// The preflight runs before the plan reads the slice. The control is a file
+// the preflight accepts, which does reach the slice.
+func TestApply_ThePreflightRunsBeforeAnyRoute(t *testing.T) {
+	assertApplyRefusesBeforeAnyRoute(t,
+		"slice \"demo\" { billing = \"monthly\" }\nsite \"/\" { dir = \"site\" }\nsite \"/a\" { dir = \"site\" }\nsite \"/a/\" { dir = \"site\" }\n",
+		`canvas site collision — these sites share a slug and would overwrite each other on the slice:
+  - "a" is served by 2 sites: site → /a, site → /a`)
+
+	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	withRealSchema(t)
+	applyIn(t, "slice \"demo\" { billing = \"monthly\" }\nsite \"/\" { dir = \"site\" }\n", "site")
+	_ = runApply(applyOptions{noEnvFile: true, answers: noAnswers(), out: os.Stdout, in: strings.NewReader("")})
+	if rec.count("GET /ops/slice/get") == 0 {
+		t.Error("a file the preflight accepts never reached the slice, so the refusal above proves nothing")
+	}
 }

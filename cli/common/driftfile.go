@@ -47,8 +47,8 @@ import (
 
 // driftfileRefreshOnce bounds the refresh to a single attempt per invocation.
 // "Whenever we call the API" is the intent; once per PROCESS is the honest
-// implementation — a single `drift file apply` makes many HTTP calls, and
-// paying a schema round-trip on each would be latency nobody asked for.
+// implementation — a single `drift apply` makes many HTTP calls, and paying a
+// schema round-trip on each would be latency nobody asked for.
 var driftfileRefreshOnce sync.Once
 
 // DriftfileSchemaPath is where this machine's copy lives — beside the session,
@@ -188,96 +188,12 @@ func driftfileVersionOf(raw []byte) string {
 //
 // Bump it in the release that implements a format change.
 //
-// 1.23.0 covers `concurrent` on a Pulse: its handler is safe to run in
-// parallel, and how many of its calls run at once is the slice's to decide.
-// cmd/project/handlers.go reads it from every Pulse, top level or inside an
-// element, together with 1.22.0's `concurrency`, which is deprecated, says so
-// once per run (cmd/project/concurrency.go), and reads as concurrent above 1. A
-// concurrent Pulse is refused before anything builds unless it is Go, buffered
-// and reached over HTTP (no `stream`, not `method: queue`), in the operator's
-// words; `concurrent: true` travels in the deploy metadata and in the
-// declaration digest only for a concurrent Pulse, and no count travels at all,
-// so a Pulse that is not concurrent is sent and fingerprinted exactly as
-// before.
-//
-// 1.22.0 covers a Go Pulse's main being generated from the templates that call
-// the SDK's genmain package, which serves it concurrently when the slice asks
-// and one call at a time otherwise, and passes the call's context to a handler
-// whose first parameter is a context.Context.
-//
-// 1.21.0 covers elements as the container of Atomic's work. `atomic.elements`
-// lists each element (a folder holding one language's source and one
-// dependency manifest) with the Pulses and Fields whose handlers live in it,
-// and the element's `dir`, `env` and `secrets` apply to every one of them. The
-// top-level `atomic.pulses` and `atomic.fields` are the default element, and
-// their `element:` tag is deprecated: cmd/project/elements.go flattens every
-// element into those two lists, each entry carrying its element, its directory,
-// its env merged over the element's and the union of both secrets lists, so
-// every reader downstream sees the one model it always read. The same pass
-// refuses what the schema cannot express: an element declared twice, the
-// default element declared both in `elements` and at the top level, a route or
-// a Field name declared twice anywhere in the slice, and a Field named like a
-// Pulse route. `drift file migrate` moves each tagged entry into its element.
-//
-// 1.20.0 covers Atomic's two kinds of work. `atomic.pulses` is what
-// `atomic.functions` was, one call and one result, and the old key stays legal
-// as an ALIAS: cmd/project/deprecatedkeys.go renames it in place, at the root and
-// inside every environment overlay, so every reader sees `pulses` alone, and
-// `drift file migrate` rewrites it. `atomic.fields` is new: a long-running
-// worker the slice keeps exactly one of, written in Go in this release. Each
-// Field is built from its element with its own entry point
-// (default/field_native.txt), refused before building when its element is not Go,
-// and uploaded as the slot `field:<name>` with no triggers, so it is booked,
-// referenced, reported idle and skipped when unchanged exactly as a Pulse is.
-// A Field writes no `memory`: its booking is the slice shape's, and the
-// compiled floor is checked against the live slot before anything deploys.
-//
-// 1.19.0 covers top-level `edge:`, the one home of every fact about how a slice
-// is reached. Three keys moved there, and the old spellings stay legal as
-// ALIASES: cmd/project/deprecatedkeys.go moves `atomic.egress` to `edge.egress`,
-// a top-level `domains` to `edge.domains` and `atomic.rate_limit` to
-// `edge.rate_limit` — at the root and inside every environment overlay — and
-// names each move on stderr, so every reader sees the new spelling alone.
-// `edge.egress` and `edge.domains` are applied as their old spellings were.
-// `edge.rate_limit`, `edge.site_auth`, `edge.links`, `edge.allow` and
-// `edge.hosts` each have a reconciler of their own in cmd/project. A rate limit
-// this binary does not apply is named and left to the slice form, as
-// `atomic.rate_limit` always was; any of the other four refuses the file by
-// name before anything is deployed.
-//
-// 1.18.0 covers `backbone.sql[].migrations`, a directory of versioned SQL files.
-// The data this binary carries is the directory's contents: cmd/project/sql.go
-// reads every `.sql` file in it, sends them on the load-schema call beside the
-// schema, requires the slice's migration report, and fails the apply on a
-// refusal. Ordering, validation and the history table belong to the slice.
-//
-// 1.17.0 covers top-level `labels:` — the tenant's own labels on the slice.
-// They live INSIDE the slice's config, so the data this binary has to carry is
-// the reconcile: cmd/project/labels.go compares what the Driftfile declares
-// against what the slice holds and sends a labels-ONLY patch when they differ.
-//
-// The removal half is why this is data rather than a constraint that arrives
-// with the document. A Driftfile with no `labels:` block declares none, and
-// making the slice match means sending an EMPTY set — omitting the key would
-// mean "say nothing about labels", and the slice would keep the ones the file
-// stopped naming. Nothing in the schema can express that; only a client can.
-//
-// 1.16.0 covers `slice.atomic.egress` as a declaration that travels. The
-// platform stores what arrives and renders it into the slice's NetworkPolicy,
-// so cmd/project sends the mode and the host list on every reconcile that finds
-// them changed, always including `open` — an absent mode means "re-resolve what
-// you hold", and omitting it when a tenant removes their allowlist would leave
-// the old one in force. A refusal fails the apply rather than printing a hint.
-//
-// The same version stopped accepting a wildcard host, and this binary needs no
-// code for that: it validates against the schema it fetched, so the constraint
-// arrives with the format. That is the point of holding no typed mirror, and it
-// is why "implements" here means reads and forwards rather than mirrors.
-//
-// 1.15.2 is skipped through rather than missed. It was description text on
-// `backbone.secrets` — no constraint, no pattern, nothing that changes what
-// validates — which is a PATCH under the schema's own versioning rule and
-// therefore nothing for a client to implement.
+// The format is the DOCUMENT the platform's schema describes, which the HCL
+// Driftfile compiles to (cmd/project/compile.go). The compiler writes only the
+// current keys of that document: elements holding their pulses and fields,
+// `edge`, `labels`, each pulse's `concurrent`. A key the schema carries for an
+// older spelling is never written, so the compile is valid against any schema
+// of this major that holds the keys it writes.
 const ImplementedDriftfileFormat = "1.23.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every

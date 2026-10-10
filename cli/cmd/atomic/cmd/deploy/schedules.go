@@ -1,5 +1,5 @@
-// schedules.go — the Driftfile's `atomic.functions[].cron` field, carried into
-// the deploy artifact.
+// schedules.go — a pulse's `cron` in the Driftfile, carried into the deploy
+// artifact.
 //
 // # Why this goes on the artifact and not through the trigger API
 //
@@ -17,20 +17,16 @@
 //
 // # Why a package-level registry
 //
-// The deploy functions are called from `drift file apply` and from `drift
-// atomic deploy`, and BOTH have read a Driftfile — the second through
+// The deploy functions are called from `drift apply` and from `drift atomic
+// deploy`, and BOTH have read a Driftfile — the second through
 // `FunctionSpecsInDir`, which walks up to the project's manifest to learn what
 // the directory it was given declares. Each publishes here before shipping
-// anything.
+// anything, so the same Driftfile produces the same schedules under either
+// command.
 //
 // Threading a manifest through three deploy signatures to carry one optional
 // map would put the Driftfile's whole vocabulary into paths that need one field
 // of it. Same shape as the existing `atomicForce` flag, and for the same reason.
-//
-// It was called by `file apply` ALONE, which meant `atomic deploy` shipped every
-// function with its `cron:` dropped and said nothing — the same Driftfile
-// producing a schedule under one command and not the other. That is precisely
-// what `refuseScheduleComments` refuses the retired spelling FOR.
 
 package atomic_cmd
 
@@ -41,18 +37,15 @@ var (
 	declaredSchedules map[string]string
 )
 
-// SetDeclaredSchedules records the `atomic.functions[].cron` expressions from a
-// Driftfile, keyed by function name. Called once by `drift file apply`
-// before any function ships; a nil or empty map clears it.
+// SetDeclaredSchedules records the pulses' `cron` expressions from a Driftfile,
+// keyed by function name. Called once by every deploy path before any function
+// ships; a nil or empty map clears it.
 //
 // THE KEY IS THE FULL DECLARED NAME — the composite `method:route`, e.g.
 // `get:cronprobe` — because that is what `normaliseFunctionIdentities` writes
-// into every entry and therefore what `FunctionSpec.Name` holds.
-//
-// It is NOT the route. This doc comment said it was, and the reader in
-// triggersFor believed it, so every declared `cron:` missed the map and was
-// dropped without a word. If this sentence and that lookup ever disagree again,
-// TestADeclaredCronSurvivesTheWholeDeployPath is what says so.
+// into every entry and therefore what `FunctionSpec.Name` holds. It is NOT the
+// route: a lookup by route misses the map and drops the schedule without a
+// word, which TestADeclaredCronSurvivesTheWholeDeployPath guards.
 func SetDeclaredSchedules(byFunction map[string]string) {
 	scheduleMu.Lock()
 	defer scheduleMu.Unlock()
@@ -83,8 +76,7 @@ func DeclaredScheduleFor(functionName string) string {
 // (method, path), so a schedule registered under the wrong verb resolves to
 // nothing and fires into a 404 forever — silently, because a trigger that
 // cannot find its function still exists and still ticks. It is the function's
-// OWN method because the Driftfile's `cron:` is documented as additive: same
-// code, two triggers.
+// OWN method because a pulse's `cron` is additive: same code, two triggers.
 func scheduleTriggerFor(functionName, method string) []TriggerSpec {
 	expr := DeclaredScheduleFor(functionName)
 	if expr == "" {

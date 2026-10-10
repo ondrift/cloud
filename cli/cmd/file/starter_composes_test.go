@@ -7,14 +7,14 @@ import (
 	atomic_cmd_new "github.com/ondrift/cloud/cli/cmd/atomic/cmd/new"
 )
 
-// The starter Driftfile declares a function, and NOTHING ON DISK DEFINES IT.
-// That is correct — a Driftfile declares functions, it does not create them —
-// and it is why `drift file new` followed by `drift file apply` used to
-// dead-end on a new user's second command, with a handler-resolution error
-// naming the missing callable rather than the command that writes it.
+// The starter Driftfile declares a pulse, and NOTHING ON DISK DEFINES IT. That
+// is correct — a Driftfile declares pulses, it does not create them — and it is
+// why `drift file new` followed by `drift plan` would dead-end on a new user's
+// second command, with an error naming the missing source rather than the
+// command that writes it.
 //
 // This is the test that keeps the two halves able to compose. The scaffolded
-// entry's `handler:` must be exactly what `drift atomic new` produces when run
+// block's `handler` must be exactly what `drift atomic new` produces when run
 // with the flags the scaffolder prints beside it — same route, same method,
 // same language — and that is checked against the REAL derivation rather than
 // against a restated "GetHello", because a literal agrees with the rule until
@@ -35,12 +35,13 @@ func TestStarterEntryAndItsCommandAgree(t *testing.T) {
 		}
 	}
 
-	// And the entry must name the handler that command will actually write.
+	// And the block must name the trigger and the handler that command will
+	// actually write, in the element it writes it to.
 	handler := atomic_cmd_new.HandlerName(starterMethod, starterRoute, starterLang)
 	for _, want := range []string{
-		"route: " + starterRoute,
-		"method: " + starterMethod,
-		"handler: " + handler,
+		`element "default"`,
+		`pulse "` + strings.ToUpper(starterMethod) + " /" + starterRoute + `"`,
+		`handler = "` + handler + `"`,
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("the starter Driftfile does not contain %q\n%s", want, df)
@@ -52,7 +53,7 @@ func TestStarterEntryAndItsCommandAgree(t *testing.T) {
 	// changes how handlers are derived, or edits one of the three constants,
 	// this fails here rather than as a handler-resolution error in a user's
 	// first hour.
-	if !strings.Contains(df, "handler: "+handler) {
+	if !strings.Contains(df, `handler = "`+handler+`"`) {
 		t.Fatalf("the Driftfile declares a handler that `%s` does not produce — "+
 			"the two scaffolders have stopped composing, which is the exact "+
 			"dead-end this pair exists to prevent", cmd)
