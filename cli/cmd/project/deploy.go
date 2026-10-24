@@ -74,6 +74,7 @@ func preflightManifest(m *Manifest) ([]atomic_cmd.Element, error, error) {
 		preflightEdgeLinks,
 		preflightEdgeAllow,
 		preflightEdgeHosts,
+		preflightClientChannels,
 	} {
 		if err := preflight(m); err != nil {
 			return nil, nil, err
@@ -465,7 +466,7 @@ func applySliceInOrder(m *Manifest) ([]string, error) {
 func applyBackboneSection(m *Manifest, out io.Writer) ([]string, error) {
 	b := m.Slice().Sub("backbone")
 	declared := len(b.List("nosql"))+len(b.List("queues"))+len(b.Sub("cache"))+
-		len(b.Sub("secrets"))+len(b.List("sql")) > 0
+		len(b.Sub("secrets"))+len(b.List("sql"))+len(b.Sub("realtime")) > 0
 	if declared {
 		fmt.Fprintf(out, "  %s\n", common.BackboneHeader())
 	}
@@ -569,7 +570,8 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 			fmt.Fprintf(out, "    %s Secrets: %d injected\n", common.Check(), injected)
 		}
 	}
-	return nil
+
+	return applyClientChannels(m, out)
 }
 
 // ─── Canvas ─────────────────────────────────────────────────────────

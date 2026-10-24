@@ -137,24 +137,26 @@ type planState struct {
 	local       map[string]string // booking key → the digest this file would deploy
 	buildErr    error
 
-	sites      []liveCanvasSite
-	sitesErr   error
-	secrets    []string
-	secretsErr error
-	keys       map[string][]liveAPIKey // booking key → live keys
-	keysErr    error
-	gate       siteAuthConfig
-	gateErr    error
-	links      []string
-	linksErr   error
-	allow      []string
-	allowErr   error
-	hosts      []frontedHost
-	hostsErr   error
-	egress     liveEgressView
-	egressErr  error
-	domains    []liveDomain
-	domainsErr error
+	sites       []liveCanvasSite
+	sitesErr    error
+	secrets     []string
+	secretsErr  error
+	keys        map[string][]liveAPIKey // booking key → live keys
+	keysErr     error
+	gate        siteAuthConfig
+	gateErr     error
+	links       []string
+	linksErr    error
+	allow       []string
+	allowErr    error
+	hosts       []frontedHost
+	hostsErr    error
+	egress      liveEgressView
+	egressErr   error
+	domains     []liveDomain
+	domainsErr  error
+	channels    []string // the channels the slice's clients may publish to
+	channelsErr error
 
 	priceNew, priceOld       int
 	priceNewErr, priceOldErr error
@@ -260,6 +262,7 @@ func gatherPlan(c *Compiled) (*planState, error) {
 	if m.Slice().Has("edge", "domains") {
 		p.domains, p.domainsErr = fetchLiveDomains()
 	}
+	p.channels, p.channelsErr = fetchClientChannels(m)
 
 	newPrice()
 	if !liveIsFree(live) {
@@ -530,6 +533,7 @@ func (p *planState) diff() *planDiff {
 	p.diffSecrets(d, creating)
 	p.diffKeys(d, creating)
 	p.diffEdge(d, creating)
+	p.diffClientChannels(d, creating)
 
 	// Limits, one line each where the file and the slice differ.
 	for _, l := range planLimits() {
