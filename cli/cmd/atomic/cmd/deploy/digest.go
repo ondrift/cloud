@@ -285,6 +285,15 @@ func DeployDigest(build string, spec FunctionSpec) string {
 	}
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00%s\x00", digestVersion, build, DeclarationDigest(spec))
+	// The SDK release the build resolves is an input the source cannot show, so a
+	// new release must read as a change. Mixed in only when it is known, which
+	// keeps the bytes an earlier CLI wrote for a run that could not look it up;
+	// see sdkdigest.go. No digestVersion bump is needed for the same reason: a
+	// known release always differs from a digest that never held one, and an
+	// unknown one reproduces it.
+	if tag := sdkTagForDigest(); tag != "" {
+		fmt.Fprintf(h, "sdk\x00%s\x00", tag)
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
