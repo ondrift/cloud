@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strings"
 
 	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd"
 	"github.com/ondrift/cloud/cli/common"
@@ -74,6 +76,133 @@ func FetchScheduler() (*Scheduler, error) {
 		return nil, fmt.Errorf("Couldn't read the scheduler: the API response didn't look right (%w)", err)
 	}
 	return &s, nil
+}
+
+// Envelope is the part of the slice's quota document `drift slice info` reads:
+// what the slice holds and what each part of it is allowed.
+//
+// The platform emits it as the DRIFT_QUOTA_CONFIG the slice enforces
+// (tier.QuotaConfigMap), and the slice parses it by field name, so these tags
+// are that contract's names. Only what a person asks about is decoded here.
+type Envelope struct {
+	Slots               map[string]int `json:"atomic_function_slots"`
+	Buckets             map[string]int `json:"blob_bucket_quotas"`
+	Collections         map[string]int `json:"no_sql_collection_quotas"`
+	Databases           map[string]int `json:"sql_database_quotas"`
+	Queues              map[string]int `json:"queue_quotas"`
+	QueueDepth          int            `json:"queue_max_depth"`
+	RealtimeConnections int            `json:"realtime_max_connections"`
+	AtomicStorageBytes  int64          `json:"atomic_max_storage_bytes"`
+	LogRetentionHours   int            `json:"log_retention_hours"`
+}
+
+// FetchEnvelope reads the active slice's quota envelope.
+func FetchEnvelope() (*Envelope, error) {
+	resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/slice/quota", nil)
+	if err != nil {
+		return nil, common.TransportError("read the slice's limits", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := common.CheckResponse(resp, "read the slice's limits")
+	if err != nil {
+		return nil, err
+	}
+	var e Envelope
+	if err := json.Unmarshal(body, &e); err != nil {
+		return nil, fmt.Errorf("Couldn't read the slice's limits: the API response didn't look right (%w)", err)
+	}
+	return &e, nil
+}
+
+// recordedPrice is what the active slice costs, as the stored figure renders
+// it, or "" when none was recorded. It is not PriceLabel's fallback: that names
+// the tier, and a line headed "price" must not.
+func recordedPrice(name string) string {
+	slices, err := FetchSlices()
+	if err != nil {
+		return ""
+	}
+	for _, s := range slices {
+		if s.Name != name {
+			continue
+		}
+		if s.Tier == "hacker" {
+			return "free"
+		}
+		if s.MonthlyCostCents > 0 {
+			return PriceLabel(s.Tier, s.MonthlyCostCents)
+		}
+	}
+	return ""
+}
+
+// printShapeSection is the part of `drift slice info` that answers what the
+// slice holds and costs: its price, and one line for each kind of thing it
+// declares. A kind the slice holds none of prints nothing.
+//
+// A zero figure is never printed as a limit. Every limit in Drift is read as
+// unbounded or as the platform's default at zero, so the lines below say a
+// number only where there is one.
+func printShapeSection(w io.Writer, e *Envelope, price string) {
+	fmt.Fprintf(w, "\n  shape\n")
+	if price == "" {
+		fmt.Fprintf(w, "    %-14s not recorded\n", "price")
+	} else {
+		fmt.Fprintf(w, "    %-14s %s\n", "price", price)
+	}
+
+	if len(e.Slots) > 0 {
+		total := 0
+		for _, b := range e.Slots {
+			total += b
+		}
+		fmt.Fprintf(w, "    %-14s %d booked, %s\n", "slots", len(e.Slots), bytesLabel(int64(total)))
+	}
+	sized := func(label string, set map[string]int) {
+		if len(set) == 0 {
+			return
+		}
+		names := make([]string, 0, len(set))
+		for n := range set {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		parts := make([]string, 0, len(names))
+		for _, n := range names {
+			parts = append(parts, fmt.Sprintf("%s %s", n, bytesLabel(int64(set[n]))))
+		}
+		fmt.Fprintf(w, "    %-14s %s\n", label, strings.Join(parts, ", "))
+	}
+	sized("databases", e.Databases)
+	sized("collections", e.Collections)
+	sized("buckets", e.Buckets)
+
+	if len(e.Queues) > 0 {
+		names := make([]string, 0, len(e.Queues))
+		for n := range e.Queues {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		parts := make([]string, 0, len(names))
+		for _, n := range names {
+			if d := e.Queues[n]; d > 0 {
+				parts = append(parts, fmt.Sprintf("%s %d messages", n, d))
+			} else {
+				parts = append(parts, fmt.Sprintf("%s the slice's depth, %d messages", n, e.QueueDepth))
+			}
+		}
+		fmt.Fprintf(w, "    %-14s %s\n", "queues", strings.Join(parts, ", "))
+	}
+	if e.RealtimeConnections > 0 {
+		fmt.Fprintf(w, "    %-14s %d connections\n", "realtime", e.RealtimeConnections)
+	}
+	if e.AtomicStorageBytes > 0 {
+		fmt.Fprintf(w, "    %-14s %s for code and dependencies\n", "storage", bytesLabel(e.AtomicStorageBytes))
+	}
+	if e.LogRetentionHours > 0 {
+		fmt.Fprintf(w, "    %-14s %dh\n", "log retention", e.LogRetentionHours)
+	}
 }
 
 // bytesLabel renders a byte count in MiB, and renders the platform's
@@ -160,6 +289,14 @@ func getInfoCmd() *cobra.Command {
 			// it is holding, and this shows whether it is running at all.
 			fields, ferr := atomic_cmd.FetchFields()
 			printFieldsSection(cmd.OutOrStdout(), fields, ferr)
+
+			// What it holds and costs, last: the compute above is what is
+			// happening now, and this is what was bought.
+			if env, eerr := FetchEnvelope(); eerr != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "\n  shape          couldn't be read: %v\n", eerr)
+			} else {
+				printShapeSection(cmd.OutOrStdout(), env, recordedPrice(active))
+			}
 			return nil
 		},
 	}
