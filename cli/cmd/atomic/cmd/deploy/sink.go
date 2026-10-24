@@ -87,9 +87,10 @@ func StageElementsLocally(elements []Element, runnerDir string, quiet bool) erro
 	if err := os.MkdirAll(runnerDir, 0o755); err != nil {
 		return err
 	}
-	prev := slotSink
+	prev, prevLocal := slotSink, stagingLocally
 	slotSink = localSlotSink(runnerDir)
-	defer func() { slotSink = prev }()
+	stagingLocally = true
+	defer func() { slotSink, stagingLocally = prev, prevLocal }()
 
 	// Every build runs in a throwaway language container (see toolchain.go), so
 	// the user needs only Docker — no go/cargo/pip/npm/composer/ruby on the host —

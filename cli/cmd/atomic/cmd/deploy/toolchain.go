@@ -16,8 +16,9 @@ package atomic_cmd
 // it is to build ON the target architecture and let each toolchain do the plainly
 // native thing. Docker is the only build dependency the CLI has.
 //
-// The target is a property of the platform, NOT of this machine: see
-// targetPlatform(). `runtime.GOARCH` must never appear in a build path again.
+// The target is a property of the slice, NOT of this machine: see
+// targetPlatform(). `runtime.GOARCH` must never CHOOSE a build target; it is read
+// only to tell the user when the target differs from their machine.
 //
 // Three things make the container path correct rather than merely plausible:
 //   - Ownership: containers run as the host uid:gid (`--user`), so vendor dirs
@@ -39,23 +40,26 @@ import (
 	"strings"
 )
 
-// defaultTargetPlatform is the architecture Drift slices run on. It is a property
-// of the fleet, not of the developer's laptop — an x86 laptop and an ARM laptop
-// must produce byte-identical-in-kind artifacts for the same slice.
-//
-// TODO(arch): the operator should report the target slice's architecture and the
-// CLI should thread it down here, so a mixed fleet is expressible. Until then this
-// constant is the single place the assumption lives, overridable for anyone
-// running a slice elsewhere.
+// defaultTargetPlatform is the architecture a build targets when nothing says
+// otherwise: a local run, and a deploy to a slice that reports none (see
+// targetplatform.go). It is a property of the fleet, not of the developer's
+// laptop — an x86 laptop and an ARM laptop must produce byte-identical-in-kind
+// artifacts for the same slice.
 const defaultTargetPlatform = "linux/arm64"
 
 // targetPlatform is the docker --platform value every build runs under.
-// DRIFT_TARGET_PLATFORM overrides it (e.g. "linux/amd64" for an x86 slice).
+//
+// In order: DRIFT_TARGET_PLATFORM when set, for air-gapped or experimental use;
+// defaultTargetPlatform for a local run; otherwise the architecture the target
+// slice reports, so a fleet mixing ARM and x86 gets a matching binary for each.
 func targetPlatform() string {
 	if v := strings.TrimSpace(os.Getenv("DRIFT_TARGET_PLATFORM")); v != "" {
 		return v
 	}
-	return defaultTargetPlatform
+	if stagingLocally {
+		return defaultTargetPlatform
+	}
+	return remoteTargetPlatform()
 }
 
 // targetArch is the bare architecture of targetPlatform ("arm64", "amd64").
