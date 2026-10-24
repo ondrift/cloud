@@ -650,8 +650,34 @@ func (c *compiler) compileBackbone(f *dfFile) {
 		bb["secrets"] = secrets
 	}
 
+	c.compileRealtime(f.Realtime, bb)
+
 	if len(bb) > 0 {
 		c.doc["backbone"] = map[string]any(bb)
+	}
+}
+
+// compileRealtime writes the client-channel list. The block is the list, so a
+// block that names none says nothing and is refused rather than read as "close
+// everything": that is `client_channels = []`.
+func (c *compiler) compileRealtime(blocks []dfRealtime, bb Node) {
+	if len(blocks) == 0 {
+		return
+	}
+	if len(blocks) > 1 {
+		c.ev.errorf(blocks[1].DefRange, "Duplicate realtime block", "a slice has one realtime block.")
+		return
+	}
+	r := blocks[0]
+	c.at("/backbone/realtime", r.DefRange, "realtime")
+	if !present(r.ClientChannels) {
+		c.ev.errorf(r.DefRange, "Missing client_channels",
+			`realtime names the channels a visitor may publish to: client_channels = ["chat"], or [] to close every channel.`)
+		return
+	}
+	if l, ok := c.ev.strList(r.ClientChannels, "realtime: client_channels"); ok {
+		bb["realtime"] = map[string]any{"client_channels": toAnyList(l)}
+		c.at("/backbone/realtime/client_channels", r.ClientChannels.Range(), "realtime")
 	}
 }
 

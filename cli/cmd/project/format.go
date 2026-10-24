@@ -228,6 +228,13 @@ var formatDocs = map[string]formatDoc{
 	"secret.value": {typ: tRef, required: true, doc: "The environment variable its value is read from at " +
 		"apply. Written env(\"NAME\") and nothing else, so the file never holds a credential."},
 
+	"realtime": {doc: "Realtime, the WebSocket pub/sub of the slice. A slice has one realtime block; a file " +
+		"without one opens no channel to visitors."},
+	"realtime.client_channels": {typ: tList, doc: "The channels a visitor's browser may publish to, the whole " +
+		"list: a channel name (\"chat\"), a prefix ending in * (\"room:*\"), or \"*\" for every channel. A frame " +
+		"a client sends on any other channel is dropped and never reaches the room. A pulse always may publish; " +
+		"this governs clients only. Empty closes every channel; at most 64 entries."},
+
 	"site":     {doc: "A static site, labelled with the path it is served at: \"/\" for the root."},
 	"site.dir": {typ: tString, required: true, doc: "The folder it serves, relative to the Driftfile."},
 

@@ -194,7 +194,10 @@ func driftfileVersionOf(raw []byte) string {
 // writes removed. The compiler writes no key format 1 lacked, so a binary
 // implementing 2 also compiles a document format 1 accepts, and while a machine
 // still holds format 1 it is told the schema is behind, never refused.
-const ImplementedDriftfileFormat = "2.0.0"
+//
+// 2.1.0 adds backbone.realtime.client_channels, which the compiler writes from
+// the `realtime` block.
+const ImplementedDriftfileFormat = "2.1.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every
 // authenticated request.

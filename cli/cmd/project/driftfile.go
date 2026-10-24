@@ -104,6 +104,7 @@ type dfFile struct {
 	Queues       []dfQueue       `hcl:"queue,block"`
 	Caches       []dfCache       `hcl:"cache,block"`
 	Secrets      []dfSecret      `hcl:"secret,block"`
+	Realtime     []dfRealtime    `hcl:"realtime,block"`
 	Sites        []dfSite        `hcl:"site,block"`
 	Edge         []dfEdge        `hcl:"edge,block"`
 	Variables    []dfVariable    `hcl:"variable,block"`
@@ -233,6 +234,11 @@ type dfSecret struct {
 	NameRange hcl.Range      `hcl:"name,label_range"`
 	Value     hcl.Expression `hcl:"value,optional"`
 	DefRange  hcl.Range      `hcl:",def_range"`
+}
+
+type dfRealtime struct {
+	ClientChannels hcl.Expression `hcl:"client_channels,optional"`
+	DefRange       hcl.Range      `hcl:",def_range"`
 }
 
 type dfSite struct {
