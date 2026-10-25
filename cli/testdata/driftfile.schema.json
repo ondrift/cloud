@@ -1,0 +1,886 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://api.ondrift.eu/driftfile/schema",
+  "$comment": "AUTHORITATIVE schema of the document a Driftfile compiles to. A Driftfile is written in HCL; the CLI compiles it into a JSON document and validates THAT document against this schema, so the schema describes exactly the keys the compiler can write and no others. Embedded in the api binary and served from https://api.ondrift.eu/driftfile/schema. Documentation lives HERE, in `description` (user-facing, rendered on hover by any editor that reads JSON Schema), `default` (what omission means), `examples`, and `$comment` (notes for whoever edits the schema). A doc that ships beside the schema is a doc that drifts from it. || VERSIONING: `version` below is the format's own semver. MAJOR = a field removed, renamed or retyped, so an older client cannot read a document written for it; MINOR = a new optional field, which older clients round-trip untouched; PATCH = documentation only. Bump it in the same change that alters the schema, because the api serves this number and clients compare it against the one they implement. A MAJOR difference is the one a client REFUSES on; a MINOR difference it says out loud when it lints or applies a Driftfile. || WHAT LIVES HERE: the GRAMMAR (which keys exist, their shape, their fixed defaults) and, deliberately, the BOUNDS a client must apply before it can reach the platform: the booking range published in `x-drift.memory-pattern`, and the compiled floor and interpreted-language set beside it. Those are here so a booking outside them is refused by the CLI on the laptop rather than by the api after a deploy has been confirmed and uploaded, which is most of what serving the format is for. A bound here is a COPY, never the authority: `tier` enforces the range and the compiled floor, the slice's deploy branch owns the interpreted set, and tests assert the copies still agree (driftfile_test.go for the memory range and the compiled floor, the operator's routes tests for the language set) rather than trusting them to be edited together. Add a bound here only with the test that pins it to its owner. A `default` must be a fixed property of the format, and a value no client could act on offline has no reason to be in this document at all.",
+  "version": "2.1.0",
+  "x-drift": {
+    "$comment": "BOUNDS THE PLATFORM ENFORCES, published so a client can apply them before it can reach the api. They live at the ROOT because they describe the platform rather than any key of a document. The booking range is here too: the compiled document carries no memory key, because a Pulse's and a Field's booking belongs to the slice's shape, so there is no property for a pattern to hang on, and a client reads the range from `memory-pattern` below. || Each is a COPY, never the authority: `memory-pattern` copies tier.MinFunctionMemoryBytes and tier.MaxFunctionMemoryBytes, `compiled-minimum` copies tier.MinCompiledFunctionMemoryBytes, and the slice's deploy branch owns the interpreted set. driftfile_test.go asserts the range and the floor still equal tier's. A client carrying any of these rules privately would be a second definition that drifts. || `memory-pattern` encodes the RANGE, not just the shape: 8MB to 256MB, whole megabytes, with no GB unit because the ceiling is below 1GB. Multiples of 8 are not required. || The compiled floor and the interpreted set cannot be a `pattern`: a pattern constrains the DOCUMENT, and nothing in a document says what language a handler is written in, which is detected from the source beside the Driftfile, and only the client can see that. || The set is keyed on the INTERPRETED four rather than the compiled ones because that is the stable side; the wire value for a compiled language is a known-moving target, so an unrecognised language is treated as compiled. A client that does not know these keys ignores them, and the api still refuses the deploy.",
+    "memory-pattern": "^([89]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-6])MB$",
+    "compiled-minimum": "16MB",
+    "interpreted-languages": [
+      "node",
+      "php",
+      "python",
+      "ruby"
+    ]
+  },
+  "title": "Driftfile",
+  "description": "The document a Driftfile compiles to.\n\nA Driftfile is written in HCL. The CLI compiles it into this JSON document, validates the document against this schema, and `drift plan` and `drift apply` apply it. The HCL language is documented at https://docs.ondrift.eu/driftfile/.\n\nThe document names the slice (`slice`) and declares what runs on it: `atomic` (the elements, each with its Pulses and Fields), `backbone` (data), `canvas` (static sites) and `edge` (what can reach the slice, and what it can reach). `hooks` are local commands around an apply, `tests` are e2e commands, and `labels` are your own.\n\nA Pulse (Atomic's function: one call, one result) states its trigger and the callable that serves it. A Field names the callable it keeps running. Both are declared inside the element whose folder holds their handler, so the document mirrors ./atomic.\n\nSizes and limits are not part of this document. The memory a Pulse or Field books, the storage a database, collection or bucket is given, and the slice-wide limits live in the slice's shape, which the same Driftfile declares and the CLI compiles separately. The one bound this schema does carry is the booking range, published in `x-drift.memory-pattern` so a client can refuse a booking outside it before it reaches the platform.\n\nWhat the document deliberately does NOT carry: secret values (a secret is a reference to an environment variable, never a value), anything about the machine the slice runs on, or replica counts. You declare the shape of your application; the platform decides how to run it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "slice"
+  ],
+  "properties": {
+    "slice": {
+      "type": "string",
+      "description": "The slice this document is applied to: a reference to a slice, not a name the document mints. 1-32 lowercase letters/numbers/hyphens, no leading/trailing hyphen. An environment applies to the slice it names, or to <slice>-<env>.",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+      "examples": [
+        "prorata",
+        "my-app"
+      ],
+      "$comment": "The identity is a REFERENCE: the slice's shape, its sizes and its limits are declared by the same Driftfile and compiled separately, and this document carries what runs on the slice. The CLI reads this pattern to check the slice name an environment derives, which appears in no document."
+    },
+    "labels": {
+      "type": "object",
+      "description": "Your own labels for this slice — `team: backend`, `env: staging`, `client: bakkerij & zn.`. They are how you organise your own slices, and they are yours: `drift slice list` shows them, a snapshot carries them, and a restore puts them back, so they survive a download-and-restore round trip like the rest of your data.\n\nValues are free text. These are NOT Kubernetes labels and are never written into the cluster, so spaces, punctuation and accents are all fine.",
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 256
+      },
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,62}$"
+      },
+      "maxProperties": 32,
+      "examples": [
+        {
+          "client": "bakkerij & zn.",
+          "env": "staging",
+          "team": "backend"
+        }
+      ],
+      "$comment": "THE TENANT'S HALF of two deliberately separate namespaces. The platform's own commercial attribution — origin, engagement, partner — lives on the control plane's slice record and is NOT expressible here, which is the point: a key the tenant can write is a key with two writers, and `drift slice snapshot download` would hand them our CRM fields inside their own archive. See models.Slice.Attribution, whose `json:\"-\"` is what enforces the other half. || Bounded rather than open: 32 keys, 256 bytes a value, and a key charset that stays legible in a listing. The bound is here so the CLI refuses an unreasonable document on the laptop; it is a COPY of nothing — no platform limit exists for these, because they cost nothing to store and are never indexed. || The value charset is deliberately UNCONSTRAINED. Pushing these into k8s metadata would force a 63-character DNS-safe subset onto text a person wrote about their own project, which is why they are stored on the slice record and nowhere else."
+    },
+    "atomic": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/atomicSection"
+        },
+        {
+          "required": [
+            "elements"
+          ]
+        }
+      ],
+      "description": "Serverless (Atomic) section: the elements of this slice and the Pulses and Fields each one runs. An element is a folder under ./atomic holding one language's source and one dependency manifest. A Pulse is Atomic's function: one call, one result. A Field is a long-running worker the slice keeps running.",
+      "$comment": "The section declares `elements`, as a required key beside the $ref because draft-07 ignores siblings of a bare $ref. A slice that runs no Pulse and no Field omits `atomic` altogether, and an `atomic` that names no element books no slot."
+    },
+    "backbone": {
+      "$ref": "#/definitions/backboneSection",
+      "description": "Data-layer (Backbone) section: NoSQL collections, SQL databases, blobs, queues, cache and secrets."
+    },
+    "canvas": {
+      "$ref": "#/definitions/canvasSection",
+      "description": "Static-site hosting (Canvas) section: the sites the slice serves."
+    },
+    "edge": {
+      "$ref": "#/definitions/edgeSection",
+      "description": "Edge: what can reach this slice, and what it can reach. Inbound hostnames, the site-auth gate and an address allowlist; outbound egress; links to your other slices, and the hosts this slice fronts for them. Every key is optional, and an absent key leaves that part of the slice as it is."
+    },
+    "hooks": {
+      "$ref": "#/definitions/hooks",
+      "description": "Local shell commands run around an apply (pre_deploy before, post_deploy after). Lifecycle commands, not a CI pipeline."
+    },
+    "tests": {
+      "$ref": "#/definitions/tests",
+      "description": "e2e commands run against a locally-running instance of the project. Not a CI pipeline."
+    }
+  },
+  "definitions": {
+    "hooks": {
+      "type": "object",
+      "description": "Local lifecycle commands run by the CLI around an apply, in order, via the shell, from the project root; a non-zero exit aborts. Not a CI engine.",
+      "additionalProperties": false,
+      "properties": {
+        "pre_deploy": {
+          "type": "array",
+          "description": "Commands run BEFORE anything ships (typically a build or lint), so a build may produce artifacts (e.g. a canvas dist dir) the apply then ships.",
+          "items": {
+            "type": "string",
+            "description": "A shell command run from the project root."
+          }
+        },
+        "post_deploy": {
+          "type": "array",
+          "description": "Commands run AFTER the slice is live (typically a smoke test). A failure leaves the slice deployed but exits non-zero.",
+          "items": {
+            "type": "string",
+            "description": "A shell command run from the project root."
+          }
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "description": "e2e commands run against a real, locally-running instance of the project. Not a CI engine.",
+      "additionalProperties": false,
+      "properties": {
+        "e2e": {
+          "type": "array",
+          "description": "Commands run AFTER the local instance is up and confirmed healthy. The instance's local URL rides in as DRIFT_TEST_URL. First non-zero exit fails the run; the instance is always torn down afterward.",
+          "items": {
+            "type": "string",
+            "description": "A shell command run from the project root."
+          }
+        }
+      }
+    },
+    "atomicSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "Memory is not declared here. A Pulse's and a Field's booking belongs to the slice's shape, which the same Driftfile declares and the CLI compiles separately, so this section carries no figure. || ELEMENTS CONTAIN THEIR PULSES AND FIELDS. An element is a folder with one language and one manifest, so the entries whose handlers live in it are declared inside it, and the section mirrors ./atomic. The element named `default` is the folder ./atomic itself. || NOTHING IN A BOOKING KEY NAMES AN ELEMENT. A slot is `<method>:<route>` or `field:<name>`, so routes and Field names are unique across the whole slice rather than per element, and an element is a source layout fact the platform never sees. JSON Schema cannot compare entries across lists, so the client refuses a duplicate, and the platform refuses a config declaring one booking key twice (tier.ValidateFunctionIdentities). || A Field is a slot like a Pulse: its booking key is `field:<name>` and it is sold, priced and pooled under that key, so nothing below `fields` carries a trigger.",
+      "properties": {
+        "elements": {
+          "type": "array",
+          "description": "The elements of this slice, each with the Pulses and Fields whose handlers live in its folder. An element is a folder under ./atomic holding one language's source and one dependency manifest, and declaring every Pulse and Field inside its element makes this section mirror that folder. Element names are unique in this list. `default` names the default element, the flat files directly under ./atomic. Routes and Field names are unique across the whole slice, not per element, because a slot is booked as `<method>:<route>` or `field:<name>` with no element in the key: two elements cannot both serve `post:rpc`, and a Field name may not equal any Pulse route in any element.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/elementEntry"
+          },
+          "examples": [
+            [
+              {
+                "name": "evm",
+                "pulses": [
+                  {
+                    "route": "rpc",
+                    "method": "post",
+                    "handler": "PostRPC",
+                    "response": "json"
+                  }
+                ],
+                "fields": [
+                  {
+                    "name": "sequencer",
+                    "handler": "Sequencer"
+                  }
+                ]
+              }
+            ]
+          ],
+          "$comment": "Every rule in the description that compares two entries is the client's to enforce, because JSON Schema cannot compare across lists: `uniqueItems` compares whole entries, so two elements of one name with different contents both pass it. The platform holds the booking-key half of it independently (tier.ValidateFunctionIdentities, tier.ValidateFieldNames)."
+        }
+      }
+    },
+    "atomicEntry": {
+      "type": "object",
+      "description": "One Pulse: its trigger, the callable that serves it, and how it is guarded. The memory it books is part of the slice's shape, not of this document.",
+      "additionalProperties": false,
+      "required": [
+        "route",
+        "method",
+        "handler"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "method"
+            ],
+            "properties": {
+              "method": {
+                "const": "queue"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "route": {
+                "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "stream"
+            ]
+          },
+          "then": {
+            "properties": {
+              "concurrent": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "method"
+            ],
+            "properties": {
+              "method": {
+                "const": "queue"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "concurrent": {
+                "const": false
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "An entry is always an object, never a bare name: the trigger, the callable and the guard are separate facts. || THE QUEUE GRAMMAR IS NARROWER THAN THE HTTP ONE AND THE `if`/`then` IS WHAT KEEPS IT SO. A queue name is `[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?`: no slash, no underscore, no colon, 32 characters. `route` carries the wider HTTP grammar `[a-z0-9][a-z0-9/:_-]{0,62}`, and the conditional restores the queue grammar when `method` is `queue`. Without it `{route: orders/new, method: queue}` and `{route: a_b, method: queue}` would both be accepted, and the slice cannot book `queue:orders/new`. || THIS ENTRY IS THE WHOLE DECLARATION — `handler`, `auth`, `stream` and `secrets` all live here, so a function's trigger and its route have exactly one owner. Splitting them between this list and an annotation above the callable gives one fact two owners with nothing reconciling them: the element deploy path ships what the annotation says while the memory pool is keyed on what the manifest says, so a function deploys under a name that has booked nothing.",
+      "properties": {
+        "route": {
+          "type": "string",
+          "description": "The path this function answers on, without a leading slash — `auth/challenge`, `groups/:id`, `ping`. With `method: queue` it is the Backbone queue the slice invokes the function from instead, and the grammar narrows accordingly: a queue name carries no slash, no underscore and no colon.",
+          "pattern": "^[a-z0-9][a-z0-9/:_-]{0,62}$",
+          "examples": [
+            "ping",
+            "auth/challenge",
+            "groups/:id",
+            "orders"
+          ],
+          "$comment": "The pattern is the HTTP grammar. The queue grammar is applied by the conditional in `allOf` rather than here, because which grammar binds depends on `method` and a `pattern` cannot read a sibling."
+        },
+        "method": {
+          "type": "string",
+          "description": "How the function is reached. Seven HTTP verbs, or `queue` for a function the slice invokes from a Backbone queue instead of an HTTP request.",
+          "enum": [
+            "get",
+            "post",
+            "put",
+            "patch",
+            "delete",
+            "head",
+            "options",
+            "queue"
+          ],
+          "examples": [
+            "get",
+            "post",
+            "queue"
+          ],
+          "$comment": "LOWERCASE ONLY, and the enum is what enforces it: the runtime composes its booking key as lower(method) + \":\" + route and looks it up exactly, so `GET` stored verbatim names a pool no invocation reaches. || EIGHT VALUES, NOT FIVE. Trimming to get/post/put/patch/delete would delete every queue-triggered function from the format and drop `head` and `options`. `queue` is a synthetic method the slice already books under, not an HTTP verb."
+        },
+        "handler": {
+          "type": "string",
+          "description": "The callable in your source that serves this function — `PostUsers`, `handle_order`, `createBoard`. Looked for in the function's element directory, in the language that directory is written in, so two elements may each have a `handler`. Exported/public where the language distinguishes: a capital first letter in Go, `pub fn` in Rust, a named `function` rather than an arrow assigned to a const in Node.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,62}[?!]?$",
+          "examples": [
+            "PostUsers",
+            "handle_order",
+            "createBoard"
+          ],
+          "$comment": "Required, and deliberately not inferred from the route. A route is lowercase-and-slashes and a callable is not, so any derivation would be a per-language guess (`post:users` → PostUsers in Go, post_users in Python, postUsers in Node) that is wrong the first time someone names a function after what it does rather than after its route. The trailing `[?!]` admits Ruby predicate and bang methods, which its sentinel pattern already accepts."
+        },
+        "dir": {
+          "type": "string",
+          "description": "Source directory holding this function's callable, relative to the Driftfile. Defaults to its element's directory: the element's own `dir`, which is ./atomic/<element> for a named element and ./atomic for the default one.",
+          "default": "./atomic/<element>",
+          "$comment": "The element owns the directory; this key overrides it for the odd function that lives elsewhere. It is not derived from the route, which holds `:` and `/` and would name a path nobody wrote."
+        },
+        "auth": {
+          "type": "string",
+          "description": "The gate in front of this function. `none` answers every caller; `apikey` demands a key this slice issued. Setting a key on the route forces `apikey` whatever this says — the key is the stronger statement.",
+          "enum": [
+            "none",
+            "apikey"
+          ],
+          "default": "none",
+          "$comment": "Enumerated rather than free text. As an annotation this was any string, and an unrecognised one deployed happily and then answered 403 to every caller — a function that looked deployed and served nobody. An enum refuses it in the CLI, offline, before anything ships. It also puts every gate in the slice on one page: an auth downgrade is a one-line diff in the Driftfile instead of a comment edit in a source file nobody re-reads."
+        },
+        "stream": {
+          "type": "string",
+          "description": "Hold the connection open instead of buffering one response: `sse` for Server-Sent Events, `ws` for WebSocket. Omitted = an ordinary buffered response.",
+          "enum": [
+            "sse",
+            "ws"
+          ]
+        },
+        "response": {
+          "type": "string",
+          "description": "The shape this function's replies take on the wire. `envelope` wraps your payload as `{status, message, payload}`, which is what the SDKs expect and the default. `json` writes your payload as the WHOLE body, for an endpoint whose body a third party parses — a webhook receiver, an OAuth or OIDC endpoint. `raw` writes it as bytes, base64-decoded, for a body that is not text at all; set your own Content-Type with it.",
+          "enum": [
+            "envelope",
+            "json",
+            "raw"
+          ],
+          "default": "envelope",
+          "$comment": "Declared rather than inferred from Content-Type, because `application/json` means two different things: it is the envelope's own type AND the exact type an OAuth token endpoint must answer with (RFC 6749). A header cannot separate those, so anything guessing from one gets a real case wrong. Enumerated for the same reason `auth` is — an unrecognised value is refused by the CLI, offline, instead of deploying happily and answering in the wrong shape."
+        },
+        "concurrent": {
+          "type": "boolean",
+          "description": "Whether this Pulse's handler is safe to run in parallel. `false`, the default, is one call per process at a time. `true` lets one warm process serve many of its calls together: it pays its runtime's memory once and each call in flight books only what it adds, so a burst is answered without queueing inside the same booking. How many run at once is the slice's to decide, from what it measures: what the booking fits, and whether more calls at once still answer more calls per second or only make each one slower. Go only in this release, and not with `stream` or `method: queue`. Calls of this Pulse then share one process: package variables, caches and goroutines your handler leaves behind are visible to the other calls in flight; the memory one call holds is memory the others cannot use; and a crash, an `os.Exit` or a panic in a goroutine you started fails every call in flight. Each call still has its own request. A handler that wants to stop when its time is up takes a `context.Context` as its first parameter, `func Name(ctx context.Context, body T, req drift.Request)`, and the context is cancelled then. A call that needs scratch files makes its own directory with `os.MkdirTemp(\"\", ...)`: the process's temporary directory is private to it, but shared by every call it serves. Other Pulses, Fields and slices stay isolated exactly as before. Set it only for a handler that is safe to run concurrently; `go test -race` is the check.",
+          "default": false,
+          "examples": [
+            true
+          ],
+          "$comment": "A declaration of SAFETY, which only the author can make: a data race shows in neither memory nor latency, so the slice cannot learn it. The NUMBER is the slice's: memory admission already holds every call to its measured increment, and a latency loop finds how many calls still add throughput (src/slice/src/atomic/muxlimit.rs). || `stream` and `method: queue` are refused by the two conditionals in `allOf`, which pin this to false: the slice multiplexes buffered HTTP calls only, and a queue Pulse's trigger invokes it one-shot, so either would be a declaration nothing honours. The language rule (Go only) cannot be a schema rule, because nothing in a document says what language a handler is written in; the client and the operator enforce it. || A Pulse's key only. A Field is one process by definition and an element is a source layout, so neither takes it, and additionalProperties:false refuses it on both. || No tier gate: every preset may declare it, and it prices nothing."
+        },
+        "env": {
+          "type": "object",
+          "description": "Plain configuration for this function, injected into its environment verbatim and read the way any process reads its environment (os.environ, process.env, os.Getenv). Use it for anything that is NOT a credential: a base URL, a bucket name, a region, a feature flag. SEPARATE FROM `secrets` on purpose — `secrets:` is meant to be readable as an isolation boundary, and that reading only holds while the list carries credentials. VALUES HERE ARE VALUES IN GIT: nothing can tell a credential from a config string, so put secrets in `secrets:`.",
+          "propertyNames": {
+            "$comment": "NEGATION IS `not`, NOT A LOOKAHEAD. This was one pattern using `(?!…)`, and Go's regexp is RE2, which has no lookahead — so the pattern failed to compile, which failed the WHOLE schema, which made every client fall back to \"this machine has no copy of the Driftfile format\". the CLI then validated nothing and refused every Driftfile outright. A regex feature that only some engines have is not a safe thing to put in a document six languages read; JSON Schema's own composition works everywhere.",
+            "allOf": [
+              {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              },
+              {
+                "not": {
+                  "pattern": "^(?i:DRIFT_)"
+                }
+              },
+              {
+                "not": {
+                  "pattern": "^(?i:BACKBONE_URL|DEED_URL|PATH|HOME|TMPDIR|PYTHONPATH|NODE_PATH|GOMEMLIMIT|GOFLAGS|LD_PRELOAD|LD_LIBRARY_PATH)$"
+                }
+              }
+            ]
+          },
+          "additionalProperties": {
+            "type": "string"
+          },
+          "examples": [
+            {
+              "OPERATOR_URL": "http://operator.drift-core.svc.cluster.local:8000"
+            },
+            {
+              "STRIPE_API_BASE": "https://api.stripe.com",
+              "FEATURE_NEW_CHECKOUT": "true"
+            }
+          ],
+          "$comment": "hurdles/011. Before this, `secrets:` was the ONLY per-function injection channel, so an in-cluster address was declared beside the token that authenticates to it — which spends the one property `secrets:` was supposed to advertise. The reserved names in propertyNames are refused HERE for a good message and refused AGAIN in the runtime (atomic::protocol::is_reserved_env), because a schema check runs on the caller's machine over a file the caller wrote: it is the right place for help and the wrong place for a boundary. Setting BACKBONE_URL or DEED_URL would point every SDK call in the function at another listener, carrying that function's own secrets in the request bodies."
+        },
+        "secrets": {
+          "type": "array",
+          "description": "The Backbone secrets this function may read. The runner fetches exactly these at invocation and injects them; a secret this list does not name is unreachable from this function even though the slice holds it. Read them through the SDK rather than the environment — the persistent Python and Node language servers receive them in the request envelope, where no environment variable exists. For configuration that is NOT a credential, use `env:` — see hurdles/011.",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "examples": [
+            [
+              "STRIPE_KEY"
+            ],
+            [
+              "SMTP_HOST",
+              "SMTP_PASSWORD"
+            ]
+          ],
+          "$comment": "Which secrets a function may read is policy, and policy belongs in the document that is reviewed at deploy rather than in a comment any contributor can widen. The slice-wide values still live in backbone.secrets; this is the per-function allowlist over them."
+        },
+        "cron": {
+          "type": "string",
+          "description": "5-field POSIX cron expression to run this function on a schedule, IN ADDITION to its own trigger — an HTTP function with a cron stays callable over HTTP. Parser checks for exactly five whitespace-separated tokens; the scheduler validates the grammar.",
+          "pattern": "^\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+$"
+        }
+      }
+    },
+    "fieldEntry": {
+      "type": "object",
+      "description": "One Field: the long-running worker the slice keeps running, and the callable it runs. A Field declares no memory here: its booking is part of the slice's shape, under the slot `field:<name>`, like a Pulse's. A Field is compiled (Go), so that booking is held to the compiled floor of 16MB, and a Field that grows past it is stopped and restarted.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "handler"
+      ],
+      "$comment": "Every property but `name` is atomicEntry's own, reached by $ref, so the handler grammar and the env reservation have one owner and a Field cannot drift from a Pulse on either. Wrapped in allOf so each can carry a description of its own: draft-07 ignores siblings of a bare $ref. || `memory` is ABSENT: the slice shape owns every booking, so a Field has no key here for one, and additionalProperties:false refuses one with a schema error rather than accepting a figure nothing reads. The compiled floor is enforced on the slot's booking at create and resize (tier.ValidateAtomicMemory). || Nothing else belongs here. A Field is not reached by a request, so it has no route, method, auth, stream or response; it is always running, so it has no cron.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The Field's name: what `drift atomic fields` and `drift atomic logs` call it. Lowercase letters, digits and hyphens, starting with a letter, up to 63 characters. Its booking key is `field:<name>`. It may not equal any Pulse's route (or queue name): the two would share logs and metrics, so the platform refuses the pair.",
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "examples": [
+            "sequencer",
+            "mail-sender"
+          ],
+          "$comment": "tier.ValidateBookingKey holds the same grammar for method `field`, and fields_test.go asserts the two accept the same names."
+        },
+        "handler": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/atomicEntry/properties/handler"
+            }
+          ],
+          "description": "The callable the Field runs, `func Name(ctx context.Context) error` in Go. The context is cancelled when the slice stops the Field; returning nil after that is a clean stop."
+        },
+        "dir": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/atomicEntry/properties/dir"
+            }
+          ],
+          "description": "Source directory holding this Field's callable, relative to the Driftfile. Defaults to its element's directory."
+        },
+        "secrets": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/atomicEntry/properties/secrets"
+            }
+          ],
+          "description": "The Backbone secrets this Field may read, injected into its environment when it starts."
+        },
+        "env": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/atomicEntry/properties/env"
+            }
+          ],
+          "description": "Plain configuration for this Field, injected into its environment verbatim. Not for credentials: those go in `secrets:`."
+        }
+      }
+    },
+    "elementEntry": {
+      "type": "object",
+      "description": "One element: a folder under ./atomic holding one language's source and that language's single dependency manifest, with the Pulses and Fields whose handlers live in it. ONE LANGUAGE PER ELEMENT. A second language is a second element, with its own folder and its own manifest, because an element has exactly one manifest slot and two languages cannot share it; `drift atomic new --element <name>` starts one. The element named `default` is the default element: it holds the flat source files directly under `atomic`, the ./atomic folder itself, while any other element's folder is ./atomic/<name>.",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "pulses"
+          ]
+        },
+        {
+          "required": [
+            "fields"
+          ]
+        }
+      ],
+      "$comment": "An element declares at least one Pulse or Field, as an anyOf because draft-07 has no other way to say \"one of these\": an element with neither books no slot and names a folder nothing runs from. || No `memory`, `auth` or any other per-entry key belongs here, and neither do `env` or `secrets`: an element is a source layout, not a slot, so every booking, every gate and every injected value is a Pulse's or a Field's own.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The element's name, and by default its folder: ./atomic/<name>. Lowercase letters, digits and hyphens, up to 32 characters. `default` names the default element, whose folder is ./atomic.",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+          "examples": [
+            "evm",
+            "bench",
+            "default"
+          ]
+        },
+        "dir": {
+          "type": "string",
+          "description": "The element's source directory, relative to the Driftfile. Every Pulse and Field in the element looks for its handler here unless it sets a `dir` of its own. Defaults to ./atomic/<name>, or ./atomic for `default`.",
+          "default": "./atomic/<name>"
+        },
+        "pulses": {
+          "type": "array",
+          "description": "The Pulses whose handlers live in this element. The element containing a Pulse is the one it belongs to.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/atomicEntry"
+          }
+        },
+        "fields": {
+          "type": "array",
+          "description": "The Fields whose handlers live in this element. The element containing a Field is the one it belongs to. Fields run Go, so an element declaring one is a Go element.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/fieldEntry"
+          },
+          "$comment": "Names are unique across the whole slice, every element's together, and JSON Schema cannot say so: `uniqueItems` compares whole entries, so two entries naming one Field with different handlers would both pass it. The client refuses the duplicate, and the platform refuses a config declaring one booking key twice (tier.ValidateFunctionIdentities). A Field name may NOT equal any Pulse route: the booking keys `field:<name>` and `<method>:<route>` differ, but the slice keys logs, metrics, alerts and triggers by the bare name, so the two would share them. JSON Schema cannot compare across lists either, so the client and tier.ValidateFieldNames refuse it."
+        }
+      }
+    },
+    "egressSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "Outbound posture: 'open' allows any public host; 'allowlist' denies egress not listed in hosts.",
+          "enum": [
+            "open",
+            "allowlist"
+          ],
+          "default": "open"
+        },
+        "hosts": {
+          "type": "array",
+          "description": "Allowed outbound hostnames when mode=allowlist. Format 'host' or 'host:port' (default port 443). Concrete hostnames only: a wildcard cannot be resolved to an address, so it cannot become a rule.",
+          "items": {
+            "type": "string",
+            "description": "An allowlisted host, e.g. api.stripe.com, smtp.sendgrid.net:587.",
+            "pattern": "^[^*]+$",
+            "$comment": "The pattern excludes '*' anywhere, and this field used to advertise the opposite: the description offered '*.amazonaws.com' as an example while the operator's resolver skipped any '*.' entry with a log line nobody reads. That combination would have produced an enforced allowlist silently missing a host the tenant declared. RE2-safe by construction - a negated character class, no lookahead - because one pattern Go cannot compile makes the CLI validate nothing at all."
+          }
+        }
+      }
+    },
+    "edgeSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "THE ONE HOME OF EVERY REACHABILITY FACT. Atomic is compute, Backbone data, Canvas sites, Deed identity, and Edge networking, in both directions. || Deed answers \"who are you\" and Edge \"what can reach what\": `site_auth` declares THAT a request must be gated; verifying the credential is Deed's. Content-Security-Policy is deliberately not here: it is a property of a served document that a browser enforces, and Edge's rules are the ones Drift enforces itself. || The slice-wide request rate is not here: it is a limit, so it lives in the slice's shape, which the same Driftfile declares and the CLI compiles separately. || Each key is applied by its own route, so an absent key changes nothing, and a present one is the whole truth for that fact: `links` removes a live link the list does not name.",
+      "properties": {
+        "egress": {
+          "$ref": "#/definitions/egressSection",
+          "description": "Outbound network posture for the slice. Enforced: the platform resolves the declared hosts and renders them into this slice's egress rules on deploy. Private RFC-1918, link-local and CGNAT ranges are blocked in both modes, by a rule the cluster applies."
+        },
+        "domains": {
+          "type": "array",
+          "description": "Custom hostnames the slice answers on, beyond the default <user>-<slice>.ondrift.eu. Each is proved yours by a DNS TXT record before it routes, and is released with the slice.",
+          "items": {
+            "$ref": "#/definitions/domainEntry"
+          }
+        },
+        "site_auth": {
+          "type": "object",
+          "description": "A password gate in front of the slice's Canvas sites (HTTP Basic). Only Canvas paths are gated: /api and /trigger carry their own credentials and are never asked for this one. Passwords are never written in the document: each names an environment variable that `drift apply` reads, so nothing secret lands in your repository.",
+          "additionalProperties": false,
+          "required": [
+            "users"
+          ],
+          "properties": {
+            "realm": {
+              "type": "string",
+              "description": "The name a browser shows in its password prompt.",
+              "maxLength": 64
+            },
+            "users": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "user",
+                  "password"
+                ],
+                "properties": {
+                  "user": {
+                    "type": "string",
+                    "description": "The username a visitor types.",
+                    "pattern": "^[^:\\s]{1,64}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "An environment variable REFERENCE, e.g. $SITE_PASS: `drift apply` reads that variable. A literal password is refused, because it would be committed with the file.",
+                    "pattern": "^\\$[A-Z_][A-Z0-9_]*$",
+                    "examples": [
+                      "$SITE_PASS"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "links": {
+          "type": "array",
+          "description": "Your other slices this one may call (drift.Edge.Slice(name) in a function) and front (`hosts`). Each must be a slice you own. When this key is present it is the whole list: `drift apply` adds the links it names and removes the ones it does not. Absent, links are left as they are.",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "description": "A slice name you own.",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+          }
+        },
+        "allow": {
+          "type": "array",
+          "description": "Inbound address allowlist, as CIDRs (203.0.113.0/24, 2001:db8::/32). When it names any, only those addresses reach the slice; anyone else gets 403 with code EDGE-ALLOW, never a 404. Absent or empty admits everyone, as every slice does today.",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "description": "An IPv4 or IPv6 CIDR.",
+            "pattern": "^(([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}|[0-9A-Fa-f:]*:[0-9A-Fa-f:]*/[0-9]{1,3})$"
+          }
+        },
+        "hosts": {
+          "type": "array",
+          "description": "Hosts this slice fronts for slices it links: a request for `host` is served by `slice`. Each host must be a verified custom domain of THIS slice, and each slice must be in `links`; the link is the authority, so removing it stops the host routing.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "host",
+              "slice"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "A custom domain this slice owns, e.g. admin.example.com."
+              },
+              "slice": {
+                "type": "string",
+                "description": "The linked slice that serves it.",
+                "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "backboneSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "Limits are not here. The slice-wide Backbone limits (blob object size, queue depth, secret size, locks, realtime connections) and every storage size live in the slice's shape, which the same Driftfile declares and the CLI compiles separately. This section names what the slice holds and what a deploy seeds.",
+      "properties": {
+        "nosql": {
+          "type": "array",
+          "description": "NoSQL document collections this document seeds or expires. Each element is a map with slot/seed/ttl/unique.",
+          "items": {
+            "$ref": "#/definitions/nosqlEntry"
+          }
+        },
+        "sql": {
+          "type": "array",
+          "description": "Per-slice SQLite databases (each becomes one .db file, reached via drift.SQL(\"name\")). Each element is a map with name/schema/migrations/seed.",
+          "items": {
+            "$ref": "#/definitions/sqlEntry"
+          }
+        },
+        "blobs": {
+          "type": "array",
+          "description": "Named buckets in the per-slice blob store. Each element is a map with name.",
+          "items": {
+            "$ref": "#/definitions/blobEntry"
+          }
+        },
+        "queues": {
+          "type": "array",
+          "description": "FIFO queues to create (no seeding). Each element is a queue name. Pushing to a queue can trigger a function automatically.",
+          "items": {
+            "$ref": "#/definitions/queueEntry"
+          }
+        },
+        "cache": {
+          "type": "object",
+          "description": "Named cache entries (map keyed by cache key) pre-warmed at deploy. Each is a map with file or value, and ttl.",
+          "additionalProperties": {
+            "$ref": "#/definitions/cacheEntry"
+          }
+        },
+        "secrets": {
+          "type": "object",
+          "description": "Map of secret NAME to the environment variable its value is read from, written `$ENVNAME`. The CLI resolves the variable at apply time from (highest first) the shell environment, a --secret KEY=value flag, or the sibling .env file, and the value never appears in the document, so nothing secret lands in your repository.",
+          "additionalProperties": {
+            "type": "string",
+            "description": "An environment variable reference, `$` followed by the variable's name, resolved at apply time."
+          }
+        },
+        "realtime": {
+          "$ref": "#/definitions/realtimeSection",
+          "description": "Realtime (WebSocket pub/sub) section: which channels a visitor's browser may publish to."
+        }
+      }
+    },
+    "realtimeSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "Realtime's connection limit is not here: it is a limit, so it lives in the slice's shape. This section holds the one BEHAVIOUR Realtime has, who may speak. || The entry grammar is a COPY of the slice's own check (valid_client_channel_entry in src/slice/src/backbone/realtime.rs): a channel name of up to 256 characters from [A-Za-z0-9:._~-], optionally ending in `*`, or a bare `*`. The count is a copy of MAX_CLIENT_CHANNEL_ENTRIES there. The slice refuses what this admits wrongly, so a drift between them costs a refused apply rather than a hole.",
+      "properties": {
+        "client_channels": {
+          "type": "array",
+          "description": "The channels a connected client (a browser) may publish to. A frame a client sends on any other channel is dropped and never reaches the room; the sender is told once why. Server-side publishing from a Pulse is not governed by this: a function always may. An entry is an exact channel name (`chat`), a prefix ending in `*` (`room:*` opens every channel that starts with `room:`), or a bare `*` for every channel. Omitted or empty = no client may publish, which is what every slice does until it declares otherwise. Authoritative: removing an entry and applying again closes that channel to clients. At most 64 entries.",
+          "uniqueItems": true,
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "description": "A channel name, a name followed by `*`, or `*`.",
+            "pattern": "^(\\*|[A-Za-z0-9:._~-]{1,256}\\*?)$"
+          },
+          "examples": [
+            [
+              "chat"
+            ],
+            [
+              "room:*",
+              "presence"
+            ]
+          ]
+        }
+      }
+    },
+    "queueEntry": {
+      "type": "string",
+      "description": "A FIFO queue, written as its name. Queues have no per-item size; they are bounded slice-wide by the queue depth in the slice's shape, so a queue carries nothing but its name.",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+    },
+    "nosqlEntry": {
+      "description": "A NoSQL collection the document seeds or expires. Written as `slot`, a reference to a collection the slice already holds: the slice's shape owns what a slice contains and how big it is.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot"
+      ],
+      "$comment": "`ttl` is here deliberately: it is a document-expiry BEHAVIOUR rather than a capacity purchase, so it is not part of the slice's shape, and dropping it would turn every TTL'd collection into kept-forever with nothing reporting the change.",
+      "properties": {
+        "slot": {
+          "type": "string",
+          "description": "The collection this entry seeds or expires — a reference to a collection the slice already holds, not one this file creates. Must match the Drift identifier shape.",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+          "examples": [
+            "sessions",
+            "ops"
+          ],
+          "$comment": "A `slot` on its own is a complete entry. A manifest legitimately references a collection it neither seeds nor expires, and requiring `seed` or `ttl` beside it would make the reference form unwriteable."
+        },
+        "seed": {
+          "type": "string",
+          "description": "Path to a JSONL seed file (one JSON doc per line, each with a non-empty _id), upserted by _id on deploy (idempotent). Relative to the Driftfile."
+        },
+        "ttl": {
+          "type": "string",
+          "description": "How long a document lives after its last write before the platform deletes it (duration: s/m/h/d). Resets on every write — only genuinely stale, untouched documents are reaped. Omitted = kept forever. Applies per-collection, not per-document.",
+          "pattern": "^[0-9]+[smhd]$"
+        },
+        "unique": {
+          "type": "array",
+          "description": "Fields whose values must be unique within this collection. A write carrying a value another document already holds in one of these fields is rejected with 409, by the platform, inside the same transaction as the write — so it is a constraint rather than a check you could have raced. Use it for an email, a username, an external reference. A document that OMITS one of these fields is written: absence is not a value, so this does not make the field required. Authoritative: removing a field from this list and redeploying stops enforcing it.",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,254}$"
+          },
+          "examples": [
+            [
+              "email"
+            ],
+            [
+              "email",
+              "handle"
+            ]
+          ],
+          "$comment": "hurdles/021. Before this the store had no way to declare a constraint, so a tenant registering users by email implemented it as read-then-write — a race that passes every test they write and fails under two concurrent requests. It rides `ttl`'s path rather than the quota envelope's for the reason stated in this definition's own $comment: it is a BEHAVIOUR of the collection, not a capacity purchase, so the Driftfile owns it and the slice's shape has no field for it. The slice stores it in the same marker record as the TTL and enforces it under the write lock, inside the write transaction — anywhere further out and it would be a suggestion."
+        }
+      }
+    },
+    "sqlEntry": {
+      "description": "A SQL (SQLite) database this project builds in: a map naming a database the slice already holds, with an optional schema, migrations directory and seed, which a deploy takes in that order: the schema every time, each migration once, the seed while the database holds no data. The slice's shape owns the database set and its sizes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Database identifier and SDK lookup key (drift.SQL(\"name\")); becomes the .db filename. 1-64 chars, lowercase alphanumeric plus _ and - in the interior.",
+          "pattern": "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$"
+        },
+        "schema": {
+          "type": "string",
+          "description": "Path to a SQL file of idempotent DDL (CREATE TABLE IF NOT EXISTS ...), applied on every deploy, before `migrations`. Relative to the Driftfile."
+        },
+        "migrations": {
+          "type": "string",
+          "description": "Path to a directory of versioned migrations, relative to the Driftfile. Each file is named `<number>_<name>.sql` (`0001_create_users.sql`, `0002_add_email.sql`) and is applied ONCE, on the first deploy that sees it, in numeric order, after `schema` and before `seed`. Each runs in its own transaction and is recorded in the database's `_drift_migrations` table.\n\nRules: numbers are compared as numbers (`10_` runs after `9_`), gaps are fine, and two files with one number are refused. A NEW file numbered below one already applied is refused. An applied file whose contents changed is refused (line endings excepted) — put the change in a new migration instead. A migration that fails is rolled back, the ones after it are not attempted, and the deploy fails naming the file. Do not write BEGIN/COMMIT in a migration: it already runs in a transaction.",
+          "examples": [
+            "./migrations"
+          ],
+          "$comment": "The client sends the directory's .sql files on the same load-schema call as `schema` ({db, schema, migrations: [{name, sql}]}); the slice owns ordering, validation and the record (backbone/sql.rs `migrate`). The slice answers a call that carries `migrations`, even an empty list, with a JSON report, and a call without it with the bare 204 it always gave — so a client can tell a slice that applies migrations from one that would ignore the field. The history table is part of the database, so the portable dump carries it and a restored database does not re-run anything."
+        },
+        "seed": {
+          "type": "string",
+          "description": "Path to a SQL file run after `schema` and `migrations` while the database holds no data yet: when it has no tables, or its first table by name (the migration history excepted) is empty. Relative to the Driftfile."
+        }
+      }
+    },
+    "blobEntry": {
+      "description": "A bucket this project writes to. It references a bucket the slice already holds: the slice's shape owns the bucket set and its sizes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Bucket name; must match the Drift identifier shape.",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+        }
+      }
+    },
+    "cacheEntry": {
+      "description": "A cache entry's seed source: a map with file/value/ttl (exactly one of file or value required).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Path to a file whose contents become the cached value (relative to the Driftfile). One of file or value is required."
+        },
+        "value": {
+          "type": "string",
+          "description": "Inline literal value to pre-warm the cache entry with. One of file or value is required."
+        },
+        "ttl": {
+          "type": "integer",
+          "description": "Time-to-live in seconds, after which the entry expires (seconds). 0 or omitted = never expires.",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "file"
+          ]
+        },
+        {
+          "required": [
+            "value"
+          ]
+        }
+      ]
+    },
+    "canvasSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "The total Canvas storage is not here: it is a limit, so it lives in the slice's shape, which the same Driftfile declares and the CLI compiles separately.",
+      "properties": {
+        "sites": {
+          "type": "array",
+          "description": "Static sites to host. Each element is a map with dir/path.",
+          "items": {
+            "$ref": "#/definitions/canvasEntry"
+          }
+        }
+      }
+    },
+    "canvasEntry": {
+      "description": "A static site: a map with dir and, optionally, the path it mounts at.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dir"
+      ],
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Directory of static assets to serve (relative to the Driftfile). Must exist."
+        },
+        "path": {
+          "type": "string",
+          "description": "URL sub-path the site mounts at. Defaults to / when omitted.",
+          "default": "/",
+          "examples": [
+            "/",
+            "/admin"
+          ],
+          "$comment": "The slug the slice lays a site out under is derived from this, so two sites resolving to one value would overwrite each other. The client refuses an EMPTY value rather than reading it as the root, and refuses a document in which two sites share a slug — before the first upload, because the site being replaced is gone by the time an upload reports it."
+        }
+      }
+    },
+    "domainEntry": {
+      "type": "object",
+      "description": "One custom hostname for the slice. It is proved yours by a DNS TXT record before it routes.",
+      "additionalProperties": false,
+      "required": [
+        "host"
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Custom hostname the slice should answer on (e.g. forms.gemeente.example)."
+        },
+        "wildcard": {
+          "type": "boolean",
+          "description": "Route every subdomain of host (isrand.imprente.com, alice.imprente.com, ...) to this same slice. The app on the slice owns any further per-subdomain multitenancy. Routing only — each subdomain still gets its own on-demand TLS certificate, not a wildcard cert.",
+          "default": false
+        }
+      }
+    }
+  }
+}
