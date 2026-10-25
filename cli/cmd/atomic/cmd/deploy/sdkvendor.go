@@ -351,6 +351,9 @@ func resolveLatestSDKTag() (string, error) {
 	if v := strings.TrimSpace(os.Getenv("DRIFT_SDK_TAG")); v != "" {
 		return v, nil
 	}
+	if sdkSourceDir() != "" {
+		return sdkTagPrefix + "vlocal", nil
+	}
 	hint := "\nPin one with DRIFT_SDK_TAG=<tag>, or set DRIFT_FORCE_CONTAINER_BUILD=1 to build in a container instead."
 
 	client := &http.Client{Timeout: sdkHTTPTimeout}
@@ -453,6 +456,16 @@ func semverLess(a, b [3]int) bool {
 	return false
 }
 
+// sdkSourceDir is a directory laid out like the extracted tarball (the monorepo
+// root, holding `sdk/`), named by DRIFT_SDK_SOURCE. When it is set the SDK is
+// vendored from there and nothing is resolved or downloaded: for developing the
+// SDK against the CLI, for an air-gapped machine, and for a test run that must
+// not depend on GitHub answering (its unauthenticated API allows 60 requests an
+// hour to one address, which a shared CI box spends).
+func sdkSourceDir() string {
+	return strings.TrimSpace(os.Getenv("DRIFT_SDK_SOURCE"))
+}
+
 // fetchSDKTarball downloads one tagged source tarball.
 func fetchSDKTarball(tag string) (io.ReadCloser, error) {
 	client := &http.Client{Timeout: sdkHTTPTimeout}
@@ -472,6 +485,9 @@ func fetchSDKTarball(tag string) (io.ReadCloser, error) {
 // downloading it once. Keyed by tag under UserCacheDir, so repeated deploys —
 // and every function in an element — reuse one copy.
 func sdkCachedSource(tag string) (string, error) {
+	if dir := sdkSourceDir(); dir != "" {
+		return dir, nil
+	}
 	base, err := os.UserCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("locate cache dir: %w", err)

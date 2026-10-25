@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://api.ondrift.eu/driftfile/schema",
   "$comment": "AUTHORITATIVE schema of the document a Driftfile compiles to. A Driftfile is written in HCL; the CLI compiles it into a JSON document and validates THAT document against this schema, so the schema describes exactly the keys the compiler can write and no others. Embedded in the api binary and served from https://api.ondrift.eu/driftfile/schema. Documentation lives HERE, in `description` (user-facing, rendered on hover by any editor that reads JSON Schema), `default` (what omission means), `examples`, and `$comment` (notes for whoever edits the schema). A doc that ships beside the schema is a doc that drifts from it. || VERSIONING: `version` below is the format's own semver. MAJOR = a field removed, renamed or retyped, so an older client cannot read a document written for it; MINOR = a new optional field, which older clients round-trip untouched; PATCH = documentation only. Bump it in the same change that alters the schema, because the api serves this number and clients compare it against the one they implement. A MAJOR difference is the one a client REFUSES on; a MINOR difference it says out loud when it lints or applies a Driftfile. || WHAT LIVES HERE: the GRAMMAR (which keys exist, their shape, their fixed defaults) and, deliberately, the BOUNDS a client must apply before it can reach the platform: the booking range published in `x-drift.memory-pattern`, and the compiled floor and interpreted-language set beside it. Those are here so a booking outside them is refused by the CLI on the laptop rather than by the api after a deploy has been confirmed and uploaded, which is most of what serving the format is for. A bound here is a COPY, never the authority: `tier` enforces the range and the compiled floor, the slice's deploy branch owns the interpreted set, and tests assert the copies still agree (driftfile_test.go for the memory range and the compiled floor, the operator's routes tests for the language set) rather than trusting them to be edited together. Add a bound here only with the test that pins it to its owner. A `default` must be a fixed property of the format, and a value no client could act on offline has no reason to be in this document at all.",
-  "version": "2.2.0",
+  "version": "2.1.0",
   "x-drift": {
     "$comment": "BOUNDS THE PLATFORM ENFORCES, published so a client can apply them before it can reach the api. They live at the ROOT because they describe the platform rather than any key of a document. The booking range is here too: the compiled document carries no memory key, because a Pulse's and a Field's booking belongs to the slice's shape, so there is no property for a pattern to hang on, and a client reads the range from `memory-pattern` below. || Each is a COPY, never the authority: `memory-pattern` copies tier.MinFunctionMemoryBytes and tier.MaxFunctionMemoryBytes, `compiled-minimum` copies tier.MinCompiledFunctionMemoryBytes, and the slice's deploy branch owns the interpreted set. driftfile_test.go asserts the range and the floor still equal tier's. A client carrying any of these rules privately would be a second definition that drifts. || `memory-pattern` encodes the RANGE, not just the shape: 8MB to 256MB, whole megabytes, with no GB unit because the ceiling is below 1GB. Multiples of 8 are not required. || The compiled floor and the interpreted set cannot be a `pattern`: a pattern constrains the DOCUMENT, and nothing in a document says what language a handler is written in, which is detected from the source beside the Driftfile, and only the client can see that. || The set is keyed on the INTERPRETED four rather than the compiled ones because that is the stable side; the wire value for a compiled language is a known-moving target, so an unrecognised language is treated as compiled. A client that does not know these keys ignores them, and the api still refuses the deploy.",
     "memory-pattern": "^([89]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-6])MB$",
@@ -537,18 +537,6 @@
               "type": "string",
               "description": "The name a browser shows in its password prompt.",
               "maxLength": 64
-            },
-            "paths": {
-              "type": "array",
-              "description": "The Canvas paths the gate covers. [\"*\"] covers every path. Otherwise each entry is an absolute path that covers itself and everything beneath it: \"/admin\" gates /admin, /admin/ and /admin/users/1, and not /administrator or /admin.html. A path outside the list is served without a credential. The match is on the cleaned request path and is case-sensitive. When the key is absent the gate covers every path, which is what a gate set before this key existed does; the CLI requires it to be written.",
-              "minItems": 1,
-              "maxItems": 32,
-              "uniqueItems": true,
-              "items": {
-                "type": "string",
-                "maxLength": 256,
-                "pattern": "^(\\*|/[^\\s?#\\\\]+)$"
-              }
             },
             "users": {
               "type": "array",
