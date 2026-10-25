@@ -1734,7 +1734,7 @@ class _SliceClient:
         if not base:
             raise RuntimeError(
                 f'drift: slice "{self.name}" is not linked: declare it under edge.links '
-                f"in the Driftfile (or run drift slice link add {self.name})"
+                "in the Driftfile"
             )
         return base.rstrip("/") + "/" + str(path).lstrip("/")
 
@@ -1772,10 +1772,9 @@ class _Edge:
     this slice links to under edge.links in the Driftfile."""
 
     def slice(self, name):
-        """A client for a slice linked under edge.links (or added with
-        `drift slice link add <name>`). The call travels in-cluster and
-        carries this slice's identity (X-Drift-Slice) as a label when the
-        runtime supplies one."""
+        """A client for a slice linked under edge.links. The call travels
+        in-cluster and carries this slice's identity (X-Drift-Slice) as a
+        label when the runtime supplies one."""
         return _SliceClient(name)
 
 

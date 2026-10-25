@@ -4,11 +4,12 @@
 // # Why this goes on the artifact and not through the trigger API
 //
 // There are two ways to register a schedule with a slice, and only one of them
-// is metered. `drift atomic trigger register schedule` posts to the api's
-// `/ops/trigger/register`, which proxies straight through to the slice — the
-// operator never sees it, so `enforceScheduleLimit` never runs. The deploy
-// artifact's `Triggers` field goes through the operator, which counts the new
-// schedules, checks them against the slice's envelope, and only then registers.
+// is metered. A schedule posted to the api's `/ops/trigger/register` proxies
+// straight through to the slice — the operator never sees it, so
+// `enforceScheduleLimit` never runs. The deploy artifact's `Triggers` field goes
+// through the operator, which counts the new schedules, checks them against the
+// slice's envelope, and only then registers. The CLI has no command that posts
+// a schedule to the first route.
 //
 // Scheduled jobs are priced (tier.CentsPerScheduledJob). A schedule the
 // envelope never sees is a schedule nobody is billed for, so the metered path

@@ -84,7 +84,7 @@ func TestApply_AnEmptyHostsListClearsIt(t *testing.T) {
 func TestApply_SurfacesTheHostsRefusalVerbatim(t *testing.T) {
 	s, _ := newEdgeStub(t)
 	refusal := "admin.example.com is not a verified custom domain of this slice: " +
-		"run `drift slice domain add admin.example.com`, then `drift slice domain verify admin.example.com`"
+		"declare it as a domain block in edge and run `drift apply`, then `drift slice domain verify admin.example.com`"
 	s.refuse["hosts"] = edgeReply{http.StatusUnprocessableEntity, `{"error":"` + refusal + `"}`}
 	withRealSchema(t)
 	applyIn(t, edgeFreeDemo+"edge {\n  hosts = { \"admin.example.com\" = \"admin\" }\n}\n")

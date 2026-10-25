@@ -810,7 +810,7 @@ class SliceClient {
         $base = getenv(_link_env_name($this->name));
         if ($base === false || $base === '') {
             throw new \RuntimeException(
-                "drift: slice \"{$this->name}\" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add {$this->name})"
+                "drift: slice \"{$this->name}\" is not linked: declare it under edge.links in the Driftfile"
             );
         }
         return rtrim($base, '/') . '/' . ltrim($path, '/');
@@ -1409,8 +1409,7 @@ namespace Drift\Edge {
 
 /**
  * A client for another slice of the same owner that this slice links to under
- * edge.links in the Driftfile (or added with `drift slice link add <name>`).
- * The call travels in-cluster and carries this slice's identity
+ * edge.links in the Driftfile. The call travels in-cluster and carries this slice's identity
  * (X-Drift-Slice) as a label when the runtime supplies one.
  */
 function slice(string $name): \Drift\SliceClient {
