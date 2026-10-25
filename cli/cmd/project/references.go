@@ -123,8 +123,8 @@ var errAdoptionDeclined = fmt.Errorf(
 // writes, which is what lets the plan path use it.
 func sliceReferenceMisses(m *Manifest, live *LiveSlice) ([]referenceMiss, error) {
 	if live == nil {
-		return nil, fmt.Errorf("slice %q does not exist — create it first with `drift slice create %s`, then deploy into it",
-			m.Name(), m.Name())
+		return nil, fmt.Errorf("slice %q does not exist — `drift apply` creates it from the Driftfile and then deploys into it",
+			m.Name())
 	}
 
 	declaredFunctions := make(map[string]bool, len(live.Config.Atomic.Functions))

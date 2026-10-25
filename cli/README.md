@@ -55,7 +55,7 @@ block it can hold.
 
 | Command | Description |
 |---------|-------------|
-| `drift slice create [name]` | Create a slice, drawing its shape in the terminal — a tree you move around in, priced live as you type. `--free` takes the fixed free shape with nothing to answer. |
+| `drift file new` | Write a starter Driftfile, asking for the slice's name, its billing and the first pulse; `drift apply` then creates the slice. (`drift slice create` still works and says it is deprecated.) |
 | `drift slice list` | List your slices; the active one is marked. |
 | `drift slice use <name>` | Set the active slice for subsequent commands. |
 | `drift slice resize [name]` | Reshape a slice on the same form, opened on what it already is (defaults to the active slice). Repricing and removal are confirmed on the form itself. |
