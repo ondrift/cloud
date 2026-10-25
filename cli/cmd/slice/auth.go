@@ -45,8 +45,7 @@ func getAuthCmd() *cobra.Command {
 			"Visitors get a browser password box; anyone without the credential gets a\n" +
 			"401 and never reaches the site. This gates the SITE — Atomic functions are\n" +
 			"guarded separately with `drift atomic auth`.",
-		Example: "  drift slice auth set --user visitor\n" +
-			"  drift slice auth list\n" +
+		Example: "  drift slice auth list\n" +
 			"  drift slice auth disable",
 	}
 	cmd.AddCommand(getAuthSetCmd(), getAuthListCmd(), getAuthDisableCmd())
@@ -61,7 +60,7 @@ func getAuthSetCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "set",
-		Short: "Enable the gate, replacing any credentials already set",
+		Short: "Deprecated: declare edge.site_auth in the Driftfile instead",
 		Long: "Enable the Basic-auth gate on this slice's site.\n\n" +
 			"This REPLACES the whole credential set rather than adding to it, so a\n" +
 			"`set` naming one user leaves exactly that user able to get in. That is\n" +
@@ -138,7 +137,11 @@ func getAuthSetCmd() *cobra.Command {
 		"Realm shown in the browser's password box")
 	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false,
 		"Read passwords from stdin, one line per --user, in order (for CI)")
-	return cmd
+	return common.DeprecateCommand(cmd, common.Deprecation{
+		Old:     "drift slice auth set",
+		New:     "drift apply",
+		Because: "Declare a `site_auth` block in the Driftfile's edge block, with each password read from an environment variable; apply sets exactly those users.",
+	})
 }
 
 func getAuthListCmd() *cobra.Command {
