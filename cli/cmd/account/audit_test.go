@@ -9,21 +9,25 @@ import (
 // what someone asking about last week means — not a seven-day-long window
 // starting at some other point.
 func TestParseWhen_ADurationIsMeasuredBackwardsFromNow(t *testing.T) {
+	now := func() time.Time { return time.Now() }
 	for _, tc := range []struct {
 		raw  string
-		back time.Duration
+		want func() time.Time
 	}{
-		{"24h", 24 * time.Hour},
-		{"90m", 90 * time.Minute},
-		{"7d", 7 * 24 * time.Hour},
-		{"1d", 24 * time.Hour},
+		{"24h", func() time.Time { return now().Add(-24 * time.Hour) }},
+		{"90m", func() time.Time { return now().Add(-90 * time.Minute) }},
+		// A day is a CALENDAR day, so across a clock change it is 23 or 25 hours.
+		// Measuring it as 24 hours here made this test fail, on those days only,
+		// in every time zone that has one.
+		{"7d", func() time.Time { return now().AddDate(0, 0, -7) }},
+		{"1d", func() time.Time { return now().AddDate(0, 0, -1) }},
 	} {
 		got, err := parseWhen(tc.raw)
 		if err != nil {
 			t.Errorf("parseWhen(%q) = %v", tc.raw, err)
 			continue
 		}
-		want := time.Now().Add(-tc.back)
+		want := tc.want()
 		// A second of slack: `now` moves between the call and the comparison.
 		if diff := got.Sub(want); diff > time.Second || diff < -time.Second {
 			t.Errorf("parseWhen(%q) is %v from the expected point — a duration must be an AGO",
