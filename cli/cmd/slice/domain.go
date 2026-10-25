@@ -1,5 +1,7 @@
-// domain.go — `drift slice domain {add, verify, list, remove}`.
-// Thin wrappers around the API gateway's /ops/slice/domain* endpoints.
+// domain.go — `drift slice domain {verify, list, remove}`.
+// Thin wrappers around the API gateway's /ops/slice/domain* endpoints. A host is
+// attached by declaring a `domain` block in the Driftfile's edge block and
+// running `drift apply`; there is no command that adds one.
 package slice
 
 import (
@@ -34,59 +36,11 @@ func getDomainCmd() *cobra.Command {
 			"  drift slice domain remove forms.gemeente.example",
 	}
 	cmd.AddCommand(
-		getDomainAddCmd(),
 		getDomainVerifyCmd(),
 		getDomainListCmd(),
 		getDomainRemoveCmd(),
 	)
 	return cmd
-}
-
-func getDomainAddCmd() *cobra.Command {
-	var wildcard bool
-	cmd := &cobra.Command{
-		Use:   "add <host>",
-		Short: "Deprecated: declare the domain in the Driftfile's edge block instead",
-		Long: `Register a custom hostname for the active slice.
-
---wildcard opts the domain into routing every one of its subdomains
-(isrand.imprente.com, alice.imprente.com, ...) to this SAME slice — your
-app is then responsible for its own per-subdomain multitenancy (reading
-its own Host header). This is a routing feature, not a wildcard TLS
-certificate: each subdomain still gets its own certificate, issued on
-first request, exactly like every other custom domain.`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if _, err := common.RequireActiveSlice(); err != nil {
-				return err
-			}
-			host := strings.ToLower(strings.TrimSpace(args[0]))
-			body, _ := json.Marshal(map[string]any{"host": host, "verify": "dns-txt", "wildcard": wildcard})
-			resp, err := common.DoJSONRequest(http.MethodPost,
-				common.APIBaseURL+"/ops/slice/domain", strings.NewReader(string(body)))
-			if err != nil {
-				return common.TransportError("add domain", err)
-			}
-			defer resp.Body.Close()
-			respBody, err := common.CheckResponse(resp, "add domain")
-			if err != nil {
-				return err
-			}
-			var d domainResponse
-			_ = json.Unmarshal(respBody, &d)
-			fmt.Printf("Domain %s added (status: %s).\n\n", d.Host, d.Status)
-			for _, line := range d.Instructions {
-				fmt.Println(line)
-			}
-			return nil
-		},
-	}
-	cmd.Flags().BoolVar(&wildcard, "wildcard", false, "Route every subdomain of this domain to the same slice")
-	return common.DeprecateCommand(cmd, common.Deprecation{
-		Old:     "drift slice domain add",
-		New:     "drift apply",
-		Because: "Declare a `domain` block in the Driftfile's edge block (`wildcard = true` for every subdomain); apply attaches it, then `drift slice domain verify` checks the DNS record.",
-	})
 }
 
 func getDomainVerifyCmd() *cobra.Command {

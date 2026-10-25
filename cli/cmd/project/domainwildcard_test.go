@@ -9,7 +9,7 @@ import (
 // A domain the Driftfile declares with `wildcard = true` is added as a
 // wildcard: every subdomain routes to the slice. The compiler carries the
 // attribute into the document, so the add is where it has to reach the
-// platform, the same field `drift slice domain add --wildcard` sends.
+// platform.
 func TestApplyDomains_AWildcardDomainIsAddedAsOne(t *testing.T) {
 	withRealSchema(t)
 	c, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {\n  billing = \"monthly\"\n}\n\n"+

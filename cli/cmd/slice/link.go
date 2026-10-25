@@ -1,5 +1,5 @@
-// link.go — `drift slice link {add, list, remove}`, and the client calls behind
-// them.
+// link.go — `drift slice link list`, and the client calls `drift apply` makes to
+// reconcile a Driftfile's `links`.
 //
 // Slice-to-slice linking: grant the ACTIVE slice permission to call another of
 // your slices (e.g. an app slice → your own observability slice). The operator
@@ -15,9 +15,9 @@
 // Same-user only (the target must be a slice you own). This widens to
 // "same Drift Team" when Teams land — the CLI surface won't change.
 //
-// `links` in the Driftfile's edge block is the declarative way: `drift apply`
-// adds the links it names and removes the ones it does not, through the same
-// calls exported here.
+// `links` in the Driftfile's edge block is the only way to change them: `drift
+// apply` adds the links it names and removes the ones it does not, through the
+// calls exported here. `drift slice link list` shows what is live.
 package slice
 
 import (
@@ -128,39 +128,11 @@ func getLinkCmd() *cobra.Command {
 			"internet, and everything else stays subject to your egress posture.\n\n" +
 			"Links are declared as `links` in its edge block: `drift apply` " +
 			"adds the links it names and removes the ones it does not. `list` shows " +
-			"what is live; `add` and `remove` are deprecated.",
+			"what is live.",
 		Example: "  drift slice link list",
 	}
-	cmd.AddCommand(getLinkAddCmd(), getLinkListCmd(), getLinkRemoveCmd())
+	cmd.AddCommand(getLinkListCmd())
 	return cmd
-}
-
-func getLinkAddCmd() *cobra.Command {
-	return common.DeprecateCommand(&cobra.Command{
-		Use:   "add <target-slice>",
-		Short: "Deprecated: declare the link in the Driftfile's edge block instead",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			active, err := common.RequireActiveSlice()
-			if err != nil {
-				return err
-			}
-			l, err := AddLink(active, args[0])
-			if err != nil {
-				return err
-			}
-			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "Linked → %s\n", l.Target)
-			fmt.Fprintf(out, "  Call it from your functions:\n")
-			fmt.Fprintf(out, "    drift.Edge.Slice(%q).Post(\"/api/...\", body)\n", l.Target)
-			fmt.Fprintf(out, "  (an in-cluster path through the slice runtime; %s authenticates the call like any other)\n", l.Target)
-			return nil
-		},
-	}, common.Deprecation{
-		Old:     "drift slice link add",
-		New:     "drift apply",
-		Because: "List the target in `links` in the Driftfile's edge block; apply adds the links the file names.",
-	})
 }
 
 func getLinkListCmd() *cobra.Command {
@@ -188,28 +160,4 @@ func getLinkListCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-func getLinkRemoveCmd() *cobra.Command {
-	return common.DeprecateCommand(&cobra.Command{
-		Use:   "remove <target-slice>",
-		Short: "Deprecated: delete the link from the Driftfile's edge block instead",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			active, err := common.RequireActiveSlice()
-			if err != nil {
-				return err
-			}
-			target := normaliseLinkTarget(args[0])
-			if err := RemoveLink(active, target); err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Unlinked → %s\n", target)
-			return nil
-		},
-	}, common.Deprecation{
-		Old:     "drift slice link remove",
-		New:     "drift apply",
-		Because: "Delete the target from `links` in the Driftfile's edge block; apply removes the links the file does not name.",
-	})
 }

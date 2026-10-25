@@ -24,7 +24,7 @@ func Trigger() *cobra.Command {
 		Short:   "Register a trigger",
 		Example: "  drift atomic trigger register queue order-processor --queue orders --target http://localhost:8080",
 	}
-	register.AddCommand(triggerRegisterQueueCmd(), triggerRegisterScheduleCmd())
+	register.AddCommand(triggerRegisterQueueCmd())
 
 	cmd.AddCommand(triggerListCmd(), register, triggerUnregisterCmd())
 	return cmd
@@ -125,52 +125,6 @@ func triggerRegisterQueueCmd() *cobra.Command {
 	_ = cmd.MarkFlagRequired("queue")
 	_ = cmd.MarkFlagRequired("target")
 	return cmd
-}
-
-func triggerRegisterScheduleCmd() *cobra.Command {
-	var cron, target string
-	cmd := &cobra.Command{
-		Use:     "schedule <name>",
-		Short:   "Register a cron schedule trigger (5-field: minute hour dom month dow)",
-		Example: "  drift atomic trigger register schedule nightly-sync --cron \"0 0 * * *\" --target http://localhost:8080\n  drift atomic trigger register schedule health-check --cron \"*/5 * * * *\" --target http://localhost:8080",
-		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-
-			payload, _ := json.Marshal(map[string]any{
-				"name":       name,
-				"type":       "schedule",
-				"schedule":   cron,
-				"target_url": target,
-			})
-			resp, err := common.DoJSONRequest(
-				http.MethodPost,
-				common.APIBaseURL+"/ops/trigger/register",
-				bytes.NewBuffer(payload),
-			)
-			if err != nil {
-				e := common.TransportError("register the schedule trigger", err)
-				return e
-			}
-			defer resp.Body.Close()
-
-			if _, err := common.CheckResponse(resp, "register the schedule trigger"); err != nil {
-				return err
-			}
-
-			fmt.Printf("Schedule trigger %q registered (cron: %s)\n", name, cron)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&cron, "cron", "", "5-field cron expression, e.g. \"*/5 * * * *\" (required)")
-	cmd.Flags().StringVar(&target, "target", "", "Target URL to invoke on each scheduled fire (required)")
-	_ = cmd.MarkFlagRequired("cron")
-	_ = cmd.MarkFlagRequired("target")
-	return common.DeprecateCommand(cmd, common.Deprecation{
-		Old:     "drift atomic trigger register schedule",
-		New:     "drift apply",
-		Because: "Put `cron` on the pulse in the Driftfile; apply deploys it with its schedule.",
-	})
 }
 
 func triggerUnregisterCmd() *cobra.Command {
