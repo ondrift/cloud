@@ -35,8 +35,16 @@ func getRestartCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Slice %s is restarting. It may take a few seconds to become available again.\n", common.Highlight(slice))
+			fmt.Println(restartNotice(common.Highlight(slice)))
 			return nil
 		},
 	}
+}
+
+// restartNotice says what a restart costs. A slice is one instance, so a restart
+// replaces it: calls in flight drain, new ones are answered 503, and it is back
+// after tens of seconds, not a few. The note used to promise "a few seconds".
+func restartNotice(name string) string {
+	return fmt.Sprintf("Slice %s is restarting. It is unavailable for tens of seconds, "+
+		"and requests in that time are answered 503.", name)
 }
