@@ -1543,7 +1543,7 @@ function _sliceClient(name) {
     const baseUrl = process.env[_linkEnvName(name)];
     if (!baseUrl) {
       throw new Error(
-        `drift: slice "${name}" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add ${name})`,
+        `drift: slice "${name}" is not linked: declare it under edge.links in the Driftfile`,
       );
     }
     return baseUrl.replace(/\/+$/, "") + "/" + String(path).replace(/^\/+/, "");

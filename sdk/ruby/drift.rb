@@ -1397,7 +1397,7 @@ module Drift
     def _url(path)
       base = ENV[Drift._link_env_name(@name)]
       if base.nil? || base.empty?
-        raise "drift: slice \"#{@name}\" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add #{@name})"
+        raise "drift: slice \"#{@name}\" is not linked: declare it under edge.links in the Driftfile"
       end
       base.chomp('/') + '/' + path.to_s.sub(%r{\A/}, '')
     end
@@ -1433,10 +1433,9 @@ module Drift
   # Edge is the entrypoint for calling another slice of the same owner that
   # this slice links to under edge.links in the Driftfile.
   module Edge
-    # A client for a slice linked under edge.links (or added with
-    # `drift slice link add <name>`). The call travels in-cluster and carries
-    # this slice's identity (X-Drift-Slice) as a label when the runtime
-    # supplies one.
+    # A client for a slice linked under edge.links. The call travels in-cluster
+    # and carries this slice's identity (X-Drift-Slice) as a label when the
+    # runtime supplies one.
     def self.slice(name)
       SliceClient.new(name)
     end

@@ -2020,7 +2020,7 @@ type SliceClient struct{ name string }
 func (s SliceClient) resolveURL(path string) (string, error) {
 	base := os.Getenv("DRIFT_LINK_" + linkEnvName(s.name) + "_URL")
 	if base == "" {
-		return "", fmt.Errorf("drift: slice %q is not linked: declare it under edge.links in the Driftfile (or run drift slice link add %s)", s.name, s.name)
+		return "", fmt.Errorf("drift: slice %q is not linked: declare it under edge.links in the Driftfile", s.name)
 	}
 	return strings.TrimRight(base, "/") + "/" + strings.TrimPrefix(path, "/"), nil
 }

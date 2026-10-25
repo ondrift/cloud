@@ -2386,9 +2386,9 @@ pub mod edge {
     use crate::SliceClient;
 
     /// A client for another slice of the same owner that this slice links to
-    /// under `edge.links` in the Driftfile (or added with `drift slice link add
-    /// <name>`). The call travels in-cluster and carries this slice's identity
-    /// (X-Drift-Slice) as a label when the runtime supplies one.
+    /// under `edge.links` in the Driftfile. The call travels in-cluster and
+    /// carries this slice's identity (X-Drift-Slice) as a label when the
+    /// runtime supplies one.
     pub fn slice(name: &str) -> SliceClient {
         SliceClient { name: name.to_string() }
     }
@@ -2414,8 +2414,8 @@ impl SliceClient {
         let base = std::env::var(link_env_name(&self.name)).unwrap_or_default();
         if base.is_empty() {
             return Err(format!(
-                "drift: slice \"{}\" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add {})",
-                self.name, self.name
+                "drift: slice \"{}\" is not linked: declare it under edge.links in the Driftfile",
+                self.name
             ));
         }
         Ok(format!("{}/{}", base.trim_end_matches('/'), path.trim_start_matches('/')))
@@ -2501,7 +2501,7 @@ mod edge_tests {
     // spellings say the same thing, before any network I/O.
     #[test]
     fn not_linked_names_edge_links() {
-        let want = "drift: slice \"edge-test-unlinked\" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add edge-test-unlinked)".to_string();
+        let want = "drift: slice \"edge-test-unlinked\" is not linked: declare it under edge.links in the Driftfile".to_string();
         assert_eq!(crate::edge::slice("edge-test-unlinked").get("/x"), (0, want.clone()));
         assert_eq!(crate::slice("edge-test-unlinked").get("/x"), (0, want));
     }

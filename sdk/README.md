@@ -80,7 +80,7 @@ edge:
   links: [billing, docs]
 ```
 
-A call to a slice that is not linked fails before any network I/O with `drift: slice "billing" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add billing)`. The call carries this slice's identity in `X-Drift-Slice` only when the runtime supplies one, and a caller's own `X-Drift-Slice` never overrides it. `callerSlice(req)` reads that header, which any caller can write, so it is a label for logging and routing and authorises nothing.
+A call to a slice that is not linked fails before any network I/O with `drift: slice "billing" is not linked: declare it under edge.links in the Driftfile`. The call carries this slice's identity in `X-Drift-Slice` only when the runtime supplies one, and a caller's own `X-Drift-Slice` never overrides it. `callerSlice(req)` reads that header, which any caller can write, so it is a label for logging and routing and authorises nothing.
 
 ---
 

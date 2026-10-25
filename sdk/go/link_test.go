@@ -71,7 +71,7 @@ func TestEdgeSliceResolvesTheSameLinkAsSlice(t *testing.T) {
 // The not-linked error names the declaration that creates a link, and both
 // spellings say the same thing.
 func TestNotLinkedNamesEdgeLinks(t *testing.T) {
-	want := `drift: slice "billing" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add billing)`
+	want := `drift: slice "billing" is not linked: declare it under edge.links in the Driftfile`
 
 	_, edgeErr := Edge.Slice("billing").Get("/x")
 	_, aliasErr := Slice("billing").Get("/x")

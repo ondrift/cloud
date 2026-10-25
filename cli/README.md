@@ -61,8 +61,8 @@ block it can hold.
 | `drift slice resize [name]` | Reshape a slice on the same form, opened on what it already is (defaults to the active slice). Repricing and removal are confirmed on the form itself. |
 | `drift slice restart` | Restart the active slice. |
 | `drift slice delete <name>` | Delete a slice (double confirmation). |
-| `drift slice domain add\|verify\|remove\|list <host>` | Attach and verify custom domains. |
-| `drift slice link add\|list\|remove <slice>` | Let the active slice call another slice you own, in-cluster (e.g. an app → your own observability slice). Use it from code with `drift.Slice("<slice>")`. |
+| `drift slice domain verify\|remove\|list <host>` | Verify, list and remove custom domains. Domains are declared as `domain` blocks in the Driftfile's `edge` block. |
+| `drift slice link list` | List the slices the active slice may call, in-cluster (e.g. an app → your own observability slice). Links are declared as `links` in the Driftfile's `edge` block; use one from code with `drift.Edge.Slice("<slice>")`. |
 | `drift slice snapshot create\|list\|download\|restore\|delete` | Portable backups — your data, with no Drift-specific files. |
 
 ### Atomic — serverless functions

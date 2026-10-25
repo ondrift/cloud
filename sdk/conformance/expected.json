@@ -151,13 +151,13 @@
   },
 
   "edge_slice_not_linked": {
-    "why": "A slice with no link refuses before any network I/O, and the refusal names where a link is declared: edge.links in the Driftfile, with the CLI command beside it. The text is the same in all six languages so a developer reads one message whichever SDK they use.",
-    "expect": "drift: slice \"billing\" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add billing)"
+    "why": "A slice with no link refuses before any network I/O, and the refusal names where a link is declared: edge.links in the Driftfile, the only place one is declared. The text is the same in all six languages so a developer reads one message whichever SDK they use.",
+    "expect": "drift: slice \"billing\" is not linked: declare it under edge.links in the Driftfile"
   },
 
   "slice_not_linked": {
     "why": "The deprecated spelling refuses with the same message, because it is the same client.",
-    "expect": "drift: slice \"billing\" is not linked: declare it under edge.links in the Driftfile (or run drift slice link add billing)"
+    "expect": "drift: slice \"billing\" is not linked: declare it under edge.links in the Driftfile"
   },
 
   "slice_identity_absent": {

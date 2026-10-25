@@ -296,7 +296,7 @@ func getTransferAcceptCmd() *cobra.Command {
 			_ = json.Unmarshal(respBody, &out)
 			fmt.Printf("%s Slice %s is yours.\n", common.Check(), o.Slice)
 			fmt.Printf("  It answers at https://%s. That address keeps the name of the account\n", o.Host)
-			fmt.Println("  that created it; put your own name on it with `drift slice domain add`.")
+			fmt.Println("  that created it; put your own name on it with a `domain` block in your Driftfile's edge block.")
 			fmt.Printf("  Make it your active slice with `drift slice use %s`.\n", o.Slice)
 			if out.Note != "" {
 				fmt.Println()
