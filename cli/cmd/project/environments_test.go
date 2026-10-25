@@ -12,7 +12,7 @@ import (
 // 32MiB in staging.
 func withEnvironments(extra string) func(string) string {
 	return func(s string) string {
-		s = strings.Replace(s, "concurrent = true\n    memory     = \"64MiB\"", "concurrent = true\n    memory     = var.rpc_memory", 1)
+		s = strings.Replace(s, "concurrent = true\n      memory     = \"64MiB\"", "concurrent = true\n      memory     = var.rpc_memory", 1)
 		return s + `
 variable "rpc_memory" {
   default = "64MiB"
@@ -115,7 +115,7 @@ func TestEnvironment_AVariableWithNoValueIsAnErrorAtItsLine(t *testing.T) {
 	withRealSchema(t)
 	// No default: staging sets it, the default slice does not.
 	path := fixtureCopy(t, func(s string) string {
-		s = strings.Replace(s, "concurrent = true\n    memory     = \"64MiB\"", "concurrent = true\n    memory     = var.rpc_memory", 1)
+		s = strings.Replace(s, "concurrent = true\n      memory     = \"64MiB\"", "concurrent = true\n      memory     = var.rpc_memory", 1)
 		return s + `
 variable "rpc_memory" {}
 

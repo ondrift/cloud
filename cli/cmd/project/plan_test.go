@@ -175,8 +175,8 @@ func TestPlan_ABookingChangeIsPricedAndRestarts(t *testing.T) {
 	planStub(t, fxevmLive, `[]`)
 	out, err := planIn(t, func(s string) string {
 		return strings.Replace(s, `concurrent = true
-    memory     = "64MiB"`, `concurrent = true
-    memory     = "128MiB"`, 1)
+      memory     = "64MiB"`, `concurrent = true
+      memory     = "128MiB"`, 1)
 	})
 	if err != nil {
 		t.Fatalf("plan: %v", err)

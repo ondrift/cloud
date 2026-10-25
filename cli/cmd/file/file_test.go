@@ -229,7 +229,7 @@ func TestLint_PassesWhenTheHandlerResolves(t *testing.T) {
 func TestLint_NeedsNoSecretsValue(t *testing.T) {
 	withServedSchema(t)
 	dir := lintFixture(t, "GetPing")
-	src := lintDriftfile("GetPing") + "secret \"STRIPE_KEY\" { value = env(\"DRIFT_TEST_SURELY_UNSET\") }\n"
+	src := lintDriftfile("GetPing") + "backbone {\n  secret \"STRIPE_KEY\" { value = env(\"DRIFT_TEST_SURELY_UNSET\") }\n}\n"
 	if err := os.WriteFile(filepath.Join(dir, "Driftfile"), []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func bumpMinor(v string) string {
 // asserting a lint result on a Driftfile the platform refuses.
 func lintDriftfile(handler string) string {
 	return "slice \"lintdemo\" { billing = \"monthly\" }\n" +
-		"element \"default\" {\n  pulse \"GET /ping\" {\n    handler = \"" + handler + "\"\n    memory = \"16MiB\"\n  }\n}\n"
+		"atomic {\n  element \"default\" {\n    pulse \"GET /ping\" {\n      handler = \"" + handler + "\"\n      memory = \"16MiB\"\n    }\n  }\n}\n"
 }
 
 // lintFixture writes a one-pulse project whose source declares GetPing, and

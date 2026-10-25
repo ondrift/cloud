@@ -35,33 +35,37 @@ func normalise(s string) string { return s }
 
 const demoDriftfile = `slice "demo" { billing = "monthly" }
 
-element "default" {
-  pulse "GET /ping" {
-    handler = "GetPing"
-    memory = "8MiB"
-  }
-  pulse "POST /users" {
-    handler = "PostUsers"
-    memory = "32MiB"
-    secrets = ["STRIPE_KEY"]
-    auth {
-      api_key = env("USERS_KEY")
+atomic {
+  element "default" {
+    pulse "GET /ping" {
+      handler = "GetPing"
+      memory = "8MiB"
+    }
+    pulse "POST /users" {
+      handler = "PostUsers"
+      memory = "32MiB"
+      secrets = ["STRIPE_KEY"]
+      auth {
+        api_key = env("USERS_KEY")
+      }
+    }
+    pulse "QUEUE orders" {
+      handler = "HandleOrder"
+      memory = "64MiB"
     }
   }
-  pulse "QUEUE orders" {
-    handler = "HandleOrder"
-    memory = "64MiB"
+
+  element "billing" {
+    pulse "POST /invoices" {
+      handler = "PostInvoices"
+      memory = "48MiB"
+    }
   }
 }
 
-element "billing" {
-  pulse "POST /invoices" {
-    handler = "PostInvoices"
-    memory = "48MiB"
-  }
+canvas {
+  site "/" { dir = "canvas" }
 }
-
-site "/" { dir = "canvas" }
 `
 
 // The manifest is the whole declaration, and this is the seam that proves it:
@@ -151,20 +155,24 @@ func TestFunctionSpecs_BuildIntoElements(t *testing.T) {
 
 const envDriftfile = `slice "demo" { billing = "monthly" }
 
-element "default" {
-  pulse "GET /ping" {
-    handler = "GetPing"
-    memory = "8MiB"
-    env = { REGION = "eu-central", LOG_LEVEL = "debug" }
-  }
-  pulse "POST /users" {
-    handler = "PostUsers"
-    memory = "32MiB"
-    secrets = ["STRIPE_KEY"]
+atomic {
+  element "default" {
+    pulse "GET /ping" {
+      handler = "GetPing"
+      memory = "8MiB"
+      env = { REGION = "eu-central", LOG_LEVEL = "debug" }
+    }
+    pulse "POST /users" {
+      handler = "PostUsers"
+      memory = "32MiB"
+      secrets = ["STRIPE_KEY"]
+    }
   }
 }
 
-site "/" { dir = "canvas" }
+canvas {
+  site "/" { dir = "canvas" }
+}
 `
 
 // THE seam this exists for, and the one that was missing when the other four
@@ -217,23 +225,25 @@ func TestFunctionSpecs_CarryDeclaredEnv(t *testing.T) {
 // Pulse inside an element, and leaves it out of a third.
 const concurrencyDriftfile = `slice "demo" { billing = "monthly" }
 
-element "default" {
-  pulse "POST /users" {
-    handler = "PostUsers"
-    memory = "16MiB"
-    concurrent = true
+atomic {
+  element "default" {
+    pulse "POST /users" {
+      handler = "PostUsers"
+      memory = "16MiB"
+      concurrent = true
+    }
+    pulse "GET /ping" {
+      handler = "GetPing"
+      memory = "16MiB"
+    }
   }
-  pulse "GET /ping" {
-    handler = "GetPing"
-    memory = "16MiB"
-  }
-}
 
-element "billing" {
-  pulse "POST /invoices" {
-    handler = "PostInvoices"
-    memory = "16MiB"
-    concurrent = true
+  element "billing" {
+    pulse "POST /invoices" {
+      handler = "PostInvoices"
+      memory = "16MiB"
+      concurrent = true
+    }
   }
 }
 `
@@ -293,11 +303,13 @@ func TestFunctionSpecs_ConcurrencyOnAPythonPulseIsRefusedBeforeBuilding(t *testi
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "Driftfile"), `slice "demo" { billing = "monthly" }
 
-element "py" {
-  pulse "POST /rpc" {
-    handler = "post_rpc"
-    memory = "16MiB"
-    concurrent = true
+atomic {
+  element "py" {
+    pulse "POST /rpc" {
+      handler = "post_rpc"
+      memory = "16MiB"
+      concurrent = true
+    }
   }
 }
 `)
@@ -320,8 +332,8 @@ element "py" {
 func TestParseDriftfile_TheSchemaRefusesAConcurrencyItCanSee(t *testing.T) {
 	withFormatSchema(t)
 	pulse := func(entry string) string {
-		return "slice \"demo\" { billing = \"monthly\" }\n\nelement \"default\" {\n  pulse \"GET /ping\" {\n" +
-			"    handler = \"GetPing\"\n    memory = \"16MiB\"\n    " + entry + "\n  }\n}\n"
+		return "slice \"demo\" { billing = \"monthly\" }\n\natomic {\n  element \"default\" {\n    pulse \"GET /ping\" {\n" +
+			"      handler = \"GetPing\"\n      memory = \"16MiB\"\n      " + entry + "\n    }\n  }\n}\n"
 	}
 	// The controls: the same Pulse concurrent or not is accepted, so a refusal
 	// below is about the value and not the fixture.
@@ -426,10 +438,12 @@ func TestCheckCompiledBookings_LeavesInterpretedBookingsAlone(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "Driftfile"), `slice "demo" { billing = "monthly" }
 
-element "default" {
-  pulse "GET /ping" {
-    handler = "get_ping"
-    memory = "8MiB"
+atomic {
+  element "default" {
+    pulse "GET /ping" {
+      handler = "get_ping"
+      memory = "8MiB"
+    }
   }
 }
 `)

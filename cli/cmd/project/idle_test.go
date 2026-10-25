@@ -140,24 +140,28 @@ func TestReportIdle_EveryDeclaredIdentityMatchesItsSlot(t *testing.T) {
 	withRealSchema(t)
 	m := planManifest(t, `slice "demo" { billing = "monthly" }
 
-element "default" {
-  pulse "GET /ping" {
-    handler = "GetPing"
-    memory  = "16MiB"
-  }
-  pulse "POST /users" {
-    handler = "PostUsers"
-    memory  = "16MiB"
-  }
-  pulse "QUEUE orders" {
-    handler = "HandleOrders"
-    memory  = "16MiB"
+atomic {
+  element "default" {
+    pulse "GET /ping" {
+      handler = "GetPing"
+      memory  = "16MiB"
+    }
+    pulse "POST /users" {
+      handler = "PostUsers"
+      memory  = "16MiB"
+    }
+    pulse "QUEUE orders" {
+      handler = "HandleOrders"
+      memory  = "16MiB"
+    }
   }
 }
 
-nosql "ops" { size = "5MiB" }
+backbone {
+  nosql "ops" { size = "5MiB" }
 
-queue "orders" {}
+  queue "orders" {}
+}
 `, "atomic/")
 	live := idleLive("custom", []string{"get:ping", "post:users", "queue:orders"})
 	live.Config.Backbone.NoSQL.Collections = map[string]int{"ops": 5 << 20}
@@ -312,15 +316,15 @@ func idleSliceStub(tier string, slots []string) http.HandlerFunc {
 func applyWithFunctions(t *testing.T, routes []string) {
 	t.Helper()
 	var doc, src strings.Builder
-	doc.WriteString("slice \"demo\" { billing = \"monthly\" }\n\nelement \"default\" {\n")
+	doc.WriteString("slice \"demo\" { billing = \"monthly\" }\n\natomic {\n  element \"default\" {\n")
 	var exports []string
 	for _, r := range routes {
 		handler := "Get" + strings.ToUpper(r[:1]) + r[1:]
-		doc.WriteString("  pulse \"GET /" + r + "\" {\n    handler = \"" + handler + "\"\n    memory  = \"16MiB\"\n  }\n")
+		doc.WriteString("    pulse \"GET /" + r + "\" {\n      handler = \"" + handler + "\"\n      memory  = \"16MiB\"\n    }\n")
 		src.WriteString("function " + handler + "(req) { return [200, 'OK', {}]; }\n")
 		exports = append(exports, handler)
 	}
-	doc.WriteString("}\n")
+	doc.WriteString("  }\n}\n")
 	src.WriteString("module.exports = { " + strings.Join(exports, ", ") + " };\n")
 
 	withRealSchema(t)

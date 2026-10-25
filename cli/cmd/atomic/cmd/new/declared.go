@@ -60,13 +60,18 @@ func declaredRoute(funcMethod, name, queue string, isQueue bool) bool {
 		return false
 	}
 	want := pulseLabel(method, route)
-	for _, el := range f.Body.(*hclsyntax.Body).Blocks {
-		if el.Type != "element" {
+	for _, top := range f.Body.(*hclsyntax.Body).Blocks {
+		if top.Type != "atomic" {
 			continue
 		}
-		for _, p := range el.Body.Blocks {
-			if p.Type == "pulse" && len(p.Labels) == 1 && strings.EqualFold(p.Labels[0], want) {
-				return true
+		for _, el := range top.Body.Blocks {
+			if el.Type != "element" {
+				continue
+			}
+			for _, p := range el.Body.Blocks {
+				if p.Type == "pulse" && len(p.Labels) == 1 && strings.EqualFold(p.Labels[0], want) {
+					return true
+				}
 			}
 		}
 	}

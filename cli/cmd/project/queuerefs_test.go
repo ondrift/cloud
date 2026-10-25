@@ -55,10 +55,12 @@ func TestParse_AnUndeclaredQueueIsAWarningRatherThanARefusal(t *testing.T) {
 	withRealSchema(t)
 	p := writeManifest(t, `slice "demo" { billing = "monthly" }
 
-element "default" {
-  pulse "QUEUE orders" {
-    handler = "HandleOrder"
-    memory = "16MiB"
+atomic {
+  element "default" {
+    pulse "QUEUE orders" {
+      handler = "HandleOrder"
+      memory = "16MiB"
+    }
   }
 }
 `)
@@ -78,14 +80,18 @@ func TestParse_AcceptsADeclaredQueue(t *testing.T) {
 	withRealSchema(t)
 	p := writeManifest(t, `slice "demo" { billing = "monthly" }
 
-element "default" {
-  pulse "QUEUE orders" {
-    handler = "HandleOrder"
-    memory = "16MiB"
+atomic {
+  element "default" {
+    pulse "QUEUE orders" {
+      handler = "HandleOrder"
+      memory = "16MiB"
+    }
   }
 }
 
-queue "orders" {}
+backbone {
+  queue "orders" {}
+}
 `)
 	m, err := ParseDriftfile(p)
 	if err != nil {
@@ -103,10 +109,12 @@ func TestParse_AnHTTPFunctionNeedsNoQueue(t *testing.T) {
 	withRealSchema(t)
 	p := writeManifest(t, `slice "demo" { billing = "monthly" }
 
-element "default" {
-  pulse "GET /ping" {
-    handler = "GetPing"
-    memory = "16MiB"
+atomic {
+  element "default" {
+    pulse "GET /ping" {
+      handler = "GetPing"
+      memory = "16MiB"
+    }
   }
 }
 `)
@@ -126,14 +134,18 @@ func TestParse_TheQueueCheckMakesNoNetworkCall(t *testing.T) {
 
 	p := writeManifest(t, `slice "demo" { billing = "monthly" }
 
-element "default" {
-  pulse "QUEUE orders" {
-    handler = "HandleOrder"
-    memory = "16MiB"
+atomic {
+  element "default" {
+    pulse "QUEUE orders" {
+      handler = "HandleOrder"
+      memory = "16MiB"
+    }
   }
 }
 
-queue "orders" {}
+backbone {
+  queue "orders" {}
+}
 `)
 	if _, err := ParseDriftfile(p); err != nil {
 		t.Errorf("the parse dialled something, or refused for another reason: %v", err)

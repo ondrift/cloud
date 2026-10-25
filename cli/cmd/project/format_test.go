@@ -53,12 +53,12 @@ func TestFormat_DescribesEveryBlockAndAttribute(t *testing.T) {
 func TestFormat_MarksWhatTheCompilerRequires(t *testing.T) {
 	f := DriftfileFormat()
 	for path, want := range map[string]bool{
-		"slice.billing":         true,
-		"element.pulse.memory":  true,
-		"element.pulse.handler": true,
-		"secret.value":          true,
-		"element.pulse.cron":    false,
-		"queue.depth":           false,
+		"slice.billing":                true,
+		"atomic.element.pulse.memory":  true,
+		"atomic.element.pulse.handler": true,
+		"backbone.secret.value":        true,
+		"atomic.element.pulse.cron":    false,
+		"backbone.queue.depth":         false,
 	} {
 		_, attr, _ := f.Find(path)
 		if attr == nil {
@@ -75,13 +75,13 @@ func TestFormat_MarksWhatTheCompilerRequires(t *testing.T) {
 // nothing for a name the format does not have.
 func TestFormat_Find(t *testing.T) {
 	f := DriftfileFormat()
-	if b, a, _ := f.Find("element.pulse"); b == nil || a != nil || b.Name != "pulse" || len(b.Labels) != 1 || b.Labels[0] != "trigger" {
-		t.Errorf("element.pulse: block %+v, attr %+v", b, a)
+	if b, a, _ := f.Find("atomic.element.pulse"); b == nil || a != nil || b.Name != "pulse" || len(b.Labels) != 1 || b.Labels[0] != "trigger" {
+		t.Errorf("atomic.element.pulse: block %+v, attr %+v", b, a)
 	}
-	if b, a, in := f.Find("element.pulse.memory"); b != nil || a == nil || a.Name != "memory" || in == nil || in.Name != "pulse" {
-		t.Errorf("element.pulse.memory: block %+v, attr %+v, in %+v", b, a, in)
+	if b, a, in := f.Find("atomic.element.pulse.memory"); b != nil || a == nil || a.Name != "memory" || in == nil || in.Name != "pulse" {
+		t.Errorf("atomic.element.pulse.memory: block %+v, attr %+v, in %+v", b, a, in)
 	}
-	if b, a, in := f.Find("element.puls"); b != nil || a != nil || in == nil || in.Name != "element" {
-		t.Errorf("element.puls: block %+v, attr %+v, in %+v; want nothing found, in element", b, a, in)
+	if b, a, in := f.Find("atomic.element.puls"); b != nil || a != nil || in == nil || in.Name != "element" {
+		t.Errorf("atomic.element.puls: block %+v, attr %+v, in %+v; want nothing found, in element", b, a, in)
 	}
 }

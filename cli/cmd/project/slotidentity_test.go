@@ -34,7 +34,7 @@ func TestSlotIdentity_TwoPathSitesKeepDistinctSlugs(t *testing.T) {
 
 // A collection entry names the slot it seeds.
 func TestSlotIdentity_ANosqlEntryNamesItsSlot(t *testing.T) {
-	m := parseSlots(t, "slice \"demo\" { billing = \"monthly\" }\nnosql \"ops\" { size = \"5MiB\" }\n")
+	m := parseSlots(t, "slice \"demo\" { billing = \"monthly\" }\nbackbone {\n  nosql \"ops\" { size = \"5MiB\" }\n}\n")
 
 	entries := m.Slice().Entries("slot", "backbone", "nosql")
 	if len(entries) != 1 || entries[0].Str("slot") != "ops" {
@@ -48,8 +48,8 @@ func TestSlotIdentity_ANosqlEntryNamesItsSlot(t *testing.T) {
 // reporting it.
 func TestSlotIdentity_ANosqlEntryKeepsItsTTLAndItsOrder(t *testing.T) {
 	m := parseSlots(t, "slice \"demo\" { billing = \"monthly\" }\n"+
-		"nosql \"ops\" {\n  size = \"5MiB\"\n  ttl  = \"30d\"\n}\n"+
-		"nosql \"events\" { size = \"5MiB\" }\n")
+		"backbone {\n  nosql \"ops\" {\n    size = \"5MiB\"\n    ttl  = \"30d\"\n  }\n"+
+		"  nosql \"events\" { size = \"5MiB\" }\n}\n")
 
 	entries := m.Slice().Entries("slot", "backbone", "nosql")
 	if len(entries) != 2 {
@@ -67,7 +67,7 @@ func TestSlotIdentity_ANosqlEntryKeepsItsTTLAndItsOrder(t *testing.T) {
 // collection it neither seeds nor expires, and demanding either would make the
 // reference form unwriteable.
 func TestSlotIdentity_ASlotAloneIsAValidEntry(t *testing.T) {
-	if _, err := tryParseSlots(t, "slice \"demo\" { billing = \"monthly\" }\nnosql \"ops\" { size = \"5MiB\" }\n"); err != nil {
+	if _, err := tryParseSlots(t, "slice \"demo\" { billing = \"monthly\" }\nbackbone {\n  nosql \"ops\" { size = \"5MiB\" }\n}\n"); err != nil {
 		t.Fatalf("a nosql block with neither seed nor ttl must parse: %v", err)
 	}
 }
@@ -75,11 +75,11 @@ func TestSlotIdentity_ASlotAloneIsAValidEntry(t *testing.T) {
 // canvasDriftfile writes one site per mount path, each serving the next
 // ./site-<letter> folder.
 func canvasDriftfile(paths ...string) string {
-	body := "slice \"demo\" { billing = \"monthly\" }\n"
+	body := "slice \"demo\" { billing = \"monthly\" }\ncanvas {\n"
 	for i, p := range paths {
-		body += "site \"" + p + "\" { dir = \"site-" + string(rune('a'+i)) + "\" }\n"
+		body += "  site \"" + p + "\" { dir = \"site-" + string(rune('a'+i)) + "\" }\n"
 	}
-	return body
+	return body + "}\n"
 }
 
 func parseSlots(t *testing.T, body string, dirs ...string) *Manifest {

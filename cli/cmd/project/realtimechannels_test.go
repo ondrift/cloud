@@ -37,16 +37,22 @@ func realtimeManifest(realtime any) *Manifest {
 
 const realtimeFile = `slice "demo" { billing = "monthly" }
 
-site "/" { dir = "site" }
+canvas {
+  site "/" { dir = "site" }
+}
 
-realtime {
-  client_channels = ["chat", "room:*"]
+backbone {
+  realtime {
+    client_channels = ["chat", "room:*"]
+  }
 }
 `
 
 const noRealtimeFile = `slice "demo" { billing = "monthly" }
 
-site "/" { dir = "site" }
+canvas {
+  site "/" { dir = "site" }
+}
 `
 
 // ─── reading the document ───────────────────────────────────────────────────
@@ -117,7 +123,7 @@ func TestCompile_RealtimeWritesTheDocumentKey(t *testing.T) {
 func TestCompile_AnEmptyRealtimeListIsKept(t *testing.T) {
 	needRealtimeSchema(t)
 	c, err := CompileDriftfile(writeDriftfile(t,
-		noRealtimeFile+"realtime {\n  client_channels = []\n}\n", "site/"))
+		noRealtimeFile+"backbone {\n  realtime {\n    client_channels = []\n  }\n}\n", "site/"))
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -128,7 +134,7 @@ func TestCompile_AnEmptyRealtimeListIsKept(t *testing.T) {
 
 func TestCompile_RealtimeMustNameClientChannels(t *testing.T) {
 	needRealtimeSchema(t)
-	_, err := CompileDriftfile(writeDriftfile(t, noRealtimeFile+"realtime {}\n", "site/"))
+	_, err := CompileDriftfile(writeDriftfile(t, noRealtimeFile+"backbone {\n  realtime {}\n}\n", "site/"))
 	if err == nil || !strings.Contains(err.Error(), "client_channels") {
 		t.Errorf("an empty realtime block compiled, or was refused without naming client_channels: %v", err)
 	}
@@ -137,7 +143,7 @@ func TestCompile_RealtimeMustNameClientChannels(t *testing.T) {
 func TestCompile_OneRealtimeBlock(t *testing.T) {
 	needRealtimeSchema(t)
 	_, err := CompileDriftfile(writeDriftfile(t,
-		noRealtimeFile+"realtime {\n  client_channels = [\"a\"]\n}\nrealtime {\n  client_channels = [\"b\"]\n}\n", "site/"))
+		noRealtimeFile+"backbone {\n  realtime {\n    client_channels = [\"a\"]\n  }\n  realtime {\n    client_channels = [\"b\"]\n  }\n}\n", "site/"))
 	if err == nil || !strings.Contains(err.Error(), "one realtime block") {
 		t.Errorf("two realtime blocks = %v, want a refusal saying a slice has one", err)
 	}
@@ -147,9 +153,9 @@ func TestCompile_OneRealtimeBlock(t *testing.T) {
 func TestCompile_AnInvalidChannelIsRefusedAtItsLine(t *testing.T) {
 	needRealtimeSchema(t)
 	_, err := CompileDriftfile(writeDriftfile(t,
-		noRealtimeFile+"realtime {\n  client_channels = [\"chat\", \"not a channel\"]\n}\n", "site/"))
-	if err == nil || !strings.Contains(err.Error(), "Driftfile:5:") {
-		t.Errorf("an invalid channel = %v, want a refusal at Driftfile:5", err)
+		noRealtimeFile+"backbone {\n  realtime {\n    client_channels = [\"chat\", \"not a channel\"]\n  }\n}\n", "site/"))
+	if err == nil || !strings.Contains(err.Error(), "Driftfile:8:") {
+		t.Errorf("an invalid channel = %v, want a refusal at Driftfile:8", err)
 	}
 }
 
@@ -238,7 +244,7 @@ func TestApply_SendsTheDeclaredClientChannels(t *testing.T) {
 // it closes what was open.
 func TestApply_AnEmptyListClosesEveryChannel(t *testing.T) {
 	s := &channelsSlice{live: []string{"chat"}}
-	realtimeSlice(t, noRealtimeFile+"realtime {\n  client_channels = []\n}\n", s)
+	realtimeSlice(t, noRealtimeFile+"backbone {\n  realtime {\n    client_channels = []\n  }\n}\n", s)
 
 	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)

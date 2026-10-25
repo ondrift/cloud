@@ -316,27 +316,49 @@ func buildDriftfile(name string, fns []driftFn, colls []driftColl, secrets []Man
 		b.WriteString("# holds — over-booking is paid for, and under-booking is refused under load.\n")
 		b.WriteString("#\n")
 		b.WriteString("# Each migrated function is its own element, the folder it was scaffolded in.\n")
+		b.WriteString("atomic {\n")
 		for _, fn := range fns {
-			fmt.Fprintf(&b, "element %q {\n", fn.slug)
-			b.WriteString(driftPulse(fn.trigger, fn.handler, fn.secrets, azureStartingMemory, apiKeyVar(fn.slug)))
-			b.WriteString("}\n")
+			fmt.Fprintf(&b, "  element %q {\n", fn.slug)
+			b.WriteString(indentLines(driftPulse(fn.trigger, fn.handler, fn.secrets, azureStartingMemory, apiKeyVar(fn.slug)), "  "))
+			b.WriteString("  }\n")
 		}
+		b.WriteString("}\n")
 	}
-	for _, c := range colls {
-		fmt.Fprintf(&b, "\nnosql %q {\n  size = \"%dMiB\"\n  seed = %q\n}\n", c.name, c.sizeMB, c.seed)
-	}
-	if len(secrets) > 0 {
-		names := make([]string, 0, len(secrets))
-		for _, s := range secrets {
-			names = append(names, s.Name)
+	if len(colls) > 0 || len(secrets) > 0 {
+		b.WriteString("\nbackbone {\n")
+		for i, c := range colls {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			fmt.Fprintf(&b, "  nosql %q {\n    size = \"%dMiB\"\n    seed = %q\n  }\n", c.name, c.sizeMB, c.seed)
 		}
-		sort.Strings(names)
-		b.WriteString("\n")
-		for _, n := range names {
-			fmt.Fprintf(&b, "secret %q {\n  value = env(%q)\n}\n", n, n)
+		if len(secrets) > 0 {
+			names := make([]string, 0, len(secrets))
+			for _, s := range secrets {
+				names = append(names, s.Name)
+			}
+			sort.Strings(names)
+			if len(colls) > 0 {
+				b.WriteString("\n")
+			}
+			for _, n := range names {
+				fmt.Fprintf(&b, "  secret %q {\n    value = env(%q)\n  }\n", n, n)
+			}
 		}
+		b.WriteString("}\n")
 	}
 	return b.String()
+}
+
+// indentLines prefixes every non-empty line of s.
+func indentLines(s, prefix string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		if l != "" {
+			lines[i] = prefix + l
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // writeWS writes content to outDir/rel, creating parents, with the given mode.

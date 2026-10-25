@@ -24,7 +24,7 @@ func TestEdgeLinks_AbsentDoesNothing(t *testing.T) {
 // the platform's 400 after the rest of the file is live.
 func TestEdgeLinks_RefusesTheSliceItself(t *testing.T) {
 	assertApplyRefusesBeforeAnyRoute(t,
-		edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  links = [\"billing\", \"demo\"]\n}\n",
+		edgeFreeDemo+"canvas {\n  site \"/\" { dir = \"site\" }\n}\nedge {\n  links = [\"billing\", \"demo\"]\n}\n",
 		`edge.links names "demo", the slice this file is applied to; a slice cannot link to itself`)
 }
 
@@ -53,7 +53,7 @@ func TestApply_LinksAddTheMissingAndRemoveTheUndeclared(t *testing.T) {
 		}
 	})
 	withRealSchema(t)
-	applyIn(t, edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  links = [\"billing\", \"api\"]\n}\n", "site")
+	applyIn(t, edgeFreeDemo+"canvas {\n  site \"/\" { dir = \"site\" }\n}\nedge {\n  links = [\"billing\", \"api\"]\n}\n", "site")
 
 	if err := runApplyRemoving(t, "link docs"); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -82,7 +82,7 @@ func TestApply_AnEmptyLinksListRemovesEveryLink(t *testing.T) {
 		_, _ = w.Write([]byte(`{}`))
 	})
 	withRealSchema(t)
-	applyIn(t, edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  links = []\n}\n", "site")
+	applyIn(t, edgeFreeDemo+"canvas {\n  site \"/\" { dir = \"site\" }\n}\nedge {\n  links = []\n}\n", "site")
 
 	if err := runApplyRemoving(t, "link docs", "link api"); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -99,7 +99,7 @@ func TestApply_AnEmptyLinksListRemovesEveryLink(t *testing.T) {
 func TestApply_AbsentLinksCallNoLinkRoute(t *testing.T) {
 	rec := stubSliceWithEdge(t, func(w http.ResponseWriter, r *http.Request) {})
 	withRealSchema(t)
-	applyIn(t, edgeFreeDemo+"site \"/\" { dir = \"site\" }\n", "site")
+	applyIn(t, edgeFreeDemo+"canvas {\n  site \"/\" { dir = \"site\" }\n}\n", "site")
 
 	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -127,7 +127,7 @@ func TestApply_LinksSurfaceTheRefusal(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"no slice named 'ghost' in your account (links are same-user only)"}`))
 	})
 	withRealSchema(t)
-	applyIn(t, edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  links = [\"ghost\"]\n}\n", "site")
+	applyIn(t, edgeFreeDemo+"canvas {\n  site \"/\" { dir = \"site\" }\n}\nedge {\n  links = [\"ghost\"]\n}\n", "site")
 
 	err := applyAgreeingAtZero(t)
 	if err == nil {
@@ -148,7 +148,7 @@ func TestPlan_LinksShowAddsAndRemoves(t *testing.T) {
 		}
 	})
 	withRealSchema(t)
-	applyIn(t, edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  links = [\"billing\", \"api\"]\n}\n", "site")
+	applyIn(t, edgeFreeDemo+"canvas {\n  site \"/\" { dir = \"site\" }\n}\nedge {\n  links = [\"billing\", \"api\"]\n}\n", "site")
 
 	out, err := edgeStdout(t, func() error { return runPlanCmd(t) })
 	if err != nil {

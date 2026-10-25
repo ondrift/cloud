@@ -46,19 +46,23 @@ const helloHandler = "function GetHello(req) { return [200, 'OK', {}]; }\nmodule
 // the same file declares.
 const orderDriftfile = `slice "demo" { billing = "monthly" }
 
-element "default" {
-  pulse "GET /hello" {
-    handler = "GetHello"
-    memory  = "32MiB"
+atomic {
+  element "default" {
+    pulse "GET /hello" {
+      handler = "GetHello"
+      memory  = "32MiB"
+    }
   }
 }
 
-queue "txs" {}
+backbone {
+  queue "txs" {}
 
-sql "ledger" {
-  size   = "10MiB"
-  schema = "schema.sql"
-  seed   = "seed.sql"
+  sql "ledger" {
+    size   = "10MiB"
+    schema = "schema.sql"
+    seed   = "seed.sql"
+  }
 }
 `
 
@@ -165,14 +169,18 @@ func TestApply_ABackboneFailureDeploysNoAtomic(t *testing.T) {
 	withRealSchema(t)
 	applyIn(t, `slice "demo" { billing = "monthly" }
 
-element "default" {
-  pulse "GET /hello" {
-    handler = "GetHello"
-    memory  = "32MiB"
+atomic {
+  element "default" {
+    pulse "GET /hello" {
+      handler = "GetHello"
+      memory  = "32MiB"
+    }
   }
 }
 
-queue "txs" {}
+backbone {
+  queue "txs" {}
+}
 `, "atomic")
 	if err := os.WriteFile(filepath.Join("atomic", "hello.js"), []byte(helloHandler), 0o600); err != nil {
 		t.Fatal(err)

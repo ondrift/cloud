@@ -46,7 +46,7 @@ func TestEdgeHosts_PreflightRefusesAnIncompleteEntry(t *testing.T) {
 // An incomplete entry is refused before anything reaches the slice.
 func TestApply_RefusesAnIncompleteHostBeforeAnyRoute(t *testing.T) {
 	assertEdgeApplyRefuses(t,
-		edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  hosts = { \"admin.example.com\" = \"\" }\n}\n",
+		edgeFreeDemo+"canvas {\n  site \"/\" { dir = \"site\" }\n}\nedge {\n  hosts = { \"admin.example.com\" = \"\" }\n}\n",
 		"edge.hosts", "slice")
 }
 

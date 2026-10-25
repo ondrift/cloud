@@ -12,9 +12,9 @@ import "testing"
 // any of them.
 func TestFunctionSpecCarriesTheDeclaredResponseShape(t *testing.T) {
 	withRealSchema(t)
-	m := planManifest(t, "slice \"demo\" { billing = \"monthly\" }\n\nelement \"default\" {\n"+
-		"  pulse \"POST /token\" {\n    handler = \"PostToken\"\n    memory = \"16MiB\"\n    response = \"json\"\n  }\n"+
-		"  pulse \"GET /ping\" {\n    handler = \"GetPing\"\n    memory = \"16MiB\"\n  }\n}\n", "atomic/")
+	m := planManifest(t, "slice \"demo\" { billing = \"monthly\" }\n\natomic {\n  element \"default\" {\n"+
+		"    pulse \"POST /token\" {\n      handler = \"PostToken\"\n      memory = \"16MiB\"\n      response = \"json\"\n    }\n"+
+		"    pulse \"GET /ping\" {\n      handler = \"GetPing\"\n      memory = \"16MiB\"\n    }\n  }\n}\n", "atomic/")
 
 	specs := FunctionSpecs(m)
 	if len(specs) != 2 {

@@ -140,7 +140,7 @@ func TestEveryReaderRefusesAYAMLDriftfileTheSameWay(t *testing.T) {
 // A file with no slice block says what one looks like, at the top of the file.
 func TestCompile_AFileWithNoSliceBlockIsRefusedAtItsStart(t *testing.T) {
 	withRealSchema(t)
-	_, err := CompileDriftfile(writeDriftfile(t, "queue \"jobs\" {}\n"))
+	_, err := CompileDriftfile(writeDriftfile(t, "backbone {\n  queue \"jobs\" {}\n}\n"))
 	if err == nil || !strings.Contains(err.Error(), "Driftfile:1:1: Missing slice block") {
 		t.Fatalf("got %v, want a refusal at 1:1 naming the slice block", err)
 	}
@@ -152,7 +152,7 @@ func TestCompile_AFileWithNoSliceBlockIsRefusedAtItsStart(t *testing.T) {
 func TestCompile_TheDefaultElementIsTheAtomicFolderItself(t *testing.T) {
 	withRealSchema(t)
 	body := "slice \"demo\" { billing = \"monthly\" }\n" +
-		"element \"default\" {\n  pulse \"GET /hello\" {\n    handler = \"GetHello\"\n    memory = \"32MiB\"\n  }\n}\n"
+		"atomic {\n  element \"default\" {\n    pulse \"GET /hello\" {\n      handler = \"GetHello\"\n      memory = \"32MiB\"\n    }\n  }\n}\n"
 	path := writeDriftfile(t, body, "atomic/")
 	c, err := CompileDriftfile(path)
 	if err != nil {
@@ -168,6 +168,41 @@ func TestCompile_TheDefaultElementIsTheAtomicFolderItself(t *testing.T) {
 	named := strings.Replace(body, `element "default"`, `element "api"`, 1)
 	if _, err := CompileDriftfile(writeDriftfile(t, named, "atomic/")); err == nil || !strings.Contains(err.Error(), "atomic/api is not a directory") {
 		t.Errorf("a named element without its folder: got %v", err)
+	}
+}
+
+// A pillar's block written at the top of the file is refused naming the
+// container it belongs in, at the block's own position.
+func TestCompile_APillarBlockAtTheTopIsRefusedNamingItsContainer(t *testing.T) {
+	withRealSchema(t)
+	for _, tc := range []struct{ block, pillar string }{
+		{"element \"api\" {}", "atomic"},
+		{"sql \"db\" {}", "backbone"},
+		{"nosql \"docs\" {}", "backbone"},
+		{"blobs \"files\" {}", "backbone"},
+		{"queue \"jobs\" {}", "backbone"},
+		{"cache \"k\" {}", "backbone"},
+		{"secret \"S\" {}", "backbone"},
+		{"realtime {}", "backbone"},
+		{"site \"/\" {}", "canvas"},
+	} {
+		_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+tc.block+"\n"))
+		want := "inside the " + tc.pillar + " block"
+		if err == nil || !strings.Contains(err.Error(), "Driftfile:2:1") || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s at the top: got %v, want a refusal at 2:1 saying %q", tc.block, err, want)
+		}
+	}
+}
+
+// Two blocks of one pillar are one too many: the container is the pillar.
+func TestCompile_AContainerIsWrittenOnce(t *testing.T) {
+	withRealSchema(t)
+	for _, name := range []string{"atomic", "backbone", "canvas"} {
+		body := "slice \"demo\" { billing = \"monthly\" }\n" + name + " {}\n" + name + " {}\n"
+		_, err := CompileDriftfile(writeDriftfile(t, body))
+		if err == nil || !strings.Contains(err.Error(), "Driftfile:3:1") || !strings.Contains(err.Error(), "has one "+name+" block") {
+			t.Errorf("two %s blocks: got %v, want a refusal at 3:1", name, err)
+		}
 	}
 }
 
@@ -278,7 +313,7 @@ func TestCompile_TheReadersReadWhatTheFileSays(t *testing.T) {
 func TestParseDriftfile_ResolvesTheReferencesTheCompileKeeps(t *testing.T) {
 	withRealSchema(t)
 	t.Setenv("STRIPE_KEY", "sk_test_value")
-	path := writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\nsecret \"STRIPE_KEY\" { value = env(\"STRIPE_KEY\") }\n")
+	path := writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\nbackbone {\n  secret \"STRIPE_KEY\" { value = env(\"STRIPE_KEY\") }\n}\n")
 	m, err := ParseDriftfile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -309,9 +344,9 @@ func jsonEqual(a, b any) bool {
 func TestCompile_RefusesAWriteOnlyValueThatIsNotAReference(t *testing.T) {
 	withRealSchema(t)
 	for _, tc := range []struct{ name, body string }{
-		{"secret literal", `secret "STRIPE_KEY" { value = "sk_live_123" }`},
-		{"secret from var", "variable \"k\" { default = \"x\" }\nsecret \"STRIPE_KEY\" { value = var.k }"},
-		{"api key literal", "element \"api\" {\n  pulse \"POST /x\" {\n    handler = \"PostX\"\n    memory = \"32MiB\"\n    auth { api_key = \"abc\" }\n  }\n}"},
+		{"secret literal", "backbone {\n  secret \"STRIPE_KEY\" { value = \"sk_live_123\" }\n}"},
+		{"secret from var", "variable \"k\" { default = \"x\" }\nbackbone {\n  secret \"STRIPE_KEY\" { value = var.k }\n}"},
+		{"api key literal", "atomic {\n  element \"api\" {\n    pulse \"POST /x\" {\n      handler = \"PostX\"\n      memory = \"32MiB\"\n      auth { api_key = \"abc\" }\n    }\n  }\n}"},
 		{"site password literal", "edge {\n  site_auth {\n    user \"a\" { password = \"hunter2\" }\n  }\n}"},
 		{"site password from file", "edge {\n  site_auth {\n    user \"a\" { password = file(\"pw\") }\n  }\n}"},
 	} {
@@ -336,7 +371,7 @@ func TestCompile_RefusesAWriteOnlyValueThatIsNotAReference(t *testing.T) {
 func TestCompile_AWriteOnlyReferenceCompilesWithoutItsValue(t *testing.T) {
 	withRealSchema(t)
 	t.Setenv("STRIPE_KEY", "sk_live_do_not_print")
-	path := writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\nsecret \"STRIPE_KEY\" { value = env(\"STRIPE_KEY\") }\n")
+	path := writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\nbackbone {\n  secret \"STRIPE_KEY\" { value = env(\"STRIPE_KEY\") }\n}\n")
 	c, err := CompileDriftfile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -362,11 +397,13 @@ func TestCompile_ExpressionsAreSmall(t *testing.T) {
 	body := `
 variable "rpc_memory" { default = "48MiB" }
 slice "demo" { billing = "monthly" }
-element "api" {
-  pulse "POST /rpc" {
-    handler = env("RPC_HANDLER")
-    memory  = var.rpc_memory
-    env     = { GENESIS = sha256(file("genesis.sql")), NOTE = "literal" }
+atomic {
+  element "api" {
+    pulse "POST /rpc" {
+      handler = env("RPC_HANDLER")
+      memory  = var.rpc_memory
+      env     = { GENESIS = sha256(file("genesis.sql")), NOTE = "literal" }
+    }
   }
 }
 `
@@ -417,10 +454,10 @@ func TestCompile_AnUnsetEnvIsRefusedWhereItIsRead(t *testing.T) {
 func TestCompile_HoldsBookingsToThePlatformsGrid(t *testing.T) {
 	withRealSchema(t)
 	pulse := func(mem string) string {
-		return "element \"api\" {\n  pulse \"POST /x\" {\n    handler = \"PostX\"\n    memory = \"" + mem + "\"\n  }\n}\n"
+		return "atomic {\n  element \"api\" {\n    pulse \"POST /x\" {\n      handler = \"PostX\"\n      memory = \"" + mem + "\"\n    }\n  }\n}\n"
 	}
 	field := func(mem string) string {
-		return "element \"api\" {\n  field \"worker\" {\n    handler = \"Worker\"\n    memory = \"" + mem + "\"\n  }\n}\n"
+		return "atomic {\n  element \"api\" {\n    field \"worker\" {\n      handler = \"Worker\"\n      memory = \"" + mem + "\"\n    }\n  }\n}\n"
 	}
 	for _, tc := range []struct {
 		name, body, want string
@@ -430,7 +467,7 @@ func TestCompile_HoldsBookingsToThePlatformsGrid(t *testing.T) {
 		{"MB is not a unit here", pulse("64MB"), "Not a size"},
 		{"not whole MiB", pulse("1536KiB"), "Not whole MiB"},
 		{"a Field below the compiled floor", field("8MiB"), "Below the compiled floor"},
-		{"no memory at all", "element \"api\" {\n  pulse \"POST /x\" { handler = \"PostX\" }\n}\n", "Missing memory"},
+		{"no memory at all", "atomic {\n  element \"api\" {\n    pulse \"POST /x\" { handler = \"PostX\" }\n  }\n}\n", "Missing memory"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+tc.body, "atomic/api/")
@@ -453,11 +490,11 @@ func TestCompile_HoldsBookingsToThePlatformsGrid(t *testing.T) {
 func TestCompile_RefusesMoreSlotsThanASliceHolds(t *testing.T) {
 	withRealSchema(t)
 	var b strings.Builder
-	b.WriteString("slice \"demo\" { billing = \"monthly\" }\nelement \"api\" {\n")
+	b.WriteString("slice \"demo\" { billing = \"monthly\" }\natomic {\n  element \"api\" {\n")
 	for i := 0; i < 65; i++ {
-		b.WriteString("  pulse \"GET /r" + strconv.Itoa(i) + "\" {\n    handler = \"H\"\n    memory = \"8MiB\"\n  }\n")
+		b.WriteString("    pulse \"GET /r" + strconv.Itoa(i) + "\" {\n      handler = \"H\"\n      memory = \"8MiB\"\n    }\n")
 	}
-	b.WriteString("}\n")
+	b.WriteString("  }\n}\n")
 	_, err := CompileDriftfile(writeDriftfile(t, b.String(), "atomic/api/"))
 	if err == nil || !strings.Contains(err.Error(), "at most 64") {
 		t.Fatalf("65 slots: got %v, want a refusal naming 64", err)
@@ -470,14 +507,14 @@ func TestCompile_RefusesMoreSlotsThanASliceHolds(t *testing.T) {
 func TestCompile_ASchemaRefusalCarriesTheFilesPosition(t *testing.T) {
 	withRealSchema(t)
 	body := "slice \"demo\" { billing = \"monthly\" }\n" +
-		"element \"api\" {\n" +
-		"  pulse \"POST /Rpc\" {\n" + // line 3
-		"    handler = \"PostRPC\"\n    memory = \"32MiB\"\n  }\n}\n"
+		"atomic {\n  element \"api\" {\n" +
+		"    pulse \"POST /Rpc\" {\n" + // line 4
+		"      handler = \"PostRPC\"\n      memory = \"32MiB\"\n    }\n  }\n}\n"
 	_, err := CompileDriftfile(writeDriftfile(t, body, "atomic/api/"))
 	if err == nil {
 		t.Fatal("an uppercase route compiled; the platform's route pattern refuses it")
 	}
-	if !strings.Contains(err.Error(), "Driftfile:3:") || !strings.Contains(err.Error(), "route") {
+	if !strings.Contains(err.Error(), "Driftfile:4:") || !strings.Contains(err.Error(), "route") {
 		t.Errorf("the refusal is not at the pulse's line, or does not name the route: %v", err)
 	}
 }
@@ -490,21 +527,25 @@ func TestCompile_ASchemaRefusalCarriesTheFilesPosition(t *testing.T) {
 func TestCompile_WhatTheFileLeavesOutIsTheSmallestShape(t *testing.T) {
 	withRealSchema(t)
 	body := `slice "demo" { billing = "monthly" }
-element "api" {
-  pulse "GET /a" {
-    handler = "A"
-    memory  = "16MiB"
-    cron    = "0 * * * *"
-  }
-  pulse "GET /b" {
-    handler = "B"
-    memory  = "16MiB"
-    cron    = "30 * * * *"
+atomic {
+  element "api" {
+    pulse "GET /a" {
+      handler = "A"
+      memory  = "16MiB"
+      cron    = "0 * * * *"
+    }
+    pulse "GET /b" {
+      handler = "B"
+      memory  = "16MiB"
+      cron    = "30 * * * *"
+    }
   }
 }
-sql "one" { size = "10MiB" }
-sql "two" { size = "10MiB" }
-queue "jobs" {}
+backbone {
+  sql "one" { size = "10MiB" }
+  sql "two" { size = "10MiB" }
+  queue "jobs" {}
+}
 `
 	c, err := CompileDriftfile(writeDriftfile(t, body, "atomic/api/"))
 	if err != nil {
@@ -541,7 +582,7 @@ queue "jobs" {}
 func TestCompile_FreeBillingIsHeldToTheFreeEnvelope(t *testing.T) {
 	withRealSchema(t)
 	fits := "slice \"demo\" { billing = \"free\" }\n" +
-		"element \"api\" {\n  pulse \"GET /a\" {\n    handler = \"A\"\n    memory = \"16MiB\"\n  }\n}\n"
+		"atomic {\n  element \"api\" {\n    pulse \"GET /a\" {\n      handler = \"A\"\n      memory = \"16MiB\"\n    }\n  }\n}\n"
 	c, err := CompileDriftfile(writeDriftfile(t, fits, "atomic/api/"))
 	if err != nil {
 		t.Fatalf("a shape inside the free slice was refused: %v", err)
@@ -554,7 +595,7 @@ func TestCompile_FreeBillingIsHeldToTheFreeEnvelope(t *testing.T) {
 	for _, tc := range []struct{ name, extra, want string }{
 		{"a limit above the grant", "", "limits.requests_per_minute is 61"},
 		{"too much memory", "", "book 96 MiB in total"},
-		{"a second database", "sql \"a\" { size = \"5MiB\" }\nsql \"b\" { size = \"5MiB\" }\n", "2 sql databases"},
+		{"a second database", "backbone {\n  sql \"a\" { size = \"5MiB\" }\n  sql \"b\" { size = \"5MiB\" }\n}\n", "2 sql databases"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := fits + tc.extra

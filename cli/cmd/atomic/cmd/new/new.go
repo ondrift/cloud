@@ -357,20 +357,22 @@ func declarationSnippet(route, method, handler, auth, element string) snippet {
 		element = defaultElement
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "element %q {\n", element)
-	fmt.Fprintf(&b, "  pulse %q {\n", pulseLabel(method, route))
-	fmt.Fprintf(&b, "    handler = %q\n", handler)
-	fmt.Fprintf(&b, "    memory  = %q\n", snippetMemory)
+	b.WriteString("atomic {\n")
+	fmt.Fprintf(&b, "  element %q {\n", element)
+	fmt.Fprintf(&b, "    pulse %q {\n", pulseLabel(method, route))
+	fmt.Fprintf(&b, "      handler = %q\n", handler)
+	fmt.Fprintf(&b, "      memory  = %q\n", snippetMemory)
 	if auth != "" && auth != "none" {
-		b.WriteString("    auth {\n")
-		fmt.Fprintf(&b, "      api_key = env(%q)\n", apiKeyVariable(route))
-		b.WriteString("    }\n")
+		b.WriteString("      auth {\n")
+		fmt.Fprintf(&b, "        api_key = env(%q)\n", apiKeyVariable(route))
+		b.WriteString("      }\n")
 	}
+	b.WriteString("    }\n")
 	b.WriteString("  }\n")
 	b.WriteString("}\n")
 	return snippet{
-		intro: fmt.Sprintf("Declare it in your Driftfile, inside element %q (add the element if it is not "+
-			"there yet, or just the pulse block if it is):", element),
+		intro: fmt.Sprintf("Declare it in your Driftfile, inside element %q of the atomic block (add the "+
+			"blocks if they are not there yet, or just the pulse block if they are):", element),
 		body: b.String(),
 	}
 }

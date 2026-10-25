@@ -121,7 +121,7 @@ func TestBuildDriftfile_AKeyGatedFunctionReadsItsKeyFromAVariable(t *testing.T) 
 	}}, nil, nil)
 	for _, want := range []string{
 		`element "get-order"`,
-		"    auth {\n      api_key = env(\"GET_ORDER_API_KEY\")\n    }\n",
+		"      auth {\n        api_key = env(\"GET_ORDER_API_KEY\")\n      }\n",
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("Driftfile missing %q:\n%s", want, df)

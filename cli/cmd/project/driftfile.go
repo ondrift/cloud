@@ -97,20 +97,98 @@ func refuseYAML(path string) error {
 
 type dfFile struct {
 	Slice        []dfSlice       `hcl:"slice,block"`
-	Elements     []dfElement     `hcl:"element,block"`
-	SQL          []dfSQL         `hcl:"sql,block"`
-	NoSQL        []dfNoSQL       `hcl:"nosql,block"`
-	Blobs        []dfBlobs       `hcl:"blobs,block"`
-	Queues       []dfQueue       `hcl:"queue,block"`
-	Caches       []dfCache       `hcl:"cache,block"`
-	Secrets      []dfSecret      `hcl:"secret,block"`
-	Realtime     []dfRealtime    `hcl:"realtime,block"`
-	Sites        []dfSite        `hcl:"site,block"`
+	Atomic       []dfAtomic      `hcl:"atomic,block"`
+	Backbone     []dfBackbone    `hcl:"backbone,block"`
+	Canvas       []dfCanvas      `hcl:"canvas,block"`
 	Edge         []dfEdge        `hcl:"edge,block"`
 	Variables    []dfVariable    `hcl:"variable,block"`
 	Environments []dfEnvironment `hcl:"environment,block"`
 	Hooks        []dfHook        `hcl:"hook,block"`
 	Tests        []dfTest        `hcl:"test,block"`
+
+	// Elements, SQL, NoSQL, Blobs, Queues, Caches, Secrets and Sites carry no
+	// hcl tag: gohcl never decodes them directly. Each pillar's own blocks are
+	// written inside its container now — `atomic { element ... }`, `backbone {
+	// sql ... }`, `canvas { site ... }` — and flattenPillars copies them here
+	// right after decode, so compile.go reads exactly what it always has.
+	Elements []dfElement
+	SQL      []dfSQL
+	NoSQL    []dfNoSQL
+	Blobs    []dfBlobs
+	Queues   []dfQueue
+	Caches   []dfCache
+	Secrets  []dfSecret
+	Realtime []dfRealtime
+	Sites    []dfSite
+}
+
+// pillarOfBlock names the container each pillar block is written inside.
+var pillarOfBlock = map[string]string{
+	"element":  "atomic",
+	"sql":      "backbone",
+	"nosql":    "backbone",
+	"blobs":    "backbone",
+	"queue":    "backbone",
+	"cache":    "backbone",
+	"secret":   "backbone",
+	"realtime": "backbone",
+	"site":     "canvas",
+}
+
+// dfAtomic is the Atomic pillar's own container: every element it declares.
+type dfAtomic struct {
+	Elements []dfElement `hcl:"element,block"`
+	DefRange hcl.Range   `hcl:",def_range"`
+}
+
+// dfBackbone is the Backbone pillar's own container: every primitive it
+// declares.
+type dfBackbone struct {
+	SQL      []dfSQL      `hcl:"sql,block"`
+	NoSQL    []dfNoSQL    `hcl:"nosql,block"`
+	Blobs    []dfBlobs    `hcl:"blobs,block"`
+	Queues   []dfQueue    `hcl:"queue,block"`
+	Caches   []dfCache    `hcl:"cache,block"`
+	Secrets  []dfSecret   `hcl:"secret,block"`
+	Realtime []dfRealtime `hcl:"realtime,block"`
+	DefRange hcl.Range    `hcl:",def_range"`
+}
+
+// dfCanvas is the Canvas pillar's own container: every site it declares.
+type dfCanvas struct {
+	Sites    []dfSite  `hcl:"site,block"`
+	DefRange hcl.Range `hcl:",def_range"`
+}
+
+// flattenPillars copies each pillar container's blocks onto dfFile's own
+// fields, so everything past this point (compile.go) reads the pillars the
+// same way regardless of the container syntax above it. A second container of
+// the same kind is refused here, the same way compile.go refuses a second
+// slice or edge block.
+func flattenPillars(file *dfFile, ev *dfEval) {
+	switch len(file.Atomic) {
+	case 0:
+	case 1:
+		file.Elements = file.Atomic[0].Elements
+	default:
+		ev.errorf(file.Atomic[1].DefRange, "Duplicate atomic block", "a Driftfile has one atomic block.")
+	}
+	switch len(file.Backbone) {
+	case 0:
+	case 1:
+		b := file.Backbone[0]
+		file.SQL, file.NoSQL, file.Blobs = b.SQL, b.NoSQL, b.Blobs
+		file.Queues, file.Caches, file.Secrets, file.Realtime = b.Queues, b.Caches, b.Secrets, b.Realtime
+	default:
+		ev.errorf(file.Backbone[1].DefRange, "Duplicate backbone block", "a Driftfile has one backbone block.")
+	}
+	switch len(file.Canvas) {
+	case 0:
+	case 1:
+		file.Sites = file.Canvas[0].Sites
+	default:
+		ev.errorf(file.Canvas[1].DefRange, "Duplicate canvas block", "a Driftfile has one canvas block.")
+	}
 }
 
 type dfSlice struct {
@@ -348,6 +426,18 @@ func readDriftfileEnv(path string, data []byte, env string) (*dfFile, *dfEval, e
 
 	ev := &dfEval{dir: filepath.Dir(path), file: name}
 
+	// A pillar's own block written at the top of the file says which block it
+	// belongs in, rather than the reader's "not expected here".
+	for _, blk := range body.Blocks {
+		if pillar, ok := pillarOfBlock[blk.Type]; ok {
+			ev.errorf(blk.TypeRange, "Block belongs inside "+pillar,
+				"%s blocks are written inside the %s block: %s { %s ... }.", blk.Type, pillar, pillar, blk.Type)
+		}
+	}
+	if ev.diags.HasErrors() {
+		return nil, nil, diagError(ev.diags)
+	}
+
 	// Variables and environments first, with no `var` of their own: a default
 	// or an environment's value is a literal or an env()/file() call, and one
 	// variable cannot read another.
@@ -449,6 +539,10 @@ func readDriftfileEnv(path string, data []byte, env string) (*dfFile, *dfEval, e
 	var file dfFile
 	if d := gohcl.DecodeBody(f.Body, ev.ctx, &file); d.HasErrors() {
 		return nil, nil, diagError(d)
+	}
+	flattenPillars(&file, ev)
+	if ev.diags.HasErrors() {
+		return nil, nil, diagError(ev.diags)
 	}
 	return &file, ev, nil
 }

@@ -182,9 +182,9 @@ func TestAtomicDeployPublishesTheDeclaredSchedules(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "Driftfile"),
-		[]byte("slice \"demo\" { billing = \"monthly\" }\n\nelement \"default\" {\n"+
-			"  pulse \"GET /tick\" {\n    handler = \"GetTick\"\n    memory = \"32MiB\"\n"+
-			"    cron = \"*/1 * * * *\"\n  }\n}\n"), 0o600); err != nil {
+		[]byte("slice \"demo\" { billing = \"monthly\" }\n\natomic {\n  element \"default\" {\n"+
+			"    pulse \"GET /tick\" {\n      handler = \"GetTick\"\n      memory = \"32MiB\"\n"+
+			"      cron = \"*/1 * * * *\"\n    }\n  }\n}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

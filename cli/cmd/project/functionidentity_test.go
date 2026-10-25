@@ -130,14 +130,14 @@ func bookingKeys(t *testing.T, body string) []string {
 // route, in the default element.
 func driftfileFor(identities []string) string {
 	var b strings.Builder
-	b.WriteString("slice \"prorata\" { billing = \"monthly\" }\n\nelement \"default\" {\n")
+	b.WriteString("slice \"prorata\" { billing = \"monthly\" }\n\natomic {\n  element \"default\" {\n")
 	for i, id := range identities {
 		method, route, _ := strings.Cut(id, ":")
-		b.WriteString("  pulse \"" + strings.ToUpper(method) + " /" + route + "\" {\n")
-		b.WriteString("    handler = \"H" + string(rune('A'+i%26)) + "\"\n")
-		b.WriteString("    memory = \"16MiB\"\n")
-		b.WriteString("  }\n")
+		b.WriteString("    pulse \"" + strings.ToUpper(method) + " /" + route + "\" {\n")
+		b.WriteString("      handler = \"H" + string(rune('A'+i%26)) + "\"\n")
+		b.WriteString("      memory = \"16MiB\"\n")
+		b.WriteString("    }\n")
 	}
-	b.WriteString("}\n")
+	b.WriteString("  }\n}\n")
 	return b.String()
 }

@@ -23,9 +23,13 @@ func parseSnippet(t *testing.T, body string) parsedSnippet {
 	if diags.HasErrors() {
 		t.Fatalf("the snippet is not HCL: %v\n%s", diags, body)
 	}
-	blocks := f.Body.(*hclsyntax.Body).Blocks
+	top := f.Body.(*hclsyntax.Body).Blocks
+	if len(top) != 1 || top[0].Type != "atomic" || len(top[0].Labels) != 0 {
+		t.Fatalf("the snippet must be one atomic block, got:\n%s", body)
+	}
+	blocks := top[0].Body.Blocks
 	if len(blocks) != 1 || blocks[0].Type != "element" || len(blocks[0].Labels) != 1 {
-		t.Fatalf("the snippet must be one element block, got:\n%s", body)
+		t.Fatalf("the atomic block must hold one element block, got:\n%s", body)
 	}
 	el := blocks[0]
 	if len(el.Body.Blocks) != 1 || el.Body.Blocks[0].Type != "pulse" || len(el.Body.Blocks[0].Labels) != 1 {
