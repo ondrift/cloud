@@ -28,10 +28,8 @@ type domainResponse struct {
 func getDomainCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "domain",
-		Short: "Add, verify, list, or remove custom hostnames for your slice",
-		Example: "  drift slice domain add forms.gemeente.example\n" +
-			"  drift slice domain add imprente.com --wildcard\n" +
-			"  drift slice domain verify forms.gemeente.example\n" +
+		Short: "Verify, list, or remove custom hostnames for your slice (declare them in the Driftfile)",
+		Example: "  drift slice domain verify forms.gemeente.example\n" +
 			"  drift slice domain list\n" +
 			"  drift slice domain remove forms.gemeente.example",
 	}
@@ -48,7 +46,7 @@ func getDomainAddCmd() *cobra.Command {
 	var wildcard bool
 	cmd := &cobra.Command{
 		Use:   "add <host>",
-		Short: "Register a custom hostname for the active slice",
+		Short: "Deprecated: declare the domain in the Driftfile's edge block instead",
 		Long: `Register a custom hostname for the active slice.
 
 --wildcard opts the domain into routing every one of its subdomains
@@ -84,7 +82,11 @@ first request, exactly like every other custom domain.`,
 		},
 	}
 	cmd.Flags().BoolVar(&wildcard, "wildcard", false, "Route every subdomain of this domain to the same slice")
-	return cmd
+	return common.DeprecateCommand(cmd, common.Deprecation{
+		Old:     "drift slice domain add",
+		New:     "drift apply",
+		Because: "Declare a `domain` block in the Driftfile's edge block (`wildcard = true` for every subdomain); apply attaches it, then `drift slice domain verify` checks the DNS record.",
+	})
 }
 
 func getDomainVerifyCmd() *cobra.Command {
