@@ -711,7 +711,7 @@ func (p *planState) diffEdge(d *planDiff, creating bool) {
 	sl := m.Slice()
 
 	if sl.Has("edge", "site_auth") {
-		realm, entries, err := declaredSiteAuth(m)
+		realm, paths, entries, err := declaredSiteAuth(m)
 		if err != nil {
 			d.notes = append(d.notes, err.Error())
 		} else {
@@ -728,6 +728,17 @@ func (p *planState) diffEdge(d *planDiff, creating bool) {
 				d.add("~", "site_auth", "realm %s → %s", realmOrNone(p.gate.Realm), realmOrNone(realm))
 			default:
 				d.add(" ", "site_auth", "on (realm %s)", realmOrNone(realm))
+			}
+			// What the gate covers is its own line, so a change of paths shows beside
+			// the gate and not folded into its realm.
+			switch livePaths := describeSitePaths(p.gate.Paths); {
+			case creating || (p.gateErr == nil && !p.gate.Enabled):
+				d.add("+", "site_auth paths", "%s", describeSitePaths(paths))
+			case p.gateErr != nil:
+			case !samePaths(p.gate.Paths, paths):
+				d.add("~", "site_auth paths", "%s → %s", livePaths, describeSitePaths(paths))
+			default:
+				d.add(" ", "site_auth paths", "%s", livePaths)
 			}
 			for _, e := range entries {
 				addr := "site_auth " + e.User

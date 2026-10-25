@@ -32,6 +32,7 @@ type siteAuthUser struct {
 type siteAuthConfig struct {
 	Enabled bool           `json:"enabled"`
 	Realm   string         `json:"realm,omitempty"`
+	Paths   []string       `json:"paths,omitempty"`
 	Users   []siteAuthUser `json:"users,omitempty"`
 }
 
@@ -85,12 +86,22 @@ func getAuthListCmd() *cobra.Command {
 			if out.Realm != "" {
 				fmt.Printf("  Realm: %s\n", out.Realm)
 			}
+			fmt.Printf("  Covers: %s\n", describeGatePaths(out.Paths))
 			for _, u := range out.Users {
 				fmt.Printf("  %s\n", u.Name)
 			}
 			return nil
 		},
 	}
+}
+
+// describeGatePaths says what a gate covers. A gate that reports no paths was set
+// before paths existed and covers the whole site.
+func describeGatePaths(paths []string) string {
+	if len(paths) == 0 || (len(paths) == 1 && paths[0] == "*") {
+		return "the whole site"
+	}
+	return strings.Join(paths, ", ")
 }
 
 func getAuthDisableCmd() *cobra.Command {

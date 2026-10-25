@@ -351,6 +351,7 @@ type dfDomain struct {
 
 type dfSiteAuth struct {
 	Realm    hcl.Expression `hcl:"realm,optional"`
+	Paths    hcl.Expression `hcl:"paths,optional"`
 	Users    []dfUser       `hcl:"user,block"`
 	DefRange hcl.Range      `hcl:",def_range"`
 }

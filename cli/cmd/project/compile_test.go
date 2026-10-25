@@ -296,6 +296,9 @@ func TestCompile_TheReadersReadWhatTheFileSays(t *testing.T) {
 			t.Errorf("slot %s = %q, want %q (all: %v)", k, names[k], v, names)
 		}
 	}
+	if got := m.Slice().Sub("edge", "site_auth").Strings("paths"); len(got) != 1 || got[0] != "*" {
+		t.Errorf("site_auth paths = %v, want [*]", got)
+	}
 	users := m.Slice().Sub("edge", "site_auth").Nodes("users")
 	if len(users) != 1 || users[0].Str("password") != "$EXPLORER_PASS" {
 		t.Errorf("site_auth users = %v, want one user whose password is the reference $EXPLORER_PASS", users)
@@ -347,8 +350,8 @@ func TestCompile_RefusesAWriteOnlyValueThatIsNotAReference(t *testing.T) {
 		{"secret literal", "backbone {\n  secret \"STRIPE_KEY\" { value = \"sk_live_123\" }\n}"},
 		{"secret from var", "variable \"k\" { default = \"x\" }\nbackbone {\n  secret \"STRIPE_KEY\" { value = var.k }\n}"},
 		{"api key literal", "atomic {\n  element \"api\" {\n    pulse \"POST /x\" {\n      handler = \"PostX\"\n      memory = \"32MiB\"\n      auth { api_key = \"abc\" }\n    }\n  }\n}"},
-		{"site password literal", "edge {\n  site_auth {\n    user \"a\" { password = \"hunter2\" }\n  }\n}"},
-		{"site password from file", "edge {\n  site_auth {\n    user \"a\" { password = file(\"pw\") }\n  }\n}"},
+		{"site password literal", "edge {\n  site_auth {\n    paths = [\"*\"]\n    user \"a\" { password = \"hunter2\" }\n  }\n}"},
+		{"site password from file", "edge {\n  site_auth {\n    paths = [\"*\"]\n    user \"a\" { password = file(\"pw\") }\n  }\n}"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+tc.body+"\n", "atomic/api/", "pw")

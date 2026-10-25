@@ -261,9 +261,12 @@ var formatDocs = map[string]formatDoc{
 	"edge.domain": {doc: "A custom hostname the slice answers on, proved yours by a DNS TXT record before it " +
 		"routes."},
 	"edge.domain.wildcard": {typ: tBool, doc: "Route every subdomain of the host to this slice as well."},
-	"edge.site_auth":       {doc: "A password gate in front of the slice's sites. Its pulses are not gated."},
+	"edge.site_auth":       {doc: "A password gate in front of the slice's sites, or the part of them `paths` names. Its pulses are not gated."},
 	"edge.site_auth.realm": {typ: tString, doc: "The realm the browser shows when it asks for the password."},
-	"edge.site_auth.user":  {doc: "One user the gate admits."},
+	"edge.site_auth.paths": {typ: tList, required: true, doc: `The Canvas paths the gate covers: ["*"] for the ` +
+		`whole site, or absolute paths, each covering itself and everything beneath it ("/admin" gates /admin and ` +
+		`/admin/users/1, not /administrator). A path outside the list is served without a password.`},
+	"edge.site_auth.user": {doc: "One user the gate admits."},
 	"edge.site_auth.user.password": {typ: tRef, required: true, doc: "The environment variable the password " +
 		"is read from. Written env(\"NAME\") and nothing else."},
 

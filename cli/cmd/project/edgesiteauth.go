@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"sort"
 	"strings"
 
@@ -40,7 +41,95 @@ type siteAuthUser struct {
 type siteAuthConfig struct {
 	Enabled bool           `json:"enabled"`
 	Realm   string         `json:"realm,omitempty"`
+	Paths   []string       `json:"paths,omitempty"`
 	Users   []siteAuthUser `json:"users,omitempty"`
+}
+
+// wholeSite is the one spelling of "every Canvas path".
+const wholeSite = "*"
+
+// normaliseSitePaths checks the paths a gate covers and returns them as the
+// platform stores them. It is the platform's rule, applied here so a path that
+// could never match is refused on the laptop with its position: `*` alone, or
+// absolute paths each covering itself and everything beneath it, written clean,
+// with no `/` alone (that reads as the home page and would mean the whole site).
+// One trailing slash is dropped.
+func normaliseSitePaths(paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, fmt.Errorf(`name at least one path: ["*"] gates the whole site`)
+	}
+	if len(paths) > 32 {
+		return nil, fmt.Errorf("too many paths: at most 32")
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p == wholeSite {
+			if len(paths) != 1 {
+				return nil, fmt.Errorf(`"*" gates the whole site, so it cannot be listed beside other paths`)
+			}
+			return []string{wholeSite}, nil
+		}
+		if len(p) > 256 {
+			return nil, fmt.Errorf("path %q is too long: at most 256 characters", p)
+		}
+		if !strings.HasPrefix(p, "/") {
+			return nil, fmt.Errorf(`path %q must start with "/" (write "*" to gate the whole site)`, p)
+		}
+		for _, r := range p {
+			if r <= 0x20 || r == 0x7f || r == '?' || r == '#' || r == '\\' {
+				return nil, fmt.Errorf("path %q contains a character a path cannot carry here", p)
+			}
+		}
+		if p == "/" {
+			return nil, fmt.Errorf(`path "/" is ambiguous: write "*" to gate the whole site, or name the pages to gate`)
+		}
+		norm := strings.TrimSuffix(p, "/")
+		if path.Clean(norm) != norm {
+			return nil, fmt.Errorf("path %q is not clean: write it without `.`, `..` or doubled slashes", p)
+		}
+		if seen[norm] {
+			return nil, fmt.Errorf("path %q is listed twice", norm)
+		}
+		seen[norm] = true
+		out = append(out, norm)
+	}
+	return out, nil
+}
+
+// samePaths reports whether two gates cover the same paths, whatever order they
+// list them in. A live gate that lists none covers the whole site.
+func samePaths(a, b []string) bool {
+	a, b = append([]string(nil), sitePathsOrWhole(a)...), append([]string(nil), sitePathsOrWhole(b)...)
+	if len(a) != len(b) {
+		return false
+	}
+	sort.Strings(a)
+	sort.Strings(b)
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// describeSitePaths says what a gate covers, for a line a person reads.
+func describeSitePaths(paths []string) string {
+	paths = sitePathsOrWhole(paths)
+	if len(paths) == 1 && paths[0] == wholeSite {
+		return "the whole site"
+	}
+	return strings.Join(paths, ", ")
+}
+
+// sitePathsOrWhole is the paths a live gate covers: a gate set before paths
+// existed reports none, and covers the whole site.
+func sitePathsOrWhole(paths []string) []string {
+	if len(paths) == 0 {
+		return []string{wholeSite}
+	}
+	return paths
 }
 
 // siteAuthEntry is one declared user and the variable its password is read
@@ -53,30 +142,34 @@ type siteAuthEntry struct {
 // declaredSiteAuth reads `edge.site_auth` without resolving anything. It
 // refuses a password that is not a `$NAME` reference, a user named twice, and
 // a gate with nobody in it, and never puts a password in a message.
-func declaredSiteAuth(m *Manifest) (realm string, entries []siteAuthEntry, err error) {
+func declaredSiteAuth(m *Manifest) (realm string, paths []string, entries []siteAuthEntry, err error) {
 	gate := m.Slice().Sub("edge", "site_auth")
 	realm = gate.Str("realm")
+	paths, err = normaliseSitePaths(gate.Strings("paths"))
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("edge.site_auth: paths: %w", err)
+	}
 	seen := map[string]bool{}
 	for _, u := range gate.Nodes("users") {
 		name := u.Str("user")
 		ref := u.Str("password")
 		env := strings.TrimPrefix(ref, "$")
 		if !strings.HasPrefix(ref, "$") || !isEnvName(env) {
-			return "", nil, fmt.Errorf("edge.site_auth: the password for user %q must be an environment "+
+			return "", nil, nil, fmt.Errorf("edge.site_auth: the password for user %q must be an environment "+
 				"variable reference such as $SITE_PASS, not a value: the Driftfile is committed, and the "+
 				"password would be committed with it", name)
 		}
 		if seen[name] {
-			return "", nil, fmt.Errorf("edge.site_auth: user %q is declared more than once", name)
+			return "", nil, nil, fmt.Errorf("edge.site_auth: user %q is declared more than once", name)
 		}
 		seen[name] = true
 		entries = append(entries, siteAuthEntry{User: name, Env: env})
 	}
 	if len(entries) == 0 {
-		return "", nil, fmt.Errorf("edge.site_auth declares no users, and a gate nobody can pass locks " +
+		return "", nil, nil, fmt.Errorf("edge.site_auth declares no users, and a gate nobody can pass locks " +
 			"the site to everyone. To remove the gate, delete the key and run `drift slice auth disable`")
 	}
-	return realm, entries, nil
+	return realm, paths, entries, nil
 }
 
 // unreadablePassword says why entry's variable cannot be used, or "" when it
@@ -98,11 +191,11 @@ func unreadablePassword(e siteAuthEntry) string {
 // desiredSiteAuth is the gate the file declares, with every password read from
 // the environment. Every unreadable variable is reported at once.
 func desiredSiteAuth(m *Manifest) (siteAuthConfig, error) {
-	realm, entries, err := declaredSiteAuth(m)
+	realm, paths, entries, err := declaredSiteAuth(m)
 	if err != nil {
 		return siteAuthConfig{}, err
 	}
-	cfg := siteAuthConfig{Enabled: true, Realm: realm}
+	cfg := siteAuthConfig{Enabled: true, Realm: realm, Paths: paths}
 	var problems []string
 	var fixes []string
 	for _, e := range entries {
@@ -170,7 +263,8 @@ func applyEdgeSiteAuth(m *Manifest) error {
 	for _, u := range cfg.Users {
 		names = append(names, u.Name)
 	}
-	fmt.Printf("  %s site gate set: %s can sign in\n", common.Check(), strings.Join(names, ", "))
+	fmt.Printf("  %s site gate set: %s can sign in; it covers %s\n", common.Check(), strings.Join(names, ", "),
+		describeSitePaths(cfg.Paths))
 	if liveErr == nil {
 		if removed := removedSiteAuthUsers(cfg, live); len(removed) > 0 {
 			fmt.Printf("    %s\n", common.Hint("removed: "+strings.Join(removed, ", ")))

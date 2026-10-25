@@ -27,6 +27,24 @@ func TestSliceAuth_HasOnlyListAndDisable(t *testing.T) {
 	}
 }
 
+// A gate that reports no paths was set before paths existed and covers the whole
+// site; one that names paths is read back as those, so the list never claims more
+// or less than the router enforces.
+func TestDescribeGatePaths(t *testing.T) {
+	for _, tc := range []struct {
+		in   []string
+		want string
+	}{
+		{nil, "the whole site"},
+		{[]string{"*"}, "the whole site"},
+		{[]string{"/admin", "/secret/page"}, "/admin, /secret/page"},
+	} {
+		if got := describeGatePaths(tc.in); got != tc.want {
+			t.Errorf("describeGatePaths(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // The gate covers the SITE. `drift atomic auth` guards functions, and confusing
 // the two is the likeliest way someone leaves an API open believing it is not.
 func TestSliceAuth_DistinguishesItselfFromAtomicAuth(t *testing.T) {
