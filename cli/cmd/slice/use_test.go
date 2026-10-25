@@ -45,7 +45,7 @@ func TestUnknownSliceMessage_NoSlicesYet(t *testing.T) {
 	if !strings.Contains(got, "no slices yet") {
 		t.Errorf("must say the account has none:\n%s", got)
 	}
-	if !strings.Contains(got, "drift slice create") {
+	if !strings.Contains(got, "drift file new") || !strings.Contains(got, "drift apply") {
 		t.Errorf("must say how to make one:\n%s", got)
 	}
 	if strings.Contains(got, "This account has:") {

@@ -571,7 +571,7 @@ func GetOrCreateDeviceID() string {
 func RequireActiveSlice() (string, error) {
 	s := GetActiveSlice()
 	if s == "" {
-		return "", fmt.Errorf("no active slice — run 'drift slice use <name>' or 'drift slice create <name>' first")
+		return "", fmt.Errorf("no active slice — run 'drift slice use <name>', or write a Driftfile with 'drift file new' and run 'drift apply', first")
 	}
 	return s, nil
 }

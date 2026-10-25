@@ -31,10 +31,9 @@ func getCreateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create [name]",
-		Short: "Create a new slice, asking for its shape here",
-		Example: "  drift slice create                      # asks: name, functions, routes, memory\n" +
-			"  drift slice create my-slice             # same, with the name filled in\n" +
-			"  drift slice create my-slice --free      # the free slice, nothing to answer",
+		Short: "Deprecated: write a Driftfile with `drift file new` and run `drift apply`",
+		Example: "  drift slice create my-slice --free      # the free slice, nothing to answer\n" +
+			"  drift slice create                      # asks: name, functions, routes, memory",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var name string
@@ -67,7 +66,12 @@ func getCreateCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm the cost prompt (for CI)")
 	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period in months, for a configured (non-free) slice")
 	_ = cmd.Flags().MarkHidden("headless")
-	return cmd
+	return common.DeprecateCommand(cmd, common.Deprecation{
+		Old: "drift slice create",
+		New: "drift file new, then drift apply",
+		Because: "A Driftfile declares the slice and `drift apply` creates it, quoting the price first; " +
+			"`drift file new` asks for the name, the billing and the first pulse and writes the file.",
+	})
 }
 
 // createHeadless posts directly to api/ops/slice/create with the free tier. It

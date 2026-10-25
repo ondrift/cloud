@@ -251,8 +251,8 @@ func TestMaintenanceMessage_NeverAdvisesLoggingOut(t *testing.T) {
 // wording would leave this file describing a refusal nobody receives.
 func TestDetailForStatus_PlainTextBodyIsTheReason(t *testing.T) {
 	const reason = "the free tier is one slice per account, and you already have one. " +
-		"A second slice is allowed and is priced on its shape — run `drift slice create <name>` " +
-		"without --free to choose that shape and see the cost before anything is charged"
+		"A second slice is allowed and is priced on its shape — write billing = \"monthly\" in its " +
+		"Driftfile and run `drift plan` to see the cost before anything is charged"
 	if got := detailForStatus(http.StatusConflict, []byte(reason+"\n")); got != reason {
 		t.Errorf("detailForStatus(409, plain text) = %q, want %q", got, reason)
 	}
