@@ -86,6 +86,7 @@ canvas {
 edge {
   site_auth {
     realm = "fxevm testnode"
+    paths = ["*"]
     user "drift" { password = env("EXPLORER_PASS") }
   }
 }

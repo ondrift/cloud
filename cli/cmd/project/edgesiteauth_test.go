@@ -30,6 +30,7 @@ canvas {
 edge {
   site_auth {
     realm = "Staging"
+    paths = ["/admin", "/secret/page"]
     user "alice" { password = env("SITE_PASS_ALICE") }
     user "bob" { password = env("SITE_PASS_BOB") }
   }
@@ -100,7 +101,7 @@ func TestApply_SiteAuthSetsExactlyTheDeclaredUsers(t *testing.T) {
 		t.Fatalf("%d gate writes, want exactly one", len(sent))
 	}
 	got, _ := json.Marshal(sent[0])
-	want := `{"enabled":true,"realm":"Staging","users":[{"name":"alice","password":"alice-secret"},{"name":"bob","password":"bob-secret"}]}`
+	want := `{"enabled":true,"paths":["/admin","/secret/page"],"realm":"Staging","users":[{"name":"alice","password":"alice-secret"},{"name":"bob","password":"bob-secret"}]}`
 	if string(got) != want {
 		t.Errorf("gate write = %s\nwant          %s", got, want)
 	}
@@ -166,6 +167,7 @@ func TestApply_SiteAuthRefusesAnEmptyPasswordBeforeAnyRoute(t *testing.T) {
 // it: the reader's terminal and CI log are not where it belongs either.
 func TestEdgeSiteAuth_RefusesALiteralWithoutPrintingIt(t *testing.T) {
 	m := &Manifest{slice: Node{"edge": map[string]any{"site_auth": map[string]any{
+		"paths": []any{"*"},
 		"users": []any{map[string]any{"user": "alice", "password": "hunter2"}},
 	}}}}
 	err := preflightEdgeSiteAuth(m)
@@ -186,7 +188,7 @@ func TestEdgeSiteAuth_RefusesALiteralWithoutPrintingIt(t *testing.T) {
 func TestCompile_RefusesALiteralSitePasswordWithoutPrintingIt(t *testing.T) {
 	withRealSchema(t)
 	_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+
-		"edge {\n  site_auth {\n    user \"alice\" { password = \"hunter2\" }\n  }\n}\n"))
+		"edge {\n  site_auth {\n    paths = [\"*\"]\n    user \"alice\" { password = \"hunter2\" }\n  }\n}\n"))
 	if err == nil {
 		t.Fatal("a literal password compiled")
 	}
@@ -204,6 +206,7 @@ func TestEdgeSiteAuth_RefusesADuplicateUser(t *testing.T) {
 	t.Setenv("P1", "x")
 	t.Setenv("P2", "y")
 	m := &Manifest{slice: Node{"edge": map[string]any{"site_auth": map[string]any{
+		"paths": []any{"*"},
 		"users": []any{
 			map[string]any{"user": "alice", "password": "$P1"},
 			map[string]any{"user": "alice", "password": "$P2"},
@@ -212,6 +215,74 @@ func TestEdgeSiteAuth_RefusesADuplicateUser(t *testing.T) {
 	err := preflightEdgeSiteAuth(m)
 	if err == nil || err.Error() != `edge.site_auth: user "alice" is declared more than once` {
 		t.Errorf("err = %v, want a refusal naming the repeated user", err)
+	}
+}
+
+// A gate that does not say which paths it covers is refused where the file is
+// read, with its position. Neither reading of the omission is safe: "every path"
+// locks a site because a line was left out, and "none" protects nothing.
+func TestCompile_SiteAuthMustNameItsPaths(t *testing.T) {
+	withRealSchema(t)
+	_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+
+		"edge {\n  site_auth {\n    user \"alice\" { password = env(\"P\") }\n  }\n}\n"))
+	if err == nil {
+		t.Fatal("a site_auth with no paths compiled")
+	}
+	for _, want := range []string{"Missing paths", `paths = ["*"]`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+}
+
+// Every shape that could never match, or that means something other than it
+// reads as, is refused at its line.
+func TestCompile_SiteAuthRefusesAPathThatCouldNeverMatch(t *testing.T) {
+	withRealSchema(t)
+	for name, paths := range map[string]string{
+		"relative":           `["admin"]`,
+		"the root":           `["/"]`,
+		"star and a path":    `["*", "/admin"]`,
+		"a dot segment":      `["/a/../b"]`,
+		"a query":            `["/a?x=1"]`,
+		"the same one twice": `["/admin", "/admin/"]`,
+		"none":               `[]`,
+	} {
+		_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+
+			"edge {\n  site_auth {\n    paths = "+paths+"\n    user \"alice\" { password = env(\"P\") }\n  }\n}\n"))
+		if err == nil {
+			t.Errorf("%s: paths = %s compiled", name, paths)
+		}
+	}
+}
+
+// One trailing slash is dropped, so the document carries what the platform
+// stores and a plan compares like with like.
+func TestCompile_SiteAuthPathsAreWrittenNormalised(t *testing.T) {
+	withRealSchema(t)
+	c, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+
+		"edge {\n  site_auth {\n    paths = [\"/admin/\", \"/secret/page\"]\n    user \"alice\" { password = env(\"P\") }\n  }\n}\n"))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	got := c.Manifest.Slice().Sub("edge", "site_auth").Strings("paths")
+	if strings.Join(got, ",") != "/admin,/secret/page" {
+		t.Errorf("paths = %v, want /admin and /secret/page", got)
+	}
+}
+
+// A gate set before paths existed reports none and covers the whole site, so a
+// plan against it shows a narrower declaration as a change and an explicit `*`
+// as no change.
+func TestSamePaths_AGateWithNoPathsCoversTheWholeSite(t *testing.T) {
+	if !samePaths(nil, []string{"*"}) {
+		t.Error("a live gate reporting no paths differs from `*`, which is the whole site it covers")
+	}
+	if samePaths(nil, []string{"/admin"}) {
+		t.Error("a whole-site gate was read as the same as /admin")
+	}
+	if !samePaths([]string{"/b", "/a"}, []string{"/a", "/b"}) {
+		t.Error("the order of the paths is a change")
 	}
 }
 
@@ -257,6 +328,7 @@ func TestPlan_SiteAuthShowsUsersAndNeverAPassword(t *testing.T) {
 		"! site_auth bob",
 		"- site_auth carol",
 		"realm Old → Staging",
+		"the whole site → /admin, /secret/page",
 		"$SITE_PASS_BOB is not set here",
 	} {
 		if !strings.Contains(out, want) {

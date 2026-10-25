@@ -818,6 +818,20 @@ func (c *compiler) compileEdge(edges []dfEdge) {
 		gate := Node{}
 		c.at("/edge/site_auth", sa.DefRange, "edge.site_auth")
 		c.optString(gate, "realm", sa.Realm, "/edge/site_auth", "edge.site_auth")
+		// The gate says which paths it covers, always. A key that defaulted to
+		// "every path" would be a gate that locks the whole site because a line
+		// was left out, and one that defaulted to "none" would be a gate that
+		// protects nothing, so neither is a default.
+		if !present(sa.Paths) {
+			c.ev.errorf(sa.DefRange, "Missing paths", `edge.site_auth names the paths it gates: paths = ["*"] for the whole site, or paths = ["/admin"] for one part of it.`)
+		} else if l, ok := c.ev.strList(sa.Paths, "edge.site_auth: paths"); ok {
+			if norm, err := normaliseSitePaths(l); err != nil {
+				c.ev.errorf(sa.Paths.Range(), "Not a path list", "edge.site_auth: paths: %v.", err)
+			} else {
+				c.at("/edge/site_auth/paths", sa.Paths.Range(), "edge.site_auth: paths")
+				gate["paths"] = toAnyList(norm)
+			}
+		}
 		var users []any
 		for i, u := range sa.Users {
 			what := fmt.Sprintf("site_auth user %q", u.Name)

@@ -64,6 +64,9 @@
     },
     "edge": {
       "site_auth": {
+        "paths": [
+          "*"
+        ],
         "realm": "fxevm testnode",
         "users": [
           {
