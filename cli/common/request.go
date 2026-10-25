@@ -200,6 +200,9 @@ func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reade
 		if errors.Is(err, ErrPlatformUnavailable) {
 			return nil, errors.New(MaintenanceMessage)
 		}
+		if errors.Is(err, ErrSessionRevoked) {
+			return nil, errors.New(SessionRevokedMessage)
+		}
 		return nil, fmt.Errorf("session expired — run 'drift account login' to re-authenticate")
 	}
 
@@ -244,6 +247,17 @@ type readCloser struct {
 	io.Closer
 }
 
+// isSessionRevoked reports whether a refresh refusal is the platform's theft
+// response rather than an ordinary expiry.
+//
+// Recognised by the two sentences auth/routes/refresh.go answers with, pinned by
+// TestARevokedSessionSaysWhyAndWhatToDo. The platform sends no machine-readable
+// key for these, so the wording is the contract until it does; an unrecognised
+// refusal reads as the ordinary expiry, which is what it was before.
+func isSessionRevoked(detail string) bool {
+	return strings.Contains(detail, "device mismatch") || strings.Contains(detail, "reuse detected")
+}
+
 // RefreshAccessToken uses the stored refresh token to obtain a new access
 // token from the API, persisting both new tokens to the session file.
 // Exported so callers can proactively refresh a locally-expired access token
@@ -282,6 +296,13 @@ func RefreshAccessToken() error {
 	// platform that could not log them back in.
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		// The platform says WHY in the body, and three different reasons used to
+		// print one sentence. A device mismatch or a replayed token is its theft
+		// response, with its own next step.
+		refusal, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		if isSessionRevoked(extractDetail(refusal)) {
+			return fmt.Errorf("%w (refresh returned %d)", ErrSessionRevoked, resp.StatusCode)
+		}
 		return fmt.Errorf("%w (refresh returned %d)", ErrSessionRejected, resp.StatusCode)
 	case resp.StatusCode >= 500:
 		return fmt.Errorf("%w (refresh returned %d)", ErrPlatformUnavailable, resp.StatusCode)
