@@ -3,7 +3,7 @@
 // wildcard when its block says `wildcard = true`. A host the file does not
 // name is left attached and reported instead (see unnamed.go): a project
 // declares the hosts it wants, and two projects can share a slice.
-// After add, the user still has to flip DNS and run
+// After add, the user still has to flip DNS (the instructions are printed) and run
 // `drift slice domain verify <host>` — that step requires the
 // CNAME / TXT to be live and is not something we can do
 // automatically from the deploy path.
@@ -58,13 +58,17 @@ func applyDomains(m *Manifest) ([]string, error) {
 		if _, ok := liveByHost[host]; ok {
 			continue
 		}
-		if err := addDomain(host, wildcard); err != nil {
+		instructions, err := addDomain(host, wildcard)
+		if err != nil {
 			fmt.Printf("  %s add domain %s: %v\n", common.Hint("·"), host, err)
 			continue
 		}
 		added++
 		fmt.Printf("  %s domain added: %s (verify with `drift slice domain verify %s` once DNS is live)\n",
 			common.Check(), host, host)
+		for _, line := range instructions {
+			fmt.Printf("      %s\n", line)
+		}
 	}
 
 	if added == 0 && len(declared) > 0 {
@@ -102,19 +106,24 @@ func fetchLiveDomains() ([]liveDomain, error) {
 	return out, nil
 }
 
-// addDomain attaches one host, sending the same fields `drift slice domain
-// add` does.
-func addDomain(host string, wildcard bool) error {
+// addDomain attaches one host and returns the DNS instructions the platform
+// answers with, which are the only place the TXT record to create is spelled
+// out.
+func addDomain(host string, wildcard bool) ([]string, error) {
 	body, _ := json.Marshal(map[string]any{"host": host, "verify": "dns-txt", "wildcard": wildcard})
 	resp, err := common.DoJSONRequest(http.MethodPost,
 		common.APIBaseURL+"/ops/slice/domain", strings.NewReader(string(body)))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		_, e := common.CheckResponse(resp, "add domain")
-		return e
+	respBody, err := common.CheckResponse(resp, "add domain")
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	var d struct {
+		Instructions []string `json:"instructions"`
+	}
+	_ = json.Unmarshal(respBody, &d)
+	return d.Instructions, nil
 }

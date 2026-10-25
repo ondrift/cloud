@@ -1,11 +1,11 @@
-// auth.go — the Basic-auth gate in front of a slice's Canvas site.
+// auth.go — `drift slice auth {list, disable}`, the Basic-auth gate in front of
+// a slice's Canvas site.
 //
-// The gate has worked end to end for a while — the api stores it, the operator
-// owns the record, the edge carries it on every host lookup and the router
-// enforces it — and there was no way to switch it on short of hand-rolling a
-// curl against /ops/slice/auth. A feature nobody can find is indistinguishable
-// from one that does not work, and this one was very nearly deleted on exactly
-// that reading (#CLI-STANDARDUSAGE-P545K1).
+// The gate is switched ON by declaring `site_auth` in the Driftfile's edge block
+// and running `drift apply`, which sets exactly the declared users and realm.
+// There is no command that sets credentials. `list` reads the gate and `disable`
+// removes it, because no Driftfile declaration turns the gate off: absent, the
+// key leaves the gate as it is.
 //
 // The gate covers the SITE, not the API: it is the "this staging site is not
 // for the public yet" wall, not an authorization model for Atomic functions.
@@ -13,7 +13,6 @@
 package slice
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -24,11 +23,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// siteAuthUser is one credential on the wire. The response never carries a
-// digest back — the api marks it `json:"-"` — so Password is write-only here.
+// siteAuthUser is one credential as the platform reports it. The response never
+// carries a digest back, so only the name is read.
 type siteAuthUser struct {
-	Name     string `json:"name"`
-	Password string `json:"password,omitempty"`
+	Name string `json:"name"`
 }
 
 type siteAuthConfig struct {
@@ -40,104 +38,16 @@ type siteAuthConfig struct {
 func getAuthCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth",
-		Short: "Put a username and password in front of the slice's site",
-		Long: "Guard the slice's Canvas site with HTTP Basic auth.\n\n" +
-			"Visitors get a browser password box; anyone without the credential gets a\n" +
-			"401 and never reaches the site. This gates the SITE — Atomic functions are\n" +
-			"guarded separately with `drift atomic auth`.",
-		Example: "  drift slice auth set --user visitor\n" +
-			"  drift slice auth list\n" +
+		Short: "Show or remove the username and password in front of the slice's site",
+		Long: "Inspect or remove the HTTP Basic auth gate on the slice's Canvas site.\n\n" +
+			"The gate is declared as `site_auth` in the Driftfile's edge block and set by\n" +
+			"`drift apply`. Visitors get a browser password box; anyone without the\n" +
+			"credential gets a 401 and never reaches the site. This gates the SITE —\n" +
+			"Atomic functions are guarded separately with `drift atomic auth`.",
+		Example: "  drift slice auth list\n" +
 			"  drift slice auth disable",
 	}
-	cmd.AddCommand(getAuthSetCmd(), getAuthListCmd(), getAuthDisableCmd())
-	return cmd
-}
-
-func getAuthSetCmd() *cobra.Command {
-	var (
-		users         []string
-		realm         string
-		passwordStdin bool
-	)
-	cmd := &cobra.Command{
-		Use:   "set",
-		Short: "Enable the gate, replacing any credentials already set",
-		Long: "Enable the Basic-auth gate on this slice's site.\n\n" +
-			"This REPLACES the whole credential set rather than adding to it, so a\n" +
-			"`set` naming one user leaves exactly that user able to get in. That is\n" +
-			"what makes removing someone a single predictable command.\n\n" +
-			"Passwords are read from the terminal, or one per --user in order from\n" +
-			"stdin with --password-stdin. There is deliberately no --password flag:\n" +
-			"it would put the credential in `ps` output and shell history.",
-		Example: "  drift slice auth set --user visitor\n" +
-			"  drift slice auth set --user alice --user bob --realm \"Staging\"\n" +
-			"  printf 'hunter2\\n' | drift slice auth set --user visitor --password-stdin",
-		Args: cobra.NoArgs,
-		// RunE, not Run with os.Exit. The exit CODE was right here — unlike the
-		// `Run` handlers elsewhere that printed and returned 0 — but two other
-		// things were not: the message went to stdout rather than stderr, and
-		// `os.Exit` inside the handler skips every deferred call, including the
-		// `resp.Body.Close()` below it.
-		//
-		// Returning gives one convention across the whole CLI: the handler
-		// returns, main() prints once to stderr and exits 1.
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(users) == 0 {
-				return fmt.Errorf("name at least one user with --user; the gate needs someone who can get in")
-			}
-
-			cfg := siteAuthConfig{Enabled: true, Realm: realm}
-			for _, name := range users {
-				var pw string
-				if passwordStdin {
-					pw = common.ReadPasswordFromStdin()
-				} else {
-					pw = common.PromptForInputHidden(fmt.Sprintf("Password for %s", name))
-				}
-				if pw == "" {
-					return fmt.Errorf("no password given for %s", name)
-				}
-				cfg.Users = append(cfg.Users, siteAuthUser{Name: name, Password: pw})
-			}
-
-			body, err := json.Marshal(cfg)
-			if err != nil {
-				return fmt.Errorf("failed to prepare the request: %w", err)
-			}
-			resp, err := common.DoRequestWithContentType(http.MethodPost,
-				common.APIBaseURL+"/ops/slice/auth", "application/json", bytes.NewReader(body))
-			if err != nil {
-				return fmt.Errorf("Couldn't enable the site gate: %w", err) //nolint:staticcheck // ST1005: user-facing copy.
-			}
-			defer resp.Body.Close()
-
-			raw, err := common.CheckResponse(resp, "enable the site gate")
-			if err != nil {
-				return err
-			}
-			var out siteAuthConfig
-			if err := json.Unmarshal(raw, &out); err != nil {
-				return fmt.Errorf("Couldn't enable the site gate: the platform sent a reply we couldn't read") //nolint:staticcheck // ST1005: user-facing copy.
-			}
-
-			names := make([]string, 0, len(out.Users))
-			for _, u := range out.Users {
-				names = append(names, u.Name)
-			}
-			fmt.Printf("Site gate enabled. %s can sign in.\n", strings.Join(names, ", "))
-			if out.Realm != "" {
-				fmt.Printf("  Realm: %s\n", out.Realm)
-			}
-			fmt.Println("  Visitors without the password now get a 401 instead of the site.")
-			return nil
-		},
-	}
-	cmd.Flags().StringArrayVarP(&users, "user", "u", nil,
-		"Username allowed through the gate (repeat for more than one)")
-	cmd.Flags().StringVar(&realm, "realm", "",
-		"Realm shown in the browser's password box")
-	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false,
-		"Read passwords from stdin, one line per --user, in order (for CI)")
+	cmd.AddCommand(getAuthListCmd(), getAuthDisableCmd())
 	return cmd
 }
 
@@ -147,8 +57,9 @@ func getAuthListCmd() *cobra.Command {
 		Short:   "Show whether the gate is on, and who can sign in",
 		Example: "  drift slice auth list",
 		Args:    cobra.NoArgs,
-		// RunE — see the note on `set` above for why os.Exit is the wrong tool
-		// inside a handler that has deferred work.
+		// RunE, not Run with os.Exit: os.Exit inside a handler skips every
+		// deferred call, including the response body's Close. The handler
+		// returns, main() prints once to stderr and exits 1.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resp, err := common.DoRequest(http.MethodGet,
 				common.APIBaseURL+"/ops/slice/auth", nil)
@@ -191,7 +102,7 @@ func getAuthDisableCmd() *cobra.Command {
 			"whole point of the gate is that the site is not ready to be seen.",
 		Example: "  drift slice auth disable",
 		Args:    cobra.NoArgs,
-		// RunE — see the note on `set` above. The cancellation stays `nil`: a
+		// RunE — see the note on `list` above. The cancellation stays `nil`: a
 		// person answering "no" chose the safe outcome, and exiting non-zero on it
 		// would make that read as a failure.
 		RunE: func(cmd *cobra.Command, args []string) error {

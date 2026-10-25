@@ -1,5 +1,5 @@
-// link.go — `drift slice link {add, list, remove}`, and the client calls behind
-// them.
+// link.go — `drift slice link list`, and the client calls `drift apply` makes to
+// reconcile a Driftfile's `links`.
 //
 // Slice-to-slice linking: grant the ACTIVE slice permission to call another of
 // your slices (e.g. an app slice → your own observability slice). The operator
@@ -15,9 +15,9 @@
 // Same-user only (the target must be a slice you own). This widens to
 // "same Drift Team" when Teams land — the CLI surface won't change.
 //
-// `links` in the Driftfile's edge block is the declarative way: `drift apply`
-// adds the links it names and removes the ones it does not, through the same
-// calls exported here.
+// `links` in the Driftfile's edge block is the only way to change them: `drift
+// apply` adds the links it names and removes the ones it does not, through the
+// calls exported here. `drift slice link list` shows what is live.
 package slice
 
 import (
@@ -126,39 +126,13 @@ func getLinkCmd() *cobra.Command {
 			"(e.g. an app → your own observability slice). The call travels " +
 			"in-cluster through the slice runtime; it never crosses the public " +
 			"internet, and everything else stays subject to your egress posture.\n\n" +
-			"To declare links in the Driftfile instead, list them as `links` in its edge " +
-			"block: `drift apply` then adds the links it names and removes the ones it " +
-			"does not.",
-		Example: "  drift slice link add c12\n" +
-			"  drift slice link list\n" +
-			"  drift slice link remove c12",
+			"Links are declared as `links` in its edge block: `drift apply` " +
+			"adds the links it names and removes the ones it does not. `list` shows " +
+			"what is live.",
+		Example: "  drift slice link list",
 	}
-	cmd.AddCommand(getLinkAddCmd(), getLinkListCmd(), getLinkRemoveCmd())
+	cmd.AddCommand(getLinkListCmd())
 	return cmd
-}
-
-func getLinkAddCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "add <target-slice>",
-		Short: "Allow the active slice to call <target-slice> (a slice you own)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			active, err := common.RequireActiveSlice()
-			if err != nil {
-				return err
-			}
-			l, err := AddLink(active, args[0])
-			if err != nil {
-				return err
-			}
-			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "Linked → %s\n", l.Target)
-			fmt.Fprintf(out, "  Call it from your functions:\n")
-			fmt.Fprintf(out, "    drift.Edge.Slice(%q).Post(\"/api/...\", body)\n", l.Target)
-			fmt.Fprintf(out, "  (an in-cluster path through the slice runtime; %s authenticates the call like any other)\n", l.Target)
-			return nil
-		},
-	}
 }
 
 func getLinkListCmd() *cobra.Command {
@@ -183,26 +157,6 @@ func getLinkListCmd() *cobra.Command {
 			for _, l := range links {
 				fmt.Fprintf(out, "%-30s  %s\n", l.Target, l.TargetHost)
 			}
-			return nil
-		},
-	}
-}
-
-func getLinkRemoveCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "remove <target-slice>",
-		Short: "Remove a link (the active slice can no longer call <target-slice>)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			active, err := common.RequireActiveSlice()
-			if err != nil {
-				return err
-			}
-			target := normaliseLinkTarget(args[0])
-			if err := RemoveLink(active, target); err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Unlinked → %s\n", target)
 			return nil
 		},
 	}
