@@ -32,16 +32,18 @@ func fieldProject(t *testing.T, driftfile string) string {
 }
 
 const fieldDriftfile = `slice "demo" { billing = "monthly" }
-element "default" {
-  pulse "GET /ping" {
-    handler = "GetPing"
-    memory  = "16MiB"
-  }
-  field "sequencer" {
-    handler = "Sequencer"
-    memory  = "64MiB"
-    secrets = ["LEDGER_KEY"]
-    env     = { BATCH = "50" }
+atomic {
+  element "default" {
+    pulse "GET /ping" {
+      handler = "GetPing"
+      memory  = "16MiB"
+    }
+    field "sequencer" {
+      handler = "Sequencer"
+      memory  = "64MiB"
+      secrets = ["LEDGER_KEY"]
+      env     = { BATCH = "50" }
+    }
   }
 }
 `

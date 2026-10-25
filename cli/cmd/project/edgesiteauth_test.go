@@ -23,7 +23,9 @@ func TestEdgeSiteAuth_AbsentDoesNothing(t *testing.T) {
 // siteAuthFile is a Driftfile gating the site for alice and bob.
 const siteAuthFile = `slice "demo" { billing = "monthly" }
 
-site "/" { dir = "site" }
+canvas {
+  site "/" { dir = "site" }
+}
 
 edge {
   site_auth {
@@ -216,7 +218,7 @@ func TestEdgeSiteAuth_RefusesADuplicateUser(t *testing.T) {
 // Absent, the gate is left exactly as it is: not read, not written, not
 // removed.
 func TestApply_AbsentSiteAuthCallsNoAuthRoute(t *testing.T) {
-	rec := siteAuthSlice(t, "slice \"demo\" { billing = \"monthly\" }\nsite \"/\" { dir = \"site\" }\n",
+	rec := siteAuthSlice(t, "slice \"demo\" { billing = \"monthly\" }\ncanvas {\n  site \"/\" { dir = \"site\" }\n}\n",
 		func(w http.ResponseWriter, r *http.Request) {})
 
 	if err := applyAgreeingAtZero(t); err != nil {

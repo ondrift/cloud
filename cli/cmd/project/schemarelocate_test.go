@@ -69,12 +69,14 @@ const relocateSchema = `{
 func TestAReservedEnvNameIsReportedWhereItIs(t *testing.T) {
 	withSchema(t, relocateSchema)
 	body := "slice \"demo\" { billing = \"monthly\" }\n" + // line 1
-		"element \"api\" {\n" + // line 2
-		"  pulse \"GET /ping\" {\n" + // line 3
-		"    handler = \"GetPing\"\n" + // line 4
-		"    memory  = \"8MiB\"\n" + // line 5
-		"    env = {\n" + // line 6
-		"      BACKBONE_URL = \"http://evil.example.com\"\n" +
+		"atomic {\n" + // line 2
+		"  element \"api\" {\n" + // line 3
+		"    pulse \"GET /ping\" {\n" + // line 4
+		"      handler = \"GetPing\"\n" + // line 5
+		"      memory  = \"8MiB\"\n" + // line 6
+		"      env = {\n" + // line 7
+		"        BACKBONE_URL = \"http://evil.example.com\"\n" +
+		"      }\n" +
 		"    }\n" +
 		"  }\n" +
 		"}\n"
@@ -91,8 +93,8 @@ func TestAReservedEnvNameIsReportedWhereItIs(t *testing.T) {
 	}
 	// Moved back to the file: the env attribute, which is the line the key is
 	// under. An unrepaired location resolves to the slice's label on line 1.
-	if !strings.Contains(msg, "Driftfile:6:") {
-		t.Errorf("the error must be at the env attribute (line 6), got:\n  %s", msg)
+	if !strings.Contains(msg, "Driftfile:7:") {
+		t.Errorf("the error must be at the env attribute (line 7), got:\n  %s", msg)
 	}
 	// The pulse it is in and the attribute, which are recoverable and are not in
 	// the leaf the library hands over.
@@ -111,12 +113,14 @@ func TestAReservedEnvNameIsReportedWhereItIs(t *testing.T) {
 func TestAnOrdinaryErrorKeepsItsOwnLocation(t *testing.T) {
 	withSchema(t, relocateSchema)
 	body := "slice \"demo\" { billing = \"monthly\" }\n" + // line 1
-		"element \"api\" {\n" + // line 2
-		"  pulse \"GET /ping\" {\n" + // line 3
-		"    handler  = \"GetPing\"\n" +
-		"    memory   = \"8MiB\"\n" +
-		"    env      = { MODE = \"fast\" }\n" + // line 6
-		"    response = \"text\"\n" + // line 7
+		"atomic {\n" + // line 2
+		"  element \"api\" {\n" + // line 3
+		"    pulse \"GET /ping\" {\n" + // line 4
+		"      handler  = \"GetPing\"\n" +
+		"      memory   = \"8MiB\"\n" +
+		"      env      = { MODE = \"fast\" }\n" + // line 7
+		"      response = \"text\"\n" + // line 8
+		"    }\n" +
 		"  }\n" +
 		"}\n"
 
@@ -125,13 +129,13 @@ func TestAnOrdinaryErrorKeepsItsOwnLocation(t *testing.T) {
 		t.Fatal("an undeclared key must be refused")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "Driftfile:3:") || !strings.Contains(msg, `pulse "GET /ping"`) {
-		t.Errorf("an ordinary error must keep pointing at its own instance, the pulse on line 3, got:\n  %s", msg)
+	if !strings.Contains(msg, "Driftfile:4:") || !strings.Contains(msg, `pulse "GET /ping"`) {
+		t.Errorf("an ordinary error must keep pointing at its own instance, the pulse on line 4, got:\n  %s", msg)
 	}
 	if !strings.Contains(msg, "response") {
 		t.Errorf("the error should name the key the stub forbids, got:\n  %s", msg)
 	}
-	if strings.Contains(msg, "Driftfile:6:") {
+	if strings.Contains(msg, "Driftfile:7:") {
 		t.Errorf("relocate moved an error that already had a location onto the env:\n  %s", msg)
 	}
 }

@@ -32,11 +32,13 @@ slice "acme" {
   billing = "free"
 }
 
-element "default" {
-  # A pulse answers one call with one result.
-  pulse "GET /hello" {
-    handler = "GetHello"
-    memory = "32MiB"
+atomic {
+  element "default" {
+    # A pulse answers one call with one result.
+    pulse "GET /hello" {
+      handler = "GetHello"
+      memory = "32MiB"
+    }
   }
 }
 `
@@ -77,6 +79,7 @@ func TestDeclaredRouteFailsOpen(t *testing.T) {
 		{"a YAML Driftfile", "slice: acme\natomic:\n  pulses:\n    - route: hello\n      method: get\n"},
 		{"no element", "slice \"acme\" { billing = \"free\" }\n"},
 		{"a pulse outside any element", "slice \"acme\" { billing = \"free\" }\npulse \"GET /hello\" {}\n"},
+		{"an element outside the atomic block", "slice \"acme\" { billing = \"free\" }\nelement \"default\" {\n  pulse \"GET /hello\" {}\n}\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -91,7 +94,7 @@ func TestDeclaredRouteFailsOpen(t *testing.T) {
 // A queue pulse is labelled with QUEUE and the queue it drains, which is the
 // vocabulary the Driftfile uses and not the one the flags use.
 func TestDeclaredRouteUnderstandsAQueuePulse(t *testing.T) {
-	inDir(t, "element \"default\" {\n  pulse \"QUEUE jobs\" {\n    handler = \"ProcessJobs\"\n  }\n}\n")
+	inDir(t, "atomic {\n  element \"default\" {\n    pulse \"QUEUE jobs\" {\n      handler = \"ProcessJobs\"\n    }\n  }\n}\n")
 	if !declaredRoute("queue", "process-jobs", "jobs", true) {
 		t.Error("a queue pulse is declared by its QUEUE name, not the pulse's name, and was not matched")
 	}
@@ -103,7 +106,7 @@ func TestDeclaredRouteUnderstandsAQueuePulse(t *testing.T) {
 // A pulse declared inside a named element is recognised too, so the user is
 // not handed a duplicate of it.
 func TestDeclaredRouteFindsAPulseInsideANamedElement(t *testing.T) {
-	inDir(t, "element \"ml\" {\n  pulse \"POST /train\" {\n    handler = \"post_train\"\n  }\n}\n")
+	inDir(t, "atomic {\n  element \"ml\" {\n    pulse \"POST /train\" {\n      handler = \"post_train\"\n    }\n  }\n}\n")
 	if !declaredRoute("post", "train", "", false) {
 		t.Error("a pulse declared inside an element was not recognised")
 	}

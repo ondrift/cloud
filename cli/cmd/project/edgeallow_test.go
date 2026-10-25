@@ -56,7 +56,7 @@ func TestEdgeAllow_PreflightRefusesWhatIsNotACIDR(t *testing.T) {
 // A bare address is refused before anything reaches the slice.
 func TestApply_RefusesABareAllowAddressBeforeAnyRoute(t *testing.T) {
 	assertEdgeApplyRefuses(t,
-		edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  allow = [\"203.0.113.5\"]\n}\n",
+		edgeFreeDemo+"canvas {\n  site \"/\" { dir = \"site\" }\n}\nedge {\n  allow = [\"203.0.113.5\"]\n}\n",
 		"edge.allow", "203.0.113.5")
 }
 

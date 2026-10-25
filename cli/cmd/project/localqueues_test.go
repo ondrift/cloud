@@ -19,8 +19,8 @@ func TestFunctionSpecsInDir_PublishesTheDeclaredQueues(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "atomic", "main.go"),
 		"package main\n\nimport \"context\"\n\nfunc Sequencer(ctx context.Context) error { return nil }\n")
 	mustWrite(t, filepath.Join(root, "Driftfile"), "slice \"demo\" { billing = \"monthly\" }\n"+
-		"element \"default\" {\n  field \"sequencer\" {\n    handler = \"Sequencer\"\n    memory = \"64MiB\"\n  }\n}\n"+
-		"queue \"txs\" {}\nqueue \"blocks\" {}\n")
+		"atomic {\n  element \"default\" {\n    field \"sequencer\" {\n      handler = \"Sequencer\"\n      memory = \"64MiB\"\n    }\n  }\n}\n"+
+		"backbone {\n  queue \"txs\" {}\n  queue \"blocks\" {}\n}\n")
 	t.Cleanup(func() { atomic_cmd.SetDeclaredQueues(nil) })
 
 	if _, err := FunctionSpecsInDir(filepath.Join(root, "atomic")); err != nil {

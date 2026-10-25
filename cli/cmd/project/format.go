@@ -157,86 +157,92 @@ var formatDocs = map[string]formatDoc{
 	"slice.limits.vault_entries":        {typ: tNumber, doc: "Deed Vault entries one identity may hold."},
 	"slice.limits.pocket_record_size":   {typ: tSize, doc: "Largest record a Deed Pocket accepts."},
 
-	"element": {doc: "A folder of one language's source and its one dependency manifest. \"default\" is " +
+	"atomic": {doc: "The Atomic pillar: every element the slice runs, and the pulses and fields each one " +
+		"declares. A slice has one atomic block; a file without one runs no Atomic code."},
+	"atomic.element": {doc: "A folder of one language's source and its one dependency manifest. \"default\" is " +
 		"./atomic itself; any other name is ./atomic/<name>. Each pulse and field is declared inside the " +
 		"element its handler lives in."},
-	"element.dir": {typ: tString, doc: "The element's folder, relative to the Driftfile, when it is not the default one."},
-	"element.pulse": {doc: "A Pulse answers one call with one result. It is labelled with its trigger: an HTTP " +
+	"atomic.element.dir": {typ: tString, doc: "The element's folder, relative to the Driftfile, when it is not the default one."},
+	"atomic.element.pulse": {doc: "A Pulse answers one call with one result. It is labelled with its trigger: an HTTP " +
 		"method and route, \"POST /rpc\", or QUEUE and the queue it drains, \"QUEUE orders\". Its booking key is " +
 		"the method and route, unique across the slice."},
-	"element.pulse.handler": {typ: tString, required: true, doc: "The callable in the element's source that " +
+	"atomic.element.pulse.handler": {typ: tString, required: true, doc: "The callable in the element's source that " +
 		"serves it: `PostRPC`, `handle_order`, `createBoard`."},
-	"element.pulse.memory": {typ: tSize, required: true, doc: "The memory it books, from 8MiB to 256MiB (16MiB in " +
+	"atomic.element.pulse.memory": {typ: tSize, required: true, doc: "The memory it books, from 8MiB to 256MiB (16MiB in " +
 		"a compiled language). It is the pulse's own pool and what it is billed at; `drift size` rewrites it " +
 		"from what the slice measured."},
-	"element.pulse.response": {typ: tString, doc: `How replies are written: "envelope" (the default, ` +
+	"atomic.element.pulse.response": {typ: tString, doc: `How replies are written: "envelope" (the default, ` +
 		`{status, message, payload}), "json" for the payload as the whole body, or "raw" for bytes.`},
-	"element.pulse.concurrent": {typ: tBool, doc: "Whether the handler is safe to run in parallel. true lets one " +
+	"atomic.element.pulse.concurrent": {typ: tBool, doc: "Whether the handler is safe to run in parallel. true lets one " +
 		"warm process serve many calls at once; how many is the slice's to decide."},
-	"element.pulse.stream": {typ: tString, doc: `Hold the connection open: "sse" for Server-Sent Events, ` +
+	"atomic.element.pulse.stream": {typ: tString, doc: `Hold the connection open: "sse" for Server-Sent Events, ` +
 		`"ws" for WebSocket.`},
-	"element.pulse.cron": {typ: tString, doc: "A five-field cron expression that also runs the pulse on a " +
+	"atomic.element.pulse.cron": {typ: tString, doc: "A five-field cron expression that also runs the pulse on a " +
 		"schedule. An HTTP pulse with a cron stays callable over HTTP."},
-	"element.pulse.env": {typ: tMap, doc: "Plain configuration injected into its environment. Not for " +
+	"atomic.element.pulse.env": {typ: tMap, doc: "Plain configuration injected into its environment. Not for " +
 		"credentials: those are secret blocks, named in `secrets`."},
-	"element.pulse.secrets": {typ: tList, doc: "The secrets this pulse may read. One the list does not name is " +
+	"atomic.element.pulse.secrets": {typ: tList, doc: "The secrets this pulse may read. One the list does not name is " +
 		"unreachable from it, though the slice holds it."},
-	"element.pulse.dir":  {typ: tString, doc: "The folder its handler is in, when it is not its element's."},
-	"element.pulse.auth": {doc: "An API key gate: the pulse answers only a caller presenting the key."},
-	"element.pulse.auth.api_key": {typ: tRef, required: true, doc: "The environment variable the key is read " +
+	"atomic.element.pulse.dir":  {typ: tString, doc: "The folder its handler is in, when it is not its element's."},
+	"atomic.element.pulse.auth": {doc: "An API key gate: the pulse answers only a caller presenting the key."},
+	"atomic.element.pulse.auth.api_key": {typ: tRef, required: true, doc: "The environment variable the key is read " +
 		"from. Written env(\"NAME\") and nothing else, so the file never holds the key."},
-	"element.field": {doc: "A Field is a long-running worker: the slice keeps exactly one running, starts it on " +
+	"atomic.element.field": {doc: "A Field is a long-running worker: the slice keeps exactly one running, starts it on " +
 		"every deploy and restarts it when it exits. Fields run Go. Its booking key is field:<name>."},
-	"element.field.handler": {typ: tString, required: true, doc: "The callable it runs, " +
+	"atomic.element.field.handler": {typ: tString, required: true, doc: "The callable it runs, " +
 		"`func Name(ctx context.Context) error`."},
-	"element.field.memory": {typ: tSize, required: true, doc: "The memory it books: 16MiB or more, since a " +
+	"atomic.element.field.memory": {typ: tSize, required: true, doc: "The memory it books: 16MiB or more, since a " +
 		"field runs Go. What it is billed at."},
-	"element.field.env":     {typ: tMap, doc: "Plain configuration injected into its environment."},
-	"element.field.secrets": {typ: tList, doc: "The secrets this field may read."},
-	"element.field.dir":     {typ: tString, doc: "The folder its handler is in, when it is not its element's."},
+	"atomic.element.field.env":     {typ: tMap, doc: "Plain configuration injected into its environment."},
+	"atomic.element.field.secrets": {typ: tList, doc: "The secrets this field may read."},
+	"atomic.element.field.dir":     {typ: tString, doc: "The folder its handler is in, when it is not its element's."},
 
-	"sql": {doc: "A SQLite database, reached as drift.SQL(\"name\")."},
-	"sql.size": {typ: tSize, required: true, doc: "The database's storage: the enforced limit and what it is " +
+	"backbone": {doc: "The Backbone pillar: every database, collection, bucket, queue, cache entry and secret " +
+		"the slice holds. A slice has one backbone block; a file without one holds no Backbone primitive."},
+	"backbone.sql": {doc: "A SQLite database, reached as drift.SQL(\"name\")."},
+	"backbone.sql.size": {typ: tSize, required: true, doc: "The database's storage: the enforced limit and what it is " +
 		"billed at."},
-	"sql.schema": {typ: tString, doc: "A file of idempotent DDL, applied on every deploy before the migrations."},
-	"sql.migrations": {typ: tString, doc: "A folder of numbered migrations, `0001_create_users.sql`, each " +
+	"backbone.sql.schema": {typ: tString, doc: "A file of idempotent DDL, applied on every deploy before the migrations."},
+	"backbone.sql.migrations": {typ: tString, doc: "A folder of numbered migrations, `0001_create_users.sql`, each " +
 		"applied once, in order."},
-	"sql.seed": {typ: tString, doc: "A SQL file run after the migrations while the database holds no data."},
+	"backbone.sql.seed": {typ: tString, doc: "A SQL file run after the migrations while the database holds no data."},
 
-	"nosql": {doc: "A NoSQL document collection."},
-	"nosql.size": {typ: tSize, required: true, doc: "The collection's storage: the enforced limit and what it " +
+	"backbone.nosql": {doc: "A NoSQL document collection."},
+	"backbone.nosql.size": {typ: tSize, required: true, doc: "The collection's storage: the enforced limit and what it " +
 		"is billed at. A write past it is refused."},
-	"nosql.seed": {typ: tString, doc: "A JSONL file, one document per line, each with an _id, upserted on deploy."},
-	"nosql.ttl":  {typ: tDuration, doc: "How long a document lives after its last write."},
-	"nosql.unique": {typ: tList, doc: "Fields whose values must be unique in the collection; a write that " +
+	"backbone.nosql.seed": {typ: tString, doc: "A JSONL file, one document per line, each with an _id, upserted on deploy."},
+	"backbone.nosql.ttl":  {typ: tDuration, doc: "How long a document lives after its last write."},
+	"backbone.nosql.unique": {typ: tList, doc: "Fields whose values must be unique in the collection; a write that " +
 		"repeats one is refused."},
 
-	"blobs":      {doc: "A bucket in the slice's blob store."},
-	"blobs.size": {typ: tSize, required: true, doc: "The bucket's storage: the enforced limit and what it is billed at."},
+	"backbone.blobs":      {doc: "A bucket in the slice's blob store."},
+	"backbone.blobs.size": {typ: tSize, required: true, doc: "The bucket's storage: the enforced limit and what it is billed at."},
 
-	"queue": {doc: "A FIFO queue. A pulse labelled QUEUE <name> drains it."},
-	"queue.depth": {typ: tNumber, doc: "Messages it holds before producers are throttled. Left out, the " +
+	"backbone.queue": {doc: "A FIFO queue. A pulse labelled QUEUE <name> drains it."},
+	"backbone.queue.depth": {typ: tNumber, doc: "Messages it holds before producers are throttled. Left out, the " +
 		"slice's queue_depth."},
 
-	"cache":       {doc: "A cache entry, by key, written on every deploy."},
-	"cache.file":  {typ: tString, doc: "A file whose contents are the value."},
-	"cache.value": {typ: tString, doc: "The value itself."},
-	"cache.ttl":   {typ: tNumber, doc: "Seconds the entry lives."},
+	"backbone.cache":       {doc: "A cache entry, by key, written on every deploy."},
+	"backbone.cache.file":  {typ: tString, doc: "A file whose contents are the value."},
+	"backbone.cache.value": {typ: tString, doc: "The value itself."},
+	"backbone.cache.ttl":   {typ: tNumber, doc: "Seconds the entry lives."},
 
-	"secret": {doc: "A secret the slice holds, named like an environment variable: STRIPE_KEY. A pulse or " +
+	"backbone.secret": {doc: "A secret the slice holds, named like an environment variable: STRIPE_KEY. A pulse or " +
 		"field reads it only when its `secrets` names it."},
-	"secret.value": {typ: tRef, required: true, doc: "The environment variable its value is read from at " +
+	"backbone.secret.value": {typ: tRef, required: true, doc: "The environment variable its value is read from at " +
 		"apply. Written env(\"NAME\") and nothing else, so the file never holds a credential."},
 
-	"realtime": {doc: "Realtime, the WebSocket pub/sub of the slice. A slice has one realtime block; a file " +
-		"without one opens no channel to visitors."},
-	"realtime.client_channels": {typ: tList, doc: "The channels a visitor's browser may publish to, the whole " +
+	"backbone.realtime": {doc: "Realtime, the WebSocket pub/sub of the slice. A backbone block has one realtime " +
+		"block; a file without one opens no channel to visitors."},
+	"backbone.realtime.client_channels": {typ: tList, doc: "The channels a visitor's browser may publish to, the whole " +
 		"list: a channel name (\"chat\"), a prefix ending in * (\"room:*\"), or \"*\" for every channel. A frame " +
 		"a client sends on any other channel is dropped and never reaches the room. A pulse always may publish; " +
 		"this governs clients only. Empty closes every channel; at most 64 entries."},
 
-	"site":     {doc: "A static site, labelled with the path it is served at: \"/\" for the root."},
-	"site.dir": {typ: tString, required: true, doc: "The folder it serves, relative to the Driftfile."},
+	"canvas": {doc: "The Canvas pillar: every static site the slice serves. A slice has one canvas block; a " +
+		"file without one serves no site."},
+	"canvas.site":     {doc: "A static site, labelled with the path it is served at: \"/\" for the root."},
+	"canvas.site.dir": {typ: tString, required: true, doc: "The folder it serves, relative to the Driftfile."},
 
 	"edge": {doc: "What can reach the slice, and what it can reach. An attribute or block left out leaves " +
 		"that part of the slice as it is."},

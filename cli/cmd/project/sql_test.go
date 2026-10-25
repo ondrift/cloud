@@ -357,12 +357,12 @@ func TestApplySQL_ASchemaWithoutMigrationsIsUnchanged(t *testing.T) {
 func TestParseDriftfile_ReportsAMissingMigrationsDirectory(t *testing.T) {
 	withRealSchema(t)
 	body := "slice \"demo\" { billing = \"monthly\" }\n" +
-		"sql \"orders\" {\n  size       = \"10MiB\"\n  migrations = \"./migrations\"\n}\n"
+		"backbone {\n  sql \"orders\" {\n    size       = \"10MiB\"\n    migrations = \"./migrations\"\n  }\n}\n"
 	path := writeDriftfile(t, body)
 
 	_, err := ParseDriftfile(path)
-	if err == nil || !strings.Contains(err.Error(), "migrations") || !strings.Contains(err.Error(), "Driftfile:4:") {
-		t.Fatalf("got %v, want one error naming the missing migrations directory at line 4", err)
+	if err == nil || !strings.Contains(err.Error(), "migrations") || !strings.Contains(err.Error(), "Driftfile:5:") {
+		t.Fatalf("got %v, want one error naming the missing migrations directory at line 5", err)
 	}
 
 	mustMkdir(t, filepath.Join(filepath.Dir(path), "migrations"))
@@ -395,7 +395,7 @@ func TestParse_CarriesSQLMigrationsThrough(t *testing.T) {
 	mustMkdir(t, filepath.Join(root, "migrations"))
 	mustWrite(t, filepath.Join(root, "Driftfile"),
 		"slice \"demo\" { billing = \"monthly\" }\n"+
-			"sql \"orders\" {\n  size       = \"10MiB\"\n  migrations = \"./migrations\"\n}\n")
+			"backbone {\n  sql \"orders\" {\n    size       = \"10MiB\"\n    migrations = \"./migrations\"\n  }\n}\n")
 	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
 	if err != nil {
 		t.Fatalf("a Driftfile declaring migrations does not parse under %s: %v", doc.Version, err)

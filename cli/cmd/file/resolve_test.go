@@ -18,16 +18,20 @@ slice "demo" {
   }
 }
 
-element "default" {
-  pulse "POST /rpc" {
-    handler = "PostRPC"
-    memory  = var.rpc_memory
+atomic {
+  element "default" {
+    pulse "POST /rpc" {
+      handler = "PostRPC"
+      memory  = var.rpc_memory
+    }
   }
 }
 
-nosql "events" { size = "20MiB" }
-queue "jobs" {}
-secret "STRIPE_KEY" { value = env("STRIPE_KEY") }
+backbone {
+  nosql "events" { size = "20MiB" }
+  queue "jobs" {}
+  secret "STRIPE_KEY" { value = env("STRIPE_KEY") }
+}
 
 edge {
   rate_limit = "600/min"

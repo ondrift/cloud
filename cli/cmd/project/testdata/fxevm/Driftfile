@@ -26,55 +26,61 @@ slice "fxevm-testnode" {
   }
 }
 
-element "evm" {
-  dir = "atomic/evm"
+atomic {
+  element "evm" {
+    dir = "atomic/evm"
 
-  # JSON-RPC multiplexes on a body field, so the whole node answers here.
-  pulse "POST /rpc" {
-    handler    = "PostRPC"
-    response   = "json"
-    concurrent = true
-    memory     = "64MiB"
-  }
+    # JSON-RPC multiplexes on a body field, so the whole node answers here.
+    pulse "POST /rpc" {
+      handler    = "PostRPC"
+      response   = "json"
+      concurrent = true
+      memory     = "64MiB"
+    }
 
-  pulse "POST /admin/reset" {
-    handler  = "PostReset"
-    response = "json"
-    memory   = "32MiB"
-    auth {
-      api_key = env("RESET_KEY")
+    pulse "POST /admin/reset" {
+      handler  = "PostReset"
+      response = "json"
+      memory   = "32MiB"
+      auth {
+        api_key = env("RESET_KEY")
+      }
+    }
+
+    # The chain's single writer.
+    field "sequencer" {
+      handler = "Sequencer"
+      memory  = "64MiB"
     }
   }
 
-  # The chain's single writer.
-  field "sequencer" {
-    handler = "Sequencer"
-    memory  = "64MiB"
+  element "bench" {
+    dir = "atomic/bench"
+
+    pulse "GET /bench" {
+      handler  = "GetBench"
+      response = "json"
+      memory   = "32MiB"
+    }
   }
 }
 
-element "bench" {
-  dir = "atomic/bench"
+backbone {
+  sql "chain" {
+    size   = "256MiB"
+    schema = "backbone/chain.sql"
+    seed   = "backbone/genesis.sql"
+  }
 
-  pulse "GET /bench" {
-    handler  = "GetBench"
-    response = "json"
-    memory   = "32MiB"
+  queue "txs" {
+    depth = 1000
   }
 }
 
-sql "chain" {
-  size   = "256MiB"
-  schema = "backbone/chain.sql"
-  seed   = "backbone/genesis.sql"
-}
-
-queue "txs" {
-  depth = 1000
-}
-
-site "/" {
-  dir = "canvas"
+canvas {
+  site "/" {
+    dir = "canvas"
+  }
 }
 
 edge {

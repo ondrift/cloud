@@ -35,31 +35,33 @@ func elementProject(t *testing.T, driftfile string) string {
 // The fxevm testnode: two elements holding their Pulses and a Field.
 const nestedDriftfile = `slice "fxevm-testnode" { billing = "monthly" }
 
-element "evm" {
-  pulse "POST /rpc" {
-    handler  = "PostRPC"
-    response = "json"
-    memory   = "64MiB"
-  }
-  pulse "POST /admin/reset" {
-    handler  = "PostReset"
-    response = "json"
-    memory   = "32MiB"
-    auth {
-      api_key = env("RESET_KEY")
+atomic {
+  element "evm" {
+    pulse "POST /rpc" {
+      handler  = "PostRPC"
+      response = "json"
+      memory   = "64MiB"
+    }
+    pulse "POST /admin/reset" {
+      handler  = "PostReset"
+      response = "json"
+      memory   = "32MiB"
+      auth {
+        api_key = env("RESET_KEY")
+      }
+    }
+    field "sequencer" {
+      handler = "Sequencer"
+      memory  = "64MiB"
     }
   }
-  field "sequencer" {
-    handler = "Sequencer"
-    memory  = "64MiB"
-  }
-}
 
-element "bench" {
-  pulse "GET /bench" {
-    handler  = "GetBench"
-    response = "json"
-    memory   = "32MiB"
+  element "bench" {
+    pulse "GET /bench" {
+      handler  = "GetBench"
+      response = "json"
+      memory   = "32MiB"
+    }
   }
 }
 `
@@ -121,25 +123,27 @@ func TestElements_NormaliseIntoTheFlatModel(t *testing.T) {
 // build from ./atomic itself.
 func TestElements_ASlotsOwnDirEnvAndSecrets(t *testing.T) {
 	path := elementProject(t, `slice "demo" { billing = "monthly" }
-element "default" {
-  pulse "GET /ping" {
-    handler = "GetPing"
-    memory  = "16MiB"
+atomic {
+  element "default" {
+    pulse "GET /ping" {
+      handler = "GetPing"
+      memory  = "16MiB"
+    }
   }
-}
-element "evm" {
-  pulse "POST /rpc" {
-    handler = "PostRPC"
-    memory  = "64MiB"
-    env     = { CHAIN_ID = "31337", MODE = "pulse" }
-    secrets = ["RPC_TOKEN", "ADMIN_KEY"]
+  element "evm" {
+    pulse "POST /rpc" {
+      handler = "PostRPC"
+      memory  = "64MiB"
+      env     = { CHAIN_ID = "31337", MODE = "pulse" }
+      secrets = ["RPC_TOKEN", "ADMIN_KEY"]
+    }
   }
-}
-element "bench" {
-  pulse "GET /bench" {
-    handler = "GetBench"
-    memory  = "32MiB"
-    dir     = "atomic/evm"
+  element "bench" {
+    pulse "GET /bench" {
+      handler = "GetBench"
+      memory  = "32MiB"
+      dir     = "atomic/evm"
+    }
   }
 }
 `)
@@ -178,6 +182,7 @@ func TestElements_ValidationAcrossTheWholeDriftfile(t *testing.T) {
 		return "  field \"" + name + "\" {\n    handler = \"Sequencer\"\n    memory = \"64MiB\"\n  }\n"
 	}
 	element := func(name, body string) string { return "element \"" + name + "\" {\n" + body + "}\n" }
+	atomicOf := func(elements ...string) string { return "atomic {\n" + strings.Join(elements, "") + "}\n" }
 
 	cases := []struct {
 		name string
@@ -186,27 +191,27 @@ func TestElements_ValidationAcrossTheWholeDriftfile(t *testing.T) {
 	}{
 		{
 			name: "an element declared twice",
-			doc:  head + element("evm", pulse("POST /rpc", "PostRPC")) + element("evm", field("sequencer")),
+			doc:  head + atomicOf(element("evm", pulse("POST /rpc", "PostRPC")), element("evm", field("sequencer"))),
 			want: []string{`element "evm" is declared twice`, "declared once"},
 		},
 		{
 			name: "a route declared in two elements",
-			doc:  head + element("evm", pulse("POST /rpc", "PostRPC")) + element("bench", pulse("POST /rpc", "GetBench")),
+			doc:  head + atomicOf(element("evm", pulse("POST /rpc", "PostRPC")), element("bench", pulse("POST /rpc", "GetBench"))),
 			want: []string{`the pulse "post:rpc" is declared 2 times (in the elements evm and bench)`, "the whole slice"},
 		},
 		{
 			name: "a route in the default element and a named one",
-			doc:  head + element("default", pulse("POST /rpc", "GetPing")) + element("evm", pulse("POST /rpc", "PostRPC")),
+			doc:  head + atomicOf(element("default", pulse("POST /rpc", "GetPing")), element("evm", pulse("POST /rpc", "PostRPC"))),
 			want: []string{`the pulse "post:rpc" is declared 2 times (in the elements default and evm)`},
 		},
 		{
 			name: "a Field name declared in two elements",
-			doc:  head + element("evm", field("sequencer")) + element("bench", field("sequencer")),
+			doc:  head + atomicOf(element("evm", field("sequencer")), element("bench", field("sequencer"))),
 			want: []string{`the field "sequencer" is declared 2 times (in the elements evm and bench)`},
 		},
 		{
 			name: "a Field named like a Pulse route in another element",
-			doc:  head + element("evm", field("bench")) + element("bench", pulse("GET /bench", "GetBench")),
+			doc:  head + atomicOf(element("evm", field("bench")), element("bench", pulse("GET /bench", "GetBench"))),
 			want: []string{`the Field "bench" and the Pulse route "bench" would share logs and metrics; rename one`},
 		},
 	}
@@ -229,7 +234,7 @@ func TestElements_ValidationAcrossTheWholeDriftfile(t *testing.T) {
 
 	// The control: the default element beside a named one, each with its own
 	// slots, parses.
-	ok := head + element("default", pulse("GET /ping", "GetPing")) + element("evm", pulse("POST /rpc", "PostRPC"))
+	ok := head + atomicOf(element("default", pulse("GET /ping", "GetPing")), element("evm", pulse("POST /rpc", "PostRPC")))
 	if _, err := ParseDriftfile(elementProject(t, ok)); err != nil {
 		t.Errorf("must parse:\n%s\n%v", ok, err)
 	}

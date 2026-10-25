@@ -233,7 +233,7 @@ func TestApply_PostsAnHourlyRateAsRequestsPerMinute(t *testing.T) {
 func TestApply_RefusesTheRateLimitWrittenTwiceBeforeAnyRoute(t *testing.T) {
 	assertEdgeApplyRefuses(t,
 		"slice \"demo\" {\n  billing = \"free\"\n  limits {\n    requests_per_minute = 30\n  }\n}\n"+
-			"site \"/\" { dir = \"site\" }\nedge {\n  rate_limit = \"30/min\"\n}\n",
+			"canvas {\n  site \"/\" { dir = \"site\" }\n}\nedge {\n  rate_limit = \"30/min\"\n}\n",
 		"edge.rate_limit and limits.requests_per_minute are one limit; write it in one place")
 }
 
@@ -310,7 +310,7 @@ func TestApply_PostsAllowAndHostsInOrder(t *testing.T) {
 // anything is deployed.
 func TestApply_RefusesARateBelowOnePerMinuteBeforeAnyRoute(t *testing.T) {
 	assertEdgeApplyRefuses(t,
-		edgeFreeDemo+"site \"/\" { dir = \"site\" }\nedge {\n  rate_limit = \"30/h\"\n}\n",
+		edgeFreeDemo+"canvas {\n  site \"/\" { dir = \"site\" }\n}\nedge {\n  rate_limit = \"30/h\"\n}\n",
 		`"30/h" is below one request per minute, the smallest rate a slice holds; `+
 			`the smallest you can write is "1/min" (or "60/h")`)
 }

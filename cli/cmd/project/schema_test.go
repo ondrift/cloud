@@ -73,7 +73,7 @@ func TestSchema_ValidatesTheCompiledDocument(t *testing.T) {
 	  }
 	}`)
 
-	path := writeDriftfile(t, "slice \"hello\" { billing = \"monthly\" }\nsite \"/\" { dir = \"canvas\" }\n", "canvas/")
+	path := writeDriftfile(t, "slice \"hello\" { billing = \"monthly\" }\ncanvas {\n  site \"/\" { dir = \"canvas\" }\n}\n", "canvas/")
 
 	m, err := ParseDriftfile(path)
 	if err != nil {
@@ -116,8 +116,10 @@ func TestSchema_RejectsWhatTheSchemaRejects(t *testing.T) {
 	}`)
 
 	body := "slice \"hello\" { billing = \"monthly\" }\n" + // line 1
-		"site \"/\" { dir = \"canvas\" }\n" + // line 2
-		"site \"/admin\" { dir = \"canvas\" }\n" // line 3: its path is the key the schema forbids
+		"canvas {\n" + // line 2
+		"  site \"/\" { dir = \"canvas\" }\n" + // line 3
+		"  site \"/admin\" { dir = \"canvas\" }\n" + // line 4: its path is the key the schema forbids
+		"}\n"
 	_, err := ParseDriftfile(writeDriftfile(t, body, "canvas/"))
 	if err == nil {
 		t.Fatal("a key the schema forbids was accepted")
@@ -125,8 +127,8 @@ func TestSchema_RejectsWhatTheSchemaRejects(t *testing.T) {
 	if !contains(err.Error(), "path") {
 		t.Errorf("the error should name the offending key, got: %v", err)
 	}
-	if !contains(err.Error(), "Driftfile:3:") || contains(err.Error(), "Driftfile:2:") {
-		t.Errorf("the refusal should be at the site that carries the key (line 3), got: %v", err)
+	if !contains(err.Error(), "Driftfile:4:") || contains(err.Error(), "Driftfile:3:") {
+		t.Errorf("the refusal should be at the site that carries the key (line 4), got: %v", err)
 	}
 }
 
@@ -141,7 +143,7 @@ func TestSchema_AbsentIsReportedNotFaked(t *testing.T) {
 		t.Fatal("SchemaAvailable() is true with no schema on disk")
 	}
 
-	path := writeDriftfile(t, "slice \"hello\" { billing = \"monthly\" }\nsite \"/\" { dir = \"canvas\" }\n", "canvas/")
+	path := writeDriftfile(t, "slice \"hello\" { billing = \"monthly\" }\ncanvas {\n  site \"/\" { dir = \"canvas\" }\n}\n", "canvas/")
 	if _, err := ParseDriftfile(path); err != nil {
 		t.Errorf("parsing must still work offline on a never-online machine: %v", err)
 	}

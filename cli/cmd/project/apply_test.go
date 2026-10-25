@@ -182,7 +182,7 @@ func TestApply_ASliceThatIsTheFileIsDeployedWithoutAResize(t *testing.T) {
 
 func TestApply_APriceChangeStopsUntilTheQuotedFigureIsAgreed(t *testing.T) {
 	double := func(s string) string {
-		return strings.Replace(s, "concurrent = true\n    memory     = \"64MiB\"", "concurrent = true\n    memory     = \"128MiB\"", 1)
+		return strings.Replace(s, "concurrent = true\n      memory     = \"64MiB\"", "concurrent = true\n      memory     = \"128MiB\"", 1)
 	}
 	p, deployed := applyFixture(t, matchingLive(t), double)
 
@@ -278,7 +278,7 @@ func TestApply_ASliceThatDoesNotExistIsCreatedWithTheFilesShape(t *testing.T) {
 
 func TestApply_AResizeTheSliceRefusesIsReportedAndNothingIsDeployed(t *testing.T) {
 	double := func(s string) string {
-		return strings.Replace(s, "concurrent = true\n    memory     = \"64MiB\"", "concurrent = true\n    memory     = \"128MiB\"", 1)
+		return strings.Replace(s, "concurrent = true\n      memory     = \"64MiB\"", "concurrent = true\n      memory     = \"128MiB\"", 1)
 	}
 	p, deployed := applyFixture(t, matchingLive(t), double)
 	p.refuse = `{"error":"price changed","price_change":{"current_monthly_cents":576,"new_monthly_cents":800}}`
@@ -295,7 +295,7 @@ func TestApply_AResizeTheSliceRefusesIsReportedAndNothingIsDeployed(t *testing.T
 
 func TestApply_APlanFileAppliesWhatItRecordsAndRefusesWhenTheFileMoved(t *testing.T) {
 	double := func(s string) string {
-		return strings.Replace(s, "concurrent = true\n    memory     = \"64MiB\"", "concurrent = true\n    memory     = \"128MiB\"", 1)
+		return strings.Replace(s, "concurrent = true\n      memory     = \"64MiB\"", "concurrent = true\n      memory     = \"128MiB\"", 1)
 	}
 	p, deployed := applyFixture(t, matchingLive(t), double)
 	planFile := filepath.Join(t.TempDir(), "plan.json")

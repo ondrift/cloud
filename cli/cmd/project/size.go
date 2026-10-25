@@ -75,16 +75,21 @@ func ResizeDriftfile(src []byte, rows []sizingRow) (*SizeResult, error) {
 	recs := measuredRecommendations(rows)
 
 	res := &SizeResult{}
-	for _, el := range f.Body().Blocks() {
-		if el.Type() != "element" {
+	for _, top := range f.Body().Blocks() {
+		if top.Type() != "atomic" {
 			continue
 		}
-		for _, blk := range el.Body().Blocks() {
-			key, address, ok := slotOfBlock(blk)
-			if !ok {
+		for _, el := range top.Body().Blocks() {
+			if el.Type() != "element" {
 				continue
 			}
-			res.size(blk.Body(), key, address, byKey, recs)
+			for _, blk := range el.Body().Blocks() {
+				key, address, ok := slotOfBlock(blk)
+				if !ok {
+					continue
+				}
+				res.size(blk.Body(), key, address, byKey, recs)
+			}
 		}
 	}
 	res.Output = f.Bytes()

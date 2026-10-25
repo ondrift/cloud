@@ -109,7 +109,7 @@ func TestParseDriftfile_UnknownBlocksAndAttributesAreRefused(t *testing.T) {
 		{"slice \"hello\" {\n  billing = \"monthly\"\n  bliling = \"free\"\n}\n", "bliling"},
 		// An option nothing implements is refused rather than accepted and
 		// ignored: a redelivery cap the file states and nothing enforces is a lie.
-		{"slice \"hello\" { billing = \"monthly\" }\nqueue \"jobs\" { max_receives = 3 }\n", "max_receives"},
+		{"slice \"hello\" { billing = \"monthly\" }\nbackbone {\n  queue \"jobs\" { max_receives = 3 }\n}\n", "max_receives"},
 	} {
 		_, err := ParseDriftfile(writeDriftfile(t, tc.body))
 		if err == nil || !contains(err.Error(), tc.want) || !contains(err.Error(), "Driftfile:") {
@@ -123,7 +123,7 @@ func TestParseDriftfile_UnknownBlocksAndAttributesAreRefused(t *testing.T) {
 func TestParseDriftfile_StorageWithoutASizeIsRefused(t *testing.T) {
 	withRealSchema(t)
 	for _, block := range []string{"sql", "nosql", "blobs"} {
-		_, err := ParseDriftfile(writeDriftfile(t, "slice \"hello\" { billing = \"monthly\" }\n"+block+" \"thing\" {}\n"))
+		_, err := ParseDriftfile(writeDriftfile(t, "slice \"hello\" { billing = \"monthly\" }\nbackbone {\n  "+block+" \"thing\" {}\n}\n"))
 		if err == nil || !contains(err.Error(), "Missing size") {
 			t.Errorf("%s with no size: got %v", block, err)
 		}
@@ -138,30 +138,36 @@ func writeRestaurantFixture(t *testing.T) string {
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
 slice "la-cucina" { billing = "monthly" }
 
-element "api" {
-  pulse "GET /menu" {
-    handler = "GetMenu"
-    memory  = "32MiB"
-  }
-  pulse "POST /reservations" {
-    handler = "PostReservations"
-    memory  = "64MiB"
-  }
-  pulse "POST /reservations/confirm" {
-    handler = "PostReservationsConfirm"
-    memory  = "32MiB"
+atomic {
+  element "api" {
+    pulse "GET /menu" {
+      handler = "GetMenu"
+      memory  = "32MiB"
+    }
+    pulse "POST /reservations" {
+      handler = "PostReservations"
+      memory  = "64MiB"
+    }
+    pulse "POST /reservations/confirm" {
+      handler = "PostReservationsConfirm"
+      memory  = "32MiB"
+    }
   }
 }
 
-nosql "reservations" { size = "50MiB" }
-queue "reservation-queue" {}
-cache "menu" { file = "backbone/menu.json" }
+backbone {
+  nosql "reservations" { size = "50MiB" }
+  queue "reservation-queue" {}
+  cache "menu" { file = "backbone/menu.json" }
 
-secret "RESTAURANT_NAME" { value = env("RESTAURANT_NAME") }
-secret "RESEND_API_KEY" { value = env("RESEND_API_KEY") }
-secret "SENDER_EMAIL" { value = env("SENDER_EMAIL") }
+  secret "RESTAURANT_NAME" { value = env("RESTAURANT_NAME") }
+  secret "RESEND_API_KEY" { value = env("RESEND_API_KEY") }
+  secret "SENDER_EMAIL" { value = env("SENDER_EMAIL") }
+}
 
-site "/" { dir = "canvas" }
+canvas {
+  site "/" { dir = "canvas" }
+}
 `)
 	mustMkdir(t, filepath.Join(tmp, "atomic", "api"))
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
@@ -175,9 +181,9 @@ site "/" { dir = "canvas" }
 func TestCheckRouteCollisions(t *testing.T) {
 	withRealSchema(t)
 	two := func(a, b string) string {
-		return "slice \"shop\" { billing = \"monthly\" }\nelement \"api\" {\n" +
-			"  pulse \"" + a + "\" {\n    handler = \"A\"\n    memory = \"32MiB\"\n  }\n" +
-			"  pulse \"" + b + "\" {\n    handler = \"B\"\n    memory = \"32MiB\"\n  }\n}\n"
+		return "slice \"shop\" { billing = \"monthly\" }\natomic {\n  element \"api\" {\n" +
+			"    pulse \"" + a + "\" {\n      handler = \"A\"\n      memory = \"32MiB\"\n    }\n" +
+			"    pulse \"" + b + "\" {\n      handler = \"B\"\n      memory = \"32MiB\"\n    }\n  }\n}\n"
 	}
 	m := planManifest(t, two("GET /items", "POST /items"), "atomic/api/")
 	if err := checkRouteCollisions(m); err != nil {
@@ -218,13 +224,13 @@ func TestParseDriftfile_LocalPathsMustExist(t *testing.T) {
 	withRealSchema(t)
 	const head = "slice \"hello\" { billing = \"monthly\" }\n"
 	for _, tc := range []struct{ name, body, want string }{
-		{"a pulse's own dir", "element \"default\" {\n  pulse \"GET /menu\" {\n    handler = \"GetMenu\"\n    memory = \"8MiB\"\n    dir = \"src/menu\"\n  }\n}\n",
+		{"a pulse's own dir", "atomic {\n  element \"default\" {\n    pulse \"GET /menu\" {\n      handler = \"GetMenu\"\n      memory = \"8MiB\"\n      dir = \"src/menu\"\n    }\n  }\n}\n",
 			"pulse \"GET /menu\": dir: src/menu does not exist"},
-		{"an element's folder", "element \"billing\" {\n  pulse \"GET /x\" {\n    handler = \"X\"\n    memory = \"8MiB\"\n  }\n}\n",
+		{"an element's folder", "atomic {\n  element \"billing\" {\n    pulse \"GET /x\" {\n      handler = \"X\"\n      memory = \"8MiB\"\n    }\n  }\n}\n",
 			"atomic/billing is not a directory"},
-		{"a site's folder", "site \"/\" { dir = \"site\" }\n", "site \"/\": dir: site does not exist"},
-		{"a seed file", "nosql \"menu\" {\n  size = \"10MiB\"\n  seed = \"seeds/menu.jsonl\"\n}\n", "seeds/menu.jsonl does not exist"},
-		{"a cache file", "cache \"greeting\" { file = \"data/greeting.txt\" }\n", "data/greeting.txt does not exist"},
+		{"a site's folder", "canvas {\n  site \"/\" { dir = \"site\" }\n}\n", "site \"/\": dir: site does not exist"},
+		{"a seed file", "backbone {\n  nosql \"menu\" {\n    size = \"10MiB\"\n    seed = \"seeds/menu.jsonl\"\n  }\n}\n", "seeds/menu.jsonl does not exist"},
+		{"a cache file", "backbone {\n  cache \"greeting\" { file = \"data/greeting.txt\" }\n}\n", "data/greeting.txt does not exist"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseDriftfile(writeDriftfile(t, head+tc.body, "atomic/"))
@@ -242,7 +248,7 @@ func TestParseDriftfile_SeedRecordsMustBeLoadable(t *testing.T) {
 	withRealSchema(t)
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"),
-		"slice \"hello\" { billing = \"monthly\" }\nnosql \"menu\" {\n  size = \"10MiB\"\n  seed = \"seeds/menu.jsonl\"\n}\n")
+		"slice \"hello\" { billing = \"monthly\" }\nbackbone {\n  nosql \"menu\" {\n    size = \"10MiB\"\n    seed = \"seeds/menu.jsonl\"\n  }\n}\n")
 	mustWrite(t, filepath.Join(tmp, "seeds", "menu.jsonl"),
 		`{"_id":"pizza","price":9}`+"\n"+
 			`{"price":11}`+"\n"+ // no _id
@@ -274,7 +280,9 @@ func mustMkdir(t *testing.T, path string) {
 // pre_deploy build can make what the compile then checks for.
 func TestParseHooks(t *testing.T) {
 	path := writeDriftfile(t, `slice "hello" { billing = "monthly" }
-site "/" { dir = "dist" }
+canvas {
+  site "/" { dir = "dist" }
+}
 hook "pre_deploy" { run = "npm run build" }
 hook "pre_deploy" { run = "npm run lint" }
 hook "post_deploy" { run = "./smoke.sh" }
@@ -324,7 +332,9 @@ func TestParseDriftfileEnv_ResolvesSecretsForTheEnvironment(t *testing.T) {
 	withRealSchema(t)
 	t.Setenv("DRIFT_TEST_SECRET_VALUE", "s3cr3t")
 	path := writeDriftfile(t, `slice "hello" { billing = "monthly" }
-secret "API_TOKEN" { value = env("DRIFT_TEST_SECRET_VALUE") }
+backbone {
+  secret "API_TOKEN" { value = env("DRIFT_TEST_SECRET_VALUE") }
+}
 environment "staging" {}
 `)
 	m, err := ParseDriftfileEnv(path, "staging")

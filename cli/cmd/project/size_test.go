@@ -78,7 +78,7 @@ func TestSize_ChangesOnlyTheMemoryLinesItRecommends(t *testing.T) {
 	if len(diff) != 2 || !strings.Contains(diff[0], `"32MiB"`) || !strings.Contains(diff[1], `"128MiB"`) {
 		t.Errorf("the changed lines are %q, want the rpc at 32MiB and the sequencer at 128MiB", diff)
 	}
-	for _, kept := range []string{"# JSON-RPC multiplexes on a body field", "# The chain's single writer.", "    concurrent = true"} {
+	for _, kept := range []string{"# JSON-RPC multiplexes on a body field", "# The chain's single writer.", "      concurrent = true"} {
 		if !strings.Contains(string(res.Output), kept) {
 			t.Errorf("%q did not survive the edit", kept)
 		}
@@ -115,14 +115,16 @@ func TestSize_ChangesOnlyTheMemoryLinesItRecommends(t *testing.T) {
 func TestSize_LeavesAnExpressionAloneAndKeepsATrailingComment(t *testing.T) {
 	src := []byte(`variable "m" { default = "16MiB" }
 slice "demo" { billing = "monthly" }
-element "api" {
-  pulse "GET /a" {
-    handler = "A"
-    memory  = var.m
-  }
-  pulse "GET /b" {
-    handler = "B"
-    memory  = "64MiB" # measured on 3 July
+atomic {
+  element "api" {
+    pulse "GET /a" {
+      handler = "A"
+      memory  = var.m
+    }
+    pulse "GET /b" {
+      handler = "B"
+      memory  = "64MiB" # measured on 3 July
+    }
   }
 }
 `)
@@ -217,7 +219,7 @@ func TestSize_WritesTheFileAndAsksOnlyForTheMeasurement(t *testing.T) {
 	for _, want := range []string{
 		"~ pulse POST /rpc", "memory 64MiB → 32MiB", "peak 9MB over 1204 calls",
 		"~ field sequencer", "memory 64MiB → 128MiB",
-		"-    memory     = \"64MiB\"", "+    memory     = \"32MiB\"", "nothing written (--dry-run)",
+		"-      memory     = \"64MiB\"", "+      memory     = \"32MiB\"", "nothing written (--dry-run)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the dry run does not say %q:\n%s", want, out)

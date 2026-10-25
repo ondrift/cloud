@@ -81,7 +81,7 @@ func checkQueueReferences(m *Manifest) []string {
 			"pulse %q drains queue %q, which this Driftfile does not declare. "+
 				"It will still fire, because an undeclared queue is created on its first push, but the "+
 				"queue has no declared depth and nothing records that it should exist. "+
-				"Declare it: `queue %q {}`.",
+				"Declare it inside the backbone block: `queue %q {}`.",
 			"QUEUE "+q, q, q))
 	}
 	return out
