@@ -110,7 +110,22 @@ var (
 	ErrPlatformUnavailable = errors.New("drift is temporarily unavailable")
 	// ErrSessionRejected — the platform answered, and said no. Log in again.
 	ErrSessionRejected = errors.New("session rejected")
+	// ErrSessionRevoked — the platform answered, and said the session was ended
+	// on purpose: a refresh arrived from a different machine than the one that
+	// logged in, or with a token that had already been used. That is its response
+	// to a stolen session file, and it cuts every session on the account.
+	ErrSessionRevoked = errors.New("session revoked")
 )
+
+// SessionRevokedMessage is what a person sees when the platform ended their
+// sessions as a theft response. It differs from an ordinary expiry in the one
+// way that matters: the next step is not only to log in, because someone else
+// may be holding the session file.
+const SessionRevokedMessage = "your session was ended on purpose: a refresh arrived from a different machine " +
+	"than the one you logged in on, or with a token that had already been used, which Drift treats as a " +
+	"stolen session file, so every session on this account was cut. " +
+	"Run 'drift account login' to get back in. " +
+	"If that was not you on another machine, also run 'drift account reset-password'."
 
 // MaintenanceMessage is what a user sees when Drift is temporarily
 // unavailable. One string, used by every path that can conclude it, so the
