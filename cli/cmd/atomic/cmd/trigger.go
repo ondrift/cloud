@@ -15,14 +15,14 @@ func Trigger() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "trigger",
 		Short:   "Manage event triggers for pulses",
-		Example: "  drift atomic trigger list\n  drift atomic trigger register queue order-processor --queue orders --target http://localhost:8080\n  drift atomic trigger register schedule nightly-sync --cron \"0 0 * * *\" --target http://localhost:8080\n  drift atomic trigger unregister order-processor",
+		Example: "  drift atomic trigger list\n  drift atomic trigger register queue order-processor --queue orders --target http://localhost:8080\n  drift atomic trigger unregister order-processor",
 		GroupID: "operations",
 	}
 
 	register := &cobra.Command{
 		Use:     "register",
 		Short:   "Register a trigger",
-		Example: "  drift atomic trigger register queue order-processor --queue orders --target http://localhost:8080\n  drift atomic trigger register schedule nightly-sync --cron \"0 0 * * *\" --target http://localhost:8080",
+		Example: "  drift atomic trigger register queue order-processor --queue orders --target http://localhost:8080",
 	}
 	register.AddCommand(triggerRegisterQueueCmd(), triggerRegisterScheduleCmd())
 
@@ -166,7 +166,11 @@ func triggerRegisterScheduleCmd() *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", "", "Target URL to invoke on each scheduled fire (required)")
 	_ = cmd.MarkFlagRequired("cron")
 	_ = cmd.MarkFlagRequired("target")
-	return cmd
+	return common.DeprecateCommand(cmd, common.Deprecation{
+		Old:     "drift atomic trigger register schedule",
+		New:     "drift apply",
+		Because: "Put `cron` on the pulse in the Driftfile; apply deploys it with its schedule.",
+	})
 }
 
 func triggerUnregisterCmd() *cobra.Command {
