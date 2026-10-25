@@ -138,7 +138,7 @@ func TestReportIdle_WithoutTheServingListASlotIsUnnamedNotIdle(t *testing.T) {
 // tenant to release the function they are running.
 func TestReportIdle_EveryDeclaredIdentityMatchesItsSlot(t *testing.T) {
 	withRealSchema(t)
-	m := planManifest(t, `slice "demo" { billing = "monthly" }
+	m := planManifest(t, `slice "demo" {}
 
 atomic {
   element "default" {
@@ -316,7 +316,7 @@ func idleSliceStub(tier string, slots []string) http.HandlerFunc {
 func applyWithFunctions(t *testing.T, routes []string) {
 	t.Helper()
 	var doc, src strings.Builder
-	doc.WriteString("slice \"demo\" { billing = \"monthly\" }\n\natomic {\n  element \"default\" {\n")
+	doc.WriteString("slice \"demo\" {}\n\natomic {\n  element \"default\" {\n")
 	var exports []string
 	for _, r := range routes {
 		handler := "Get" + strings.ToUpper(r[:1]) + r[1:]

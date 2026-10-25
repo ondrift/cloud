@@ -53,7 +53,6 @@ func TestFormat_DescribesEveryBlockAndAttribute(t *testing.T) {
 func TestFormat_MarksWhatTheCompilerRequires(t *testing.T) {
 	f := DriftfileFormat()
 	for path, want := range map[string]bool{
-		"slice.billing":                true,
 		"atomic.element.pulse.memory":  true,
 		"atomic.element.pulse.handler": true,
 		"backbone.secret.value":        true,

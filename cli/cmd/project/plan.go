@@ -94,7 +94,7 @@ Nothing is changed.`,
 				return err
 			}
 
-			p, err := gatherPlan(c)
+			p, err := gatherPlan(c, false)
 			if err != nil {
 				return err
 			}
@@ -160,12 +160,27 @@ type planState struct {
 
 	priceNew, priceOld       int
 	priceNewErr, priceOldErr error
+
+	// free is the account's free slices, read only when a slice that does not
+	// exist yet fits the free grant (freeErr says it could not be read).
+	// declinedFree is the person having chosen a priced slice for a shape that
+	// could have been free.
+	free         FreeSlots
+	freeErr      error
+	declinedFree bool
 }
 
 // gatherPlan reads the live slice. Every read is a GET but the price quote.
-func gatherPlan(c *Compiled) (*planState, error) {
+//
+// The file does not say how the slice is paid for; this decides, and Use records
+// it on c. An existing slice stays the tier it is. A new slice that fits the free
+// grant is a free slice unless the person chose to pay (declinedFree): when the
+// account has no free slot left it is still planned as free, and the apply
+// refuses with what the account holds, because a refusal must name the free
+// slices and not quietly turn into a price.
+func gatherPlan(c *Compiled, declinedFree bool) (*planState, error) {
 	m := c.Manifest
-	p := &planState{c: c, user: common.GetUsername()}
+	p := &planState{c: c, user: common.GetUsername(), declinedFree: declinedFree}
 
 	// The build reads the source beside the file: which language each element
 	// is, where each handler lives. A failure here is what an apply would hit,
@@ -200,9 +215,17 @@ func gatherPlan(c *Compiled) (*planState, error) {
 		return nil, err
 	}
 	p.live = live
+	if live != nil {
+		c.Use(liveIsFree(live))
+	} else {
+		if c.FitsFree && !declinedFree {
+			p.free, p.freeErr = fetchFreeSlots()
+		}
+		c.Use(!declinedFree)
+	}
 
 	newPrice := func() {
-		if c.Billing == "free" {
+		if c.Free {
 			return // the free slice costs nothing, by its tier
 		}
 		p.priceNew, p.priceNewErr = quotePrice(c.Shape)
@@ -557,13 +580,18 @@ func (p *planState) diff() *planDiff {
 	}
 
 	if !creating {
-		liveBilling := "monthly"
+		liveTier, wantTier := "priced", "priced"
 		if liveIsFree(p.live) {
-			liveBilling = "free"
+			liveTier = "free"
 		}
-		if liveBilling != c.Billing {
+		if c.Free {
+			wantTier = "free"
+		}
+		if liveTier != wantTier {
+			// A live free slice whose file no longer fits the free grant: that
+			// is a move off the free tier, which apply does not make yet.
 			d.billingChanged = true
-			d.add("~", "billing", "%s → %s", liveBilling, c.Billing)
+			d.add("~", "tier", "%s → %s", liveTier, wantTier)
 		}
 		for _, ch := range diffLabels(c.Shape.Labels, live.Labels) {
 			d.add("~", "label "+ch.Key, "%s", describeLabelChange(ch))
@@ -922,6 +950,9 @@ func (p *planState) render(out io.Writer) {
 // for a run with nobody to ask.
 func (p *planState) approvalFlags(d *planDiff) []string {
 	var flags []string
+	if p.choosesFree() && !p.freeFull() {
+		flags = append(flags, "--use-free-slice")
+	}
 	if p.priceAsked() {
 		flags = append(flags, fmt.Sprintf("--approve-price %d", p.priceNew))
 	}
@@ -937,7 +968,7 @@ func (p *planState) approvalFlags(d *planDiff) []string {
 // priceAsked is whether applying this plan agrees to a new monthly figure: a
 // slice created on monthly billing, or a monthly price that moves.
 func (p *planState) priceAsked() bool {
-	if p.c.Billing == "free" {
+	if p.c.Free {
 		return false
 	}
 	return p.live == nil || liveIsFree(p.live) || p.priceNew != p.priceOld
@@ -983,6 +1014,9 @@ func (p *planState) renderBody(out io.Writer) *planDiff {
 
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "  Price     %s\n", p.priceLine())
+	if line := p.freeLine(); line != "" {
+		fmt.Fprintf(out, "  Free      %s\n", line)
+	}
 	fmt.Fprintf(out, "  Restart   %s\n", p.restartLine())
 	if len(d.removes) == 0 {
 		fmt.Fprintf(out, "  Removes   nothing\n")
@@ -996,11 +1030,44 @@ func (p *planState) renderBody(out io.Writer) *planDiff {
 	return d
 }
 
+// choosesFree is whether applying this plan creates a free slice: a slice that
+// does not exist yet, whose shape fits the free grant, and that the person has
+// not chosen to pay for.
+func (p *planState) choosesFree() bool { return p.live == nil && p.c.Free }
+
+// freeFull is whether the account holds every free slice it may, so a free
+// slice cannot be created.
+func (p *planState) freeFull() bool { return p.choosesFree() && p.freeErr == nil && p.free.Full() }
+
+// freeLine says, for a slice that does not exist yet, whether it is one of the
+// account's free slices and why. It is empty for a slice that exists: its tier
+// is what it is.
+func (p *planState) freeLine() string {
+	if p.live != nil {
+		return ""
+	}
+	switch {
+	case !p.c.FitsFree:
+		return fmt.Sprintf("no, so it is priced: %v", p.c.FreeMisfit)
+	case p.declinedFree:
+		return "not used: it fits the free slice, and you chose to pay for it"
+	case p.freeErr != nil:
+		return fmt.Sprintf("it fits the free slice; the platform could not say how many free slices you hold (%v)", p.freeErr)
+	case p.free.Full():
+		names := make([]string, 0, len(p.free.Held))
+		for _, s := range p.free.Held {
+			names = append(names, s.Name)
+		}
+		return fmt.Sprintf("it fits the free slice, and you hold all %d (%s): apply refuses until one is emptied", p.free.Limit, strings.Join(names, ", "))
+	}
+	return fmt.Sprintf("it fits the free slice: this would be your %s of %d", ordinal(len(p.free.Held)+1), p.free.Limit)
+}
+
 func (p *planState) priceLine() string {
 	euro := func(cents int) string { return fmt.Sprintf("€%d.%02d", cents/100, cents%100) }
 	newLabel := ""
 	switch {
-	case p.c.Billing == "free":
+	case p.c.Free:
 		newLabel = "free"
 	case p.priceNewErr != nil:
 		return fmt.Sprintf("unknown: the platform could not quote the shape (%v)", p.priceNewErr)

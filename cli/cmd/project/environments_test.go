@@ -19,8 +19,7 @@ variable "rpc_memory" {
 }
 
 environment "staging" {
-  billing = "monthly"
-  vars    = { rpc_memory = "32MiB" }
+  vars = { rpc_memory = "32MiB" }
 }
 ` + extra
 	}
@@ -85,20 +84,19 @@ func TestEnvironment_AnEnvironmentIsItsOwnSliceWithItsOwnValues(t *testing.T) {
 	}
 }
 
-func TestEnvironment_AnEnvironmentMayNameItsSliceAndBilling(t *testing.T) {
+func TestEnvironment_AnEnvironmentMayNameItsSlice(t *testing.T) {
 	withRealSchema(t)
 	path := fixtureCopy(t, withEnvironments(`
 environment "demo" {
-  slice   = "fxevm-demo"
-  billing = "monthly"
+  slice = "fxevm-demo"
 }
 `))
 	c, err := CompileDriftfileEnv(path, "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Manifest.Name() != "fxevm-demo" || c.Billing != "monthly" {
-		t.Errorf("demo compiled to slice %q, billing %q", c.Manifest.Name(), c.Billing)
+	if c.Manifest.Name() != "fxevm-demo" {
+		t.Errorf("demo compiled to slice %q", c.Manifest.Name())
 	}
 }
 
@@ -120,8 +118,7 @@ func TestEnvironment_AVariableWithNoValueIsAnErrorAtItsLine(t *testing.T) {
 variable "rpc_memory" {}
 
 environment "staging" {
-  billing = "monthly"
-  vars    = { rpc_memory = "32MiB" }
+  vars = { rpc_memory = "32MiB" }
 }
 `
 	})

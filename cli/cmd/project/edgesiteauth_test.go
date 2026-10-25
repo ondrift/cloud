@@ -21,7 +21,7 @@ func TestEdgeSiteAuth_AbsentDoesNothing(t *testing.T) {
 }
 
 // siteAuthFile is a Driftfile gating the site for alice and bob.
-const siteAuthFile = `slice "demo" { billing = "monthly" }
+const siteAuthFile = `slice "demo" {}
 
 canvas {
   site "/" { dir = "site" }
@@ -187,7 +187,7 @@ func TestEdgeSiteAuth_RefusesALiteralWithoutPrintingIt(t *testing.T) {
 // password nor loses the user it belongs to.
 func TestCompile_RefusesALiteralSitePasswordWithoutPrintingIt(t *testing.T) {
 	withRealSchema(t)
-	_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+
+	_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {}\n"+
 		"edge {\n  site_auth {\n    paths = [\"*\"]\n    user \"alice\" { password = \"hunter2\" }\n  }\n}\n"))
 	if err == nil {
 		t.Fatal("a literal password compiled")
@@ -223,7 +223,7 @@ func TestEdgeSiteAuth_RefusesADuplicateUser(t *testing.T) {
 // locks a site because a line was left out, and "none" protects nothing.
 func TestCompile_SiteAuthMustNameItsPaths(t *testing.T) {
 	withRealSchema(t)
-	_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+
+	_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {}\n"+
 		"edge {\n  site_auth {\n    user \"alice\" { password = env(\"P\") }\n  }\n}\n"))
 	if err == nil {
 		t.Fatal("a site_auth with no paths compiled")
@@ -248,7 +248,7 @@ func TestCompile_SiteAuthRefusesAPathThatCouldNeverMatch(t *testing.T) {
 		"the same one twice": `["/admin", "/admin/"]`,
 		"none":               `[]`,
 	} {
-		_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+
+		_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {}\n"+
 			"edge {\n  site_auth {\n    paths = "+paths+"\n    user \"alice\" { password = env(\"P\") }\n  }\n}\n"))
 		if err == nil {
 			t.Errorf("%s: paths = %s compiled", name, paths)
@@ -260,7 +260,7 @@ func TestCompile_SiteAuthRefusesAPathThatCouldNeverMatch(t *testing.T) {
 // stores and a plan compares like with like.
 func TestCompile_SiteAuthPathsAreWrittenNormalised(t *testing.T) {
 	withRealSchema(t)
-	c, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+
+	c, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {}\n"+
 		"edge {\n  site_auth {\n    paths = [\"/admin/\", \"/secret/page\"]\n    user \"alice\" { password = env(\"P\") }\n  }\n}\n"))
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -289,7 +289,7 @@ func TestSamePaths_AGateWithNoPathsCoversTheWholeSite(t *testing.T) {
 // Absent, the gate is left exactly as it is: not read, not written, not
 // removed.
 func TestApply_AbsentSiteAuthCallsNoAuthRoute(t *testing.T) {
-	rec := siteAuthSlice(t, "slice \"demo\" { billing = \"monthly\" }\ncanvas {\n  site \"/\" { dir = \"site\" }\n}\n",
+	rec := siteAuthSlice(t, "slice \"demo\" {}\ncanvas {\n  site \"/\" { dir = \"site\" }\n}\n",
 		func(w http.ResponseWriter, r *http.Request) {})
 
 	if err := applyAgreeingAtZero(t); err != nil {

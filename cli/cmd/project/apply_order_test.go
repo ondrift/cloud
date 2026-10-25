@@ -44,7 +44,7 @@ const helloHandler = "function GetHello(req) { return [200, 'OK', {}]; }\nmodule
 
 // orderDriftfile declares one Pulse that runs against a database and a queue
 // the same file declares.
-const orderDriftfile = `slice "demo" { billing = "monthly" }
+const orderDriftfile = `slice "demo" {}
 
 atomic {
   element "default" {
@@ -167,7 +167,7 @@ func TestApply_ABackboneFailureDeploysNoAtomic(t *testing.T) {
 		}
 	})
 	withRealSchema(t)
-	applyIn(t, `slice "demo" { billing = "monthly" }
+	applyIn(t, `slice "demo" {}
 
 atomic {
   element "default" {

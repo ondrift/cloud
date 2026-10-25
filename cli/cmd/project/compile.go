@@ -60,9 +60,23 @@ import (
 // file says about money and write-only values.
 type Compiled struct {
 	Manifest *Manifest
-	Shape    SliceConfig
-	// Billing is "free" or "monthly".
-	Billing string
+	// Shape is the shape the file is applied as: PricedShape or FreeShape,
+	// whichever Use last chose. A compile starts on PricedShape.
+	Shape SliceConfig
+	// PricedShape is the file read as a configured slice: a limit it leaves out
+	// is 0 (the platform's smallest billed figure), and the slot and scheduled-job
+	// counts are what the file declares.
+	PricedShape SliceConfig
+	// FreeShape is the file read as a slice inside the free grant: a limit it
+	// leaves out is the free preset's figure, and a written one may only be lower.
+	FreeShape SliceConfig
+	// FitsFree is whether the file's shape is inside the free grant, and
+	// FreeMisfit is the first bound it crosses when it is not. The file does not
+	// say how the slice is paid for; this is what decides whether it can be free.
+	FitsFree   bool
+	FreeMisfit error
+	// Free is whether Shape is FreeShape.
+	Free bool
 	// WriteOnly lists every write-only value by reference, never by value.
 	WriteOnly []WriteOnlyRef
 	// Environments are the declared environment blocks, validated.
@@ -143,6 +157,17 @@ func CompileDriftfileEnv(path, env string) (*Compiled, error) {
 	return c.out, nil
 }
 
+// Use chooses which shape the file is applied as. A file that does not fit the
+// free grant cannot be chosen free.
+func (c *Compiled) Use(free bool) {
+	c.Free = free && c.FitsFree
+	if c.Free {
+		c.Shape = c.FreeShape
+	} else {
+		c.Shape = c.PricedShape
+	}
+}
+
 func (c *compiler) at(ptr string, rng hcl.Range, what string) {
 	c.ranges[ptr] = docRange{rng: rng, what: what}
 }
@@ -160,11 +185,17 @@ func (c *compiler) compile(f *dfFile) {
 
 // ─── slice ──────────────────────────────────────────────────────────────────
 
+// billingGone is the refusal of the old `billing` key, one sentence naming what
+// to do. Nothing rewrites the file: deleting the line is the whole migration.
+const billingGone = "a Driftfile no longer says how a slice is paid for. Delete this line: a slice whose shape " +
+	"fits the free grant can take one of the account's free slices (`drift apply` asks), and any other shape " +
+	"is priced, quoted by `drift plan` and agreed to with `drift apply`."
+
 func (c *compiler) compileSlice(f *dfFile) {
 	switch len(f.Slice) {
 	case 0:
 		start := hcl.Range{Filename: c.ev.file, Start: hcl.InitialPos, End: hcl.InitialPos}
-		c.ev.errorf(start, "Missing slice block", `a Driftfile names its slice: slice "my-app" { billing = "monthly" }.`)
+		c.ev.errorf(start, "Missing slice block", `a Driftfile names its slice: slice "my-app" {}.`)
 		return
 	case 1:
 	default:
@@ -189,24 +220,11 @@ func (c *compiler) compileSlice(f *dfFile) {
 	c.at("", nameRange, fmt.Sprintf("slice %q", name))
 	c.at("/slice", nameRange, fmt.Sprintf("slice %q", name))
 
-	// The billing is the environment's when it states one, else the slice's.
-	billing, ok := c.ev.str(s.Billing, "billing")
-	billingRange := s.DefRange
+	// There is no billing key. Whether a slice is free is a fact about its
+	// shape and the account, decided when the file is applied, so a file that
+	// still says how it is paid for is refused rather than half-honoured.
 	if present(s.Billing) {
-		billingRange = s.Billing.Range()
-	}
-	if e := c.ev.env; e != nil && e.hasBilling {
-		billing, ok, billingRange = e.billing, true, e.billingRange
-	}
-	switch {
-	case !ok:
-		// Money is stated, never defaulted: a file that does not say how the
-		// slice is paid for is not one a plan can price.
-		c.ev.errorf(s.DefRange, "Missing billing", `the slice says how it is paid for: billing = "monthly", or "free" for a shape inside the free slice.`)
-	case billing != "free" && billing != "monthly":
-		c.ev.errorf(billingRange, "Unknown billing", `billing is "free" or "monthly", not %q.`, billing)
-	default:
-		c.out.Billing = billing
+		c.ev.errorf(s.Billing.Range(), "billing is gone", billingGone)
 	}
 
 	if present(s.Labels) {
@@ -926,8 +944,8 @@ func (c *compiler) compileEnvironments(envs []dfEnvironment) {
 		if s, ok := c.ev.str(e.Slice, what+": slice"); ok && name != nil && !name.MatchString(s) {
 			c.ev.errorf(e.Slice.Range(), "Not a slice name", "%s: %q is not a slice name.", what, s)
 		}
-		if b, ok := c.ev.str(e.Billing, what+": billing"); ok && b != "free" && b != "monthly" {
-			c.ev.errorf(e.Billing.Range(), "Unknown billing", `%s: billing is "free" or "monthly", not %q.`, what, b)
+		if present(e.Billing) {
+			c.ev.errorf(e.Billing.Range(), "billing is gone", "%s: %s", what, billingGone)
 		}
 		if vars, ok := c.ev.strMap(e.Vars, what+": vars"); ok {
 			for k := range vars {
@@ -984,11 +1002,44 @@ var shapeLimits = []shapeLimit{
 	{"pocket_record_size", func(l *dfLimits) hcl.Expression { return l.PocketRecordSize }, unitSize, func(c *SliceConfig) *int { return &c.Deed.Pocket.MaxSizeInBytesEach }},
 }
 
+// compileLimits settles the slice-wide part of the shape twice, because the file
+// does not say how the slice is paid for and both readings are real: as a
+// configured slice (a limit left out is 0, the slot and scheduled-job counts are
+// the file's), and as a slice inside the free grant (a limit left out is the
+// free preset's figure). Which one is applied is chosen later, by Use, from the
+// account's free slots; whether the second is available at all is FitsFree.
+//
+// Both passes read the same text, so the second one's refusals are the first
+// one's again and are dropped.
 func (c *compiler) compileLimits(f *dfFile) {
 	if len(f.Slice) != 1 {
 		return
 	}
-	sh := &c.out.Shape
+	base := c.out.Shape
+	priced := c.limitsFor(f, base, false)
+	seen := len(c.ev.diags)
+	free := c.limitsFor(f, base, true)
+	c.ev.diags = c.ev.diags[:seen]
+
+	c.out.PricedShape, c.out.FreeShape, c.out.Shape = priced, free, priced
+	if !c.ev.diags.HasErrors() {
+		c.out.FreeMisfit = freeEnvelopeViolation(free, c.out.Domains)
+		// The second pass's own refusals were dropped above, and one of them is a
+		// fact about the free reading rather than a fault in the file: more
+		// scheduled pulses than the free slice allows jobs for. That is a shape
+		// the free slice cannot hold.
+		if c.out.FreeMisfit == nil && free.Atomic.MaxNumberOfScheduledJobs < c.crons {
+			c.out.FreeMisfit = fmt.Errorf("%d pulses carry a cron, and the free slice grants %d scheduled job%s",
+				c.crons, free.Atomic.MaxNumberOfScheduledJobs, map[bool]string{true: "", false: "s"}[free.Atomic.MaxNumberOfScheduledJobs == 1])
+		}
+		c.out.FitsFree = c.out.FreeMisfit == nil
+	}
+}
+
+// limitsFor is the shape the file declares when it is applied as a free slice
+// (free) or as a configured one.
+func (c *compiler) limitsFor(f *dfFile, shape SliceConfig, free bool) SliceConfig {
+	sh := &shape
 	rateFromEdge := sh.Atomic.MaxNumberOfRequestsPerMinute
 
 	// A free slice is provisioned from the free preset: what the file leaves
@@ -996,7 +1047,7 @@ func (c *compiler) compileLimits(f *dfFile) {
 	// pool are the preset's too, because the free create path takes every
 	// scalar from it.
 	written := map[string]bool{}
-	if c.out.Billing == "free" {
+	if free {
 		for _, l := range freeLimits {
 			*l.at(sh) = *l.at(&freePreset)
 		}
@@ -1032,7 +1083,7 @@ func (c *compiler) compileLimits(f *dfFile) {
 		}
 	}
 
-	if c.out.Billing != "free" {
+	if !free {
 		sh.Atomic.MaxNumberOfFunctions = len(sh.Atomic.Functions)
 		if !written["scheduled_jobs"] {
 			sh.Atomic.MaxNumberOfScheduledJobs = c.crons
@@ -1046,13 +1097,7 @@ func (c *compiler) compileLimits(f *dfFile) {
 		c.ev.errorf(rng, "Too few scheduled jobs",
 			"%d pulses carry a cron and the slice allows %d scheduled jobs.", c.crons, sh.Atomic.MaxNumberOfScheduledJobs)
 	}
-
-	if c.out.Billing == "free" && !c.ev.diags.HasErrors() {
-		if err := freeEnvelopeViolation(*sh, c.out.Domains); err != nil {
-			c.ev.errorf(f.Slice[0].Billing.Range(), "Not the free slice",
-				"billing is \"free\", and %v. Make the shape smaller, or write billing = \"monthly\".", err)
-		}
-	}
+	return shape
 }
 
 // limitValue reads one limit in its unit, as the integer the shape stores.

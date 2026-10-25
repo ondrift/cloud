@@ -174,7 +174,7 @@ func TestApplyEgress_AbsentLeavesTheLiveSettingAsItIs(t *testing.T) {
 // to an allowlisted slice, calls no egress route.
 func TestApply_AbsentEgressCallsNoEgressRoute(t *testing.T) {
 	rec, refreshes := allowlistedSliceStub(t)
-	applyIn(t, "slice \"demo\" { billing = \"monthly\" }\nedge { rate_limit = \"600/min\" }\n")
+	applyIn(t, "slice \"demo\" {}\nedge { rate_limit = \"600/min\" }\n")
 
 	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -196,8 +196,8 @@ func TestApply_AbsentEgressCallsNoEgressRoute(t *testing.T) {
 // back to open; so is an egress block that states no mode at all.
 func TestApply_ADeclaredOpenEgressStillSetsOpen(t *testing.T) {
 	for _, body := range []string{
-		"slice \"demo\" { billing = \"monthly\" }\nedge {\n  egress {\n    mode = \"open\"\n  }\n}\n",
-		"slice \"demo\" { billing = \"monthly\" }\nedge {\n  egress {}\n}\n",
+		"slice \"demo\" {}\nedge {\n  egress {\n    mode = \"open\"\n  }\n}\n",
+		"slice \"demo\" {}\nedge {\n  egress {}\n}\n",
 	} {
 		_, refreshes := allowlistedSliceStub(t)
 		applyIn(t, body)

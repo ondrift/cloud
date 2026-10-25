@@ -45,6 +45,9 @@ func DriftfileFormat() FormatBlock {
 func formatOf(t reflect.Type, name, path string) FormatBlock {
 	b := FormatBlock{Name: name, Path: path, Doc: formatDocs[path].doc}
 	for i := 0; i < t.NumField(); i++ {
+		if t.Field(i).Tag.Get("format") == "-" {
+			continue // read only to be refused, so not part of the format
+		}
 		parts := strings.Split(t.Field(i).Tag.Get("hcl"), ",")
 		if len(parts) != 2 || parts[0] == "" {
 			continue // the def_range and label_range fields
@@ -131,8 +134,6 @@ var formatDocs = map[string]formatDoc{
 
 	"slice": {doc: "The slice this file declares, by name: 1 to 32 lowercase letters, digits and hyphens. " +
 		"`drift apply` creates it when it does not exist, and resizes it to this file's shape when it does."},
-	"slice.billing": {typ: tString, required: true, doc: `How the slice is paid for: "monthly", or "free" for ` +
-		`a shape inside the free slice. A limit a free slice leaves out is the free slice's own.`},
 	"slice.labels": {typ: tMap, doc: "Your own labels for the slice, `team = \"backend\"`. They change no limit " +
 		"and no price, `drift slice list` shows them, and a snapshot carries them."},
 	"slice.limits": {doc: "The slice-wide part of the shape: everything a slice has that no single block in " +
@@ -277,9 +278,8 @@ var formatDocs = map[string]formatDoc{
 	"environment": {doc: "Another slice from the same file: `drift plan <name>` and `drift apply <name>` " +
 		"work on it. Its slice is <slice>-<name> unless it names one; \"prod\" and \"production\" are " +
 		"the slice itself."},
-	"environment.slice":   {typ: tString, doc: "The slice this environment is applied to."},
-	"environment.billing": {typ: tString, doc: `Its billing, when it is not the slice's: "free" or "monthly".`},
-	"environment.vars":    {typ: tMap, doc: "The variables it sets, by name."},
+	"environment.slice": {typ: tString, doc: "The slice this environment is applied to."},
+	"environment.vars":  {typ: tMap, doc: "The variables it sets, by name."},
 
 	"hook": {doc: "A local command run around `drift apply`, labelled with when: \"pre_deploy\" before " +
 		"anything is sent, \"post_deploy\" once the slice is live."},

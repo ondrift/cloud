@@ -356,7 +356,7 @@ func TestApplySQL_ASchemaWithoutMigrationsIsUnchanged(t *testing.T) {
 // at parse time, at the attribute that names it, with every other missing path.
 func TestParseDriftfile_ReportsAMissingMigrationsDirectory(t *testing.T) {
 	withRealSchema(t)
-	body := "slice \"demo\" { billing = \"monthly\" }\n" +
+	body := "slice \"demo\" {}\n" +
 		"backbone {\n  sql \"orders\" {\n    size       = \"10MiB\"\n    migrations = \"./migrations\"\n  }\n}\n"
 	path := writeDriftfile(t, body)
 
@@ -394,7 +394,7 @@ func TestParse_CarriesSQLMigrationsThrough(t *testing.T) {
 	root := t.TempDir()
 	mustMkdir(t, filepath.Join(root, "migrations"))
 	mustWrite(t, filepath.Join(root, "Driftfile"),
-		"slice \"demo\" { billing = \"monthly\" }\n"+
+		"slice \"demo\" {}\n"+
 			"backbone {\n  sql \"orders\" {\n    size       = \"10MiB\"\n    migrations = \"./migrations\"\n  }\n}\n")
 	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
 	if err != nil {

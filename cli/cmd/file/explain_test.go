@@ -74,7 +74,7 @@ func TestExplain_Recursive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"billing = string", "limits {", "backup_retention = duration"} {
+	for _, want := range []string{"limits {", "backup_retention = duration"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("explain slice --recursive does not print %q:\n%s", want, out)
 		}
@@ -99,7 +99,7 @@ func TestExplain_AnUnknownNameSuggestsTheNearest(t *testing.T) {
 func TestExplain_RefusesWhatBelongsToResolve(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "Driftfile"), []byte("slice \"x\" { billing = \"free\" }\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "Driftfile"), []byte("slice \"x\" {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"Driftfile"}, {"./anything"}, {"--env", "staging"}} {

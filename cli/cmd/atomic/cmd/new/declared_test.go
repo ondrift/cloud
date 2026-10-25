@@ -28,9 +28,7 @@ func inDir(t *testing.T, driftfile string) {
 
 // What `drift file new` writes, comments and all.
 const scaffolded = `# acme: a Drift project.
-slice "acme" {
-  billing = "free"
-}
+slice "acme" {}
 
 atomic {
   element "default" {
@@ -77,9 +75,9 @@ func TestDeclaredRouteFailsOpen(t *testing.T) {
 		{"no Driftfile at all", ""},
 		{"not HCL", "{{{ this is not hcl"},
 		{"a YAML Driftfile", "slice: acme\natomic:\n  pulses:\n    - route: hello\n      method: get\n"},
-		{"no element", "slice \"acme\" { billing = \"free\" }\n"},
-		{"a pulse outside any element", "slice \"acme\" { billing = \"free\" }\npulse \"GET /hello\" {}\n"},
-		{"an element outside the atomic block", "slice \"acme\" { billing = \"free\" }\nelement \"default\" {\n  pulse \"GET /hello\" {}\n}\n"},
+		{"no element", "slice \"acme\" {}\n"},
+		{"a pulse outside any element", "slice \"acme\" {}\npulse \"GET /hello\" {}\n"},
+		{"an element outside the atomic block", "slice \"acme\" {}\nelement \"default\" {\n  pulse \"GET /hello\" {}\n}\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

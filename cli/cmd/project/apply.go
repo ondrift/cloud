@@ -57,6 +57,7 @@ func GetApplyCmd() *cobra.Command {
 		secrets    []string
 		noEnvFile  bool
 		approve    int
+		useFree    bool
 		removes    []string
 		dataLoss   []string
 		force      bool
@@ -71,13 +72,19 @@ Apply prints the same plan 'drift plan' prints, asks before the monthly price
 moves, before anything is removed, and before any data could be lost, then
 creates or resizes the slice and deploys what the file declares.
 
-Without a terminal each question is answered by a flag: --approve-price with the
-quoted figure, --approve-remove and --allow-data-loss with each resource's
-address. A plan file written by 'drift plan --out' carries the answers of the
-plan it records, and is refused if the Driftfile or the slice changed since.
+The file does not say how the slice is paid for. A new slice whose shape fits
+the free grant is asked about ("You have 1 of 3 free slices — make this the
+2nd?"), and one that does not is priced and needs the figure agreed to. When
+the account holds all its free slices, apply refuses and names them.
+
+Without a terminal each question is answered by a flag: --use-free-slice for the
+free slice, --approve-price with the quoted figure, --approve-remove and
+--allow-data-loss with each resource's address. A plan file written by 'drift
+plan --out' carries the answers of the plan it records, and is refused if the
+Driftfile or the slice changed since.
 
 An environment's name applies the file to that environment's own slice, with
-its variables and its billing.`,
+its variables.`,
 		Example: "  drift apply\n" +
 			"  drift apply staging\n" +
 			"  drift apply --approve-price 768 --approve-remove \"pulse GET /bench\"\n" +
@@ -85,7 +92,7 @@ its variables and its billing.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			approveSet = cmd.Flags().Changed("approve-price")
-			a := applyAnswers{removes: map[string]bool{}, dataLoss: map[string]bool{}, price: -1}
+			a := applyAnswers{removes: map[string]bool{}, dataLoss: map[string]bool{}, price: -1, useFree: useFree}
 			if approveSet {
 				a.price = approve
 			}
@@ -121,6 +128,7 @@ its variables and its billing.`,
 	cmd.Flags().StringArrayVar(&secrets, "secret", nil, "The same as --var.")
 	cmd.Flags().BoolVar(&noEnvFile, "no-env-file", false, "Do not read the .env / .env.<env> file beside the Driftfile")
 	cmd.Flags().IntVar(&approve, "approve-price", 0, "Agree to the new monthly price, in cents: it must be the figure the plan quoted")
+	cmd.Flags().BoolVar(&useFree, "use-free-slice", false, "Agree that a new slice whose shape fits the free grant takes one of your free slices")
 	cmd.Flags().StringArrayVar(&removes, "approve-remove", nil, "Agree to remove a resource, by its address as the plan prints it (repeatable)")
 	cmd.Flags().StringArrayVar(&dataLoss, "allow-data-loss", nil, "Agree that a resource's data may be lost, by its address (repeatable)")
 	cmd.Flags().BoolVar(&force, "force", false, "Redeploy every pulse and field even if its source is unchanged")
@@ -129,7 +137,10 @@ its variables and its billing.`,
 
 // applyAnswers are the answers given before the apply asks anything.
 type applyAnswers struct {
-	price    int // -1: none given
+	price int // -1: none given
+	// useFree is the person agreeing that a new slice that fits the free grant
+	// takes one of the account's free slices.
+	useFree  bool
 	removes  map[string]bool
 	dataLoss map[string]bool
 }
@@ -169,12 +180,18 @@ func runApply(o applyOptions) error {
 	}
 	dir := filepath.Dir(path)
 
+	recordedPrice := false
 	if o.planFile != "" {
 		rec, err := readPlanRecord(o.planFile)
 		if err != nil {
 			return err
 		}
 		o.env = rec.Environment
+		// What the plan was made as: a free slice, or a priced one.
+		recordedPrice = rec.Price >= 0
+		if rec.UseFree {
+			o.answers.useFree = true
+		}
 	}
 
 	sum, err := applyVariableSources(dir, o.overrides, !o.noEnvFile, o.env)
@@ -218,43 +235,67 @@ func runApply(o applyOptions) error {
 		return err
 	}
 
-	p, err := gatherPlan(c)
-	if err != nil {
-		return err
-	}
-	d := p.renderBody(o.out)
+	// A person who agrees to a price for a shape that would fit the free grant has
+	// chosen to pay: a plan file recorded with a price, or --approve-price on the
+	// command line, without --use-free-slice. Anyone else is asked, or told which
+	// flag answers the question.
+	declined := (o.answers.price >= 0 || recordedPrice) && !o.answers.useFree
 
-	if o.planFile != "" {
-		if err := checkPlanFile(o.planFile, data, p, d, &o.answers); err != nil {
+	var (
+		p *planState
+		d *planDiff
+	)
+	for {
+		p, err = gatherPlan(c, declined)
+		if err != nil {
 			return err
 		}
-	}
+		d = p.renderBody(o.out)
 
-	if p.buildErr != nil {
-		return fmt.Errorf("the build cannot read this project, so nothing was applied: %w", p.buildErr)
-	}
-	if d.billingChanged {
-		return fmt.Errorf("the file moves slice %q between free and monthly billing, which `drift apply` does not do yet; "+
-			"nothing was applied", name)
-	}
-	if p.priceAsked() && p.priceNewErr != nil {
-		return fmt.Errorf("the platform could not quote the new shape, so its price cannot be agreed to: %w", p.priceNewErr)
-	}
-	if err := writeOnlyValuesSet(c); err != nil {
-		return err
-	}
-	if err := o.settle(p, d); err != nil {
-		return err
+		if o.planFile != "" {
+			if err := checkPlanFile(o.planFile, data, p, d, &o.answers); err != nil {
+				return err
+			}
+		}
+
+		if p.buildErr != nil {
+			return fmt.Errorf("the build cannot read this project, so nothing was applied: %w", p.buildErr)
+		}
+		if d.billingChanged {
+			why := "its shape no longer fits the free slice"
+			if c.FreeMisfit != nil {
+				why += " (" + c.FreeMisfit.Error() + ")"
+			}
+			return fmt.Errorf("slice %q is a free slice and %s, which would make it a priced one. `drift apply` does not "+
+				"move a slice off the free tier yet; nothing was applied. `drift slice resize` makes that move",
+				name, why)
+		}
+		if p.priceAsked() && p.priceNewErr != nil {
+			return fmt.Errorf("the platform could not quote the new shape, so its price cannot be agreed to: %w", p.priceNewErr)
+		}
+		if err := writeOnlyValuesSet(c); err != nil {
+			return err
+		}
+		err = o.settle(p, d)
+		if errors.Is(err, errPricedInstead) && !declined {
+			declined = true
+			fmt.Fprintf(o.out, "\n  Then it is a priced slice. The plan for that:\n")
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		break
 	}
 
 	// 1 and 2: the shape.
 	switch {
 	case p.live == nil:
 		fmt.Fprintf(o.out, "  Creating slice %s...\n", common.Highlight(name))
-		if err := slice.CreateWithShape(name, c.Shape, c.Billing == "free"); err != nil {
+		if err := slice.CreateWithShape(name, c.Shape, c.Free); err != nil {
 			return err
 		}
-		if c.Billing == "free" {
+		if c.Free {
 			// The free preset ships placeholder names; the file's own replace
 			// them. Nothing is deployed in a placeholder, and the person asked
 			// for this slice a moment ago, so the removal is the create's own.
@@ -320,6 +361,28 @@ func resizeToFile(name string, c *Compiled, ack int, confirm string) error {
 // it returns.
 func (o *applyOptions) settle(p *planState, d *planDiff) error {
 	var missing []string
+
+	// A new slice that fits the free grant is one of the account's free slices
+	// when the person says so. With none open it is refused, naming the ones held:
+	// emptying a slice is a decision made on purpose, never a side effect of
+	// applying a file.
+	if p.choosesFree() {
+		switch {
+		case p.freeFull():
+			return fmt.Errorf("nothing was applied: %s", p.free.fullRefusal())
+		case o.answers.useFree:
+		case o.ask:
+			question := "Make this one of your free slices?"
+			if p.freeErr == nil {
+				question = p.free.freeQuestion()
+			}
+			if !o.confirm(question) {
+				return errPricedInstead
+			}
+		default:
+			missing = append(missing, "--use-free-slice")
+		}
+	}
 
 	if p.priceAsked() {
 		switch {
@@ -469,14 +532,17 @@ func applyAPIKeys(c *Compiled, p *planState, out io.Writer) error {
 // planRecord is what `drift plan --out` writes: what the plan was made from,
 // and the answers it carries. No value of any write-only key is in it.
 type planRecord struct {
-	Version     int      `json:"version"`
-	Slice       string   `json:"slice"`
-	Environment string   `json:"environment,omitempty"`
-	Driftfile   string   `json:"driftfile_sha256"`
-	Live        string   `json:"live_sha256"`
-	Price       int      `json:"price_monthly_cents"`
-	Removes     []string `json:"removes"`
-	DataLoss    []string `json:"data_loss"`
+	Version     int    `json:"version"`
+	Slice       string `json:"slice"`
+	Environment string `json:"environment,omitempty"`
+	Driftfile   string `json:"driftfile_sha256"`
+	Live        string `json:"live_sha256"`
+	Price       int    `json:"price_monthly_cents"`
+	// UseFree is a plan for a new slice that takes one of the account's free
+	// slices: the answer to the question it asks.
+	UseFree  bool     `json:"use_free_slice,omitempty"`
+	Removes  []string `json:"removes"`
+	DataLoss []string `json:"data_loss"`
 }
 
 const planRecordVersion = 1
@@ -508,6 +574,7 @@ func recordPlan(data []byte, p *planState, d *planDiff) planRecord {
 	if p.priceAsked() {
 		r.Price = p.priceNew
 	}
+	r.UseFree = p.choosesFree() && !p.freeFull()
 	for _, x := range uniq(d.removes) {
 		r.Removes = append(r.Removes, guardAddress(x))
 	}
@@ -542,12 +609,15 @@ func checkPlanFile(path string, data []byte, p *planState, d *planDiff, a *apply
 		return fmt.Errorf("the Driftfile changed after the plan was made; run `drift plan --out` again. Nothing was applied")
 	case rec.Live != now.Live:
 		return fmt.Errorf("slice %q changed after the plan was made; run `drift plan --out` again. Nothing was applied", now.Slice)
-	case rec.Price != now.Price || strings.Join(rec.Removes, "\n") != strings.Join(now.Removes, "\n") ||
+	case rec.Price != now.Price || rec.UseFree != now.UseFree || strings.Join(rec.Removes, "\n") != strings.Join(now.Removes, "\n") ||
 		strings.Join(rec.DataLoss, "\n") != strings.Join(now.DataLoss, "\n"):
 		return fmt.Errorf("this plan no longer asks what the recorded one did; run `drift plan --out` again. Nothing was applied")
 	}
 	if rec.Price >= 0 {
 		a.price = rec.Price
+	}
+	if rec.UseFree {
+		a.useFree = true
 	}
 	for _, r := range rec.Removes {
 		a.removes[r] = true

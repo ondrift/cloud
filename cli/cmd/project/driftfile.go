@@ -194,7 +194,7 @@ func flattenPillars(file *dfFile, ev *dfEval) {
 type dfSlice struct {
 	Name      string         `hcl:"name,label"`
 	NameRange hcl.Range      `hcl:"name,label_range"`
-	Billing   hcl.Expression `hcl:"billing,optional"`
+	Billing   hcl.Expression `hcl:"billing,optional" format:"-"`
 	Labels    hcl.Expression `hcl:"labels,optional"`
 	Limits    []dfLimits     `hcl:"limits,block"`
 	DefRange  hcl.Range      `hcl:",def_range"`
@@ -372,7 +372,7 @@ type dfEnvironment struct {
 	Name      string         `hcl:"name,label"`
 	NameRange hcl.Range      `hcl:"name,label_range"`
 	Slice     hcl.Expression `hcl:"slice,optional"`
-	Billing   hcl.Expression `hcl:"billing,optional"`
+	Billing   hcl.Expression `hcl:"billing,optional" format:"-"`
 	Vars      hcl.Expression `hcl:"vars,optional"`
 	DefRange  hcl.Range      `hcl:",def_range"`
 }
@@ -398,13 +398,12 @@ func readDriftfile(path string, data []byte) (*dfFile, *dfEval, error) {
 	return readDriftfileEnv(path, data, "")
 }
 
-// selectedEnv is the environment a file is read for: its name, the slice it
-// is applied to, and its billing when it states one.
+// selectedEnv is the environment a file is read for: its name and the slice it
+// is applied to.
 type selectedEnv struct {
-	name, slice, billing string
-	sliceRange           hcl.Range
-	billingRange         hcl.Range
-	hasSlice, hasBilling bool
+	name, slice string
+	sliceRange  hcl.Range
+	hasSlice    bool
 }
 
 // readDriftfileEnv parses a Driftfile for one environment, or for the default
@@ -468,9 +467,6 @@ func readDriftfileEnv(path string, data []byte, env string) (*dfFile, *dfEval, e
 		sel := &selectedEnv{name: env}
 		if s, ok := ev.str(e.Slice, fmt.Sprintf("environment %q: slice", env)); ok {
 			sel.slice, sel.hasSlice, sel.sliceRange = s, true, e.Slice.Range()
-		}
-		if b, ok := ev.str(e.Billing, fmt.Sprintf("environment %q: billing", env)); ok {
-			sel.billing, sel.hasBilling, sel.billingRange = b, true, e.Billing.Range()
 		}
 		if present(e.Vars) {
 			v, d := e.Vars.Value(ev.ctx)

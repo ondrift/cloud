@@ -3,8 +3,6 @@
 # what the testnode uses, so the free slice's placeholder collections, buckets,
 # queue and database are not in it.
 slice "fxevm-testnode" {
-  billing = "monthly"
-
   limits {
     requests_per_minute  = 60000
     timeout              = "30s"

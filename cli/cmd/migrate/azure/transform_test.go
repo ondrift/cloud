@@ -86,8 +86,7 @@ func TestPipeline_SnapshotToTransform(t *testing.T) {
 	// secrets, each read from the environment.
 	df := readFile(t, wsDir, "Driftfile")
 	for _, want := range []string{
-		`slice "orders"`,
-		`billing = "monthly"`,
+		`slice "orders" {}`,
 		`element "get-order"`,
 		`pulse "GET /orders/:id"`,
 		`handler = "get_orders_id"`,

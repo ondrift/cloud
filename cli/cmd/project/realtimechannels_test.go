@@ -35,7 +35,7 @@ func realtimeManifest(realtime any) *Manifest {
 	return &Manifest{slice: Node{"backbone": map[string]any{"realtime": realtime}}}
 }
 
-const realtimeFile = `slice "demo" { billing = "monthly" }
+const realtimeFile = `slice "demo" {}
 
 canvas {
   site "/" { dir = "site" }
@@ -48,7 +48,7 @@ backbone {
 }
 `
 
-const noRealtimeFile = `slice "demo" { billing = "monthly" }
+const noRealtimeFile = `slice "demo" {}
 
 canvas {
   site "/" { dir = "site" }

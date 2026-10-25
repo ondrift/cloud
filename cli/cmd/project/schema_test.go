@@ -73,7 +73,7 @@ func TestSchema_ValidatesTheCompiledDocument(t *testing.T) {
 	  }
 	}`)
 
-	path := writeDriftfile(t, "slice \"hello\" { billing = \"monthly\" }\ncanvas {\n  site \"/\" { dir = \"canvas\" }\n}\n", "canvas/")
+	path := writeDriftfile(t, "slice \"hello\" {}\ncanvas {\n  site \"/\" { dir = \"canvas\" }\n}\n", "canvas/")
 
 	m, err := ParseDriftfile(path)
 	if err != nil {
@@ -115,7 +115,7 @@ func TestSchema_RejectsWhatTheSchemaRejects(t *testing.T) {
 	  }
 	}`)
 
-	body := "slice \"hello\" { billing = \"monthly\" }\n" + // line 1
+	body := "slice \"hello\" {}\n" + // line 1
 		"canvas {\n" + // line 2
 		"  site \"/\" { dir = \"canvas\" }\n" + // line 3
 		"  site \"/admin\" { dir = \"canvas\" }\n" + // line 4: its path is the key the schema forbids
@@ -143,7 +143,7 @@ func TestSchema_AbsentIsReportedNotFaked(t *testing.T) {
 		t.Fatal("SchemaAvailable() is true with no schema on disk")
 	}
 
-	path := writeDriftfile(t, "slice \"hello\" { billing = \"monthly\" }\ncanvas {\n  site \"/\" { dir = \"canvas\" }\n}\n", "canvas/")
+	path := writeDriftfile(t, "slice \"hello\" {}\ncanvas {\n  site \"/\" { dir = \"canvas\" }\n}\n", "canvas/")
 	if _, err := ParseDriftfile(path); err != nil {
 		t.Errorf("parsing must still work offline on a never-online machine: %v", err)
 	}

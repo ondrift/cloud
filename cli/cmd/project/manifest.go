@@ -310,7 +310,7 @@ func ParseProjectName(path, env string) (string, error) {
 		}
 	}
 	if base == "" {
-		return "", fmt.Errorf(`%s names no slice: add slice "<name>" { billing = "monthly" }`, name)
+		return "", fmt.Errorf(`%s names no slice: add slice "<name>" {}`, name)
 	}
 	if env == "" {
 		return base, nil

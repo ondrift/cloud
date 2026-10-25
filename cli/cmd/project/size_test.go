@@ -114,7 +114,7 @@ func TestSize_ChangesOnlyTheMemoryLinesItRecommends(t *testing.T) {
 // does rewrite stays on its line.
 func TestSize_LeavesAnExpressionAloneAndKeepsATrailingComment(t *testing.T) {
 	src := []byte(`variable "m" { default = "16MiB" }
-slice "demo" { billing = "monthly" }
+slice "demo" {}
 atomic {
   element "api" {
     pulse "GET /a" {

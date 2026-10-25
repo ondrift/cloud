@@ -78,8 +78,8 @@ func starterProject(t *testing.T, canvasDir string) string {
 
 // The scaffold's whole claim is that it produces a file that DEPLOYS, not one
 // that merely parses. So the test is a round trip through the real compiler
-// rather than a string comparison: the free billing it writes is held to the
-// free slice, and its one pulse is booked.
+// rather than a string comparison: the shape it writes fits a free
+// slice, and its one pulse is booked.
 func TestNew_ScaffoldCompiles(t *testing.T) {
 	withServedSchema(t)
 	for _, canvas := range []string{"", "site"} {
@@ -87,8 +87,8 @@ func TestNew_ScaffoldCompiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the scaffold (canvas %q) does not survive the compiler it is meant to precede:\n%v", canvas, err)
 		}
-		if c.Manifest.Name() != "demo" || c.Billing != "free" {
-			t.Errorf("slice %q on %q billing, want demo on free", c.Manifest.Name(), c.Billing)
+		if c.Manifest.Name() != "demo" || !c.FitsFree {
+			t.Errorf("slice %q fits free = %v, want demo that fits a free slice", c.Manifest.Name(), c.FitsFree)
 		}
 		specs := project.FunctionSpecs(c.Manifest)
 		if len(specs) != 1 || specs[0].Name != starterMethod+":"+starterRoute || specs[0].Handler == "" {
@@ -124,8 +124,8 @@ func TestNew_RejectsNamesThePlatformWould(t *testing.T) {
 func TestFmt_PreservesCommentsAndOrder(t *testing.T) {
 	src := []byte(`# top of file
 slice "demo" {
-  # how it is paid for
-  billing = "monthly" # inline note
+  # how it is labelled
+  labels = { team = "a" } # inline note
 }
 queue "b" {}
 queue "a" {}
@@ -134,7 +134,7 @@ queue "a" {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"# top of file", "# how it is paid for", "# inline note"} {
+	for _, want := range []string{"# top of file", "# how it is labelled", "# inline note"} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("comment %q was dropped:\n%s", want, out)
 		}
@@ -161,7 +161,7 @@ func TestFmt_LaysOutCanonically(t *testing.T) {
 // Formatting twice must equal formatting once, or `--write` in a pre-commit hook
 // produces a diff on every run.
 func TestFmt_IsIdempotent(t *testing.T) {
-	src := []byte("slice \"demo\" {\nbilling=\"monthly\"\n  labels = { team = \"a\", tier=\"b\" }\n}\n")
+	src := []byte("slice \"demo\" {\n  labels = { team = \"a\", tier=\"b\" }\n}\n")
 	once, err := formatDriftfile("Driftfile", src)
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +181,7 @@ func TestFmt_RefusesWhatItCannotRead(t *testing.T) {
 	if _, err := formatDriftfile("Driftfile", []byte("slice: demo\n")); err == nil || !strings.Contains(err.Error(), "the Driftfile is HCL now") {
 		t.Errorf("a YAML Driftfile: got %v", err)
 	}
-	if _, err := formatDriftfile("Driftfile", []byte("slice \"demo\" {\n  billing = \n")); err == nil {
+	if _, err := formatDriftfile("Driftfile", []byte("slice \"demo\" {\n  labels = \n")); err == nil {
 		t.Error("a broken file was formatted")
 	}
 }
@@ -363,7 +363,7 @@ func bumpMinor(v string) string {
 // the compiled floor the schema publishes. At 8MiB these tests would be
 // asserting a lint result on a Driftfile the platform refuses.
 func lintDriftfile(handler string) string {
-	return "slice \"lintdemo\" { billing = \"monthly\" }\n" +
+	return "slice \"lintdemo\" {}\n" +
 		"atomic {\n  element \"default\" {\n    pulse \"GET /ping\" {\n      handler = \"" + handler + "\"\n      memory = \"16MiB\"\n    }\n  }\n}\n"
 }
 

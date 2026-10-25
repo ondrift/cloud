@@ -53,7 +53,7 @@ func TestCheckQueueReferences_NamesAnUndeclaredQueue(t *testing.T) {
 // would break a setup that works.
 func TestParse_AnUndeclaredQueueIsAWarningRatherThanARefusal(t *testing.T) {
 	withRealSchema(t)
-	p := writeManifest(t, `slice "demo" { billing = "monthly" }
+	p := writeManifest(t, `slice "demo" {}
 
 atomic {
   element "default" {
@@ -78,7 +78,7 @@ atomic {
 // a check that refuses every trigger.
 func TestParse_AcceptsADeclaredQueue(t *testing.T) {
 	withRealSchema(t)
-	p := writeManifest(t, `slice "demo" { billing = "monthly" }
+	p := writeManifest(t, `slice "demo" {}
 
 atomic {
   element "default" {
@@ -107,7 +107,7 @@ backbone {
 // project that declares no `queue` block.
 func TestParse_AnHTTPFunctionNeedsNoQueue(t *testing.T) {
 	withRealSchema(t)
-	p := writeManifest(t, `slice "demo" { billing = "monthly" }
+	p := writeManifest(t, `slice "demo" {}
 
 atomic {
   element "default" {
@@ -132,7 +132,7 @@ func TestParse_TheQueueCheckMakesNoNetworkCall(t *testing.T) {
 	t.Cleanup(func() { common.APIBaseURL = previous })
 	withRealSchema(t)
 
-	p := writeManifest(t, `slice "demo" { billing = "monthly" }
+	p := writeManifest(t, `slice "demo" {}
 
 atomic {
   element "default" {
