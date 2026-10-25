@@ -164,29 +164,52 @@ jobs:
       - name: vet
         working-directory: cli
         run: go vet ./...
-      # The CLI holds no copy of the Driftfile format — the platform serves it and
-      # the CLI caches what it fetched. A runner has never run the CLI, so it has
-      # no cache, and without one every test that asserts "the schema rejects
-      # this" passes by validating NOTHING.
+      # The CLI is tested against a schema that is NOT the one alpha serves today.
       #
-      # So fetch it, and fail the job if that does not work. Committing a fixture
-      # copy instead would be a second definition of the format, and the copy that
-      # used to exist rotted precisely because nothing compared it to the original.
+      # The platform owns the format and serves it; the CLI caches what it
+      # fetched, and a runner has never run the CLI, so it has no cache. Without
+      # one every test that asserts "the schema rejects this" passes by
+      # validating NOTHING. This job used to fetch the served schema, and that
+      # made it fail for two reasons that are not the code under test: a CLI
+      # change that writes a new key was red until the platform's PR was merged AND
+      # deployed, and every run needed the WireGuard tunnel to alpha.
       #
-      # ⚠ THIS REACHES ALPHA OVER THE TUNNEL. api.ondrift.eu resolves through
-      # public DNS to the public address, where ufw admits 443 on wg0 only, so
-      # this works because the runner's host holds the WireGuard tunnel — the
-      # same dependency pentest.yml documents on the platform side. If this step
-      # starts timing out, check the tunnel before suspecting the api.
-      - name: fetch the Driftfile schema
+      # So the schema this branch is written against is committed beside the
+      # tests (cli/testdata/driftfile.schema.json) and installed as the cache. A
+      # change that needs a new key updates that file in the same PR, copied from
+      # cloud/platform's src/common/driftfile/driftfile.schema.json, which stays
+      # the authority; TestTheTestSchemaIsAtLeastTheFormatTheCLIImplements fails a
+      # bump of ImplementedDriftfileFormat that forgot it.
+      #
+      # THE COPY CAN ROT, which is what the old fixture did, so the next step
+      # compares it with the served schema and SAYS when they differ. It cannot
+      # fail the job: alpha lagging the platform, or the tunnel being down, is a
+      # fact about the world and not about this diff.
+      - name: install the Driftfile schema the tests run against
         run: |
           mkdir -p "$HOME/.drift"
-          curl --fail --silent --show-error --retry 3 --retry-connrefused \
-            https://api.ondrift.eu/driftfile/schema -o "$HOME/.drift/driftfile.schema.json"
+          cp cli/testdata/driftfile.schema.json "$HOME/.drift/driftfile.schema.json"
           python3 - "$HOME/.drift/driftfile.schema.json" <<'PY'
           import json, sys
           schema = json.load(open(sys.argv[1]))
-          print(f"Driftfile format version {schema['version']}, tested against as served")
+          print(f"Driftfile format version {schema['version']}, from cli/testdata")
+          PY
+      - name: compare it with the served schema (informational)
+        continue-on-error: true
+        run: |
+          served=$(mktemp)
+          if ! curl --fail --silent --max-time 20 https://api.ondrift.eu/driftfile/schema -o "$served"; then
+            echo "::notice::the served schema could not be fetched (tunnel or api); nothing to compare"
+            exit 0
+          fi
+          python3 - "$served" cli/testdata/driftfile.schema.json <<'PY'
+          import json, sys
+          served, vendored = (json.load(open(p)) for p in sys.argv[1:3])
+          if served == vendored:
+              print(f"the test schema is the served schema (version {served['version']})")
+          else:
+              print(f"::warning::the tests run against format {vendored['version']}; alpha serves {served['version']}. "
+                    "Expected until the platform change that moved it is deployed; a surprise otherwise.")
           PY
       - name: test
         working-directory: cli
