@@ -36,9 +36,6 @@ func seedSession(t *testing.T) func() []byte {
 	if err := common.SaveSession("access-token-still-good", "refresh-token-still-good"); err != nil {
 		t.Fatalf("seeding the session: %v", err)
 	}
-	if err := common.SaveActiveSlice("my-slice"); err != nil {
-		t.Fatalf("seeding the active slice: %v", err)
-	}
 
 	return func() []byte {
 		b, err := os.ReadFile(path)
@@ -140,8 +137,5 @@ func TestSuccessfulLoginIsObservedToRewriteTheSession(t *testing.T) {
 	}
 	if token != "fresh-access" || refresh != "fresh-refresh" {
 		t.Errorf("stored tokens are %q/%q, want fresh-access/fresh-refresh", token, refresh)
-	}
-	if slice := common.GetActiveSlice(); slice != "my-slice" {
-		t.Errorf("logging in dropped the active slice: got %q, want my-slice", slice)
 	}
 }

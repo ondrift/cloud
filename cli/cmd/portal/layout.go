@@ -699,11 +699,10 @@ func (m *model) handleSidebar(k key) bool {
 	case keyEnter:
 		if m.sideSel < len(m.slices) {
 			name := m.slices[m.sideSel].Name
-			if err := common.SaveActiveSlice(name); err != nil {
+			if err := m.selectSlice(name); err != nil {
 				m.status = "✗ " + err.Error()
 				return false
 			}
-			m.active = name
 			m.invalidateAll()   // cached data belonged to the previous slice
 			m.load(m.tab)       // re-scope the main pane to the new active slice
 			m.focus = focusMain // jump focus into the slice's pane

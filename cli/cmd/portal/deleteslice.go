@@ -8,6 +8,7 @@ package portal
 import (
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/ondrift/cloud/cli/common"
@@ -29,8 +30,8 @@ func (m *model) startDeleteSlice(name string) {
 			if err := deleteSliceByName(name); err != nil {
 				return "✗ " + err.Error()
 			}
-			if m.active == name { // clear the active slice if it was the one deleted
-				_ = common.SaveActiveSlice("")
+			if m.active == name { // stop targeting the slice that was deleted
+				_ = os.Unsetenv(common.SliceEnv)
 				m.active = ""
 			}
 			m.invalidateAll() // cached tab data may belong to the deleted slice

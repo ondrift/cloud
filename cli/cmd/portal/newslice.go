@@ -449,7 +449,7 @@ func (m *model) deployDriftfile(dir string) {
 	cmd.Dir = dir
 	m.suspendAndRun("drift apply  "+abbrevHome(dir), cmd,
 		"deployed "+filepath.Base(dir), "✗ deploy failed (see output above)",
-		func() { m.active = common.GetActiveSlice(); m.loadSlices() })
+		func() { m.adoptSliceOf(dir) })
 }
 
 // deployFunction suspends the dashboard, runs `drift atomic deploy <dir>` against

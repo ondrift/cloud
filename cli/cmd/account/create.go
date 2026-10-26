@@ -45,7 +45,6 @@ var FirstRunHints = []string{
 	"  2. See what it creates, and what it costs       :: 'drift plan'",
 	"  3. Create the slice and deploy                  :: 'drift apply'",
 	"\nManage slices                                    :: 'drift slice list'",
-	"Switch active slice                               :: 'drift slice use <name>'",
 }
 
 func GetCreateCmd() *cobra.Command {
