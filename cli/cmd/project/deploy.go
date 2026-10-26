@@ -169,8 +169,9 @@ func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.
 	if err != nil {
 		return err
 	}
-	// Alerts are not the Driftfile's: they are set with `drift atomic alert`,
-	// and the apply neither writes nor reports them.
+	// Alerts are not reconciled here: `drift apply` plans them, asks about the
+	// ones the file no longer names, and sets them once the pulses they watch
+	// are deployed (see applyAlerts).
 	// Canvas is asked separately: applyCanvas returns early when the manifest
 	// declares no sites, the case where every live site is unnamed.
 	unnamedSites, cerr := unnamedCanvasSites(m)

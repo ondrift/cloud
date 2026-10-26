@@ -246,7 +246,18 @@ type dfPulse struct {
 	Memory     hcl.Expression `hcl:"memory,optional"`
 	Dir        hcl.Expression `hcl:"dir,optional"`
 	Auth       []dfAuth       `hcl:"auth,block"`
+	Alerts     []dfAlert      `hcl:"alert,block"`
 	DefRange   hcl.Range      `hcl:",def_range"`
+}
+
+type dfAlert struct {
+	Name      string         `hcl:"name,label"`
+	NameRange hcl.Range      `hcl:"name,label_range"`
+	On        hcl.Expression `hcl:"on,optional"`
+	Threshold hcl.Expression `hcl:"threshold,optional"`
+	Window    hcl.Expression `hcl:"window,optional"`
+	Webhook   hcl.Expression `hcl:"webhook,optional"`
+	DefRange  hcl.Range      `hcl:",def_range"`
 }
 
 type dfAuth struct {

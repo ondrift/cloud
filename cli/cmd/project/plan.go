@@ -155,6 +155,8 @@ type planState struct {
 	egressErr   error
 	domains     []liveDomain
 	domainsErr  error
+	alerts      []liveAlert
+	alertsErr   error
 	channels    []string // the channels the slice's clients may publish to
 	channelsErr error
 
@@ -247,6 +249,7 @@ func gatherPlan(c *Compiled, declinedFree bool) (*planState, error) {
 	p.sites, p.sitesErr = fetchLiveCanvasSites()
 	p.secrets, p.secretsErr = fetchSecretNames()
 	p.keys, p.keysErr = fetchAPIKeys(c)
+	p.alerts, p.alertsErr = fetchLiveAlerts()
 	if m.Slice().Has("edge", "site_auth") {
 		p.gate, p.gateErr = fetchSiteAuth(m.Name())
 	}
@@ -555,6 +558,7 @@ func (p *planState) diff() *planDiff {
 	p.diffSites(d, creating)
 	p.diffSecrets(d, creating)
 	p.diffKeys(d, creating)
+	p.diffAlerts(d, creating)
 	p.diffEdge(d, creating)
 	p.diffClientChannels(d, creating)
 
