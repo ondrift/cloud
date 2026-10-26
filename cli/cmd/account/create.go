@@ -59,7 +59,7 @@ func GetCreateCmd() *cobra.Command {
 		// RunE, not Run. A `Run` handler has no error channel, so every refusal
 		// below could only be printed and returned — and that exits 0. A signup
 		// that failed reported success to the shell, so `drift account create …
-		// && drift slice create app` went on to run against no session at all,
+		// && drift apply` went on to run against no session at all,
 		// and `set -e` could not help because nothing failed as far as the shell
 		// could see. `drift account login` had exactly this defect and was fixed;
 		// the command beside it kept it.

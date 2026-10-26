@@ -165,8 +165,8 @@ func unrunnable(root *cobra.Command, invocation string) string {
 
 	cur := root
 	for i, w := range words[1:] {
-		// A placeholder or a flag ends the command path: `drift slice create
-		// <name>` is `slice create` plus what the user fills in.
+		// A placeholder or a flag ends the command path: `drift slice info
+		// <name>` is `slice info` plus what the user fills in.
 		if strings.HasPrefix(w, "<") || strings.HasPrefix(w, "[") || strings.HasPrefix(w, "-") {
 			break
 		}
