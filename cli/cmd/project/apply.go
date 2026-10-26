@@ -332,6 +332,11 @@ func runApply(o applyOptions) error {
 		return err
 	}
 
+	// 5: the alerts, after the pulses they watch exist.
+	if err := applyAlerts(c, p, o.out); err != nil {
+		return err
+	}
+
 	if err := runHooks("post_deploy", post, dir); err != nil {
 		fmt.Fprintf(o.out, "\n  %s the slice is applied and live, but a post_deploy hook failed\n", common.Cross())
 		return err
@@ -473,8 +478,11 @@ func euro(cents int) string { return fmt.Sprintf("€%d.%02d", cents/100, cents%
 func writeOnlyValuesSet(c *Compiled) error {
 	var missing []string
 	for _, w := range c.WriteOnly {
-		if !envSet(w.Env) {
+		switch {
+		case !envSet(w.Env):
 			missing = append(missing, fmt.Sprintf("%s reads $%s, which is not set", w.Address, w.Env))
+		case w.Kind == "alert_webhook" && !webhookIsURL(os.Getenv(w.Env)):
+			missing = append(missing, fmt.Sprintf("%s reads $%s, which is not an http(s) URL", w.Address, w.Env))
 		}
 	}
 	if len(missing) > 0 {

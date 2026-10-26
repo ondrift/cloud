@@ -184,7 +184,19 @@ var formatDocs = map[string]formatDoc{
 		"credentials: those are secret blocks, named in `secrets`."},
 	"atomic.element.pulse.secrets": {typ: tList, doc: "The secrets this pulse may read. One the list does not name is " +
 		"unreachable from it, though the slice holds it."},
-	"atomic.element.pulse.dir":  {typ: tString, doc: "The folder its handler is in, when it is not its element's."},
+	"atomic.element.pulse.dir": {typ: tString, doc: "The folder its handler is in, when it is not its element's."},
+	"atomic.element.pulse.alert": {doc: "A condition the slice watches on this pulse, and the webhook it tells when it " +
+		"holds. The label is its name, unique across the slice. `drift plan` shows alerts added, changed and removed, " +
+		"and an alert the file does not name is deleted on apply after the question."},
+	"atomic.element.pulse.alert.on": {typ: tString, doc: `What fires it. "errors" is the one condition: the pulse failed ` +
+		`threshold times within window. Left out, "errors".`},
+	"atomic.element.pulse.alert.threshold": {typ: tNumber, doc: "How many failures within the window fire it, at least 1. " +
+		"Left out, 1."},
+	"atomic.element.pulse.alert.window": {typ: tString, doc: `The evaluation window, such as "5m" or "1h", at least ` +
+		`"1m". Left out, "5m".`},
+	"atomic.element.pulse.alert.webhook": {typ: tRef, required: true, doc: "The environment variable holding the " +
+		"http(s) URL the slice posts to when the alert fires and again when it resolves. Write-only: the URL " +
+		"carries the credential its endpoint needs, so it is never in the file or the plan."},
 	"atomic.element.pulse.auth": {doc: "An API key gate: the pulse answers only a caller presenting the key."},
 	"atomic.element.pulse.auth.api_key": {typ: tRef, required: true, doc: "The environment variable the key is read " +
 		"from. Written env(\"NAME\") and nothing else, so the file never holds the key."},

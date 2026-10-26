@@ -79,6 +79,8 @@ type Compiled struct {
 	Free bool
 	// WriteOnly lists every write-only value by reference, never by value.
 	WriteOnly []WriteOnlyRef
+	// Alerts is every alert the file declares, in the order it declares them.
+	Alerts []DeclaredAlert
 	// Environments are the declared environment blocks, validated.
 	Environments []string
 	// Environment is the one this compile is for, or "" for the default slice.
@@ -93,9 +95,33 @@ type Compiled struct {
 // WriteOnlyRef is one value the platform stores and never returns.
 type WriteOnlyRef struct {
 	Address string // "secret STRIPE_KEY", "pulse POST /admin/reset", "site_auth drift"
-	Kind    string // "secret", "api_key", "site_password"
+	Kind    string // "secret", "api_key", "site_password", "alert_webhook"
 	Env     string // the environment variable it is read from
 }
+
+// DeclaredAlert is one alert a pulse declares. The webhook it notifies is not
+// here: it is a write-only value, read from Env when the alert is applied.
+type DeclaredAlert struct {
+	Name string
+	// Function is the key the slice watches: the pulse's route, without its method.
+	Function string
+	// Pulse is the pulse as the file labels it, for the plan.
+	Pulse     string
+	On        string
+	Threshold int
+	WindowSec int
+	// Env is the variable the webhook URL is read from.
+	Env string
+}
+
+// Defaults an alert has when the file leaves them out; the document states them
+// too (the format's `default`).
+const (
+	defaultAlertOn        = "errors"
+	defaultAlertThreshold = 1
+	defaultAlertWindowSec = 300
+	minAlertWindowSec     = 60
+)
 
 // docRange ties a JSON pointer in the compiled document to where the file
 // wrote it, so a schema refusal is reported at a line and column.
@@ -111,6 +137,9 @@ type compiler struct {
 	ranges map[string]docRange
 	out    *Compiled
 	crons  int
+	// alertNames is every alert declared so far and the pulse that declared it:
+	// an alert's name is the slice's, not its pulse's.
+	alertNames map[string]string
 }
 
 // CompileDriftfile reads and compiles the Driftfile at path, for its default
@@ -368,6 +397,7 @@ func (c *compiler) compilePulse(p dfPulse, ptr string) Node {
 		entry["concurrent"] = b
 		c.at(ptr+"/concurrent", p.Concurrent.Range(), what)
 	}
+	c.compileAlerts(entry, p, route, ptr, what)
 	c.optEnvSecrets(entry, p.Env, p.Secrets, ptr, what)
 
 	switch len(p.Auth) {
@@ -391,6 +421,86 @@ func (c *compiler) compilePulse(p dfPulse, ptr string) Node {
 	c.booking(key, route, method, p.Memory, p.DefRange, what)
 	return entry
 }
+
+// compileAlerts reads a pulse's `alert` blocks: a condition on the pulse, and the
+// webhook told when it holds. The webhook URL carries whatever credential the
+// endpoint needs (a chat hook's path is one), so it is write-only like every
+// other value of that kind: written env("NAME"), read when the alert is applied,
+// and never in the document or the plan.
+func (c *compiler) compileAlerts(entry Node, p dfPulse, route, ptr, what string) {
+	var list []any
+	for i, a := range p.Alerts {
+		aptr := fmt.Sprintf("%s/alerts/%d", ptr, i)
+		awhat := fmt.Sprintf("%s alert %q", what, a.Name)
+		c.at(aptr, a.NameRange, awhat)
+
+		if !alertNameRe.MatchString(a.Name) {
+			c.ev.errorf(a.NameRange, "Not an alert name",
+				"%s: an alert name is 1 to 64 lowercase letters, digits and hyphens.", awhat)
+			continue
+		}
+		if other, taken := c.alertNames[a.Name]; taken {
+			c.ev.errorf(a.NameRange, "Duplicate alert",
+				"%s: %s already declares an alert of that name; an alert's name is the slice's.", awhat, other)
+			continue
+		}
+		if c.alertNames == nil {
+			c.alertNames = map[string]string{}
+		}
+		c.alertNames[a.Name] = what
+
+		on := defaultAlertOn
+		if v, ok := c.ev.str(a.On, awhat+": on"); ok {
+			if v != defaultAlertOn {
+				c.ev.errorf(a.On.Range(), "Not a condition",
+					"%s: on is %q; \"errors\" is the one condition there is.", awhat, v)
+				continue
+			}
+			on = v
+		}
+		threshold := defaultAlertThreshold
+		if n, ok := c.ev.integer(a.Threshold, awhat+": threshold"); ok {
+			if n < 1 {
+				c.ev.errorf(a.Threshold.Range(), "Out of range", "%s: threshold is %d; it is at least 1.", awhat, n)
+				continue
+			}
+			threshold = n
+		}
+		window := defaultAlertWindowSec
+		if raw, ok := c.ev.str(a.Window, awhat+": window"); ok {
+			secs, err := parseDuration(raw)
+			switch {
+			case err != nil:
+				c.ev.errorf(a.Window.Range(), "Not a duration", "%s: window %q is not a duration; write one such as \"5m\" or \"1h\".", awhat, raw)
+				continue
+			case secs < minAlertWindowSec:
+				c.ev.errorf(a.Window.Range(), "Out of range", "%s: window is %s; it is at least 1m.", awhat, raw)
+				continue
+			}
+			window = secs
+		}
+		env, ok := c.ev.envReference(a.Webhook, awhat+": webhook")
+		if !ok {
+			if !present(a.Webhook) {
+				c.ev.errorf(a.DefRange, "Missing webhook", `%s names where it notifies: webhook = env("NAME"), a variable holding an http(s) URL.`, awhat)
+			}
+			continue
+		}
+
+		list = append(list, Node{"name": a.Name, "on": on, "threshold": threshold, "window_seconds": window})
+		c.at(aptr+"/name", a.NameRange, awhat)
+		c.out.WriteOnly = append(c.out.WriteOnly, WriteOnlyRef{Address: "alert " + a.Name, Kind: "alert_webhook", Env: env})
+		c.out.Alerts = append(c.out.Alerts, DeclaredAlert{
+			Name: a.Name, Function: route, Pulse: strings.TrimPrefix(what, "pulse "),
+			On: on, Threshold: threshold, WindowSec: window, Env: env,
+		})
+	}
+	if len(list) > 0 {
+		entry["alerts"] = list
+	}
+}
+
+var alertNameRe = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
 
 func (c *compiler) compileField(f dfField, ptr string) Node {
 	what := fmt.Sprintf("field %q", f.Name)

@@ -200,7 +200,10 @@ func driftfileVersionOf(raw []byte) string {
 //
 // 2.2.0 adds edge.site_auth.paths, which the compiler writes from the `paths`
 // attribute of `site_auth`.
-const ImplementedDriftfileFormat = "2.2.0"
+//
+// 2.3.0 adds `alerts` on a pulse, which the compiler writes from its `alert`
+// blocks.
+const ImplementedDriftfileFormat = "2.3.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every
 // authenticated request.
