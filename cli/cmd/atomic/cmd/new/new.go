@@ -122,7 +122,7 @@ func New() *cobra.Command {
 	c.Flags().StringVarP(&method, "method", "m", "", "HTTP method: get|post|put|delete|patch")
 	c.Flags().StringVarP(&queue, "queue", "q", "", "queue name (creates a queue-triggered function)")
 	c.Flags().StringVarP(&auth, "auth", "a", "", "auth for HTTP: "+strings.Join(AuthOptions, "|")+" (default none)")
-	c.Flags().StringVarP(&backend, "backend", "e", "", "backend to add it to (default: the flat top-level backend)")
+	c.Flags().StringVarP(&backend, "backend", "b", "", "backend to add it to (default: the flat top-level backend)")
 	return c
 }
 

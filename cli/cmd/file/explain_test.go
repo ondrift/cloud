@@ -83,11 +83,11 @@ func TestExplain_Recursive(t *testing.T) {
 
 // A name one edit away is suggested, and what the block does hold is listed.
 func TestExplain_AnUnknownNameSuggestsTheNearest(t *testing.T) {
-	_, err := explainOut(t, "atomic.backend.puls")
+	_, err := explainOut(t, "atomic.backend.functio")
 	if err == nil {
 		t.Fatal("an unknown name was explained")
 	}
-	for _, want := range []string{`a backend block holds no block or attribute "puls"`, "did you mean: function", "available here:"} {
+	for _, want := range []string{`a backend block holds no block or attribute "functio"`, "did you mean: function", "available here:"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q:\n%v", want, err)
 		}

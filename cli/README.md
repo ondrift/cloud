@@ -69,7 +69,7 @@ block it can hold.
 
 | Command | Description |
 |---------|-------------|
-| `drift atomic new [name]` | Add a function to a backend &mdash; a flat file under `atomic/`, not a per-function folder. HTTP or queue trigger. Flags: `-l/--lang`, `-m/--method`, `-q/--queue`, `-a/--auth`, `-e/--backend`. |
+| `drift atomic new [name]` | Add a function to a backend &mdash; a flat file under `atomic/`, not a per-function folder. HTTP or queue trigger. Flags: `-l/--lang`, `-m/--method`, `-q/--queue`, `-a/--auth`, `-b/--backend`. |
 | `drift atomic fetch [path]` | Resolve dependencies for every function found under a path. |
 | `drift atomic run <dir>` | Run a function locally with hot reload. |
 | `drift atomic list` | List deployed functions. |

@@ -5,13 +5,6 @@
       "backends": [
         {
           "dir": "atomic/evm",
-          "workers": [
-            {
-              "handler": "Sequencer",
-              "name": "sequencer"
-            }
-          ],
-          "name": "evm",
           "functions": [
             {
               "concurrent": true,
@@ -27,11 +20,17 @@
               "response": "json",
               "route": "admin/reset"
             }
+          ],
+          "name": "evm",
+          "workers": [
+            {
+              "handler": "Sequencer",
+              "name": "sequencer"
+            }
           ]
         },
         {
           "dir": "atomic/bench",
-          "name": "bench",
           "functions": [
             {
               "handler": "GetBench",
@@ -39,7 +38,8 @@
               "response": "json",
               "route": "bench"
             }
-          ]
+          ],
+          "name": "bench"
         }
       ]
     },

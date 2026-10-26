@@ -19,7 +19,7 @@ func GetCmd() *cobra.Command {
 		Use:   "atomic",
 		Short: "Manage Atomic deployments: functions and workers",
 		Long: "Atomic runs your code on the slice, as two kinds of work.\n\n" +
-			"Functions: Atomic's functions, one call, one result. Workers: long-running processes.\n\n" +
+			"Functions: one call, one result. Workers: long-running processes the slice keeps running.\n\n" +
 			"Both are declared in the Driftfile, as `function` and `worker` blocks inside the `backend` " +
 			"block their handler lives in (`backend \"default\"` is ./atomic itself, any other name " +
 			"is ./atomic/<name>), each with the memory it books as a slot on the slice. " +

@@ -80,8 +80,8 @@ func webhookIsURL(v string) bool {
 // holds, and never the webhook itself.
 func alertDiff(a DeclaredAlert, live liveAlert) []string {
 	var changes []string
-	if a.Function != live.Function {
-		changes = append(changes, fmt.Sprintf("watches %s → %s", live.Function, a.Function))
+	if a.Route != live.Function {
+		changes = append(changes, fmt.Sprintf("watches %s → %s", live.Function, a.Route))
 	}
 	if a.On != live.Trigger {
 		changes = append(changes, fmt.Sprintf("on %s → %s", live.Trigger, a.On))
@@ -167,7 +167,7 @@ func applyAlerts(c *Compiled, p *planState, out io.Writer) error {
 			continue
 		}
 		body, err := json.Marshal(liveAlert{
-			Name: a.Name, Function: a.Function, Trigger: a.On, Threshold: a.Threshold,
+			Name: a.Name, Function: a.Route, Trigger: a.On, Threshold: a.Threshold,
 			WindowSec: a.WindowSec, NotifyType: "webhook", NotifyTarget: os.Getenv(a.Env),
 		})
 		if err != nil {

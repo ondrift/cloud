@@ -278,7 +278,7 @@ func TestBackends_DownstreamReadersSeeEverySlot(t *testing.T) {
 	}
 	named := namedFunctions(m)
 	sort.Strings(named)
-	if strings.Join(named, ",") != "worker:sequencer,get:bench,post:admin/reset,post:rpc" {
+	if strings.Join(named, ",") != "get:bench,post:admin/reset,post:rpc,worker:sequencer" {
 		t.Errorf("namedFunctions = %v", named)
 	}
 }

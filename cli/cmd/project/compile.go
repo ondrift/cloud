@@ -104,8 +104,8 @@ type WriteOnlyRef struct {
 // here: it is a write-only value, read from Env when the alert is applied.
 type DeclaredAlert struct {
 	Name string
-	// Function is the key the slice watches: the function's route, without its method.
-	Function string
+	// Route is the key the slice watches: the function's route, without its method.
+	Route string
 	// Function is the function as the file labels it, for the plan.
 	Function  string
 	On        string
@@ -493,7 +493,7 @@ func (c *compiler) compileAlerts(entry Node, p dfFunction, route, ptr, what stri
 		c.at(aptr+"/name", a.NameRange, awhat)
 		c.out.WriteOnly = append(c.out.WriteOnly, WriteOnlyRef{Address: "alert " + a.Name, Kind: "alert_webhook", Env: env})
 		c.out.Alerts = append(c.out.Alerts, DeclaredAlert{
-			Name: a.Name, Function: route, Function: strings.TrimPrefix(what, "function "),
+			Name: a.Name, Route: route, Function: strings.TrimPrefix(what, "function "),
 			On: on, Threshold: threshold, WindowSec: window, Env: env,
 		})
 	}

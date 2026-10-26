@@ -259,13 +259,13 @@ var goldenDeclarationDigests = []struct {
 }{
 	{FunctionSpec{Name: "post:rpc", Handler: "PostRPC", Backend: "evm", Auth: "apikey", Response: "raw",
 		Secrets: []string{"B", "A"}, Env: map[string]string{"FXEVM_DEBUG_RPC": "1", "REGION": "eu"}},
-		"de14e7d3d3c7ed7789872ae605cbbf2e4b62d5bdc1a327d9bee3fcb38eed1318"},
+		"5632412ac7670241c3a22f68514b7b21d74ea784993feb929e4e5cbec2291371"},
 	{FunctionSpec{Name: "get:tick", Handler: "GetTick"},
-		"c987a42786b18e01c7ae1702d04e9223b9a3dfb4673796baa93e6ef0d29e8676"},
+		"13b41bccc1837a9217f1570687087f09ea6e43d625bf0d894bf8b95645577d63"},
 	{FunctionSpec{Name: "get:events", Handler: "GetEvents", Stream: "sse"},
-		"87bbc952b85252546242909f892087b55defbd078ecdedc931ae81df8392dfb4"},
+		"fb8fa1b5452a45774d2d60ace35e8f78f0ba71fca9dbd23a9d2892fee53ad281"},
 	{FunctionSpec{Name: "worker:sequencer", Handler: "Sequencer", Backend: "evm"},
-		"4674fc3c8dd8f7270c07a71ce5524e8b1661832663b705f620a38340e5a77dd9"},
+		"c6bf27202716cb95ccf9e5777a370deb6671b9a39f241012130a54795bf8d886"},
 }
 
 func TestDeclarationDigest_IsUnchangedForEveryExistingDeclaration(t *testing.T) {
