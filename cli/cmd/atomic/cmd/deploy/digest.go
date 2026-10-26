@@ -251,6 +251,15 @@ func DeclarationDigest(spec FunctionSpec) string {
 	if spec.IsConcurrent() {
 		fmt.Fprintf(h, "concurrent\x00true\x00")
 	}
+	// A queue Pulse's tuning is part of what its trigger is, so changing it
+	// redeploys the Pulse; left out, nothing is written and every digest taken
+	// before these existed stays what it was.
+	if spec.PollMS != 0 {
+		fmt.Fprintf(h, "poll_ms\x00%d\x00", spec.PollMS)
+	}
+	if spec.MaxRetry != 0 {
+		fmt.Fprintf(h, "max_retry\x00%d\x00", spec.MaxRetry)
+	}
 
 	secrets := append([]string(nil), spec.Secrets...)
 	sort.Strings(secrets)

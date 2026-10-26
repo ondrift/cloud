@@ -180,6 +180,10 @@ var formatDocs = map[string]formatDoc{
 		`"ws" for WebSocket.`},
 	"atomic.element.pulse.cron": {typ: tString, doc: "A five-field cron expression that also runs the pulse on a " +
 		"schedule. An HTTP pulse with a cron stays callable over HTTP."},
+	"atomic.element.pulse.poll": {typ: tString, doc: `How often the slice looks in the queue this pulse drains, as a duration ` +
+		`from "50ms" to "60s". Only on a pulse labelled QUEUE. Left out, every 500ms.`},
+	"atomic.element.pulse.max_retries": {typ: tNumber, doc: "How many times a message that makes this pulse fail is delivered " +
+		"again before it is parked in the dead-letter queue, from 1 to 100. Only on a pulse labelled QUEUE. Left out, 3."},
 	"atomic.element.pulse.env": {typ: tMap, doc: "Plain configuration injected into its environment. Not for " +
 		"credentials: those are secret blocks, named in `secrets`."},
 	"atomic.element.pulse.secrets": {typ: tList, doc: "The secrets this pulse may read. One the list does not name is " +

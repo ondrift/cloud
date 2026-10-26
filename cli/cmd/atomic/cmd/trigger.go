@@ -13,20 +13,17 @@ import (
 
 func Trigger() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "trigger",
-		Short:   "Manage event triggers for pulses",
-		Example: "  drift atomic trigger list\n  drift atomic trigger register queue order-processor --queue orders --target http://localhost:8080\n  drift atomic trigger unregister order-processor",
+		Use:   "trigger",
+		Short: "List a slice's triggers, or remove one",
+		Long: "A pulse's triggers are declared in the Driftfile: a pulse labelled QUEUE and the queue it " +
+			"drains (with `poll` and `max_retries` to tune it), and a `cron` for a schedule. Nothing here " +
+			"registers one. `list` shows what the slice is running, and `unregister` removes a trigger the " +
+			"Driftfile no longer declares.",
+		Example: "  drift atomic trigger list\n  drift atomic trigger unregister order-processor",
 		GroupID: "operations",
 	}
 
-	register := &cobra.Command{
-		Use:     "register",
-		Short:   "Register a trigger",
-		Example: "  drift atomic trigger register queue order-processor --queue orders --target http://localhost:8080",
-	}
-	register.AddCommand(triggerRegisterQueueCmd())
-
-	cmd.AddCommand(triggerListCmd(), register, triggerUnregisterCmd())
+	cmd.AddCommand(triggerListCmd(), triggerUnregisterCmd())
 	return cmd
 }
 
@@ -78,53 +75,6 @@ func triggerListCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-func triggerRegisterQueueCmd() *cobra.Command {
-	var queue, target string
-	var pollMS, maxRetry int
-	cmd := &cobra.Command{
-		Use:     "queue <name>",
-		Short:   "Register a queue trigger: polls a Backbone queue and invokes a pulse on each message",
-		Example: "  drift atomic trigger register queue order-processor --queue orders --target http://localhost:8080\n  drift atomic trigger register queue email-sender --queue emails --target http://localhost:8080 --poll-ms 250 --max-retry 5",
-		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-
-			payload, _ := json.Marshal(map[string]any{
-				"name":       name,
-				"type":       "queue",
-				"source":     queue,
-				"target_url": target,
-				"poll_ms":    pollMS,
-				"max_retry":  maxRetry,
-			})
-			resp, err := common.DoJSONRequest(
-				http.MethodPost,
-				common.APIBaseURL+"/ops/trigger/register",
-				bytes.NewBuffer(payload),
-			)
-			if err != nil {
-				e := common.TransportError("register the queue trigger", err)
-				return e
-			}
-			defer resp.Body.Close()
-
-			if _, err := common.CheckResponse(resp, "register the queue trigger"); err != nil {
-				return err
-			}
-
-			fmt.Printf("Queue trigger %q registered (queue: %s, poll: %dms)\n", name, queue, pollMS)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&queue, "queue", "", "Backbone queue name to watch (required)")
-	cmd.Flags().StringVar(&target, "target", "", "Target URL to invoke when a message arrives (required)")
-	cmd.Flags().IntVar(&pollMS, "poll-ms", 500, "Queue polling interval in milliseconds")
-	cmd.Flags().IntVar(&maxRetry, "max-retry", 3, "Maximum retries before moving to dead-letter queue")
-	_ = cmd.MarkFlagRequired("queue")
-	_ = cmd.MarkFlagRequired("target")
-	return cmd
 }
 
 func triggerUnregisterCmd() *cobra.Command {

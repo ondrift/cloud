@@ -241,6 +241,8 @@ type dfPulse struct {
 	Concurrent hcl.Expression `hcl:"concurrent,optional"`
 	Stream     hcl.Expression `hcl:"stream,optional"`
 	Cron       hcl.Expression `hcl:"cron,optional"`
+	Poll       hcl.Expression `hcl:"poll,optional"`
+	MaxRetries hcl.Expression `hcl:"max_retries,optional"`
 	Env        hcl.Expression `hcl:"env,optional"`
 	Secrets    hcl.Expression `hcl:"secrets,optional"`
 	Memory     hcl.Expression `hcl:"memory,optional"`
