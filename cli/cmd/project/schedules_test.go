@@ -1,11 +1,8 @@
 package project
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
-
-	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
 )
 
 // projectWith returns a Manifest whose atomic.pulses are fns.
@@ -157,49 +154,6 @@ func TestTheScheduleKeyIsTheKeyTheDeployLooksUp(t *testing.T) {
 				"which is exactly how every declared cron was dropped in silence.",
 				key, specNames)
 		}
-	}
-}
-
-// `drift atomic deploy` PUBLISHES THE SCHEDULES TOO.
-//
-// It reads a Driftfile — FunctionSpecsInDir walks up to the project manifest —
-// and has to publish what it found, or the same Driftfile produces a schedule
-// under `drift apply` and none under `drift atomic deploy`, with nothing said
-// either way. A schedule that exists depending on which deploy command you typed
-// is worse than one that does not exist.
-func TestAtomicDeployPublishesTheDeclaredSchedules(t *testing.T) {
-	withRealSchema(t)
-	t.Cleanup(func() { atomic_cmd.SetDeclaredSchedules(nil) })
-	atomic_cmd.SetDeclaredSchedules(nil)
-
-	dir := t.TempDir()
-	fnDir := filepath.Join(dir, "atomic")
-	if err := os.MkdirAll(fnDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(fnDir, "tick.js"),
-		[]byte("function GetTick(req) { return [200, 'OK', {}]; }\nmodule.exports = { GetTick };\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "Driftfile"),
-		[]byte("slice \"demo\" {}\n\natomic {\n  element \"default\" {\n"+
-			"    pulse \"GET /tick\" {\n      handler = \"GetTick\"\n      memory = \"32MiB\"\n"+
-			"      cron = \"*/1 * * * *\"\n    }\n  }\n}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	specs, err := FunctionSpecsInDir(fnDir)
-	if err != nil {
-		t.Fatalf("resolving the directory: %v", err)
-	}
-	if len(specs) != 1 {
-		t.Fatalf("want one spec, got %d", len(specs))
-	}
-	if got := atomic_cmd.DeclaredScheduleFor(specs[0].Name); got != "*/1 * * * *" {
-		t.Errorf("`drift atomic deploy` resolved %q and published no schedule for it (got %q).\n"+
-			"  The Driftfile declares one, so this command ships the function with its cron "+
-			"dropped — and `drift apply` on the same file ships it with the cron.",
-			specs[0].Name, got)
 	}
 }
 

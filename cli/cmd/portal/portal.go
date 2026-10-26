@@ -783,7 +783,7 @@ func (m *model) activateFnField() {
 	}
 	switch fnConfigKeys[m.detailSel] {
 	case "element":
-		m.status = "element is set at deploy: drift atomic deploy --element <name>"
+		m.status = "element: the pulse sits in an element block of the Driftfile, then drift apply"
 	case "trigger":
 		m.status = "trigger: label the pulse QUEUE <name> in the Driftfile (poll, max_retries tune it), then drift apply"
 	case "schedule":
@@ -1131,8 +1131,10 @@ func (m *model) renderDetail(b *strings.Builder) {
 
 func (m *model) renderCanvas(b *strings.Builder) {
 	b.WriteString("  Canvas serves your static site at the slice root, same-origin with\r\n")
-	b.WriteString("  your functions (no CORS). Deploy a directory:\r\n\r\n")
-	b.WriteString("    \x1b[36mdrift canvas deploy ./site --route /\x1b[0m\r\n\r\n")
+	b.WriteString("  your functions (no CORS). Declare the directory in the Driftfile\r\n")
+	b.WriteString("  and apply it:\r\n\r\n")
+	b.WriteString("    \x1b[36mcanvas { site \"/\" { dir = \"./site\" } }\x1b[0m\r\n")
+	b.WriteString("    \x1b[36mdrift apply\x1b[0m\r\n\r\n")
 }
 
 // renderMemoryCensus draws the slice's real memory picture from the census,

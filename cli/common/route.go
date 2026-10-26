@@ -1,6 +1,6 @@
 // route.go — where a canvas site mounts, and the directory name derived from
 // it. One implementation, read by the Driftfile reconcile, by the local `run`
-// layout and by `drift canvas deploy`, so a site cannot land under one slug on
+// layout and by `drift apply`'s site upload, so a site cannot land under one slug on
 // a laptop and a different one on the slice.
 package common
 

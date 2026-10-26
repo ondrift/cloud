@@ -15,7 +15,7 @@ import (
 //
 //   - A `Run` handler has NO ERROR CHANNEL, so the only way to report a failure
 //     was to print it and return — which exits 0. A refused `drift account
-//     delete`, a failed `drift canvas deploy` and a broken `drift atomic list`
+//     delete`, a failed `drift apply` and a broken `drift atomic list`
 //     all told the shell they had succeeded, and `set -e` could not help because
 //     nothing failed as far as the shell could see.
 //   - Handlers that DID return also printed, while main() prints whatever comes

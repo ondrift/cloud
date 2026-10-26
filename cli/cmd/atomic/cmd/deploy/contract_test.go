@@ -10,7 +10,7 @@
 //
 // WHY THIS IS NOT TWO FILES AGREEING WITH EACH OTHER. The table below is not
 // the contract; the WRAPPER is, because the wrapper is what runs. Every
-// assertion reads the embedded template — the same bytes `drift atomic deploy`
+// assertion reads the embedded template — the same bytes `drift apply`
 // ships — and derives what a handler must look like from it. The README is then
 // held to that. A change to the wrapper alone fails here, a change to the README
 // alone fails here, and a change to both together passes, which is the whole

@@ -72,7 +72,6 @@ block it can hold.
 | `drift atomic new [name]` | Add a function to an element &mdash; a flat file under `atomic/`, not a per-function folder. HTTP or queue trigger. Flags: `-l/--lang`, `-m/--method`, `-q/--queue`, `-a/--auth`, `-e/--element`. |
 | `drift atomic fetch [path]` | Resolve dependencies for every function found under a path. |
 | `drift atomic run <dir>` | Run a function locally with hot reload. |
-| `drift atomic deploy <dir>` | Build, archive, and deploy a function. |
 | `drift atomic list` | List deployed functions. |
 | `drift atomic logs <name>` | View a function's logs (`logs purge` clears them). |
 | `drift atomic metrics <name>` | Request count, error rate, average duration. |
@@ -96,9 +95,7 @@ block it can hold.
 
 ### Canvas — static sites
 
-| Command | Description |
-|---------|-------------|
-| `drift canvas deploy <dir>` | Deploy a static site, served same-origin with your functions. |
+A site is declared in the Driftfile (`canvas { site "/" { dir = "./site" } }`) and uploaded by `drift apply`, served same-origin with your functions. There is no separate deploy command.
 
 ### The Driftfile
 

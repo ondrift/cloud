@@ -156,7 +156,7 @@ func TestLogin_AnEmptyCodeIsNotSent(t *testing.T) {
 
 // A refused code fails the command. This is the regression that already cost
 // this CLI once on the password path: a failed login that exits 0 makes every
-// `drift account login && drift atomic deploy` in the world deploy anyway.
+// `drift account login && drift apply` in the world deploy anyway.
 func TestLogin_ARefusedCodeIsAnError(t *testing.T) {
 	a := newAuthStub(t)
 	a.mfaStatus = http.StatusUnauthorized

@@ -493,8 +493,8 @@ func TestFunctionSpecs_MissingHandlerFailsBeforeAnythingShips(t *testing.T) {
 	}
 }
 
-// `drift atomic deploy <dir>` ships a subset of the manifest, never something
-// the manifest has never heard of.
+// `drift atomic run <dir>` runs a subset of the manifest, never something the
+// manifest has never heard of.
 func TestFunctionSpecsInDir_SelectsOneElement(t *testing.T) {
 	withRealSchema(t)
 	root := demoProject(t, demoDriftfile)
@@ -523,7 +523,7 @@ func TestFunctionSpecsInDir_SelectsOneElement(t *testing.T) {
 	}
 }
 
-// `drift atomic deploy <dir>` names a folder INSIDE a project, so the project
+// `drift atomic run <dir>` names a folder INSIDE a project, so the project
 // is found by walking UP from that folder — not by hoping the shell happens to
 // be standing in the root.
 func TestFindDriftfileFor_WalksUpFromTheTarget(t *testing.T) {
