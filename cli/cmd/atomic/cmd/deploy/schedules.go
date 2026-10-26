@@ -18,12 +18,8 @@
 //
 // # Why a package-level registry
 //
-// The deploy functions are called from `drift apply` and from `drift atomic
-// deploy`, and BOTH have read a Driftfile — the second through
-// `FunctionSpecsInDir`, which walks up to the project's manifest to learn what
-// the directory it was given declares. Each publishes here before shipping
-// anything, so the same Driftfile produces the same schedules under either
-// command.
+// The deploy functions are called from `drift apply`, which has read the
+// Driftfile and publishes here before shipping anything.
 //
 // Threading a manifest through three deploy signatures to carry one optional
 // map would put the Driftfile's whole vocabulary into paths that need one field

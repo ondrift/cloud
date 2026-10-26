@@ -137,7 +137,7 @@ const (
 // explorer modes — what "select" ultimately does.
 const (
 	exDriftfile  = iota // a Driftfile → drift apply (create or resize its slice, then deploy)
-	exFnDeploy          // a directory  → drift atomic deploy <dir>
+	exFnDeploy          // a directory  → drift apply, run in it
 	exFnNew             // a directory  → drift atomic new (scaffold there)
 	exProjectNew        // a directory  → drift file new, then drift apply
 )
@@ -336,7 +336,7 @@ func (m *model) explorerLines() []string {
 	header, hint := bold(cGreen+"+ New slice "+cReset+dim("· from a Driftfile")), "g type a path · ★ Driftfile found nearby"
 	switch e.mode {
 	case exFnDeploy:
-		header, hint = bold(cOrange+"+ New function "+cReset+dim("· deploy a directory")), "g type a path · ● select to deploy"
+		header, hint = bold(cOrange+"+ New function "+cReset+dim("· apply a project's directory")), "g type a path · ● select to apply its Driftfile"
 	case exFnNew:
 		header, hint = bold(cOrange+"+ New function "+cReset+dim("· scaffold new")), "g type a path · ● select to scaffold here"
 	case exProjectNew:
@@ -479,13 +479,16 @@ func (m *model) deployDriftfile(dir string) {
 		func() { m.adoptSliceOf(dir) })
 }
 
-// deployFunction suspends the dashboard, runs `drift atomic deploy <dir>` against
-// the active slice, then re-enters with a fresh function list.
+// deployFunction suspends the dashboard, runs `drift apply` in dir (the project
+// whose Driftfile declares the function is the nearest one up from it), then
+// re-enters with a fresh function list. Apply ships what changed and leaves the
+// rest alone.
 func (m *model) deployFunction(dir string) {
 	m.explorer = nil
-	cmd := exec.Command(driftExe(), "atomic", "deploy", dir) // #nosec G204 -- our own binary, fixed args
-	m.suspendAndRun("drift atomic deploy  "+abbrevHome(dir), cmd,
-		"deployed function from "+filepath.Base(dir), "✗ deploy failed (see output above)",
+	cmd := exec.Command(driftExe(), "apply") // #nosec G204 -- our own binary, fixed args
+	cmd.Dir = dir
+	m.suspendAndRun("drift apply  "+abbrevHome(dir), cmd,
+		"applied the project of "+filepath.Base(dir), "✗ apply failed (see output above)",
 		func() { m.invalidateAll(); m.load(m.tab) })
 }
 

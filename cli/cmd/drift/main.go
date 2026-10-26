@@ -202,6 +202,9 @@ var removedVerbs = map[string]map[string]string{
 		"diff":     "`drift plan` shows what applying the Driftfile would change, and what it would cost",
 		"migrate":  "the Driftfile is HCL: `drift file new` writes a starter, and `drift file explain` lists every block it can hold",
 	},
+	"drift atomic": {
+		"deploy": "`drift apply` builds and ships every pulse and field whose source or declaration changed, and leaves the rest alone; `drift plan` shows what it would change",
+	},
 }
 
 // refuseUnknownVerbs gives every group without a run function one: bare, it

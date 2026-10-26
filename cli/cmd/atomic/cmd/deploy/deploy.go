@@ -1,5 +1,5 @@
-// deploy.go — `drift atomic deploy <dir>`. Builds and uploads a single
-// Atomic function. Six per-language build paths share one wrapper-
+// deploy.go — builds and uploads one Atomic function, for `drift apply`. Six
+// per-language build paths share one wrapper-
 // injection scheme + one multipart-upload tail:
 //
 //  1. Detect language from source files in the directory.
@@ -42,8 +42,6 @@ import (
 
 	atomic_common "github.com/ondrift/cloud/cli/cmd/atomic/common"
 	"github.com/ondrift/cloud/cli/common"
-
-	"github.com/spf13/cobra"
 )
 
 //go:embed default/server_post_native.txt
@@ -711,8 +709,8 @@ func operatorSink(a FuncArtifact) error {
 }
 
 // DeployFunction builds and deploys one declared function. It is exported so
-// `drift apply` can call it directly without going through the cobra command
-// layer. When quiet is true, all per-function status chatter is
+// `drift apply` can call it: apply is the only command that ships a function.
+// When quiet is true, all per-function status chatter is
 // suppressed so the manifest deploy can render its own clean summary line for
 // each function.
 //
@@ -883,38 +881,4 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 		}
 	}
 	return nil
-}
-
-// Deploy is `drift atomic deploy <folder>` — ship the functions the Driftfile
-// declares in one directory, rather than the whole project.
-//
-// resolve is supplied by the caller that can read a Driftfile. This package is
-// imported BY the manifest parser, so it cannot import it back (Article I: no
-// cycles); handing the lookup in keeps the arrow pointing one way.
-func Deploy(resolve func(dir string) ([]FunctionSpec, error)) *cobra.Command {
-	atomicDeployCmd := &cobra.Command{
-		Use:   "deploy [function folder]",
-		Short: "Deploy the pulses and fields declared in one folder",
-		Long: "Build and ship every pulse and field the project's Driftfile declares in <folder>, " +
-			"leaving the rest of the project alone.\n\n" +
-			"What each one is (the handler that runs it, the memory it books, its secrets and, " +
-			"for a pulse, its trigger and gate) comes from the Driftfile, so this command " +
-			"deploys a subset of the manifest and never something the manifest has not seen.",
-		Example: "  drift atomic deploy ./atomic\n  drift atomic deploy ./atomic/billing",
-		GroupID: "operations",
-		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			specs, err := resolve(args[0])
-			if err != nil {
-				return err
-			}
-			for _, s := range specs {
-				if derr := DeployFunction(s, false); derr != nil {
-					return derr
-				}
-			}
-			return nil
-		},
-	}
-	return atomicDeployCmd
 }

@@ -209,8 +209,8 @@ func TestInstallPHPDeps_SDKOnlyNeedsNoDocker(t *testing.T) {
 // The generated wrapper requires the SDK unconditionally, so a bare element —
 // one source file and no manifest — needs it vendored exactly as much as one
 // that declares it. Every *SDKOnly helper reports a missing manifest as
-// SDK-only for this reason. Nothing declared is the shape `drift atomic deploy`
-// produces for a single-file function, and the deploy reports success either
+// SDK-only for this reason. Nothing declared is the shape `drift apply`
+// builds for a single-file function, and the deploy reports success either
 // way, so the gap surfaces only as a 500 at first invocation.
 
 func TestInstallNodeDeps_NoManifestStillVendorsTheSDK(t *testing.T) {

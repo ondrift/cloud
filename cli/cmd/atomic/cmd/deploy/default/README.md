@@ -1,4 +1,4 @@
-# default/ — embedded wrapper templates for `drift atomic deploy`
+# default/ — embedded wrapper templates for `drift apply`
 
 These files are read at compile time via `//go:embed` directives in
 `deploy.go` and used to generate the wrapper code injected into a user's
@@ -10,7 +10,7 @@ binary.
 **The SDK itself is no longer embedded, and the CLI is SDK-agnostic.**
 Each function declares the SDK in its own manifest (`go.mod`,
 `package.json`, `requirements.txt`, `Gemfile`, `composer.json`,
-`Cargo.toml`); `drift atomic deploy` / `drift atomic run` just run the
+`Cargo.toml`); `drift apply` / `drift atomic run` just run the
 package manager (`go mod tidy` / `npm` / `pip` / `bundler` / `composer` /
 `cargo`) against whatever the manifest declares — no version is injected
 or overridden. Only the thin wrapper/server templates that bridge the

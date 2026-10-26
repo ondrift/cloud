@@ -202,7 +202,7 @@ func completeLoginWithFactor(client *http.Client, mfaToken string, factor factor
 // It used to print the error and return nothing, on a cobra `Run:` (which has no
 // error channel at all), so a rejected login printed "Couldn't log in: invalid
 // username or password." and exited 0 (#CLI-STANDARDUSAGE-3F5TDV). Every script
-// doing `drift account login ... && drift atomic deploy ...` therefore deployed
+// doing `drift account login ... && drift apply ...` therefore deployed
 // after a failed login, and `set -e` could not help, because nothing failed as far
 // as the shell could see.
 //

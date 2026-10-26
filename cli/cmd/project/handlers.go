@@ -214,12 +214,12 @@ func FindDriftfileFor(dir string) (string, error) {
 }
 
 // FunctionSpecsInDir resolves the functions the project declares in one
-// directory, for `drift atomic deploy <dir>` — which ships a subset of the
-// manifest rather than something the manifest has never heard of.
+// directory, for `drift atomic run <dir>` — which runs a subset of the manifest
+// rather than something the manifest has never heard of.
 //
 // A directory the Driftfile does not name is an error, and has to be: without a
 // declaration there is no memory booking, no gate and no handler, so there is
-// nothing to deploy and nothing the slice could admit work against.
+// nothing to run and nothing the slice could admit work against.
 func FunctionSpecsInDir(dir string) ([]atomic_cmd.FunctionSpec, error) {
 	path, err := FindDriftfileFor(dir)
 	if err != nil {
@@ -229,25 +229,6 @@ func FunctionSpecsInDir(dir string) ([]atomic_cmd.FunctionSpec, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// THE SCHEDULES THIS MANIFEST DECLARES, published for the deploy that is
-	// about to read them.
-	//
-	// Without this line `drift atomic deploy` shipped every pulse with its
-	// `cron` dropped: the schedule registry was empty because only the full
-	// apply ever filled it, so the same Driftfile produced a schedule under one
-	// command and none under the other, silently.
-	//
-	// It belongs here because this is the function that reads the Driftfile on
-	// the single-directory path. `atomic deploy` is documented as deploying "a
-	// subset of the manifest and never something the manifest has not seen" — a
-	// subset of the functions, not a subset of what each function IS.
-	//
-	// Publishing the WHOLE manifest's schedules, not just the ones in `dir`, is
-	// deliberate: the registry is keyed by function name and only the functions
-	// being deployed ever look themselves up in it, so a wider map cannot reach a
-	// function this command is not shipping.
-	atomic_cmd.SetDeclaredSchedules(declaredSchedules(m))
 
 	// The declared queues, for `drift atomic run`: the function runs against
 	// the SDK's in-process store, which creates them so a declared queue nothing
