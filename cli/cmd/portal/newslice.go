@@ -136,10 +136,10 @@ const (
 
 // explorer modes — what "select" ultimately does.
 const (
-	exDriftfile = iota // a Driftfile → drift apply (create or resize its slice, then deploy)
-	exFnDeploy         // a directory  → drift atomic deploy <dir>
-	exFnNew            // a directory  → drift atomic new (scaffold there)
-	exProjectNew       // a directory  → drift file new, then drift apply
+	exDriftfile  = iota // a Driftfile → drift apply (create or resize its slice, then deploy)
+	exFnDeploy          // a directory  → drift atomic deploy <dir>
+	exFnNew             // a directory  → drift atomic new (scaffold there)
+	exProjectNew        // a directory  → drift file new, then drift apply
 )
 
 type fileEntry struct {

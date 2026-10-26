@@ -337,4 +337,3 @@ type declaredShape struct {
 	BackboneScalars map[string]int
 	CanvasMiB       int
 }
-
