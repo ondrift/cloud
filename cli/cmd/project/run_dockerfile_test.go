@@ -15,7 +15,7 @@ import (
 // wrappers the CLI generates (app.js, app.py, app.php, ...) are written 0600, and
 // COPY keeps a file's mode, so without --chmod an interpreted function failed at
 // load with "EACCES: permission denied, open '.../app.js'" while a compiled one,
-// whose binary is executable, ran: Node, Python and PHP pulses never worked under
+// whose binary is executable, ran: Node, Python and PHP functions never worked under
 // `drift file run`.
 func TestThinDockerfile_CopiesIntoThePathsTheImageNames(t *testing.T) {
 	df := thinDockerfile("ondrift/runner:test")

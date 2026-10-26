@@ -8,8 +8,8 @@ package project
 // Which blocks exist, what labels they take and which attributes they hold is
 // read from the structs driftfile.go decodes into, by their `hcl` tags, so
 // what explain prints is exactly what the reader accepts. Only the prose is
-// written here, keyed by the block's or attribute's path ("element.pulse",
-// "element.pulse.memory"). TestFormat_DescribesEveryBlockAndAttribute holds the
+// written here, keyed by the block's or attribute's path ("backend.function",
+// "backend.function.memory"). TestFormat_DescribesEveryBlockAndAttribute holds the
 // two together: a block or attribute with no description, or a description of
 // nothing, fails it.
 
@@ -20,9 +20,9 @@ import (
 
 // FormatBlock is one block of the Driftfile format.
 type FormatBlock struct {
-	// Name is the block's type, "pulse"; "" for the file itself.
+	// Name is the block's type, "function"; "" for the file itself.
 	Name string
-	// Path is where it sits, "element.pulse"; "" for the file itself.
+	// Path is where it sits, "backend.function"; "" for the file itself.
 	Path string
 	// Labels are what the block's labels mean, in order: ["trigger"].
 	Labels []string
@@ -145,7 +145,7 @@ var formatDocs = map[string]formatDoc{
 	"slice.limits.deploy_history":   {typ: tNumber, doc: "Past deploys kept per slot, for `drift atomic rollback`."},
 	"slice.limits.backup_retention": {typ: tDuration, doc: "How long Backbone backups are kept, in whole days. Shortening it deletes the older backups on the next nightly run."},
 	"slice.limits.scheduled_jobs": {typ: tNumber, doc: "Scheduled jobs the slice may run. Defaults to the " +
-		"number of pulses with a cron, the fewest that runs them."},
+		"number of functions with a cron, the fewest that runs them."},
 	"slice.limits.atomic_storage":       {typ: tSize, doc: "Disk across every deployed slot: its code and vendored dependencies."},
 	"slice.limits.canvas_storage":       {typ: tSize, doc: "Storage across every site the slice serves."},
 	"slice.limits.realtime_connections": {typ: tNumber, doc: "Live Realtime connections held at once; 0 turns Realtime off."},
@@ -158,61 +158,61 @@ var formatDocs = map[string]formatDoc{
 	"slice.limits.vault_entries":        {typ: tNumber, doc: "Deed Vault entries one identity may hold."},
 	"slice.limits.pocket_record_size":   {typ: tSize, doc: "Largest record a Deed Pocket accepts."},
 
-	"atomic": {doc: "The Atomic pillar: every element the slice runs, and the pulses and fields each one " +
+	"atomic": {doc: "The Atomic pillar: every backend the slice runs, and the functions and workers each one " +
 		"declares. A slice has one atomic block; a file without one runs no Atomic code."},
-	"atomic.element": {doc: "A folder of one language's source and its one dependency manifest. \"default\" is " +
-		"./atomic itself; any other name is ./atomic/<name>. Each pulse and field is declared inside the " +
-		"element its handler lives in."},
-	"atomic.element.dir": {typ: tString, doc: "The element's folder, relative to the Driftfile, when it is not the default one."},
-	"atomic.element.pulse": {doc: "A Pulse answers one call with one result. It is labelled with its trigger: an HTTP " +
+	"atomic.backend": {doc: "A folder of one language's source and its one dependency manifest. \"default\" is " +
+		"./atomic itself; any other name is ./atomic/<name>. Each function and worker is declared inside the " +
+		"backend its handler lives in."},
+	"atomic.backend.dir": {typ: tString, doc: "The backend's folder, relative to the Driftfile, when it is not the default one."},
+	"atomic.backend.function": {doc: "A Function answers one call with one result. It is labelled with its trigger: an HTTP " +
 		"method and route, \"POST /rpc\", or QUEUE and the queue it drains, \"QUEUE orders\". Its booking key is " +
 		"the method and route, unique across the slice."},
-	"atomic.element.pulse.handler": {typ: tString, required: true, doc: "The callable in the element's source that " +
+	"atomic.backend.function.handler": {typ: tString, required: true, doc: "The callable in the backend's source that " +
 		"serves it: `PostRPC`, `handle_order`, `createBoard`."},
-	"atomic.element.pulse.memory": {typ: tSize, required: true, doc: "The memory it books, from 8MiB to 256MiB (16MiB in " +
-		"a compiled language). It is the pulse's own pool and what it is billed at; `drift size` rewrites it " +
+	"atomic.backend.function.memory": {typ: tSize, required: true, doc: "The memory it books, from 8MiB to 256MiB (16MiB in " +
+		"a compiled language). It is the function's own pool and what it is billed at; `drift size` rewrites it " +
 		"from what the slice measured."},
-	"atomic.element.pulse.response": {typ: tString, doc: `How replies are written: "envelope" (the default, ` +
+	"atomic.backend.function.response": {typ: tString, doc: `How replies are written: "envelope" (the default, ` +
 		`{status, message, payload}), "json" for the payload as the whole body, or "raw" for bytes.`},
-	"atomic.element.pulse.concurrent": {typ: tBool, doc: "Whether the handler is safe to run in parallel. true lets one " +
+	"atomic.backend.function.concurrent": {typ: tBool, doc: "Whether the handler is safe to run in parallel. true lets one " +
 		"warm process serve many calls at once; how many is the slice's to decide."},
-	"atomic.element.pulse.stream": {typ: tString, doc: `Hold the connection open: "sse" for Server-Sent Events, ` +
+	"atomic.backend.function.stream": {typ: tString, doc: `Hold the connection open: "sse" for Server-Sent Events, ` +
 		`"ws" for WebSocket.`},
-	"atomic.element.pulse.cron": {typ: tString, doc: "A five-field cron expression that also runs the pulse on a " +
-		"schedule. An HTTP pulse with a cron stays callable over HTTP."},
-	"atomic.element.pulse.poll": {typ: tString, doc: `How often the slice looks in the queue this pulse drains, as a duration ` +
-		`from "50ms" to "60s". Only on a pulse labelled QUEUE. Left out, every 500ms.`},
-	"atomic.element.pulse.max_retries": {typ: tNumber, doc: "How many times a message that makes this pulse fail is delivered " +
-		"again before it is parked in the dead-letter queue, from 1 to 100. Only on a pulse labelled QUEUE. Left out, 3."},
-	"atomic.element.pulse.env": {typ: tMap, doc: "Plain configuration injected into its environment. Not for " +
+	"atomic.backend.function.cron": {typ: tString, doc: "A five-worker cron expression that also runs the function on a " +
+		"schedule. An HTTP function with a cron stays callable over HTTP."},
+	"atomic.backend.function.poll": {typ: tString, doc: `How often the slice looks in the queue this function drains, as a duration ` +
+		`from "50ms" to "60s". Only on a function labelled QUEUE. Left out, every 500ms.`},
+	"atomic.backend.function.max_retries": {typ: tNumber, doc: "How many times a message that makes this function fail is delivered " +
+		"again before it is parked in the dead-letter queue, from 1 to 100. Only on a function labelled QUEUE. Left out, 3."},
+	"atomic.backend.function.env": {typ: tMap, doc: "Plain configuration injected into its environment. Not for " +
 		"credentials: those are secret blocks, named in `secrets`."},
-	"atomic.element.pulse.secrets": {typ: tList, doc: "The secrets this pulse may read. One the list does not name is " +
+	"atomic.backend.function.secrets": {typ: tList, doc: "The secrets this function may read. One the list does not name is " +
 		"unreachable from it, though the slice holds it."},
-	"atomic.element.pulse.dir": {typ: tString, doc: "The folder its handler is in, when it is not its element's."},
-	"atomic.element.pulse.alert": {doc: "A condition the slice watches on this pulse, and the webhook it tells when it " +
+	"atomic.backend.function.dir": {typ: tString, doc: "The folder its handler is in, when it is not its backend's."},
+	"atomic.backend.function.alert": {doc: "A condition the slice watches on this function, and the webhook it tells when it " +
 		"holds. The label is its name, unique across the slice. `drift plan` shows alerts added, changed and removed, " +
 		"and an alert the file does not name is deleted on apply after the question."},
-	"atomic.element.pulse.alert.on": {typ: tString, doc: `What fires it. "errors" is the one condition: the pulse failed ` +
+	"atomic.backend.function.alert.on": {typ: tString, doc: `What fires it. "errors" is the one condition: the function failed ` +
 		`threshold times within window. Left out, "errors".`},
-	"atomic.element.pulse.alert.threshold": {typ: tNumber, doc: "How many failures within the window fire it, at least 1. " +
+	"atomic.backend.function.alert.threshold": {typ: tNumber, doc: "How many failures within the window fire it, at least 1. " +
 		"Left out, 1."},
-	"atomic.element.pulse.alert.window": {typ: tString, doc: `The evaluation window, such as "5m" or "1h", at least ` +
+	"atomic.backend.function.alert.window": {typ: tString, doc: `The evaluation window, such as "5m" or "1h", at least ` +
 		`"1m". Left out, "5m".`},
-	"atomic.element.pulse.alert.webhook": {typ: tRef, required: true, doc: "The environment variable holding the " +
+	"atomic.backend.function.alert.webhook": {typ: tRef, required: true, doc: "The environment variable holding the " +
 		"http(s) URL the slice posts to when the alert fires and again when it resolves. Write-only: the URL " +
 		"carries the credential its endpoint needs, so it is never in the file or the plan."},
-	"atomic.element.pulse.auth": {doc: "An API key gate: the pulse answers only a caller presenting the key."},
-	"atomic.element.pulse.auth.api_key": {typ: tRef, required: true, doc: "The environment variable the key is read " +
+	"atomic.backend.function.auth": {doc: "An API key gate: the function answers only a caller presenting the key."},
+	"atomic.backend.function.auth.api_key": {typ: tRef, required: true, doc: "The environment variable the key is read " +
 		"from. Written env(\"NAME\") and nothing else, so the file never holds the key."},
-	"atomic.element.field": {doc: "A Field is a long-running worker: the slice keeps exactly one running, starts it on " +
-		"every deploy and restarts it when it exits. Fields run Go. Its booking key is field:<name>."},
-	"atomic.element.field.handler": {typ: tString, required: true, doc: "The callable it runs, " +
+	"atomic.backend.worker": {doc: "A Worker is a long-running process: the slice keeps exactly one running, starts it on " +
+		"every deploy and restarts it when it exits. Workers run Go. Its booking key is worker:<name>."},
+	"atomic.backend.worker.handler": {typ: tString, required: true, doc: "The callable it runs, " +
 		"`func Name(ctx context.Context) error`."},
-	"atomic.element.field.memory": {typ: tSize, required: true, doc: "The memory it books: 16MiB or more, since a " +
-		"field runs Go. What it is billed at."},
-	"atomic.element.field.env":     {typ: tMap, doc: "Plain configuration injected into its environment."},
-	"atomic.element.field.secrets": {typ: tList, doc: "The secrets this field may read."},
-	"atomic.element.field.dir":     {typ: tString, doc: "The folder its handler is in, when it is not its element's."},
+	"atomic.backend.worker.memory": {typ: tSize, required: true, doc: "The memory it books: 16MiB or more, since a " +
+		"worker runs Go. What it is billed at."},
+	"atomic.backend.worker.env":     {typ: tMap, doc: "Plain configuration injected into its environment."},
+	"atomic.backend.worker.secrets": {typ: tList, doc: "The secrets this worker may read."},
+	"atomic.backend.worker.dir":     {typ: tString, doc: "The folder its handler is in, when it is not its backend's."},
 
 	"backbone": {doc: "The Backbone pillar: every database, collection, bucket, queue, cache entry and secret " +
 		"the slice holds. A slice has one backbone block; a file without one holds no Backbone primitive."},
@@ -229,13 +229,13 @@ var formatDocs = map[string]formatDoc{
 		"is billed at. A write past it is refused."},
 	"backbone.nosql.seed": {typ: tString, doc: "A JSONL file, one document per line, each with an _id, upserted on deploy."},
 	"backbone.nosql.ttl":  {typ: tDuration, doc: "How long a document lives after its last write."},
-	"backbone.nosql.unique": {typ: tList, doc: "Fields whose values must be unique in the collection; a write that " +
+	"backbone.nosql.unique": {typ: tList, doc: "Workers whose values must be unique in the collection; a write that " +
 		"repeats one is refused."},
 
 	"backbone.blobs":      {doc: "A bucket in the slice's blob store."},
 	"backbone.blobs.size": {typ: tSize, required: true, doc: "The bucket's storage: the enforced limit and what it is billed at."},
 
-	"backbone.queue": {doc: "A FIFO queue. A pulse labelled QUEUE <name> drains it."},
+	"backbone.queue": {doc: "A FIFO queue. A function labelled QUEUE <name> drains it."},
 	"backbone.queue.depth": {typ: tNumber, doc: "Messages it holds before producers are throttled. Left out, the " +
 		"slice's queue_depth."},
 
@@ -244,8 +244,8 @@ var formatDocs = map[string]formatDoc{
 	"backbone.cache.value": {typ: tString, doc: "The value itself."},
 	"backbone.cache.ttl":   {typ: tNumber, doc: "Seconds the entry lives."},
 
-	"backbone.secret": {doc: "A secret the slice holds, named like an environment variable: STRIPE_KEY. A pulse or " +
-		"field reads it only when its `secrets` names it."},
+	"backbone.secret": {doc: "A secret the slice holds, named like an environment variable: STRIPE_KEY. A function or " +
+		"worker reads it only when its `secrets` names it."},
 	"backbone.secret.value": {typ: tRef, required: true, doc: "The environment variable its value is read from at " +
 		"apply. Written env(\"NAME\") and nothing else, so the file never holds a credential."},
 
@@ -253,7 +253,7 @@ var formatDocs = map[string]formatDoc{
 		"block; a file without one opens no channel to visitors."},
 	"backbone.realtime.client_channels": {typ: tList, doc: "The channels a visitor's browser may publish to, the whole " +
 		"list: a channel name (\"chat\"), a prefix ending in * (\"room:*\"), or \"*\" for every channel. A frame " +
-		"a client sends on any other channel is dropped and never reaches the room. A pulse always may publish; " +
+		"a client sends on any other channel is dropped and never reaches the room. A function always may publish; " +
 		"this governs clients only. Empty closes every channel; at most 64 entries."},
 
 	"canvas": {doc: "The Canvas pillar: every static site the slice serves. A slice has one canvas block; a " +
@@ -278,7 +278,7 @@ var formatDocs = map[string]formatDoc{
 	"edge.domain": {doc: "A custom hostname the slice answers on, proved yours by a DNS TXT record before it " +
 		"routes."},
 	"edge.domain.wildcard": {typ: tBool, doc: "Route every subdomain of the host to this slice as well."},
-	"edge.site_auth":       {doc: "A password gate in front of the slice's sites, or the part of them `paths` names. Its pulses are not gated."},
+	"edge.site_auth":       {doc: "A password gate in front of the slice's sites, or the part of them `paths` names. Its functions are not gated."},
 	"edge.site_auth.realm": {typ: tString, doc: "The realm the browser shows when it asks for the password."},
 	"edge.site_auth.paths": {typ: tList, required: true, doc: `The Canvas paths the gate covers: ["*"] for the ` +
 		`whole site, or absolute paths, each covering itself and everything beneath it ("/admin" gates /admin and ` +

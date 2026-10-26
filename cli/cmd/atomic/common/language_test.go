@@ -16,7 +16,7 @@ func write(t *testing.T, dir, name, content string) {
 
 // A directory's language follows from what is in it. Nothing in the source has
 // to declare it, and no comment marks the file that counts.
-func TestElementLanguage(t *testing.T) {
+func TestBackendLanguage(t *testing.T) {
 	tests := []struct {
 		filename  string
 		content   string
@@ -35,9 +35,9 @@ func TestElementLanguage(t *testing.T) {
 			dir := t.TempDir()
 			write(t, dir, tt.filename, tt.content)
 
-			lang, err := ElementLanguage(dir)
+			lang, err := BackendLanguage(dir)
 			if err != nil {
-				t.Fatalf("ElementLanguage: %v", err)
+				t.Fatalf("BackendLanguage: %v", err)
 			}
 			if lang != tt.want {
 				t.Fatalf("lang: got %q, want %q", lang, tt.want)
@@ -61,28 +61,28 @@ func TestElementLanguage(t *testing.T) {
 	}
 }
 
-// An element with no source cannot serve the functions the manifest declares
+// A backend with no source cannot serve the functions the manifest declares
 // there, and saying so beats a build that fails with "no input files".
-func TestElementLanguage_EmptyDir(t *testing.T) {
-	_, err := ElementLanguage(t.TempDir())
+func TestBackendLanguage_EmptyDir(t *testing.T) {
+	_, err := BackendLanguage(t.TempDir())
 	if err == nil {
 		t.Fatal("expected an error for a directory with no source")
 	}
 }
 
-// One element, one language: it has a single dependency manifest and a single
+// One backend, one language: it has a single dependency manifest and a single
 // runtime, so a directory holding two is refused rather than half-built.
-func TestElementLanguage_MixedIsRefused(t *testing.T) {
+func TestBackendLanguage_MixedIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "a.go", "package main\n\nfunc GetA(req any) {}\n")
 	write(t, dir, "b.py", "def get_b(req): pass\n")
 
-	_, err := ElementLanguage(dir)
+	_, err := BackendLanguage(dir)
 	if err == nil {
-		t.Fatal("a mixed-language element must be refused")
+		t.Fatal("a mixed-language backend must be refused")
 	}
-	if !strings.Contains(err.Error(), "element") {
-		t.Errorf("the error should explain the element rule, got: %v", err)
+	if !strings.Contains(err.Error(), "backend") {
+		t.Errorf("the error should explain the backend rule, got: %v", err)
 	}
 }
 
@@ -165,9 +165,9 @@ func TestFindCallable_HelpersAreIgnored(t *testing.T) {
 	}
 }
 
-// The search is scoped to ONE element directory, so two elements may each have
+// The search is scoped to ONE backend directory, so two backends may each have
 // a handler of the same name — the common case for `handle` or `index`.
-func TestFindCallable_ScopedToItsElement(t *testing.T) {
+func TestFindCallable_ScopedToItsBackend(t *testing.T) {
 	root := t.TempDir()
 	billing := filepath.Join(root, "billing")
 	if err := os.MkdirAll(billing, 0o750); err != nil {
@@ -183,9 +183,9 @@ func TestFindCallable_ScopedToItsElement(t *testing.T) {
 	}
 }
 
-// Within one element the name has to be unique: the entry point imports it by
+// Within one backend the name has to be unique: the entry point imports it by
 // name and cannot say which was meant.
-func TestFindCallable_DuplicateInOneElement(t *testing.T) {
+func TestFindCallable_DuplicateInOneBackend(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "a.go", "package main\n\nfunc Handle(req any) {}\n")
 	write(t, dir, "b.go", "package main\n\nfunc Handle(req any) {}\n")

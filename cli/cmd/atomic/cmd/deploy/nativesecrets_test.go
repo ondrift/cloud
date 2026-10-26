@@ -128,7 +128,7 @@ func TestNativeWrapperImportsExactlyWhatItUses(t *testing.T) {
 }
 
 // renderNativeWrapper produces the main.go a Go function of this method shape
-// would be built from with the native template (a streaming Pulse, or an SDK
+// would be built from with the native template (a streaming Function, or an SDK
 // predating genmain), through generateMain itself rather than a copy of what
 // it does.
 func renderNativeWrapper(t *testing.T, method string) string {

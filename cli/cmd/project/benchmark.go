@@ -74,14 +74,14 @@ type sliceSizing struct {
 func getBenchmarkCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "benchmark",
-		Short: "Measure what each pulse and field costs, and what it should book",
+		Short: "Measure what each function and worker costs, and what it should book",
 		Long: strings.TrimSpace(`
-Report what each pulse and field has actually cost in memory, and the size it
+Report what each function and worker has actually cost in memory, and the size it
 should book.
 
 The numbers come from the deployed slice's own measurements: it weighs every
-pulse invocation and samples every running field, and keeps the high-water mark
-per slot. A pulse nobody has called yet says so, rather than reporting a
+function invocation and samples every running worker, and keeps the high-water mark
+per slot. A function nobody has called yet says so, rather than reporting a
 confidently small number.
 
 A booking is written in the Driftfile. 'drift size' writes these
@@ -168,9 +168,9 @@ func sizingRows(declared map[string]string) ([]sizingRow, error) {
 	return rows, nil
 }
 
-// declaredSlots holds a key for each declared Pulse and Field.
+// declaredSlots holds a key for each declared Function and Worker.
 //
-// Keyed by the booking key, which is the same `method:route` (or `field:<name>`)
+// Keyed by the booking key, which is the same `method:route` (or `worker:<name>`)
 // the slice books and reports under — the two agreeing is what lets a row be
 // matched at all.
 func declaredSlots(m *Manifest) map[string]string {

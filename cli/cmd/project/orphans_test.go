@@ -80,22 +80,22 @@ func TestReportOrphanedFunctions_AQueueHandlerIsNotAnOrphan(t *testing.T) {
 	}
 }
 
-// A deployed Field is matched by its booking key like any slot: a declared one
+// A deployed Worker is matched by its booking key like any slot: a declared one
 // is not an orphan, and one the Driftfile dropped is named with the key the
 // delete command takes.
-func TestReportOrphanedFunctions_AFieldIsMatchedByItsKey(t *testing.T) {
-	m := manifestWithField([]string{"get:ping"}, "sequencer")
-	deployed := deployedSet("get:ping", "field:sequencer", "field:old-worker")
+func TestReportOrphanedFunctions_AWorkerIsMatchedByItsKey(t *testing.T) {
+	m := manifestWithWorker([]string{"get:ping"}, "sequencer")
+	deployed := deployedSet("get:ping", "worker:sequencer", "worker:old-worker")
 
 	var out bytes.Buffer
 	ReportOrphanedFunctions(m, deployed, &out)
 
 	got := out.String()
-	if strings.Contains(got, "field:sequencer") {
-		t.Errorf("a declared Field is not an orphan, got %q", got)
+	if strings.Contains(got, "worker:sequencer") {
+		t.Errorf("a declared Worker is not an orphan, got %q", got)
 	}
-	if !strings.Contains(got, "drift atomic delete field:old-worker") {
-		t.Errorf("the dropped Field must be named with the key delete takes, got %q", got)
+	if !strings.Contains(got, "drift atomic delete worker:old-worker") {
+		t.Errorf("the dropped Worker must be named with the key delete takes, got %q", got)
 	}
 }
 

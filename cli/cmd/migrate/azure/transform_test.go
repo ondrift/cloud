@@ -81,14 +81,14 @@ func TestPipeline_SnapshotToTransform(t *testing.T) {
 	}
 
 	// The Driftfile carries the whole declaration: the function's real Azure
-	// route (not a slug derived from its folder) in the element it was
+	// route (not a slug derived from its folder) in the backend it was
 	// scaffolded in, the callable serving it, the seeded collection and the
 	// secrets, each read from the environment.
 	df := readFile(t, wsDir, "Driftfile")
 	for _, want := range []string{
 		`slice "orders" {}`,
-		`element "get-order"`,
-		`pulse "GET /orders/:id"`,
+		`backend "get-order"`,
+		`function "GET /orders/:id"`,
 		`handler = "get_orders_id"`,
 		`nosql "orders"`,
 		`seed = "backbone/nosql/orders.jsonl"`,
@@ -119,7 +119,7 @@ func TestBuildDriftfile_AKeyGatedFunctionReadsItsKeyFromAVariable(t *testing.T) 
 		trigger: ManifestTrigger{Type: "http", Method: "get", Route: "orders/:id", Auth: "apikey"},
 	}}, nil, nil)
 	for _, want := range []string{
-		`element "get-order"`,
+		`backend "get-order"`,
 		"      auth {\n        api_key = env(\"GET_ORDER_API_KEY\")\n      }\n",
 	} {
 		if !strings.Contains(df, want) {

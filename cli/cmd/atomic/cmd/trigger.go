@@ -15,7 +15,7 @@ func Trigger() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "trigger",
 		Short: "List a slice's triggers, or remove one",
-		Long: "A pulse's triggers are declared in the Driftfile: a pulse labelled QUEUE and the queue it " +
+		Long: "A function's triggers are declared in the Driftfile: a function labelled QUEUE and the queue it " +
 			"drains (with `poll` and `max_retries` to tune it), and a `cron` for a schedule. Nothing here " +
 			"registers one. `list` shows what the slice is running, and `unregister` removes a trigger the " +
 			"Driftfile no longer declares.",

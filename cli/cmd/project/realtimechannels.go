@@ -3,7 +3,7 @@
 //
 // A frame a client sends on a channel the list does not name is dropped by the
 // slice, so a visitor cannot speak to the other visitors on a channel the owner
-// never opened. A Pulse publishes whatever this says: the list governs clients
+// never opened. A Function publishes whatever this says: the list governs clients
 // only.
 //
 // The list is the whole truth, as `edge.allow` is: present, it replaces the

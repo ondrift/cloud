@@ -1,12 +1,12 @@
 // fetch.go — `drift atomic fetch [path]`. Walks the tree from a path
-// (default: cwd), finds every element (a directory of source in one
+// (default: cwd), finds every backend (a directory of source in one
 // language), and runs that language's dependency resolution *in place* — a
-// "tidy" for every element, all languages, in one command. After it, an
+// "tidy" for every backend, all languages, in one command. After it, an
 // editor/LSP sees the deps and `drift atomic run`/`deploy` have nothing left
 // to fetch.
 //
 // It reads no manifest on purpose: tidying dependencies is useful on a tree
-// whose Driftfile is half-written, and an element's language is visible from
+// whose Driftfile is half-written, and a backend's language is visible from
 // its files alone.
 //
 // The CLI stays SDK-agnostic: for the interpreted languages it just runs
@@ -32,11 +32,11 @@ import (
 func Fetch() *cobra.Command {
 	return &cobra.Command{
 		Use:   "fetch [path]",
-		Short: "Resolve dependencies for every Atomic element under a path",
-		Long: "Recursively finds every Atomic element (a directory of pulse and field source " +
+		Short: "Resolve dependencies for every Atomic backend under a path",
+		Long: "Recursively finds every Atomic backend (a directory of function and worker source " +
 			"in one language) under the given path (default: current directory) and resolves " +
 			"its dependencies in place using that language's package manager: a 'tidy' for " +
-			"every element across all six languages at once.",
+			"every backend across all six languages at once.",
 		Example: "  drift atomic fetch\n  drift atomic fetch ./intake-review",
 		GroupID: "development",
 		Args:    cobra.MaximumNArgs(1),
@@ -69,14 +69,14 @@ func runFetch(root string) error {
 
 	targets, err := discoverFunctions(root)
 	if err != nil {
-		return fmt.Errorf("scanning for elements: %w", err)
+		return fmt.Errorf("scanning for backends: %w", err)
 	}
 	if len(targets) == 0 {
-		fmt.Printf("No Atomic elements found under %s\n", root)
+		fmt.Printf("No Atomic backends found under %s\n", root)
 		return nil
 	}
 
-	fmt.Printf("Found %d Atomic element(s). Resolving dependencies...\n\n", len(targets))
+	fmt.Printf("Found %d Atomic backend(s). Resolving dependencies...\n\n", len(targets))
 	var failed int
 	for _, t := range targets {
 		fmt.Printf("  %-32s %-6s … ", t.dir, fetchLangLabel(t.language))
@@ -93,9 +93,9 @@ func runFetch(root string) error {
 
 	fmt.Println()
 	if failed > 0 {
-		return fmt.Errorf("%d of %d element(s) failed to resolve", failed, len(targets))
+		return fmt.Errorf("%d of %d backend(s) failed to resolve", failed, len(targets))
 	}
-	fmt.Printf("✅ All %d element(s) resolved.\n", len(targets))
+	fmt.Printf("✅ All %d backend(s) resolved.\n", len(targets))
 	return nil
 }
 
@@ -117,7 +117,7 @@ func discoverFunctions(root string) ([]fetchTarget, error) {
 		// language; anything else errors and we keep walking.
 		if lang, _, derr := atomic_common.DetectLanguage(p); derr == nil {
 			targets = append(targets, fetchTarget{dir: p, language: lang})
-			return filepath.SkipDir // elements don't nest; don't descend
+			return filepath.SkipDir // backends don't nest; don't descend
 		}
 		return nil
 	})

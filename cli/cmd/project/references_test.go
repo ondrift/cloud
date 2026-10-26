@@ -64,7 +64,7 @@ func manifestNaming(functions []string, collections, buckets, databases []string
 	// identity has to be written in the spelling the readers read.
 	slice := Node{
 		"slice":  "demo",
-		"atomic": map[string]any{"pulses": fns},
+		"atomic": map[string]any{"functions": fns},
 		"backbone": map[string]any{
 			"nosql": named("slot", collections),
 			"blobs": named("name", buckets),
@@ -207,7 +207,7 @@ func TestCheckSliceReferences_RefusesASecretThatWillNotExist(t *testing.T) {
 		_, _ = w.Write([]byte(`{}`))
 	})
 
-	m := manifestFrom(Node{"slice": "demo", "atomic": map[string]any{"pulses": []any{
+	m := manifestFrom(Node{"slice": "demo", "atomic": map[string]any{"functions": []any{
 		map[string]any{"name": "post:charge", "handler": "H", "secrets": []any{"MISSING"}},
 	}}})
 	err := CheckSliceReferences(m, &LiveSlice{Name: "demo"})
@@ -235,7 +235,7 @@ func TestCheckSliceReferences_ASecretOnlyOnTheSlicePasses(t *testing.T) {
 		_, _ = w.Write([]byte(`{}`))
 	})
 
-	m := manifestFrom(Node{"slice": "demo", "atomic": map[string]any{"pulses": []any{
+	m := manifestFrom(Node{"slice": "demo", "atomic": map[string]any{"functions": []any{
 		map[string]any{"name": "post:charge", "handler": "H", "secrets": []any{"STRIPE_KEY"}},
 	}}})
 	if err := CheckSliceReferences(m, &LiveSlice{Name: "demo"}); err != nil {
@@ -257,7 +257,7 @@ func TestCheckSliceReferences_ASecretThisManifestSetsPasses(t *testing.T) {
 	})
 
 	m := manifestFrom(Node{"slice": "demo",
-		"atomic": map[string]any{"pulses": []any{
+		"atomic": map[string]any{"functions": []any{
 			map[string]any{"name": "post:ops", "handler": "H", "secrets": []any{"SIGNER"}},
 		}},
 		"backbone": map[string]any{"secrets": map[string]any{"SIGNER": "$SIGNER"}},
@@ -267,58 +267,58 @@ func TestCheckSliceReferences_ASecretThisManifestSetsPasses(t *testing.T) {
 	}
 }
 
-// manifestWithField is manifestNaming plus one Field, as a resolved node.
-func manifestWithField(pulses []string, field string) *Manifest {
-	m := manifestNaming(pulses, nil, nil, nil)
-	m.slice.Sub("atomic")["fields"] = []any{
-		map[string]any{"name": field, "handler": "Run"},
+// manifestWithWorker is manifestNaming plus one Worker, as a resolved node.
+func manifestWithWorker(functions []string, worker string) *Manifest {
+	m := manifestNaming(functions, nil, nil, nil)
+	m.slice.Sub("atomic")["workers"] = []any{
+		map[string]any{"name": worker, "handler": "Run"},
 	}
 	return m
 }
 
-// A Field is a slot like a Pulse: one the slice was never sold is refused before
+// A Worker is a slot like a Function: one the slice was never sold is refused before
 // the deploy, by the key the slice books it under, and the remedy is the same
 // resize. Booked under any other key, it would run against a pool nobody
 // declared.
-func TestCheckSliceReferences_AFieldMustBeADeclaredSlot(t *testing.T) {
-	m := manifestWithField([]string{"get:ping"}, "sequencer")
+func TestCheckSliceReferences_AWorkerMustBeADeclaredSlot(t *testing.T) {
+	m := manifestWithWorker([]string{"get:ping"}, "sequencer")
 
 	err := CheckSliceReferences(m, liveWith([]string{"get:ping"}, nil, nil, nil))
 	if err == nil {
-		t.Fatal("a Field the slice does not declare must be refused")
+		t.Fatal("a Worker the slice does not declare must be refused")
 	}
-	for _, want := range []string{`field "field:sequencer"`, "drift slice resize demo", "fields"} {
+	for _, want := range []string{`worker "worker:sequencer"`, "drift slice resize demo", "workers"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal must say %q, got:\n%v", want, err)
 		}
 	}
 	if strings.Contains(err.Error(), "get:ping") {
-		t.Errorf("the Pulse the slice declares must not be named, got:\n%v", err)
+		t.Errorf("the Function the slice declares must not be named, got:\n%v", err)
 	}
 
-	// The control: the same manifest against a slice holding the Field's slot.
-	if err := CheckSliceReferences(m, liveWith([]string{"get:ping", "field:sequencer"}, nil, nil, nil)); err != nil {
-		t.Errorf("a Field whose slot the slice declares must pass, got %v", err)
+	// The control: the same manifest against a slice holding the Worker's slot.
+	if err := CheckSliceReferences(m, liveWith([]string{"get:ping", "worker:sequencer"}, nil, nil, nil)); err != nil {
+		t.Errorf("a Worker whose slot the slice declares must pass, got %v", err)
 	}
 }
 
-// A Field slot the Driftfile names is not idle, and one it does not name is,
-// exactly like a Pulse slot.
-func TestReportIdle_AFieldSlotIsNamedOrIdleLikeAPulse(t *testing.T) {
-	m := manifestWithField([]string{"get:ping"}, "sequencer")
-	live := idleLive("custom", []string{"get:ping", "field:sequencer", "field:old-worker"})
+// A Worker slot the Driftfile names is not idle, and one it does not name is,
+// exactly like a Function slot.
+func TestReportIdle_AWorkerSlotIsNamedOrIdleLikeAFunction(t *testing.T) {
+	m := manifestWithWorker([]string{"get:ping"}, "sequencer")
+	live := idleLive("custom", []string{"get:ping", "worker:sequencer", "worker:old-worker"})
 
 	var out strings.Builder
-	ReportIdleDeclarations(m, live, deployedSet("get:ping", "field:sequencer"), &out)
+	ReportIdleDeclarations(m, live, deployedSet("get:ping", "worker:sequencer"), &out)
 
 	got := out.String()
-	if !strings.Contains(got, "field:old-worker is idle") {
-		t.Errorf("a Field slot nothing runs and the Driftfile does not name is idle:\n%s", got)
+	if !strings.Contains(got, "worker:old-worker is idle") {
+		t.Errorf("a Worker slot nothing runs and the Driftfile does not name is idle:\n%s", got)
 	}
-	if strings.Contains(got, "field:sequencer") {
-		t.Errorf("the Field the Driftfile names is not idle:\n%s", got)
+	if strings.Contains(got, "worker:sequencer") {
+		t.Errorf("the Worker the Driftfile names is not idle:\n%s", got)
 	}
 	if !strings.Contains(got, "This slice declares 3 atomic slots and your Driftfile names 2.") {
-		t.Errorf("the Field must be counted with the Pulses:\n%s", got)
+		t.Errorf("the Worker must be counted with the Functions:\n%s", got)
 	}
 }

@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	// stagingLocally is true while StageElementsLocally builds for a local run.
+	// stagingLocally is true while StageBackendsLocally builds for a local run.
 	stagingLocally bool
 
 	targetMu       sync.Mutex

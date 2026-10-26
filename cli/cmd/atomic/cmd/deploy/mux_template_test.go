@@ -37,11 +37,11 @@ var withGenmain = goSDK{version: "v0.99.0", genmain: true}
 
 // --- which template ----------------------------------------------------------
 
-// Every buffered Pulse is served through genmain, concurrent or not and with
+// Every buffered Function is served through genmain, concurrent or not and with
 // or without a context; a stream keeps the native template, whose stdout is the
 // stream; and an SDK that predates genmain gets the native template for what it
 // can serve and a refusal, before anything compiles, for what it cannot.
-func TestPulseMainTemplate_ChoosesByStreamSDKAndShape(t *testing.T) {
+func TestFunctionMainTemplate_ChoosesByStreamSDKAndShape(t *testing.T) {
 	old := goSDK{version: "v0.9.0"}
 	for name, tc := range map[string]struct {
 		e        goEntry
@@ -59,18 +59,18 @@ func TestPulseMainTemplate_ChoosesByStreamSDKAndShape(t *testing.T) {
 		"a stream with ctx":                {goEntry{name: "get:events", method: "get", stream: "sse"}, true, withGenmain, "", "streams its reply"},
 		"old SDK":                          {goEntry{method: "post"}, false, old, defaultNativeServerPost, ""},
 		"old SDK, get":                     {goEntry{method: "get"}, false, old, defaultNativeServerGet, ""},
-		"old SDK, concurrent":              {goEntry{name: "post:rpc", method: "post", concurrent: true}, false, old, "", "(v0.9.0) predates concurrent Pulses"},
+		"old SDK, concurrent":              {goEntry{name: "post:rpc", method: "post", concurrent: true}, false, old, "", "(v0.9.0) predates concurrent Functions"},
 		"old SDK with ctx":                 {goEntry{name: "post:rpc", method: "post"}, true, old, "", "(v0.9.0) predates handlers"},
 		"no SDK resolved, ctx, concurrent": {goEntry{name: "post:rpc", method: "post", concurrent: true}, true, goSDK{}, "", "this build resolved predates"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, err := pulseMainTemplate(tc.e, tc.takesCtx, tc.sdk)
+			got, err := functionMainTemplate(tc.e, tc.takesCtx, tc.sdk)
 			if tc.want == "" {
 				if err == nil || !strings.Contains(err.Error(), tc.refusal) {
 					t.Fatalf("want a refusal saying %q, got %v", tc.refusal, err)
 				}
 				if tc.e.name != "" && !strings.Contains(err.Error(), tc.e.name) {
-					t.Errorf("the refusal does not name the pulse: %v", err)
+					t.Errorf("the refusal does not name the function: %v", err)
 				}
 				return
 			}
@@ -248,7 +248,7 @@ var everyRenderedMain = []renderedMain{
 	{"native-post", goEntry{handler: "PostProbe", method: "post"}, goSDK{}},
 	{"native-get", goEntry{handler: "GetProbe", method: "get"}, goSDK{}},
 	{"native-stream", goEntry{handler: "GetProbe", method: "get", stream: "sse"}, withGenmain},
-	{"field", goEntry{handler: "Sequencer", method: FieldMethod}, withGenmain},
+	{"field", goEntry{handler: "Sequencer", method: WorkerMethod}, withGenmain},
 }
 
 var rendered struct {
@@ -404,7 +404,7 @@ func (s *slice) close(t *testing.T) {
 	}
 }
 
-// THE CONCURRENT PULSE, end to end through the main this CLI generates for
+// THE CONCURRENT FUNCTION, end to end through the main this CLI generates for
 // `concurrency: 16` and a context-first handler: a hello first, then sixteen
 // request frames whose handler returns only once all sixteen are inside it at
 // once (calls served one at a time never get there), answered by sixteen
@@ -475,7 +475,7 @@ func TestTheGeneratedMuxMainServesCallsConcurrently(t *testing.T) {
 }
 
 // THE TEMPLATE DECISION, at concurrency 1: the generated main of an ordinary
-// Pulse answers one envelope at a time, as the native template did, and what
+// Function answers one envelope at a time, as the native template did, and what
 // its handler prints reaches stderr, the function's log, instead of the line
 // the slice reads as the response. Under the native template the printed line
 // IS the first line on stdout. A context-first handler is served here too, its

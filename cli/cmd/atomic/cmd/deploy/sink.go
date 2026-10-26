@@ -2,7 +2,7 @@ package atomic_cmd
 
 // sink.go — the swappable destination for a built Atomic function.
 //
-// The build paths (DeployFolder / DeployGoElement / DeployInterpretedElement)
+// The build paths (DeployFolder / DeployGoBackend / DeployInterpretedBackend)
 // all funnel through sendSourceToOperator. That used to upload to the operator
 // directly; now it routes through the active SlotSink. The default sink
 // (operatorSink, in deploy.go) is the cloud upload, unchanged. `drift file run`
@@ -29,7 +29,7 @@ import (
 // build output (SourcePath = a native `app` binary, or an interpreted tar.gz of
 // the slot contents) and the optional user-source archive.
 type FuncArtifact struct {
-	Name, Method, Language, Auth, Element, Stream string
+	Name, Method, Language, Auth, Backend, Stream string
 	// Response is the declared reply shape: "", "envelope", "json" or "raw".
 	Response string
 	Secrets  []string
@@ -38,7 +38,7 @@ type FuncArtifact struct {
 	// which is the property `secrets:` is meant to advertise and the reason
 	// these are two fields rather than one. See FunctionSpec.Env, hurdles/011.
 	Env map[string]string
-	// Concurrent is whether the Pulse was declared concurrent, in either
+	// Concurrent is whether the Function was declared concurrent, in either
 	// spelling. Both sinks write `concurrent` only when it is true.
 	Concurrent     bool
 	Triggers       []TriggerSpec
@@ -75,15 +75,15 @@ var slotSink SlotSink = operatorSink
 // It takes the artifact it was already constructing. It used to take eleven
 // consecutive parameters, nine of them strings, and the wrapper facts would have
 // made thirteen — at which point transposing two arguments still compiles and
-// quietly deploys a function under the wrong element.
+// quietly deploys a function under the wrong backend.
 func sendSourceToOperator(a FuncArtifact) error {
 	return slotSink(a)
 }
 
-// StageElementsLocally builds every function across `elements` and writes the
+// StageBackendsLocally builds every function across `backends` and writes the
 // slice slot layout under runnerDir, reusing the cloud build path with a local
 // sink. The slice boot-scans runnerDir and serves them — no control plane.
-func StageElementsLocally(elements []Element, runnerDir string, quiet bool) error {
+func StageBackendsLocally(backends []Backend, runnerDir string, quiet bool) error {
 	if err := os.MkdirAll(runnerDir, 0o755); err != nil {
 		return err
 	}
@@ -102,18 +102,18 @@ func StageElementsLocally(elements []Element, runnerDir string, quiet bool) erro
 	if quiet {
 		report = nil
 	}
-	for _, el := range elements {
-		digest, _ := ElementDigest(el.Dir, el.Name)
+	for _, el := range backends {
+		digest, _ := BackendDigest(el.Dir, el.Name)
 		var err error
 		switch {
 		case el.Lang == "go":
-			err = DeployGoElement(el, digest, report)
+			err = DeployGoBackend(el, digest, report)
 		case el.Lang == "python" || el.Lang == "node" || el.Lang == "ruby" || el.Lang == "php":
-			err = DeployInterpretedElement(el, digest, report)
+			err = DeployInterpretedBackend(el, digest, report)
 		case len(el.Funcs) == 1:
 			err = DeployFunction(el.Funcs[0].Spec, quiet)
 		default:
-			err = fmt.Errorf("element %q is %s with %d functions — multi-function %s isn't staged for local run yet",
+			err = fmt.Errorf("backend %q is %s with %d functions — multi-function %s isn't staged for local run yet",
 				el.Name, el.Lang, len(el.Funcs), el.Lang)
 		}
 		if err != nil {
@@ -137,7 +137,7 @@ func localSlotSink(runnerDir string) SlotSink {
 		if lang == "" {
 			lang = "go"
 		}
-		slotDir := filepath.Join(runnerDir, slotDirName(a.Element, a.Method, a.Name))
+		slotDir := filepath.Join(runnerDir, slotDirName(a.Backend, a.Method, a.Name))
 		if err := os.RemoveAll(slotDir); err != nil {
 			return err
 		}
@@ -170,7 +170,7 @@ func localSlotSink(runnerDir string) SlotSink {
 		// function actually declared.
 		meta := map[string]any{
 			"name": a.Name, "method": a.Method, "auth": a.Auth,
-			"element": a.Element, "language": lang, "stream": a.Stream,
+			"backend": a.Backend, "language": lang, "stream": a.Stream,
 			"secrets": secrets, "protocol": slotProtocol(a.Method, lang),
 			"response": a.Response,
 		}
@@ -178,7 +178,7 @@ func localSlotSink(runnerDir string) SlotSink {
 			meta["env"] = a.Env
 		}
 		// Only when true, as the operator sends it: a runner built from a slice
-		// that knows the key then serves the Pulse concurrently, and an older
+		// that knows the key then serves the Function concurrently, and an older
 		// one ignores it and serves it one call at a time.
 		if a.Concurrent {
 			meta["concurrent"] = true
@@ -190,9 +190,9 @@ func localSlotSink(runnerDir string) SlotSink {
 
 // slotDirName makes a filesystem-safe, unique slot directory name. The slice
 // keys the registry off metadata.json, not the directory name.
-func slotDirName(element, method, name string) string {
+func slotDirName(backend, method, name string) string {
 	var b strings.Builder
-	for _, r := range element + "-" + method + "-" + name {
+	for _, r := range backend + "-" + method + "-" + name {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 			b.WriteRune(r)

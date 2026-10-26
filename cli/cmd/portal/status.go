@@ -97,7 +97,7 @@ const (
 // shadow) on top of the dimmed UI. A blank row sits above the first item.
 func (m *model) drawStatusPopup(b *strings.Builder) {
 	ps := m.platform
-	lines := []string{""} // a blank row above the first element
+	lines := []string{""} // a blank row above the first backend
 	switch {
 	case ps.err != "":
 		lines = append(lines, cRed+"✗ couldn't reach the status page"+cReset, "")

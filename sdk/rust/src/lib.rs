@@ -51,7 +51,7 @@ thread_local! {
 /// drift_sdk::set_response_header("Content-Type", "application/oauth-authz-req+jwt");
 /// ```
 ///
-/// The other five languages carry headers as an optional fourth element of the
+/// The other five languages carry headers as an optional fourth backend of the
 /// handler's return. Rust cannot: its wrapper destructures a fixed-arity tuple,
 /// so growing one would fail to compile against every handler already written.
 /// A sink keeps the change additive.

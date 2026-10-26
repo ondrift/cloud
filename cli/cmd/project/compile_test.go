@@ -91,7 +91,7 @@ func TestIsYAML_ReadsTheFirstTokens(t *testing.T) {
 		want bool
 	}{
 		{"slice: demo\n", true},
-		{"# a comment\n\nname: demo\natomic:\n  pulses: []\n", true},
+		{"# a comment\n\nname: demo\natomic:\n  functions: []\n", true},
 		{"---\nslice: demo\n", true},
 		{"slice \"demo\" {}\n", false},
 		{"# a comment\n// another\nslice \"demo\" {\n}\n", false},
@@ -109,7 +109,7 @@ func TestIsYAML_ReadsTheFirstTokens(t *testing.T) {
 // changed, rather than an HCL syntax error about a colon.
 func TestEveryReaderRefusesAYAMLDriftfileTheSameWay(t *testing.T) {
 	withRealSchema(t)
-	path := writeDriftfile(t, "slice: demo\natomic:\n  pulses: []\n")
+	path := writeDriftfile(t, "slice: demo\natomic:\n  functions: []\n")
 	readers := map[string]func() error{
 		"compile": func() error { _, err := CompileDriftfile(path); return err },
 		"parse":   func() error { _, err := ParseDriftfile(path); return err },
@@ -146,28 +146,28 @@ func TestCompile_AFileWithNoSliceBlockIsRefusedAtItsStart(t *testing.T) {
 	}
 }
 
-// The element named "default" is ./atomic itself, where `drift atomic new`
-// writes without --element; any other element is ./atomic/<name>. Its slots
-// carry no element, as the build expects of the default one.
-func TestCompile_TheDefaultElementIsTheAtomicFolderItself(t *testing.T) {
+// The backend named "default" is ./atomic itself, where `drift atomic new`
+// writes without --backend; any other backend is ./atomic/<name>. Its slots
+// carry no backend, as the build expects of the default one.
+func TestCompile_TheDefaultBackendIsTheAtomicFolderItself(t *testing.T) {
 	withRealSchema(t)
 	body := "slice \"demo\" {}\n" +
-		"atomic {\n  element \"default\" {\n    pulse \"GET /hello\" {\n      handler = \"GetHello\"\n      memory = \"32MiB\"\n    }\n  }\n}\n"
+		"atomic {\n  backend \"default\" {\n    function \"GET /hello\" {\n      handler = \"GetHello\"\n      memory = \"32MiB\"\n    }\n  }\n}\n"
 	path := writeDriftfile(t, body, "atomic/")
 	c, err := CompileDriftfile(path)
 	if err != nil {
-		t.Fatalf("the default element in ./atomic was refused: %v", err)
+		t.Fatalf("the default backend in ./atomic was refused: %v", err)
 	}
 	spec := FunctionSpecs(c.Manifest)[0]
-	if spec.Element != "" || spec.Dir != filepath.Join(filepath.Dir(path), "atomic") {
-		t.Errorf("the default element's pulse is in element %q, dir %s; want no element and ./atomic", spec.Element, spec.Dir)
+	if spec.Backend != "" || spec.Dir != filepath.Join(filepath.Dir(path), "atomic") {
+		t.Errorf("the default backend's function is in backend %q, dir %s; want no backend and ./atomic", spec.Backend, spec.Dir)
 	}
 
-	// The control: a named element is ./atomic/<name>, so ./atomic alone does
+	// The control: a named backend is ./atomic/<name>, so ./atomic alone does
 	// not hold it.
-	named := strings.Replace(body, `element "default"`, `element "api"`, 1)
+	named := strings.Replace(body, `backend "default"`, `backend "api"`, 1)
 	if _, err := CompileDriftfile(writeDriftfile(t, named, "atomic/")); err == nil || !strings.Contains(err.Error(), "atomic/api is not a directory") {
-		t.Errorf("a named element without its folder: got %v", err)
+		t.Errorf("a named backend without its folder: got %v", err)
 	}
 }
 
@@ -176,7 +176,7 @@ func TestCompile_TheDefaultElementIsTheAtomicFolderItself(t *testing.T) {
 func TestCompile_APillarBlockAtTheTopIsRefusedNamingItsContainer(t *testing.T) {
 	withRealSchema(t)
 	for _, tc := range []struct{ block, pillar string }{
-		{"element \"api\" {}", "atomic"},
+		{"backend \"api\" {}", "atomic"},
 		{"sql \"db\" {}", "backbone"},
 		{"nosql \"docs\" {}", "backbone"},
 		{"blobs \"files\" {}", "backbone"},
@@ -229,7 +229,7 @@ type compiledGolden struct {
 }
 
 type goldenSpec struct {
-	Name, Handler, Element, Dir, Auth, Response string
+	Name, Handler, Backend, Dir, Auth, Response string
 	Concurrent                                  bool
 }
 
@@ -247,7 +247,7 @@ func TestCompile_FxevmGolden(t *testing.T) {
 	g := compiledGolden{FitsFree: c.FitsFree, Document: c.Manifest.Doc(), Shape: c.Shape, WriteOnly: c.WriteOnly}
 	for _, s := range AtomicSpecs(c.Manifest) {
 		rel, _ := filepath.Rel(base, s.Dir)
-		g.Slots = append(g.Slots, goldenSpec{s.Name, s.Handler, s.Element, rel, s.Auth, s.Response, s.Concurrent})
+		g.Slots = append(g.Slots, goldenSpec{s.Name, s.Handler, s.Backend, rel, s.Auth, s.Response, s.Concurrent})
 	}
 	got, err := json.MarshalIndent(g, "", "  ")
 	if err != nil {
@@ -283,13 +283,13 @@ func TestCompile_TheReadersReadWhatTheFileSays(t *testing.T) {
 	}
 	names := map[string]string{}
 	for _, s := range AtomicSpecs(m) {
-		names[s.Name] = s.Element + "/" + s.Handler + "/" + s.Auth
+		names[s.Name] = s.Backend + "/" + s.Handler + "/" + s.Auth
 	}
 	want := map[string]string{
 		"post:rpc":         "evm/PostRPC/",
 		"post:admin/reset": "evm/PostReset/apikey",
 		"get:bench":        "bench/GetBench/",
-		"field:sequencer":  "evm/Sequencer/",
+		"worker:sequencer": "evm/Sequencer/",
 	}
 	for k, v := range want {
 		if names[k] != v {
@@ -349,7 +349,7 @@ func TestCompile_RefusesAWriteOnlyValueThatIsNotAReference(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		{"secret literal", "backbone {\n  secret \"STRIPE_KEY\" { value = \"sk_live_123\" }\n}"},
 		{"secret from var", "variable \"k\" { default = \"x\" }\nbackbone {\n  secret \"STRIPE_KEY\" { value = var.k }\n}"},
-		{"api key literal", "atomic {\n  element \"api\" {\n    pulse \"POST /x\" {\n      handler = \"PostX\"\n      memory = \"32MiB\"\n      auth { api_key = \"abc\" }\n    }\n  }\n}"},
+		{"api key literal", "atomic {\n  backend \"api\" {\n    function \"POST /x\" {\n      handler = \"PostX\"\n      memory = \"32MiB\"\n      auth { api_key = \"abc\" }\n    }\n  }\n}"},
 		{"site password literal", "edge {\n  site_auth {\n    paths = [\"*\"]\n    user \"a\" { password = \"hunter2\" }\n  }\n}"},
 		{"site password from file", "edge {\n  site_auth {\n    paths = [\"*\"]\n    user \"a\" { password = file(\"pw\") }\n  }\n}"},
 	} {
@@ -401,8 +401,8 @@ func TestCompile_ExpressionsAreSmall(t *testing.T) {
 variable "rpc_memory" { default = "48MiB" }
 slice "demo" {}
 atomic {
-  element "api" {
-    pulse "POST /rpc" {
+  backend "api" {
+    function "POST /rpc" {
       handler = env("RPC_HANDLER")
       memory  = var.rpc_memory
       env     = { GENESIS = sha256(file("genesis.sql")), NOTE = "literal" }
@@ -456,21 +456,21 @@ func TestCompile_AnUnsetEnvIsRefusedWhereItIsRead(t *testing.T) {
 
 func TestCompile_HoldsBookingsToThePlatformsGrid(t *testing.T) {
 	withRealSchema(t)
-	pulse := func(mem string) string {
-		return "atomic {\n  element \"api\" {\n    pulse \"POST /x\" {\n      handler = \"PostX\"\n      memory = \"" + mem + "\"\n    }\n  }\n}\n"
+	function := func(mem string) string {
+		return "atomic {\n  backend \"api\" {\n    function \"POST /x\" {\n      handler = \"PostX\"\n      memory = \"" + mem + "\"\n    }\n  }\n}\n"
 	}
-	field := func(mem string) string {
-		return "atomic {\n  element \"api\" {\n    field \"worker\" {\n      handler = \"Worker\"\n      memory = \"" + mem + "\"\n    }\n  }\n}\n"
+	worker := func(mem string) string {
+		return "atomic {\n  backend \"api\" {\n    worker \"worker\" {\n      handler = \"Worker\"\n      memory = \"" + mem + "\"\n    }\n  }\n}\n"
 	}
 	for _, tc := range []struct {
 		name, body, want string
 	}{
-		{"above 256MiB", pulse("300MiB"), "Memory out of range"},
-		{"below 8MiB", pulse("4MiB"), "Memory out of range"},
-		{"MB is not a unit here", pulse("64MB"), "Not a size"},
-		{"not whole MiB", pulse("1536KiB"), "Not whole MiB"},
-		{"a Field below the compiled floor", field("8MiB"), "Below the compiled floor"},
-		{"no memory at all", "atomic {\n  element \"api\" {\n    pulse \"POST /x\" { handler = \"PostX\" }\n  }\n}\n", "Missing memory"},
+		{"above 256MiB", function("300MiB"), "Memory out of range"},
+		{"below 8MiB", function("4MiB"), "Memory out of range"},
+		{"MB is not a unit here", function("64MB"), "Not a size"},
+		{"not whole MiB", function("1536KiB"), "Not whole MiB"},
+		{"a Worker below the compiled floor", worker("8MiB"), "Below the compiled floor"},
+		{"no memory at all", "atomic {\n  backend \"api\" {\n    function \"POST /x\" { handler = \"PostX\" }\n  }\n}\n", "Missing memory"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeDriftfile(t, "slice \"demo\" {}\n"+tc.body, "atomic/api/")
@@ -482,7 +482,7 @@ func TestCompile_HoldsBookingsToThePlatformsGrid(t *testing.T) {
 	}
 
 	// The controls, so the refusals above cannot be passing for one reason.
-	for _, ok := range []string{pulse("8MiB"), pulse("256MiB"), field("16MiB")} {
+	for _, ok := range []string{function("8MiB"), function("256MiB"), worker("16MiB")} {
 		path := writeDriftfile(t, "slice \"demo\" {}\n"+ok, "atomic/api/")
 		if _, err := CompileDriftfile(path); err != nil {
 			t.Errorf("a booking on the grid was refused: %v", err)
@@ -493,9 +493,9 @@ func TestCompile_HoldsBookingsToThePlatformsGrid(t *testing.T) {
 func TestCompile_RefusesMoreSlotsThanASliceHolds(t *testing.T) {
 	withRealSchema(t)
 	var b strings.Builder
-	b.WriteString("slice \"demo\" {}\natomic {\n  element \"api\" {\n")
+	b.WriteString("slice \"demo\" {}\natomic {\n  backend \"api\" {\n")
 	for i := 0; i < 65; i++ {
-		b.WriteString("    pulse \"GET /r" + strconv.Itoa(i) + "\" {\n      handler = \"H\"\n      memory = \"8MiB\"\n    }\n")
+		b.WriteString("    function \"GET /r" + strconv.Itoa(i) + "\" {\n      handler = \"H\"\n      memory = \"8MiB\"\n    }\n")
 	}
 	b.WriteString("  }\n}\n")
 	_, err := CompileDriftfile(writeDriftfile(t, b.String(), "atomic/api/"))
@@ -506,19 +506,19 @@ func TestCompile_RefusesMoreSlotsThanASliceHolds(t *testing.T) {
 
 // A refusal the platform's schema makes is moved back to where the file wrote
 // it: an uppercase route fails the schema's route pattern, and is reported at
-// the pulse's label.
+// the function's label.
 func TestCompile_ASchemaRefusalCarriesTheFilesPosition(t *testing.T) {
 	withRealSchema(t)
 	body := "slice \"demo\" {}\n" +
-		"atomic {\n  element \"api\" {\n" +
-		"    pulse \"POST /Rpc\" {\n" + // line 4
+		"atomic {\n  backend \"api\" {\n" +
+		"    function \"POST /Rpc\" {\n" + // line 4
 		"      handler = \"PostRPC\"\n      memory = \"32MiB\"\n    }\n  }\n}\n"
 	_, err := CompileDriftfile(writeDriftfile(t, body, "atomic/api/"))
 	if err == nil {
 		t.Fatal("an uppercase route compiled; the platform's route pattern refuses it")
 	}
 	if !strings.Contains(err.Error(), "Driftfile:4:") || !strings.Contains(err.Error(), "route") {
-		t.Errorf("the refusal is not at the pulse's line, or does not name the route: %v", err)
+		t.Errorf("the refusal is not at the function's line, or does not name the route: %v", err)
 	}
 }
 
@@ -531,13 +531,13 @@ func TestCompile_WhatTheFileLeavesOutIsTheSmallestShape(t *testing.T) {
 	withRealSchema(t)
 	body := `slice "demo" {}
 atomic {
-  element "api" {
-    pulse "GET /a" {
+  backend "api" {
+    function "GET /a" {
       handler = "A"
       memory  = "16MiB"
       cron    = "0 * * * *"
     }
-    pulse "GET /b" {
+    function "GET /b" {
       handler = "B"
       memory  = "16MiB"
       cron    = "30 * * * *"
@@ -585,7 +585,7 @@ backbone {
 func TestCompile_FreeFitIsHeldToTheFreeEnvelope(t *testing.T) {
 	withRealSchema(t)
 	fits := "slice \"demo\" {}\n" +
-		"atomic {\n  element \"api\" {\n    pulse \"GET /a\" {\n      handler = \"A\"\n      memory = \"16MiB\"\n    }\n  }\n}\n"
+		"atomic {\n  backend \"api\" {\n    function \"GET /a\" {\n      handler = \"A\"\n      memory = \"16MiB\"\n    }\n  }\n}\n"
 	c, err := CompileDriftfile(writeDriftfile(t, fits, "atomic/api/"))
 	if err != nil {
 		t.Fatalf("a shape inside the free slice was refused: %v", err)
@@ -638,7 +638,7 @@ func TestCompile_TheBillingKeyIsRefused(t *testing.T) {
 	}
 }
 
-// edge.rate_limit and limits.requests_per_minute are one field of the shape,
+// edge.rate_limit and limits.requests_per_minute are one worker of the shape,
 // so the file may write it once.
 func TestCompile_TheRateLimitHasOneHome(t *testing.T) {
 	withRealSchema(t)

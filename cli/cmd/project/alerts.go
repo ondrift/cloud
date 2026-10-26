@@ -1,8 +1,8 @@
 package project
 
-// alerts.go — a pulse's alerts, planned and applied with the rest of the file.
+// alerts.go — a function's alerts, planned and applied with the rest of the file.
 //
-// An alert is a condition the slice watches (a pulse failing `threshold` times in
+// An alert is a condition the slice watches (a function failing `threshold` times in
 // `window`) and a webhook it tells when it holds. The file declares the first;
 // the webhook is write-only, read from the environment, and compared with what
 // the slice holds without being printed.
@@ -80,8 +80,8 @@ func webhookIsURL(v string) bool {
 // holds, and never the webhook itself.
 func alertDiff(a DeclaredAlert, live liveAlert) []string {
 	var changes []string
-	if a.Function != live.Function {
-		changes = append(changes, fmt.Sprintf("watches %s → %s", live.Function, a.Function))
+	if a.Route != live.Function {
+		changes = append(changes, fmt.Sprintf("watches %s → %s", live.Function, a.Route))
 	}
 	if a.On != live.Trigger {
 		changes = append(changes, fmt.Sprintf("on %s → %s", live.Trigger, a.On))
@@ -107,7 +107,7 @@ func (p *planState) diffAlerts(d *planDiff, creating bool) {
 	for _, a := range p.c.Alerts {
 		declared[a.Name] = true
 		addr := "alert " + a.Name
-		what := fmt.Sprintf("%s fails %d× in %s, tells $%s", a.Pulse, a.Threshold, alertWindow(a.WindowSec), a.Env)
+		what := fmt.Sprintf("%s fails %d× in %s, tells $%s", a.Function, a.Threshold, alertWindow(a.WindowSec), a.Env)
 		switch live, held := liveByName[a.Name]; {
 		case !envSet(a.Env):
 			d.add("!", addr, "$%s is not set here: apply would refuse", a.Env)
@@ -167,7 +167,7 @@ func applyAlerts(c *Compiled, p *planState, out io.Writer) error {
 			continue
 		}
 		body, err := json.Marshal(liveAlert{
-			Name: a.Name, Function: a.Function, Trigger: a.On, Threshold: a.Threshold,
+			Name: a.Name, Function: a.Route, Trigger: a.On, Threshold: a.Threshold,
 			WindowSec: a.WindowSec, NotifyType: "webhook", NotifyTarget: os.Getenv(a.Env),
 		})
 		if err != nil {
@@ -182,7 +182,7 @@ func applyAlerts(c *Compiled, p *planState, out io.Writer) error {
 		if cerr != nil {
 			return cerr
 		}
-		say("alert %s set on %s", a.Name, a.Pulse)
+		say("alert %s set on %s", a.Name, a.Function)
 	}
 
 	if p.alertsErr != nil {

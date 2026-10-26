@@ -100,36 +100,36 @@ func ValidateAuth(auth string) error {
 
 // New is the `drift atomic new` command.
 func New() *cobra.Command {
-	var lang, method, queue, auth, element string
+	var lang, method, queue, auth, backend string
 	c := &cobra.Command{
 		Use:     "new [name]",
-		Short:   "Add a pulse to an element",
+		Short:   "Add a function to a backend",
 		GroupID: "development",
 		Args:    cobra.MaximumNArgs(1),
 		Example: "  drift atomic new\n" +
 			"  drift atomic new send-email -l python -m post\n" +
 			"  drift atomic new process-jobs -l go -q jobs\n" +
-			"  drift atomic new train -l python -m post --element ml",
+			"  drift atomic new train -l python -m post --backend ml",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := ""
 			if len(args) == 1 {
 				name = args[0]
 			}
-			return runNew(name, lang, method, queue, auth, element)
+			return runNew(name, lang, method, queue, auth, backend)
 		},
 	}
 	c.Flags().StringVarP(&lang, "lang", "l", "", "language: go|python|node|ruby|php|rust")
 	c.Flags().StringVarP(&method, "method", "m", "", "HTTP method: get|post|put|delete|patch")
-	c.Flags().StringVarP(&queue, "queue", "q", "", "queue name (creates a queue-triggered pulse)")
+	c.Flags().StringVarP(&queue, "queue", "q", "", "queue name (creates a queue-triggered function)")
 	c.Flags().StringVarP(&auth, "auth", "a", "", "auth for HTTP: "+strings.Join(AuthOptions, "|")+" (default none)")
-	c.Flags().StringVarP(&element, "element", "e", "", "element to add it to (default: the flat top-level element)")
+	c.Flags().StringVarP(&backend, "backend", "b", "", "backend to add it to (default: the flat top-level backend)")
 	return c
 }
 
-func runNew(name, lang, method, queue, auth, element string) error {
+func runNew(name, lang, method, queue, auth, backend string) error {
 	// ---- name ----
 	if name == "" {
-		if err := survey.AskOne(&survey.Input{Message: "Pulse name (e.g. send-email):"}, &name,
+		if err := survey.AskOne(&survey.Input{Message: "Function name (e.g. send-email):"}, &name,
 			survey.WithValidator(survey.Required)); err != nil {
 			return err
 		}
@@ -230,37 +230,37 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	}
 
 	// ---- assemble + write ----
-	// The source carries no Drift-specific marking. What this pulse is — its
+	// The source carries no Drift-specific marking. What this function is — its
 	// trigger, its gate, the memory it books — is declared in the Driftfile,
 	// and the handler name is the only thing binding the two.
 	funcName := HandlerName(funcMethod, name, lang)
 	source := strings.NewReplacer("{{FUNC}}", funcName).Replace(sourceTemplate(lang, shape))
 
-	// ---- resolve the target element + drop a flat handler file into it ----
-	// An element is a single-language backend: a folder of flat source files
-	// sharing one manifest. The default element is atomic/ itself; --element
+	// ---- resolve the target backend + drop a flat handler file into it ----
+	// A backend is a single-language backend: a folder of flat source files
+	// sharing one manifest. The default backend is atomic/ itself; --backend
 	// targets a named subfolder. Adding a function never creates a per-function
 	// folder — it's just another file alongside its siblings.
 	atomicDir := resolveAtomicDir()
-	elementDir, elementID := atomicDir, defaultElement
-	if element != "" {
-		if !nameRe.MatchString(element) {
-			return fmt.Errorf("invalid element name %q — use lowercase letters, digits and hyphens", element)
+	backendDir, backendID := atomicDir, defaultBackend
+	if backend != "" {
+		if !nameRe.MatchString(backend) {
+			return fmt.Errorf("invalid backend name %q — use lowercase letters, digits and hyphens", backend)
 		}
-		elementDir, elementID = filepath.Join(atomicDir, element), element
+		backendDir, backendID = filepath.Join(atomicDir, backend), backend
 	}
 
-	// One language per element — a different language is, by definition, a
-	// different element.
-	if existing := elementLang(elementDir); existing != "" && existing != lang {
-		return fmt.Errorf("the %s element is %s — a different language is a different element; "+
-			"pass --element <name> to start a new one", elementID, existing)
+	// One language per backend — a different language is, by definition, a
+	// different backend.
+	if existing := backendLang(backendDir); existing != "" && existing != lang {
+		return fmt.Errorf("the %s backend is %s — a different language is a different backend; "+
+			"pass --backend <name> to start a new one", backendID, existing)
 	}
-	if err := os.MkdirAll(elementDir, 0o750); err != nil {
-		return fmt.Errorf("create element dir: %w", err)
+	if err := os.MkdirAll(backendDir, 0o750); err != nil {
+		return fmt.Errorf("create backend dir: %w", err)
 	}
 
-	srcFile := filepath.Join(elementDir, sourceBase(lang, name)+"."+langExt[lang])
+	srcFile := filepath.Join(backendDir, sourceBase(lang, name)+"."+langExt[lang])
 	if exists(srcFile) {
 		return fmt.Errorf("%s already exists", srcFile)
 	}
@@ -268,17 +268,17 @@ func runNew(name, lang, method, queue, auth, element string) error {
 		return fmt.Errorf("write source: %w", err)
 	}
 
-	// Manifest / .env / .gitignore: one per element, written only when absent so
-	// adding a function never clobbers an existing element's shared files.
+	// Manifest / .env / .gitignore: one per backend, written only when absent so
+	// adding a function never clobbers an existing backend's shared files.
 	created := []string{srcFile}
-	manifestName, manifestBody := Manifest(lang, elementID)
-	if mp := filepath.Join(elementDir, manifestName); !exists(mp) {
+	manifestName, manifestBody := Manifest(lang, backendID)
+	if mp := filepath.Join(backendDir, manifestName); !exists(mp) {
 		if err := os.WriteFile(mp, []byte(manifestBody), 0o600); err != nil {
 			return fmt.Errorf("write manifest: %w", err)
 		}
 		created = append(created, mp)
 	}
-	if ep := filepath.Join(elementDir, ".env"); !exists(ep) {
+	if ep := filepath.Join(backendDir, ".env"); !exists(ep) {
 		_ = os.WriteFile(ep, []byte(dotEnv), 0o600) // #nosec G306 -- local-dev secrets file
 	}
 	if gp := filepath.Join(atomicDir, ".gitignore"); !exists(gp) {
@@ -289,21 +289,21 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	if isQueue {
 		trigger = "queue " + queue
 	}
-	fmt.Printf("✅ Added %s to the %s element  (%s, %s)\n", filepath.Base(srcFile), elementID, lang, trigger)
+	fmt.Printf("✅ Added %s to the %s backend  (%s, %s)\n", filepath.Base(srcFile), backendID, lang, trigger)
 	for _, f := range created {
 		fmt.Printf("   %s\n", f)
 	}
 
-	// The pulse does not exist until the Driftfile says so: the file is what
-	// the slice is contracted to run, and a pulse nobody declared is one the
+	// The function does not exist until the Driftfile says so: the file is what
+	// the slice is contracted to run, and a function nobody declared is one the
 	// platform cannot size, price or admit work against.
 	//
 	// ALREADY DECLARED IS A DIFFERENT MESSAGE, and this is the case `drift file
 	// new` creates on purpose. That scaffolder writes a Driftfile declaring
-	// `pulse "GET /hello"` and prints the command that produces its source —
+	// `function "GET /hello"` and prints the command that produces its source —
 	// which is this one. Telling the user who followed that hint to "declare it
 	// in your Driftfile" sends them to paste a duplicate of a block already
-	// three lines above, and a second pulse on one trigger is a compile error
+	// three lines above, and a second function on one trigger is a compile error
 	// rather than a no-op.
 	//
 	// So the two commands point at each other rather than each assuming the
@@ -319,7 +319,7 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	if isQueue {
 		route = queue
 	}
-	snippet := declarationSnippet(route, funcMethod, funcName, auth, elementID)
+	snippet := declarationSnippet(route, funcMethod, funcName, auth, backendID)
 	fmt.Printf("\n%s\n\n", snippet.intro)
 	for _, line := range strings.Split(strings.TrimSuffix(snippet.body, "\n"), "\n") {
 		fmt.Printf("    %s\n", line)
@@ -328,7 +328,7 @@ func runNew(name, lang, method, queue, auth, element string) error {
 	return nil
 }
 
-// printNext names what follows declaring a pulse.
+// printNext names what follows declaring a function.
 func printNext() {
 	fmt.Printf("\nThen:\n")
 	fmt.Printf("\tdrift plan            # what applying it creates, and what it costs\n")
@@ -343,23 +343,23 @@ type snippet struct {
 	body  string
 }
 
-// snippetMemory is what a new pulse books until it is measured: above the
+// snippetMemory is what a new function books until it is measured: above the
 // floor a compiled language needs, so the snippet is not refused by the
 // language it was scaffolded in. `drift size` replaces it with what the slice
 // measured.
 const snippetMemory = "32MiB"
 
-// declarationSnippet is the block declaring a new Pulse, inside the element it
-// was added to. A Pulse is declared inside the element its handler lives in,
-// so the snippet is that element's block holding the pulse.
-func declarationSnippet(route, method, handler, auth, element string) snippet {
-	if element == "" {
-		element = defaultElement
+// declarationSnippet is the block declaring a new Function, inside the backend it
+// was added to. A Function is declared inside the backend its handler lives in,
+// so the snippet is that backend's block holding the function.
+func declarationSnippet(route, method, handler, auth, backend string) snippet {
+	if backend == "" {
+		backend = defaultBackend
 	}
 	var b strings.Builder
 	b.WriteString("atomic {\n")
-	fmt.Fprintf(&b, "  element %q {\n", element)
-	fmt.Fprintf(&b, "    pulse %q {\n", pulseLabel(method, route))
+	fmt.Fprintf(&b, "  backend %q {\n", backend)
+	fmt.Fprintf(&b, "    function %q {\n", functionLabel(method, route))
 	fmt.Fprintf(&b, "      handler = %q\n", handler)
 	fmt.Fprintf(&b, "      memory  = %q\n", snippetMemory)
 	if auth != "" && auth != "none" {
@@ -371,13 +371,13 @@ func declarationSnippet(route, method, handler, auth, element string) snippet {
 	b.WriteString("  }\n")
 	b.WriteString("}\n")
 	return snippet{
-		intro: fmt.Sprintf("Declare it in your Driftfile, inside element %q of the atomic block (add the "+
-			"blocks if they are not there yet, or just the pulse block if they are):", element),
+		intro: fmt.Sprintf("Declare it in your Driftfile, inside backend %q of the atomic block (add the "+
+			"blocks if they are not there yet, or just the function block if they are):", backend),
 		body: b.String(),
 	}
 }
 
-// apiKeyVariable is the environment variable a new pulse's API key is read
+// apiKeyVariable is the environment variable a new function's API key is read
 // from: its route in capitals, `admin/reset` → ADMIN_RESET_API_KEY.
 func apiKeyVariable(route string) string {
 	var b strings.Builder
@@ -422,9 +422,9 @@ func HandlerName(method, route, lang string) string {
 	}
 }
 
-// defaultElement is the implicit flat element (atomic/*.<lang>) — mirrors the
-// deploy package's DefaultElementName without importing it.
-const defaultElement = "default"
+// defaultBackend is the implicit flat backend (atomic/*.<lang>) — mirrors the
+// deploy package's DefaultBackendName without importing it.
+const defaultBackend = "default"
 
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
@@ -438,9 +438,9 @@ func resolveAtomicDir() string {
 	return "atomic"
 }
 
-// elementLang reports the single language of the source already in dir (an
-// element is one language), or "" if it holds none yet.
-func elementLang(dir string) string {
+// backendLang reports the single language of the source already in dir (an
+// backend is one language), or "" if it holds none yet.
+func backendLang(dir string) string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""

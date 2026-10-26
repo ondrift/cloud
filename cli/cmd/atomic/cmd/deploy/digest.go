@@ -9,7 +9,7 @@
 // what is recorded against a function is both:
 //
 //   - the BUILD digest — handler code, trigger comments, dependency manifests,
-//     plus the element grouping. FunctionDigest and ElementDigest.
+//     plus the backend grouping. FunctionDigest and BackendDigest.
 //   - the DECLARATION digest — everything the Driftfile entry tells the
 //     operator: the gate, the secrets, the env, the reply shape, the stream mode
 //     and the declared `cron`. DeclarationDigest.
@@ -22,7 +22,7 @@
 // must not force a rebuild of code that did not change."
 //
 // The reasoning is right and the premise is false. A function whose digest
-// matches is SKIPPED — `elementUnchanged` drops the whole element before
+// matches is SKIPPED — `backendUnchanged` drops the whole backend before
 // anything is staged, built or uploaded — so there is no deploy on which to send
 // the gate. Adding an API-key gate and re-applying would leave the function
 // open, with the deploy printing `(unchanged)` beside it. The same holds for
@@ -75,9 +75,9 @@ var digestSkipDirs = map[string]struct{}{
 
 // FunctionDigest returns a deterministic, mtime-independent fingerprint of the
 // function at dir: every non-hidden source file (relative path + executable bit
-// + content, in sorted order) plus the element. Identical trees always hash to
+// + content, in sorted order) plus the backend. Identical trees always hash to
 // the same value; any meaningful change flips it.
-func FunctionDigest(dir, element string) (string, error) {
+func FunctionDigest(dir, backend string) (string, error) {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return "", fmt.Errorf("resolve function dir: %w", err)
@@ -117,9 +117,9 @@ func FunctionDigest(dir, element string) (string, error) {
 	sort.Strings(rels)
 
 	h := sha256.New()
-	// Version + element header. NUL delimiters everywhere so distinct inputs
+	// Version + backend header. NUL delimiters everywhere so distinct inputs
 	// can never concatenate into the same byte stream.
-	fmt.Fprintf(h, "%s\x00element=%s\x00", digestVersion, element)
+	fmt.Fprintf(h, "%s\x00backend=%s\x00", digestVersion, backend)
 
 	for _, rel := range rels {
 		full := filepath.Join(absDir, rel)
@@ -146,22 +146,22 @@ func FunctionDigest(dir, element string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// ElementDigest fingerprints an element's package using only the TOP-LEVEL
-// non-hidden files in dir — never subdirectories. For a Default element at
-// atomic/, the subdirectories are OTHER elements, not part of this package, so
-// folding them in would spuriously rebuild the Default when a sibling element
+// BackendDigest fingerprints a backend's package using only the TOP-LEVEL
+// non-hidden files in dir — never subdirectories. For a Default backend at
+// atomic/, the subdirectories are OTHER backends, not part of this package, so
+// folding them in would spuriously rebuild the Default when a sibling backend
 // changes. This matches the build's flat copy (copyGoSourceFiles). The digest
-// is element-granular: any source change reflips it, so the whole element
+// is backend-granular: any source change reflips it, so the whole backend
 // redeploys (its functions all share the same compiled package). `name` is
-// mixed in exactly like FunctionDigest's element label.
-func ElementDigest(dir, name string) (string, error) {
+// mixed in exactly like FunctionDigest's backend label.
+func BackendDigest(dir, name string) (string, error) {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
-		return "", fmt.Errorf("resolve element dir: %w", err)
+		return "", fmt.Errorf("resolve backend dir: %w", err)
 	}
 	entries, err := os.ReadDir(absDir)
 	if err != nil {
-		return "", fmt.Errorf("read element dir: %w", err)
+		return "", fmt.Errorf("read backend dir: %w", err)
 	}
 	var names []string
 	for _, e := range entries {
@@ -175,7 +175,7 @@ func ElementDigest(dir, name string) (string, error) {
 	sort.Strings(names)
 
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00element=%s\x00", digestVersion, name)
+	fmt.Fprintf(h, "%s\x00backend=%s\x00", digestVersion, name)
 	for _, n := range names {
 		full := filepath.Join(absDir, n)
 		info, serr := os.Stat(full)
@@ -206,12 +206,12 @@ func ElementDigest(dir, name string) (string, error) {
 //
 // The field list is `operatorSink`'s metadata minus what the build already
 // covers: it is the gate, the reply shape, the stream mode, the secrets, the
-// env, the element, the schedule the manifest declares, and whether it is
+// env, the backend, the schedule the manifest declares, and whether it is
 // concurrent. Get this list out of step with what is actually sent and the
 // failure is silent in one direction only — a field left out here is a field
 // whose change is skipped.
 //
-// `concurrent` is hashed only when the Pulse is concurrent, in either
+// `concurrent` is hashed only when the Function is concurrent, in either
 // spelling, which is also when it is sent. Every declaration that is not
 // therefore hashes exactly as it did before the key existed, so a CLI that
 // knows the key redeploys nothing on its account, and a change to or from
@@ -223,8 +223,8 @@ func ElementDigest(dir, name string) (string, error) {
 // developer who checked it out somewhere else.
 //
 // A Field is hashed through the same list. Its name is its booking key,
-// `field:<name>`, so a Field and a Pulse never share a declaration digest, and
-// its handler, element, secrets and env are what it tells the operator; the
+// `field:<name>`, so a Field and a Function never share a declaration digest, and
+// its handler, backend, secrets and env are what it tells the operator; the
 // keys a Field cannot carry hash as empty.
 //
 // Maps and slices are written in sorted order so the same declaration always
@@ -236,7 +236,7 @@ func DeclarationDigest(spec FunctionSpec) string {
 
 	for _, kv := range [][2]string{
 		{"name", spec.Name},
-		{"element", spec.Element},
+		{"backend", spec.Backend},
 		{"auth", spec.Auth},
 		{"stream", spec.Stream},
 		{"response", spec.Response},
@@ -251,8 +251,8 @@ func DeclarationDigest(spec FunctionSpec) string {
 	if spec.IsConcurrent() {
 		fmt.Fprintf(h, "concurrent\x00true\x00")
 	}
-	// A queue Pulse's tuning is part of what its trigger is, so changing it
-	// redeploys the Pulse; left out, nothing is written and every digest taken
+	// A queue Function's tuning is part of what its trigger is, so changing it
+	// redeploys the Function; left out, nothing is written and every digest taken
 	// before these existed stays what it was.
 	if spec.PollMS != 0 {
 		fmt.Fprintf(h, "poll_ms\x00%d\x00", spec.PollMS)
@@ -315,7 +315,7 @@ type deployedAtomic struct {
 }
 
 // deployedKey is the identity a deployed record is filed under in the digest
-// map — it must equal ElementFunc.DeployKey() for the local function. For HTTP
+// map — it must equal BackendFunc.DeployKey() for the local function. For HTTP
 // that's "<method>:<path>" (so get:x and post:x are distinct); a queue handler's
 // stored method is "queue", so its key stays the queue name (the function_name).
 func deployedKey(method, functionName string) string {

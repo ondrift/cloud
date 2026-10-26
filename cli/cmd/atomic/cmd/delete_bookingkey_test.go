@@ -30,7 +30,7 @@ func TestSplitBookingKey_AcceptsTheFormEveryOtherSurfacePrints(t *testing.T) {
 		// found", while `delete txs --method queue` worked.
 		{"queue:txs", "txs", "queue"},
 		{"QUEUE:orders.v2", "orders.v2", "queue"},
-		{"field:sequencer", "sequencer", "field"},
+		{"worker:sequencer", "sequencer", "worker"},
 	} {
 		route, method, split := splitBookingKey(c.in)
 		if !split {
@@ -63,7 +63,7 @@ func TestDelete_TheBookingKeyFormReachesTheOperatorSplit(t *testing.T) {
 	}{
 		{[]string{"queue:txs"}, "txs", "queue"},
 		{[]string{"txs", "--method", "queue"}, "txs", "queue"},
-		{[]string{"field:sequencer"}, "sequencer", "field"},
+		{[]string{"worker:sequencer"}, "sequencer", "worker"},
 		{[]string{"post:send-email"}, "send-email", "post"},
 	} {
 		var got []string

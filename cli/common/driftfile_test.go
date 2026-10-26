@@ -56,7 +56,7 @@ func TestFormatSkew_WarnsWhenTheServedMinorIsAhead(t *testing.T) {
 // validated against that schema, and a key added since is refused as "not
 // allowed" with nothing naming the cause. This rung was silent, and a nested
 // Driftfile linted against a 1.19.0 cache by a 1.21.0 binary was refused for
-// `elements` with no word about the schema being two formats old.
+// `backends` with no word about the schema being two formats old.
 func TestFormatSkew_WarnsWhenTheHeldSchemaIsBehind(t *testing.T) {
 	for _, tc := range []struct{ implemented, served string }{
 		{"2.0.0", "1.9.0"},

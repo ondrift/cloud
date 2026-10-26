@@ -11,13 +11,13 @@ import (
 	"testing"
 )
 
-// fxevmSizing is what the slice measured for the testnode: the rpc Pulse peaks
-// far below its 64MiB booking, the sequencer Field far above its, the bench
-// Pulse is booked as recommended, and the reset Pulse was never called.
+// fxevmSizing is what the slice measured for the testnode: the rpc Function peaks
+// far below its 64MiB booking, the sequencer Worker far above its, the bench
+// Function is booked as recommended, and the reset Function was never called.
 func fxevmSizing() []sizingRow {
 	return []sizingRow{
 		{Function: "post:rpc", Measurements: 1204, PeakBytes: 9 * mib, BookedBytes: 64 * mib, Recommended: 32 * mib},
-		{Function: "field:sequencer", Measurements: 40, PeakBytes: 90 * mib, BookedBytes: 64 * mib, Recommended: 128 * mib},
+		{Function: "worker:sequencer", Measurements: 40, PeakBytes: 90 * mib, BookedBytes: 64 * mib, Recommended: 128 * mib},
 		{Function: "get:bench", Measurements: 10, PeakBytes: 20 * mib, BookedBytes: 32 * mib, Recommended: 32 * mib},
 		{Function: "post:admin/reset", Measurements: 0, BookedBytes: 32 * mib, Recommended: 8 * mib},
 	}
@@ -58,8 +58,8 @@ func TestSize_ChangesOnlyTheMemoryLinesItRecommends(t *testing.T) {
 	for _, c := range res.Changes {
 		changed = append(changed, c.Address)
 	}
-	if got := strings.Join(changed, ", "); got != "pulse POST /rpc, field sequencer" {
-		t.Fatalf("changed %q, want the rpc Pulse and the sequencer Field", got)
+	if got := strings.Join(changed, ", "); got != "function POST /rpc, worker sequencer" {
+		t.Fatalf("changed %q, want the rpc Function and the sequencer Worker", got)
 	}
 
 	was, now := lines(src), lines(res.Output)
@@ -84,8 +84,8 @@ func TestSize_ChangesOnlyTheMemoryLinesItRecommends(t *testing.T) {
 		}
 	}
 	// What it left alone, and why.
-	if len(res.Left) != 1 || !strings.Contains(res.Left[0], "pulse POST /admin/reset: never invoked") {
-		t.Errorf("left = %q, want the never-invoked Pulse named with its reason", res.Left)
+	if len(res.Left) != 1 || !strings.Contains(res.Left[0], "function POST /admin/reset: never invoked") {
+		t.Errorf("left = %q, want the never-invoked Function named with its reason", res.Left)
 	}
 	// The edited file still compiles.
 	withRealSchema(t)
@@ -104,7 +104,7 @@ func TestSize_ChangesOnlyTheMemoryLinesItRecommends(t *testing.T) {
 	for _, f := range c.Shape.Atomic.Functions {
 		booked[f.Name] = f.MemoryBytes
 	}
-	if booked["post:rpc"] != 32*mib || booked["field:sequencer"] != 128*mib || booked["get:bench"] != 32*mib {
+	if booked["post:rpc"] != 32*mib || booked["worker:sequencer"] != 128*mib || booked["get:bench"] != 32*mib {
 		t.Errorf("the compiled bookings are %v", booked)
 	}
 }
@@ -116,12 +116,12 @@ func TestSize_LeavesAnExpressionAloneAndKeepsATrailingComment(t *testing.T) {
 	src := []byte(`variable "m" { default = "16MiB" }
 slice "demo" {}
 atomic {
-  element "api" {
-    pulse "GET /a" {
+  backend "api" {
+    function "GET /a" {
       handler = "A"
       memory  = var.m
     }
-    pulse "GET /b" {
+    function "GET /b" {
       handler = "B"
       memory  = "64MiB" # measured on 3 July
     }
@@ -142,7 +142,7 @@ atomic {
 	if !strings.Contains(out, `memory  = "16MiB" # measured on 3 July`) {
 		t.Errorf("the booking was not rewritten with its comment kept:\n%s", out)
 	}
-	if len(res.Left) != 1 || !strings.Contains(res.Left[0], "pulse GET /a: its memory is not a plain size string") {
+	if len(res.Left) != 1 || !strings.Contains(res.Left[0], "function GET /a: its memory is not a plain size string") {
 		t.Errorf("left = %q", res.Left)
 	}
 }
@@ -217,8 +217,8 @@ func TestSize_WritesTheFileAndAsksOnlyForTheMeasurement(t *testing.T) {
 		t.Fatalf("size --dry-run: %v", err)
 	}
 	for _, want := range []string{
-		"~ pulse POST /rpc", "memory 64MiB → 32MiB", "peak 9MB over 1204 calls",
-		"~ field sequencer", "memory 64MiB → 128MiB",
+		"~ function POST /rpc", "memory 64MiB → 32MiB", "peak 9MB over 1204 calls",
+		"~ worker sequencer", "memory 64MiB → 128MiB",
 		"-      memory     = \"64MiB\"", "+      memory     = \"32MiB\"", "nothing written (--dry-run)",
 	} {
 		if !strings.Contains(out, want) {
@@ -254,7 +254,7 @@ func TestSize_WritesTheFileAndAsksOnlyForTheMeasurement(t *testing.T) {
 // before the platform is asked anything, and the file is as it was.
 func TestSize_RefusesAYAMLDriftfile(t *testing.T) {
 	rec := sizingStub(t, fxevmSizing())
-	yamlText := []byte("slice: fxevm-testnode\natomic:\n  elements: []\n")
+	yamlText := []byte("slice: fxevm-testnode\natomic:\n  backends: []\n")
 
 	dir, _, err := sizeIn(t, yamlText)
 	if err == nil || !strings.Contains(err.Error(), "the Driftfile is HCL now") {

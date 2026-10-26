@@ -12,7 +12,7 @@ import (
 
 // serveLocal serves the handler over HTTP for development outside a slice, on
 // $PORT (8080 by default), the way drift.Run does. net/http runs each request
-// on its own goroutine, so calls are concurrent here as on a concurrent Pulse.
+// on its own goroutine, so calls are concurrent here as on a concurrent Function.
 func serveLocal(handler handlerFunc) {
 	port := os.Getenv("PORT")
 	if port == "" {

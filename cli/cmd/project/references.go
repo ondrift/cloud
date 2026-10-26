@@ -132,12 +132,12 @@ func sliceReferenceMisses(m *Manifest, live *LiveSlice) ([]referenceMiss, error)
 		declaredFunctions[f.Name] = true
 	}
 
-	// Pulses and Fields are checked against ONE declared set, because both are
-	// slots: a Field is booked as `field:<name>`, and a Driftfile naming a Field
-	// the slice was never sold is refused exactly as a missing Pulse is.
+	// Functions and Workers are checked against ONE declared set, because both are
+	// slots: a Worker is booked as `worker:<name>`, and a Driftfile naming a Worker
+	// the slice was never sold is refused exactly as a missing Function is.
 	var missing []referenceMiss
-	missing = append(missing, missesIn(classPulse, specNames(FunctionSpecs(m)), declaredFunctions)...)
-	missing = append(missing, missesIn(classField, specNames(FieldSpecs(m)), declaredFunctions)...)
+	missing = append(missing, missesIn(classFunction, specNames(FunctionSpecs(m)), declaredFunctions)...)
+	missing = append(missing, missesIn(classWorker, specNames(WorkerSpecs(m)), declaredFunctions)...)
 	missing = append(missing, missingSecrets(m)...)
 	missing = append(missing, missesIn("nosql collection",
 		entryNames(m, "slot", "backbone", "nosql"), keySet(live.Config.Backbone.NoSQL.Collections))...)
@@ -151,16 +151,16 @@ func sliceReferenceMisses(m *Manifest, live *LiveSlice) ([]referenceMiss, error)
 // adoptIdleSlots renames idle slots to the slot names this manifest declares,
 // when the ONLY thing the slice is missing is those names.
 //
-// It is attempted only for a miss of Pulses or Fields alone. A manifest also
+// It is attempted only for a miss of Functions or Workers alone. A manifest also
 // naming a collection the slice does not have needs the form whatever happens
 // to the slots, and half-fixing it would send the user there anyway having
-// silently changed their slice on the way. A Field is a slot like a Pulse, so
+// silently changed their slice on the way. A Worker is a slot like a Function, so
 // an idle slot can be re-pointed at either; the platform validates the key.
 func adoptIdleSlots(m *Manifest, live *LiveSlice, missing []referenceMiss, autoYes bool) ([]slice.SlotAdoption, error) {
 	var want []string
 	for _, miss := range missing {
-		if miss.Class != classPulse && miss.Class != classField {
-			return nil, fmt.Errorf("more than pulses and fields are missing")
+		if miss.Class != classFunction && miss.Class != classWorker {
+			return nil, fmt.Errorf("more than functions and workers are missing")
 		}
 		want = append(want, miss.Name)
 	}
@@ -342,11 +342,11 @@ func missesIn(class string, referenced []string, declared map[string]bool) []ref
 // The reference classes a slot falls into. A miss of either can be repaired by
 // re-pointing an idle slot; a miss of anything else needs the resize form.
 const (
-	classPulse = "pulse"
-	classField = "field"
+	classFunction = "function"
+	classWorker   = "worker"
 )
 
-// namedFunctions is every slot this manifest names, Pulses and Fields, by the
+// namedFunctions is every slot this manifest names, Functions and Workers, by the
 // booking key the slice holds each under. It reads identities through the specs
 // rather than off the raw node, so a change to how an identity is spelled moves
 // one join site and leaves this file alone.
@@ -418,7 +418,7 @@ func referenceError(sliceName string, missing []referenceMiss) error {
 	// the one place to declare it, so it states the whole command rather than
 	// the verb.
 	fmt.Fprintf(&b, "\n\nAdd them with `drift slice resize %s`, then deploy again. "+
-		"Checked: pulses, fields, nosql collections, blob buckets, sql databases and secrets.",
+		"Checked: functions, workers, nosql collections, blob buckets, sql databases and secrets.",
 		sliceName)
 	return fmt.Errorf("%s", b.String())
 }
@@ -463,13 +463,13 @@ func ReportOrphanedFunctions(m *Manifest, deployed []atomic_cmd.DeployedFunction
 	sort.Slice(orphans, func(i, j int) bool { return orphans[i].Key < orphans[j].Key })
 
 	fmt.Fprintf(out, "\n  %s %s deployed on this slice that your Driftfile no longer names:\n",
-		common.Hint("·"), plural(len(orphans), "One pulse or field is", "Pulses or fields are"))
+		common.Hint("·"), plural(len(orphans), "One function or worker is", "Functions or workers are"))
 	for _, o := range orphans {
 		fmt.Fprintf(out, "      %s: still running, still holding one of the slice's slots\n", o.Key)
 		fmt.Fprintf(out, "        free it with: drift atomic delete %s\n", o.Key)
 	}
 	fmt.Fprintf(out, "    Nothing was removed: a slice can serve more than one project, and a\n"+
-		"    deploy cannot tell a pulse or field that is not yours from one you deleted.\n")
+		"    deploy cannot tell a function or worker that is not yours from one you deleted.\n")
 }
 
 // specMethodAndPath splits a manifest function identity back into the method and

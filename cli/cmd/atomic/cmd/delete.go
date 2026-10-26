@@ -31,7 +31,7 @@ import (
 // unrecognised prefix is left alone and travels as the route it is.
 //
 // The known methods are deploy.SlotMethods: every HTTP method, `queue` and
-// `field`, read from the one list the deploy path books slots under.
+// `worker`, read from the one list the deploy path books slots under.
 func splitBookingKey(name string) (route, method string, split bool) {
 	prefix, rest, found := strings.Cut(name, ":")
 	if !found || rest == "" || !deploy.IsSlotMethod(prefix) {
@@ -44,19 +44,19 @@ func Delete() *cobra.Command {
 	var method string
 	cmd := &cobra.Command{
 		Use:   "delete <name>",
-		Short: "Delete a deployed pulse or field by name",
+		Short: "Delete a deployed function or worker by name",
 		Long: "Takes either form of the name:\n\n" +
 			"  drift atomic delete get:users     the booking key, as the Driftfile declares it\n" +
 			"  drift atomic delete users --method get\n" +
-			"  drift atomic delete queue:orders     a pulse a queue triggers\n" +
-			"  drift atomic delete field:sequencer\n\n" +
-			"A route containing a colon that is not an HTTP method, `queue` or `field`\n" +
+			"  drift atomic delete queue:orders     a function a queue triggers\n" +
+			"  drift atomic delete worker:sequencer\n\n" +
+			"A route containing a colon that is not an HTTP method, `queue` or `worker`\n" +
 			"is left alone, so a path like `users/:id` still means itself.",
 		Example: "  drift atomic delete send-email\n" +
 			"  drift atomic delete get:groups/id\n" +
 			"  drift atomic delete users --method get\n" +
 			"  drift atomic delete queue:orders\n" +
-			"  drift atomic delete field:sequencer",
+			"  drift atomic delete worker:sequencer",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(1),
 		// SilenceUsage: a refused delete is the platform answering, not the command
@@ -96,16 +96,16 @@ func Delete() *cobra.Command {
 			}
 
 			switch method {
-			case "field":
-				fmt.Printf("Field %q deleted.\n", name)
+			case "worker":
+				fmt.Printf("Worker %q deleted.\n", name)
 			case "":
 				fmt.Printf("%q deleted.\n", name)
 			default:
-				fmt.Printf("Pulse %q deleted.\n", name)
+				fmt.Printf("Function %q deleted.\n", name)
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path; queue for a pulse a queue triggers; field for a field")
+	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path; queue for a function a queue triggers; worker for a worker")
 	return cmd
 }

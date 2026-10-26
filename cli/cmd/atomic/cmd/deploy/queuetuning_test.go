@@ -2,9 +2,9 @@ package atomic_cmd
 
 import "testing"
 
-// A queue pulse ships the trigger its Driftfile declared: the tuning it wrote,
+// A queue function ships the trigger its Driftfile declared: the tuning it wrote,
 // and the slice's own defaults for what it left out.
-func TestTriggersForCarriesAQueuePulsesTuning(t *testing.T) {
+func TestTriggersForCarriesAQueueFunctionsTuning(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		poll, retry  int
@@ -16,7 +16,7 @@ func TestTriggersForCarriesAQueuePulsesTuning(t *testing.T) {
 		{"only the poll", 2000, 0, 2000, 3},
 		{"only the retries", 0, 9, 500, 9},
 	} {
-		got := triggersFor(ElementFunc{Spec: FunctionSpec{Name: "queue:orders", PollMS: tc.poll, MaxRetry: tc.retry}})
+		got := triggersFor(BackendFunc{Spec: FunctionSpec{Name: "queue:orders", PollMS: tc.poll, MaxRetry: tc.retry}})
 		if len(got) != 1 || got[0].Type != "queue" || got[0].Source != "orders" {
 			t.Fatalf("%s: triggers = %+v, want the one queue trigger", tc.name, got)
 		}
@@ -26,10 +26,10 @@ func TestTriggersForCarriesAQueuePulsesTuning(t *testing.T) {
 	}
 }
 
-// Tuning a queue pulse changes what its trigger is, so it has to move the
-// declaration digest: otherwise `drift apply` skips the pulse as unchanged and
+// Tuning a queue function changes what its trigger is, so it has to move the
+// declaration digest: otherwise `drift apply` skips the function as unchanged and
 // the new interval never reaches the slice. Left out, the digest is what it was.
-func TestDeclarationDigest_MovesWhenAQueuePulseIsTuned(t *testing.T) {
+func TestDeclarationDigest_MovesWhenAQueueFunctionIsTuned(t *testing.T) {
 	base := FunctionSpec{Name: "queue:orders", Handler: "Handle"}
 	tuned := base
 	tuned.PollMS = 250

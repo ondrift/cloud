@@ -7,8 +7,8 @@ import (
 	atomic_cmd_new "github.com/ondrift/cloud/cli/cmd/atomic/cmd/new"
 )
 
-// The starter Driftfile declares a pulse, and NOTHING ON DISK DEFINES IT. That
-// is correct — a Driftfile declares pulses, it does not create them — and it is
+// The starter Driftfile declares a function, and NOTHING ON DISK DEFINES IT. That
+// is correct — a Driftfile declares functions, it does not create them — and it is
 // why `drift file new` followed by `drift plan` would dead-end on a new user's
 // second command, with an error naming the missing source rather than the
 // command that writes it.
@@ -36,11 +36,11 @@ func TestStarterEntryAndItsCommandAgree(t *testing.T) {
 	}
 
 	// And the block must name the trigger and the handler that command will
-	// actually write, in the element it writes it to.
+	// actually write, in the backend it writes it to.
 	handler := atomic_cmd_new.HandlerName(starterMethod, starterRoute, starterLang)
 	for _, want := range []string{
-		`element "default"`,
-		`pulse "` + strings.ToUpper(starterMethod) + " /" + starterRoute + `"`,
+		`backend "default"`,
+		`function "` + strings.ToUpper(starterMethod) + " /" + starterRoute + `"`,
 		`handler = "` + handler + `"`,
 	} {
 		if !strings.Contains(df, want) {

@@ -49,8 +49,8 @@ type Manifest struct {
 	doc Node
 
 	// slice is the resource shape: the document root minus the siblings that
-	// are about deployment rather than shape, with every element's Pulses and
-	// Fields flattened into the two lists every reader consumes.
+	// are about deployment rather than shape, with every backend's Functions and
+	// Workers flattened into the two lists every reader consumes.
 	slice Node
 
 	// baseDir is the Driftfile's directory; relative paths resolve against it.
@@ -119,7 +119,7 @@ func ParseDriftfileEnv(path, env string) (*Manifest, error) {
 }
 
 // finishParse runs every pass that follows schema validation on a compiled
-// document: the elements flattened, each Pulse's identity composed, the slots
+// document: the backends flattened, each Function's identity composed, the slots
 // checked against one another, and the questions only this machine can
 // answer.
 func finishParse(m *Manifest) error {
@@ -128,18 +128,18 @@ func finishParse(m *Manifest) error {
 		delete(m.slice, sibling)
 	}
 
-	// Every element's Pulses and Fields, flattened into the two lists every
-	// reader consumes. See elements.go.
-	if err := normaliseElements(m.slice); err != nil {
+	// Every backend's Functions and Workers, flattened into the two lists every
+	// reader consumes. See backends.go.
+	if err := normaliseBackends(m.slice); err != nil {
 		return err
 	}
 
-	// A Pulse's identity, its route and method, composed into the one string
+	// A Function's identity, its route and method, composed into the one string
 	// the platform books against.
 	normaliseFunctionIdentities(m.doc)
 	normaliseFunctionIdentities(m.slice)
 
-	// Two slots on one booking key, or a Field named like a Pulse route,
+	// Two slots on one booking key, or a Worker named like a Function route,
 	// anywhere in the slice. Refused here, before anything is built.
 	if err := checkSlotIdentities(m.slice); err != nil {
 		return err
@@ -153,11 +153,11 @@ func finishParse(m *Manifest) error {
 	}
 
 	// The other class the schema cannot own: a reference from one part of the
-	// document to another. A queue-triggered Pulse names a queue, and only a
+	// document to another. A queue-triggered Function names a queue, and only a
 	// `queue` block declares one.
 	//
 	// A warning, not a refusal: the slice creates an undeclared queue on its
-	// first push, so the Pulse does fire and stopping the deploy would be
+	// first push, so the Function does fire and stopping the deploy would be
 	// wrong. See queuerefs.go.
 	for _, w := range checkQueueReferences(m) {
 		fmt.Fprintf(os.Stderr, "  %s %s\n", common.Hint("·"), w)

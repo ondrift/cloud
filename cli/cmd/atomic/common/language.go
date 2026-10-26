@@ -35,10 +35,10 @@ func IsGo(language string) bool {
 // written in — a snapshot being laid out, a project being explained.
 //
 // A caller that needs to build something wants FindCallable instead: a
-// function's source file is the one declaring its handler, and an element
+// function's source file is the one declaring its handler, and a backend
 // commonly spreads its handlers across several files.
 func DetectLanguage(dir string) (string, string, error) {
-	lang, err := ElementLanguage(dir)
+	lang, err := BackendLanguage(dir)
 	if err != nil {
 		return "", "", err
 	}

@@ -8,26 +8,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func Element() *cobra.Command {
+func Backend() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "element",
-		Short:   "Manage Atomic elements (virtual API groups)",
-		Example: "  drift atomic element list",
+		Use:     "backend",
+		Short:   "Manage Atomic backends (virtual API groups)",
+		Example: "  drift atomic backend list",
 		GroupID: "operations",
 	}
-	cmd.AddCommand(elementList())
+	cmd.AddCommand(backendList())
 	return cmd
 }
 
-func elementList() *cobra.Command {
+func backendList() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
-		Short:   "List all elements and the pulses and fields they contain",
-		Example: "  drift atomic element list",
+		Short:   "List all backends and the functions and workers they contain",
+		Example: "  drift atomic backend list",
 		Args:    cobra.NoArgs,
 		// RunE, not Run. A `Run` handler has no error channel, so the only way to
 		// report a failure was to print it and return — which exits 0. Every
-		// script doing `drift atomic element list && …` carried on as though the
+		// script doing `drift atomic backend list && …` carried on as though the
 		// listing had succeeded, and `set -e` could not help because nothing
 		// failed as far as the shell could see.
 		//
@@ -39,26 +39,26 @@ func elementList() *cobra.Command {
 				return err
 			}
 
-			byElement := make(map[string][]atomicRecord)
+			byBackend := make(map[string][]atomicRecord)
 			for _, r := range deployed {
-				if r.Element != "" {
-					byElement[r.Element] = append(byElement[r.Element], r)
+				if r.Backend != "" {
+					byBackend[r.Backend] = append(byBackend[r.Backend], r)
 				}
 			}
 
-			if len(byElement) == 0 {
-				fmt.Println("No elements defined. Deploy with --element <name> to create one.")
+			if len(byBackend) == 0 {
+				fmt.Println("No backends defined. Deploy with --backend <name> to create one.")
 				return nil
 			}
 
-			names := make([]string, 0, len(byElement))
-			for name := range byElement {
+			names := make([]string, 0, len(byBackend))
+			for name := range byBackend {
 				names = append(names, name)
 			}
 			sort.Strings(names)
 
 			for _, name := range names {
-				fns := byElement[name]
+				fns := byBackend[name]
 				fmt.Printf("%s  (%d slot", name, len(fns))
 				if len(fns) != 1 {
 					fmt.Print("s")
@@ -66,12 +66,12 @@ func elementList() *cobra.Command {
 				fmt.Println(")")
 
 				for _, r := range fns {
-					// Org-only routing: the element groups these slots (it's the
+					// Org-only routing: the backend groups these slots (it's the
 					// section header above) but never appears in the route path.
-					// A field has no route at all; nothing calls it.
+					// A worker has no route at all; nothing calls it.
 					route := "/api/" + r.FunctionName
-					if r.Method == "field" {
-						route = r.FunctionName + " (field, no route)"
+					if r.Method == "worker" {
+						route = r.FunctionName + " (worker, no route)"
 					}
 					methods := r.Method
 					if methods == "" {

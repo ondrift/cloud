@@ -30,15 +30,15 @@ func TestParseDriftfile_RestaurantTemplate(t *testing.T) {
 		t.Errorf("slice = %q, want %q", m.Name(), "la-cucina")
 	}
 
-	// Every pulse, by its booking key, in the order the file declares them.
-	fns := PulseEntries(m.Slice())
+	// Every function, by its booking key, in the order the file declares them.
+	fns := FunctionEntries(m.Slice())
 	wantFns := []string{"get:menu", "post:reservations", "post:reservations/confirm"}
 	if len(fns) != len(wantFns) {
-		t.Fatalf("pulses = %d, want %d", len(fns), len(wantFns))
+		t.Fatalf("functions = %d, want %d", len(fns), len(wantFns))
 	}
 	for i, fn := range fns {
 		if fn.Str("name") != wantFns[i] {
-			t.Errorf("pulse %d = %q, want %q", i, fn.Str("name"), wantFns[i])
+			t.Errorf("function %d = %q, want %q", i, fn.Str("name"), wantFns[i])
 		}
 	}
 
@@ -139,16 +139,16 @@ func writeRestaurantFixture(t *testing.T) string {
 slice "la-cucina" {}
 
 atomic {
-  element "api" {
-    pulse "GET /menu" {
+  backend "api" {
+    function "GET /menu" {
       handler = "GetMenu"
       memory  = "32MiB"
     }
-    pulse "POST /reservations" {
+    function "POST /reservations" {
       handler = "PostReservations"
       memory  = "64MiB"
     }
-    pulse "POST /reservations/confirm" {
+    function "POST /reservations/confirm" {
       handler = "PostReservationsConfirm"
       memory  = "32MiB"
     }
@@ -175,15 +175,15 @@ canvas {
 	return tmp
 }
 
-// A pulse's identity is its method and route, so GET /items and POST /items are
-// two slots. Two pulses on ONE identity would shadow each other on the slice,
+// A function's identity is its method and route, so GET /items and POST /items are
+// two slots. Two functions on ONE identity would shadow each other on the slice,
 // with the survivor answering for both, so the parse refuses them by key.
 func TestCheckRouteCollisions(t *testing.T) {
 	withRealSchema(t)
 	two := func(a, b string) string {
-		return "slice \"shop\" {}\natomic {\n  element \"api\" {\n" +
-			"    pulse \"" + a + "\" {\n      handler = \"A\"\n      memory = \"32MiB\"\n    }\n" +
-			"    pulse \"" + b + "\" {\n      handler = \"B\"\n      memory = \"32MiB\"\n    }\n  }\n}\n"
+		return "slice \"shop\" {}\natomic {\n  backend \"api\" {\n" +
+			"    function \"" + a + "\" {\n      handler = \"A\"\n      memory = \"32MiB\"\n    }\n" +
+			"    function \"" + b + "\" {\n      handler = \"B\"\n      memory = \"32MiB\"\n    }\n  }\n}\n"
 	}
 	m := planManifest(t, two("GET /items", "POST /items"), "atomic/api/")
 	if err := checkRouteCollisions(m); err != nil {
@@ -191,7 +191,7 @@ func TestCheckRouteCollisions(t *testing.T) {
 	}
 
 	_, err := ParseDriftfile(writeDriftfile(t, two("POST /items", "POST /items"), "atomic/api/"))
-	if err == nil || !strings.Contains(err.Error(), `the pulse "post:items" is declared 2 times`) {
+	if err == nil || !strings.Contains(err.Error(), `the function "post:items" is declared 2 times`) {
 		t.Errorf("the parse must refuse two POST /items, naming the key, got %v", err)
 	}
 
@@ -224,9 +224,9 @@ func TestParseDriftfile_LocalPathsMustExist(t *testing.T) {
 	withRealSchema(t)
 	const head = "slice \"hello\" {}\n"
 	for _, tc := range []struct{ name, body, want string }{
-		{"a pulse's own dir", "atomic {\n  element \"default\" {\n    pulse \"GET /menu\" {\n      handler = \"GetMenu\"\n      memory = \"8MiB\"\n      dir = \"src/menu\"\n    }\n  }\n}\n",
-			"pulse \"GET /menu\": dir: src/menu does not exist"},
-		{"an element's folder", "atomic {\n  element \"billing\" {\n    pulse \"GET /x\" {\n      handler = \"X\"\n      memory = \"8MiB\"\n    }\n  }\n}\n",
+		{"a function's own dir", "atomic {\n  backend \"default\" {\n    function \"GET /menu\" {\n      handler = \"GetMenu\"\n      memory = \"8MiB\"\n      dir = \"src/menu\"\n    }\n  }\n}\n",
+			"function \"GET /menu\": dir: src/menu does not exist"},
+		{"a backend's folder", "atomic {\n  backend \"billing\" {\n    function \"GET /x\" {\n      handler = \"X\"\n      memory = \"8MiB\"\n    }\n  }\n}\n",
 			"atomic/billing is not a directory"},
 		{"a site's folder", "canvas {\n  site \"/\" { dir = \"site\" }\n}\n", "site \"/\": dir: site does not exist"},
 		{"a seed file", "backbone {\n  nosql \"menu\" {\n    size = \"10MiB\"\n    seed = \"seeds/menu.jsonl\"\n  }\n}\n", "seeds/menu.jsonl does not exist"},

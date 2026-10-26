@@ -3,7 +3,7 @@
 // The Driftfile declares every Atomic function — its trigger, the memory it
 // books, its gate, its secrets, and the `handler` that serves it. This package
 // answers the one question the manifest cannot: which source file in the
-// element holds that callable, and what language is it written in.
+// backend holds that callable, and what language is it written in.
 //
 // Nothing here reads intent out of source. A comment above a function changes
 // nothing about how it deploys; the manifest is the whole declaration.
@@ -121,7 +121,7 @@ type Callable struct {
 }
 
 // sourceFilesIn lists dir's top-level source files, sorted, with the language
-// each maps to. Subdirectories are not descended: an element is one flat
+// each maps to. Subdirectories are not descended: a backend is one flat
 // package, and a nested directory is that language's own vendor or module
 // tree rather than more handlers.
 func sourceFilesIn(dir string) ([]string, error) {
@@ -143,12 +143,12 @@ func sourceFilesIn(dir string) ([]string, error) {
 	return files, nil
 }
 
-// ElementLanguage reports the one language an element directory is written in.
+// BackendLanguage reports the one language a backend directory is written in.
 //
-// An element is one language by construction — it has a single dependency
+// A backend is one language by construction — it has a single dependency
 // manifest and a single runtime — so a directory holding two is refused here
 // rather than producing a build that silently drops half the handlers.
-func ElementLanguage(dir string) (string, error) {
+func BackendLanguage(dir string) (string, error) {
 	files, err := sourceFilesIn(dir)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", dir, err)
@@ -162,10 +162,10 @@ func ElementLanguage(dir string) (string, error) {
 	for _, f := range files[1:] {
 		if l := languageFromExt(filepath.Ext(f)); l != lang {
 			return "", fmt.Errorf(
-				"%s mixes languages (%s in %s, %s in %s) — an element is one language, "+
+				"%s mixes languages (%s in %s, %s in %s) — a backend is one language, "+
 					"one dependency manifest and one runtime; move the %s functions into "+
-					"their own element (a separate folder under atomic/, named by the "+
-					"`element:` key on those functions)",
+					"their own backend (a separate folder under atomic/, named by the "+
+					"`backend:` key on those functions)",
 				dir, lang, files[0], l, f, l)
 		}
 	}
@@ -174,8 +174,8 @@ func ElementLanguage(dir string) (string, error) {
 
 // FindCallable locates the callable named handler in dir.
 //
-// The search is scoped to ONE element directory, never the whole project, so
-// two elements may each declare a `handler`. Within an element the name has to
+// The search is scoped to ONE backend directory, never the whole project, so
+// two backends may each declare a `handler`. Within a backend the name has to
 // be unique: the generated entry point imports it by name, and two candidates
 // mean the build would pick one and silently drop the other.
 func FindCallable(dir, handler string) (Callable, error) {
@@ -183,7 +183,7 @@ func FindCallable(dir, handler string) (Callable, error) {
 		return Callable{}, fmt.Errorf("no handler named for a function in %s", dir)
 	}
 
-	lang, err := ElementLanguage(dir)
+	lang, err := BackendLanguage(dir)
 	if err != nil {
 		return Callable{}, err
 	}
@@ -222,8 +222,8 @@ func FindCallable(dir, handler string) (Callable, error) {
 	default:
 		return Callable{}, fmt.Errorf(
 			"%q is declared in %d files in %s (%s) — a handler has to be unique within its "+
-				"element, because the entry point imports it by name and cannot say which one "+
-				"you meant. Rename one, or split them into separate elements.",
+				"backend, because the entry point imports it by name and cannot say which one "+
+				"you meant. Rename one, or split them into separate backends.",
 			handler, len(found), dir, strings.Join(found, ", "))
 	}
 }

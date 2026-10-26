@@ -26,9 +26,9 @@ func (s *scripted) ask(label string) string {
 	return a
 }
 
-// The guide asks for the slice's name, the first pulse's method,
+// The guide asks for the slice's name, the first function's method,
 // route and language, and a site folder, in that order, and the file it writes is
-// the answers: the pulse's handler is the one `drift atomic new` produces for
+// the answers: the function's handler is the one `drift atomic new` produces for
 // them, so the two halves still compose.
 func TestNew_AGuidedRunWritesTheFileFromTheAnswers(t *testing.T) {
 	cmd := getNewCmd()
@@ -47,7 +47,7 @@ func TestNew_AGuidedRunWritesTheFileFromTheAnswers(t *testing.T) {
 	df := o.render()
 	for _, want := range []string{
 		`slice "orders-app" {}`,
-		`pulse "POST /orders"`,
+		`function "POST /orders"`,
 		`handler = "` + atomic_cmd_new.HandlerName("post", "orders", "python") + `"`,
 		`site "/"`,
 		`dir = "site"`,
@@ -57,7 +57,7 @@ func TestNew_AGuidedRunWritesTheFileFromTheAnswers(t *testing.T) {
 		}
 	}
 	if got := o.fnCommand(); got != "drift atomic new orders -l python -m post" {
-		t.Errorf("the printed command is %q, which would write a different pulse than the file declares", got)
+		t.Errorf("the printed command is %q, which would write a different function than the file declares", got)
 	}
 }
 
@@ -124,7 +124,7 @@ func TestNew_WithYesItAsksNothingAndWritesTheFlagsAndDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`slice "demo" {}`, `pulse "GET /orders"`} {
+	for _, want := range []string{`slice "demo" {}`, `function "GET /orders"`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("the file does not contain %q:\n%s", want, raw)
 		}

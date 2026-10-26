@@ -38,32 +38,32 @@ func TestExplain_ListsTheBlocksOffline(t *testing.T) {
 // A block prints its labels, its attributes with their types and whether each
 // is required, and the blocks inside it.
 func TestExplain_ABlock(t *testing.T) {
-	out, err := explainOut(t, "atomic.element.pulse")
+	out, err := explainOut(t, "atomic.backend.function")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`BLOCK:  pulse "trigger" {}`, "inside atomic.element",
+		`BLOCK:  function "trigger" {}`, "inside atomic.backend",
 		"handler = string   -required-",
 		`memory = size ("32MiB": whole KiB, MiB or GiB)   -required-`,
 		"cron = string\n",
 		"BLOCKS:", "auth {}",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("explain atomic.element.pulse does not print %q:\n%s", want, out)
+			t.Errorf("explain atomic.backend.function does not print %q:\n%s", want, out)
 		}
 	}
 }
 
 // An attribute prints its type, where it sits, and its whole description.
 func TestExplain_AnAttribute(t *testing.T) {
-	out, err := explainOut(t, "atomic.element.pulse.memory")
+	out, err := explainOut(t, "atomic.backend.function.memory")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"ATTRIBUTE:  memory = size", "-required-", `inside pulse "trigger"`, "rewrites it from what the slice measured"} {
+	for _, want := range []string{"ATTRIBUTE:  memory = size", "-required-", `inside function "trigger"`, "rewrites it from what the slice measured"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("explain atomic.element.pulse.memory does not print %q:\n%s", want, out)
+			t.Errorf("explain atomic.backend.function.memory does not print %q:\n%s", want, out)
 		}
 	}
 }
@@ -83,11 +83,11 @@ func TestExplain_Recursive(t *testing.T) {
 
 // A name one edit away is suggested, and what the block does hold is listed.
 func TestExplain_AnUnknownNameSuggestsTheNearest(t *testing.T) {
-	_, err := explainOut(t, "atomic.element.puls")
+	_, err := explainOut(t, "atomic.backend.functio")
 	if err == nil {
 		t.Fatal("an unknown name was explained")
 	}
-	for _, want := range []string{`a element block holds no block or attribute "puls"`, "did you mean: pulse", "available here:"} {
+	for _, want := range []string{`a backend block holds no block or attribute "functio"`, "did you mean: function", "available here:"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q:\n%v", want, err)
 		}

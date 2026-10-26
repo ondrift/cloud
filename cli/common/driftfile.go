@@ -201,9 +201,9 @@ func driftfileVersionOf(raw []byte) string {
 // 2.2.0 adds edge.site_auth.paths, which the compiler writes from the `paths`
 // attribute of `site_auth`.
 //
-// 2.3.0 adds poll_ms and max_retry on a queue pulse, which the compiler writes
-// from the `poll` and `max_retries` attributes of `pulse "QUEUE <name>"`, and
-// `alerts` on a pulse, which it writes from its `alert` blocks.
+// 2.3.0 adds poll_ms and max_retry on a queue function, which the compiler writes
+// from the `poll` and `max_retries` attributes of `function "QUEUE <name>"`, and
+// `alerts` on a function, which it writes from its `alert` blocks.
 const ImplementedDriftfileFormat = "2.3.0"
 
 // DriftfileFormatHeader carries ImplementedDriftfileFormat on every

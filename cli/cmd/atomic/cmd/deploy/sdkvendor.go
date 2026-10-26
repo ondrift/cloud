@@ -1,6 +1,6 @@
 package atomic_cmd
 
-// sdkvendor.go — the no-Docker path for an element whose only dependency is
+// sdkvendor.go — the no-Docker path for a backend whose only dependency is
 // the Drift SDK.
 //
 // WHY THE CONTAINER EXISTS (toolchain.go says it at length): a dependency with
@@ -17,7 +17,7 @@ package atomic_cmd
 //	node   -> node/index.js         php  -> php/drift.php
 //
 // There is nothing to compile, so architecture is irrelevant and the package
-// manager is doing nothing a file copy could not. For an element that declares
+// manager is doing nothing a file copy could not. For a backend that declares
 // the SDK and nothing else — the common case for a first project, and for most
 // Canvas-plus-a-few-functions apps — we lay the SDK out where that language's
 // wrapper already looks and skip the container entirely. `ensureDocker` is then
@@ -54,7 +54,7 @@ var sdkModule = map[string]string{
 // sdkVendorLayout records where a vendored SDK file has to land for each
 // language's wrapper to find it, and is the whole reason this fast path is
 // safe: each destination is the path the wrapper ALREADY searches, so a
-// vendored element and a container-built one are byte-identical in the ways
+// vendored backend and a container-built one are byte-identical in the ways
 // that matter at runtime.
 //
 //	python — wrapper_get_python.txt prepends vendor/ to sys.path
@@ -87,7 +87,7 @@ var (
 // deploy that hangs on a package host is worse than one that fails and says so.
 const sdkHTTPTimeout = 30 * time.Second
 
-// tryVendorSDKOnly takes the no-Docker path when the element's manifest
+// tryVendorSDKOnly takes the no-Docker path when the backend's manifest
 // declares nothing but the Drift SDK. Reports whether it handled the install.
 //
 // A (false, nil) return means "not applicable, use the container path" and is
@@ -115,7 +115,7 @@ func tryVendorSDKOnly(lang, absFolder, stageDir string) (bool, error) {
 	return true, nil
 }
 
-// sdkOnlyManifest reports whether the element at absFolder declares the Drift
+// sdkOnlyManifest reports whether the backend at absFolder declares the Drift
 // SDK and nothing else. A missing manifest counts as SDK-only: there is nothing
 // to install, and today that already skips the container (every install*Deps
 // no-ops without its manifest) — routing it here just makes the SDK available.
@@ -341,7 +341,7 @@ const sdkTagPrefix = "sdk/"
 // them. `git/matching-refs/tags/sdk/` returns exactly the SDK's refs.
 //
 // The order is still not contracted, so the highest version is selected
-// explicitly rather than by taking the first element.
+// explicitly rather than by taking the first backend.
 //
 // A resolved tag is always a concrete version, never a floating ref. Vendoring a
 // moving target means two deploys of identical source can ship different SDKs,
@@ -483,7 +483,7 @@ func fetchSDKTarball(tag string) (io.ReadCloser, error) {
 
 // sdkCachedSource returns a directory holding the extracted SDK at tag,
 // downloading it once. Keyed by tag under UserCacheDir, so repeated deploys —
-// and every function in an element — reuse one copy.
+// and every function in a backend — reuse one copy.
 func sdkCachedSource(tag string) (string, error) {
 	if dir := sdkSourceDir(); dir != "" {
 		return dir, nil

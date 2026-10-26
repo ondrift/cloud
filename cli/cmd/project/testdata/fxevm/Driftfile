@@ -25,18 +25,18 @@ slice "fxevm-testnode" {
 }
 
 atomic {
-  element "evm" {
+  backend "evm" {
     dir = "atomic/evm"
 
     # JSON-RPC multiplexes on a body field, so the whole node answers here.
-    pulse "POST /rpc" {
+    function "POST /rpc" {
       handler    = "PostRPC"
       response   = "json"
       concurrent = true
       memory     = "64MiB"
     }
 
-    pulse "POST /admin/reset" {
+    function "POST /admin/reset" {
       handler  = "PostReset"
       response = "json"
       memory   = "32MiB"
@@ -46,16 +46,16 @@ atomic {
     }
 
     # The chain's single writer.
-    field "sequencer" {
+    worker "sequencer" {
       handler = "Sequencer"
       memory  = "64MiB"
     }
   }
 
-  element "bench" {
+  backend "bench" {
     dir = "atomic/bench"
 
-    pulse "GET /bench" {
+    function "GET /bench" {
       handler  = "GetBench"
       response = "json"
       memory   = "32MiB"

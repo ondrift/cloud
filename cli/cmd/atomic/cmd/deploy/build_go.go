@@ -17,12 +17,12 @@ import (
 )
 
 // buildGo builds one function on its own: stage the folder, then compile a
-// binary bound to spec's handler. The element path (buildGoElementStage +
+// binary bound to spec's handler. The backend path (buildGoBackendStage +
 // buildGoEntrypoint) is the multi-function generalization, which stages once
 // and links per function.
 func buildGo(absFolder string, spec FunctionSpec) (string, error) {
 	_, name := spec.Wire()
-	stage, err := buildGoElementStage(absFolder, name)
+	stage, err := buildGoBackendStage(absFolder, name)
 	if err != nil {
 		return "", err
 	}
@@ -37,7 +37,7 @@ func buildGo(absFolder string, spec FunctionSpec) (string, error) {
 	return bin, nil
 }
 
-// goStage is a Go element's package, staged and dependency-resolved once.
+// goStage is a Go backend's package, staged and dependency-resolved once.
 type goStage struct {
 	dir string
 	sdk goSDK
@@ -49,19 +49,19 @@ type goSDK struct {
 	// requires none.
 	version string
 	// genmain reports whether that version carries the genmain package, which
-	// the main of every buffered Go Pulse imports. Every SDK tagged since the
-	// concurrent Pulse carries it; one tagged before does not, and a build that
+	// the main of every buffered Go Function imports. Every SDK tagged since the
+	// concurrent Function carries it; one tagged before does not, and a build that
 	// resolves one (a CLI released before its SDK, or a module proxy still
 	// answering @latest with the previous tag) gets the native templates.
 	genmain bool
 }
 
-// buildGoElementStage copies a Go Element's package into a fresh host-side
+// buildGoBackendStage copies a Go Backend's package into a fresh host-side
 // tempdir and resolves its dependencies ONCE (go mod init/get/tidy). The
 // caller then compiles one binary per function into it via buildGoEntrypoint
 // and is responsible for RemoveAll(stage.dir). Each call gets its own tempdir,
 // so parallel deploys never race; the user's source is never modified.
-func buildGoElementStage(srcDir, name string) (goStage, error) {
+func buildGoBackendStage(srcDir, name string) (goStage, error) {
 	buildDir, err := stageTempDir("drift-go-build-")
 	if err != nil {
 		return goStage{}, fmt.Errorf("create build tempdir: %w", err)
@@ -149,8 +149,8 @@ func buildGoEntrypoint(buildDir string, e goEntry, sdk goSDK, binBase string) (s
 
 // buildGoEntrypointIsolated compiles one function's entrypoint in its OWN fresh
 // build dir (a copy of the staged package + a main bound to e's handler), so it
-// is safe to call CONCURRENTLY for an element's functions. They share the
-// module cache (deps already resolved by buildGoElementStage) and Go's content-
+// is safe to call CONCURRENTLY for a backend's functions. They share the
+// module cache (deps already resolved by buildGoBackendStage) and Go's content-
 // addressed build cache (the package compiles once; the rest only re-link), so
 // parallelism turns the per-function link into the only marginal cost. Returns
 // the binary path and the fn dir; the caller must RemoveAll(fnDir).

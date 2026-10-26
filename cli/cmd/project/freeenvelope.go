@@ -116,7 +116,7 @@ func freeEnvelopeViolation(c SliceConfig, domains int) error {
 	}
 
 	if n := len(c.Atomic.Functions); n > freeSets.slots {
-		return fmt.Errorf("the file declares %d pulses and fields, and the free slice grants %d", n, freeSets.slots)
+		return fmt.Errorf("the file declares %d functions and workers, and the free slice grants %d", n, freeSets.slots)
 	}
 	total := 0
 	for _, f := range c.Atomic.Functions {
@@ -125,7 +125,7 @@ func freeEnvelopeViolation(c SliceConfig, domains int) error {
 		}
 	}
 	if mib := total / bytesPerMiB; mib > freeSets.slotMiB {
-		return fmt.Errorf("the pulses and fields book %d MiB in total, and the free slice grants %d MiB "+
+		return fmt.Errorf("the functions and workers book %d MiB in total, and the free slice grants %d MiB "+
 			"across up to %d of them, in any sizes", mib, freeSets.slotMiB, freeSets.slots)
 	}
 

@@ -9,12 +9,12 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// parsedSnippet is a snippet read back as HCL: the element it declares, the
-// pulse inside it, and each of the pulse's attributes as written.
+// parsedSnippet is a snippet read back as HCL: the backend it declares, the
+// function inside it, and each of the function's attributes as written.
 type parsedSnippet struct {
-	element, pulse string
-	attrs          map[string]string
-	apiKeyEnv      string
+	backend, function string
+	attrs             map[string]string
+	apiKeyEnv         string
 }
 
 func parseSnippet(t *testing.T, body string) parsedSnippet {
@@ -28,25 +28,25 @@ func parseSnippet(t *testing.T, body string) parsedSnippet {
 		t.Fatalf("the snippet must be one atomic block, got:\n%s", body)
 	}
 	blocks := top[0].Body.Blocks
-	if len(blocks) != 1 || blocks[0].Type != "element" || len(blocks[0].Labels) != 1 {
-		t.Fatalf("the atomic block must hold one element block, got:\n%s", body)
+	if len(blocks) != 1 || blocks[0].Type != "backend" || len(blocks[0].Labels) != 1 {
+		t.Fatalf("the atomic block must hold one backend block, got:\n%s", body)
 	}
 	el := blocks[0]
-	if len(el.Body.Blocks) != 1 || el.Body.Blocks[0].Type != "pulse" || len(el.Body.Blocks[0].Labels) != 1 {
-		t.Fatalf("the element must hold one pulse block, got:\n%s", body)
+	if len(el.Body.Blocks) != 1 || el.Body.Blocks[0].Type != "function" || len(el.Body.Blocks[0].Labels) != 1 {
+		t.Fatalf("the backend must hold one function block, got:\n%s", body)
 	}
 	p := el.Body.Blocks[0]
-	out := parsedSnippet{element: el.Labels[0], pulse: p.Labels[0], attrs: map[string]string{}}
+	out := parsedSnippet{backend: el.Labels[0], function: p.Labels[0], attrs: map[string]string{}}
 	for name, attr := range p.Body.Attributes {
 		v, d := attr.Expr.Value(nil)
 		if d.HasErrors() || !v.Type().Equals(cty.String) {
-			t.Fatalf("pulse attribute %s is not a string literal:\n%s", name, body)
+			t.Fatalf("function attribute %s is not a string literal:\n%s", name, body)
 		}
 		out.attrs[name] = v.AsString()
 	}
 	for _, b := range p.Body.Blocks {
 		if b.Type != "auth" {
-			t.Fatalf("unexpected block %s in the pulse:\n%s", b.Type, body)
+			t.Fatalf("unexpected block %s in the function:\n%s", b.Type, body)
 		}
 		call, ok := b.Body.Attributes["api_key"].Expr.(*hclsyntax.FunctionCallExpr)
 		if !ok || call.Name != "env" || len(call.Args) != 1 {
@@ -58,35 +58,35 @@ func parseSnippet(t *testing.T, body string) parsedSnippet {
 	return out
 }
 
-// A Pulse added to a named element is declared inside that element's block,
+// A Function added to a named backend is declared inside that backend's block,
 // with everything the compiler requires of it: its handler and its memory. An
 // API-key gate reads its key from a variable named for the route, never from a
 // literal.
-func TestDeclarationSnippet_ANamedElementHoldsThePulse(t *testing.T) {
+func TestDeclarationSnippet_ANamedBackendHoldsTheFunction(t *testing.T) {
 	got := declarationSnippet("train", "post", "post_train", "apikey", "ml")
-	if !strings.Contains(got.intro, `element "ml"`) {
-		t.Errorf("the intro must name the element, got %q", got.intro)
+	if !strings.Contains(got.intro, `backend "ml"`) {
+		t.Errorf("the intro must name the backend, got %q", got.intro)
 	}
 	s := parseSnippet(t, got.body)
-	if s.element != "ml" || s.pulse != "POST /train" {
-		t.Errorf("the snippet declares pulse %q in element %q", s.pulse, s.element)
+	if s.backend != "ml" || s.function != "POST /train" {
+		t.Errorf("the snippet declares function %q in backend %q", s.function, s.backend)
 	}
 	if s.attrs["handler"] != "post_train" || s.attrs["memory"] != snippetMemory || len(s.attrs) != 2 {
-		t.Errorf("the pulse reads back as %v", s.attrs)
+		t.Errorf("the function reads back as %v", s.attrs)
 	}
 	if s.apiKeyEnv != "TRAIN_API_KEY" {
 		t.Errorf("the key is read from %q, want TRAIN_API_KEY", s.apiKeyEnv)
 	}
 }
 
-// The default element is `element "default"`, and a queue pulse is labelled
-// with QUEUE and its queue. A pulse with no gate has no auth block.
-func TestDeclarationSnippet_TheDefaultElementAndAQueuePulse(t *testing.T) {
-	for _, element := range []string{"", defaultElement} {
-		got := declarationSnippet("jobs", "queue", "QueueJobs", "none", element)
+// The default backend is `backend "default"`, and a queue function is labelled
+// with QUEUE and its queue. A function with no gate has no auth block.
+func TestDeclarationSnippet_TheDefaultBackendAndAQueueFunction(t *testing.T) {
+	for _, backend := range []string{"", defaultBackend} {
+		got := declarationSnippet("jobs", "queue", "QueueJobs", "none", backend)
 		s := parseSnippet(t, got.body)
-		if s.element != defaultElement || s.pulse != "QUEUE jobs" || s.attrs["handler"] != "QueueJobs" || s.apiKeyEnv != "" {
-			t.Errorf("element %q: the snippet reads back as %+v", element, s)
+		if s.backend != defaultBackend || s.function != "QUEUE jobs" || s.attrs["handler"] != "QueueJobs" || s.apiKeyEnv != "" {
+			t.Errorf("backend %q: the snippet reads back as %+v", backend, s)
 		}
 	}
 }

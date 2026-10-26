@@ -94,7 +94,7 @@ func TestAnUnusableReportFallsBackToTheDefault(t *testing.T) {
 }
 
 // One lookup per run, however many functions build: the answer cannot change
-// between two functions of the same deploy, and a Go element links its
+// between two functions of the same deploy, and a Go backend links its
 // functions concurrently.
 func TestTheSliceIsAskedOncePerRun(t *testing.T) {
 	calls := withSliceReport(t, `{"arch":"x86_64"}`, nil)

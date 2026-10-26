@@ -12,7 +12,7 @@ import (
 )
 
 // schemaAt is the platform's schema relabelled as one version, and, when
-// stale, without `atomic.elements`, which a 1.19.0 schema did not have.
+// stale, without `atomic.backends`, which a 1.19.0 schema did not have.
 func schemaAt(t *testing.T, version string, stale bool) []byte {
 	t.Helper()
 	var doc map[string]any
@@ -22,7 +22,7 @@ func schemaAt(t *testing.T, version string, stale bool) []byte {
 	doc["version"] = version
 	if stale {
 		section := doc["definitions"].(map[string]any)["atomicSection"].(map[string]any)
-		delete(section["properties"].(map[string]any), "elements")
+		delete(section["properties"].(map[string]any), "backends")
 	}
 	raw, err := json.Marshal(doc)
 	if err != nil {
@@ -59,7 +59,7 @@ func runLint(t *testing.T, api, path string) (stderr string, err error) {
 
 // A cache older than this binary was validated against in silence: a file
 // legal in the format this binary implements was refused with "additional
-// properties 'elements' not allowed" and nothing said the schema was formats
+// properties 'backends' not allowed" and nothing said the schema was formats
 // old. Offline, the refusal now arrives with both versions and the command
 // that refreshes the schema.
 func TestLint_AStaleSchemaOfflineIsNamedWithItsRemedy(t *testing.T) {
@@ -69,8 +69,8 @@ func TestLint_AStaleSchemaOfflineIsNamedWithItsRemedy(t *testing.T) {
 	down.Close() // a platform that cannot be reached
 
 	stderr, err := runLint(t, down.URL, path)
-	if err == nil || !strings.Contains(err.Error(), "elements") {
-		t.Fatalf("against a 1.19.0 schema the file is refused for `elements`, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "backends") {
+		t.Fatalf("against a 1.19.0 schema the file is refused for `backends`, got %v", err)
 	}
 	for _, want := range []string{common.ImplementedDriftfileFormat, "1.19.0", "drift slice list"} {
 		if !strings.Contains(stderr, want) {

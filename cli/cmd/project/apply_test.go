@@ -242,7 +242,7 @@ func TestApply_EachRemovalAndEachDataLossIsNamedBeforeAnythingIsSent(t *testing.
 
 	// Agreeing to the removals is not agreeing to the data loss.
 	a := noAnswers()
-	for _, r := range []string{"sql database-1", "blobs bucket-01", "blobs bucket-02", "nosql default", "nosql collection-2", "queue queue-1", "slots", "pulse GET /bench"} {
+	for _, r := range []string{"sql database-1", "blobs bucket-01", "blobs bucket-02", "nosql default", "nosql collection-2", "queue queue-1", "slots", "function GET /bench"} {
 		a.removes[r] = true
 	}
 	_, err = runApplyTest(t, a, "")

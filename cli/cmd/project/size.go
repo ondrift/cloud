@@ -2,9 +2,9 @@ package project
 
 // size.go: `drift size`, the measured peaks written back into the Driftfile.
 //
-// `drift file benchmark` reports what each Pulse and Field has cost. The
+// `drift file benchmark` reports what each Function and Worker has cost. The
 // Driftfile holds each booking on the block it books, so the recommendation
-// belongs there: this edits the `memory` line of every Pulse and Field the
+// belongs there: this edits the `memory` line of every Function and Worker the
 // slice recommends a different size for, and shows the change. The edit then
 // goes through `drift plan` and apply like any other, so a recommendation is
 // never bought without being seen.
@@ -61,7 +61,7 @@ type SizeResult struct {
 	Left []string
 }
 
-// ResizeDriftfile rewrites the `memory` of each Pulse and Field in src that
+// ResizeDriftfile rewrites the `memory` of each Function and Worker in src that
 // rows recommend a different size for.
 func ResizeDriftfile(src []byte, rows []sizingRow) (*SizeResult, error) {
 	f, diags := hclwrite.ParseConfig(src, driftfileName, hcl.InitialPos)
@@ -80,7 +80,7 @@ func ResizeDriftfile(src []byte, rows []sizingRow) (*SizeResult, error) {
 			continue
 		}
 		for _, el := range top.Body().Blocks() {
-			if el.Type() != "element" {
+			if el.Type() != "backend" {
 				continue
 			}
 			for _, blk := range el.Body().Blocks() {
@@ -96,25 +96,25 @@ func ResizeDriftfile(src []byte, rows []sizingRow) (*SizeResult, error) {
 	return res, nil
 }
 
-// slotOfBlock is the booking key and the address of a pulse or field block.
+// slotOfBlock is the booking key and the address of a function or worker block.
 func slotOfBlock(blk *hclwrite.Block) (key, address string, ok bool) {
 	labels := blk.Labels()
 	if len(labels) != 1 {
 		return "", "", false
 	}
 	switch blk.Type() {
-	case "pulse":
-		key, ok = pulseBookingKey(labels[0])
-		return key, "pulse " + labels[0], ok
-	case "field":
-		return "field:" + labels[0], "field " + labels[0], true
+	case "function":
+		key, ok = functionBookingKey(labels[0])
+		return key, "function " + labels[0], ok
+	case "worker":
+		return "worker:" + labels[0], "worker " + labels[0], true
 	}
 	return "", "", false
 }
 
-// pulseBookingKey reads a Pulse's label into the key the slice books it under.
-func pulseBookingKey(label string) (string, bool) {
-	m := pulseLabelRe.FindStringSubmatch(label)
+// functionBookingKey reads a Function's label into the key the slice books it under.
+func functionBookingKey(label string) (string, bool) {
+	m := functionLabelRe.FindStringSubmatch(label)
 	if m == nil {
 		return "", false
 	}
@@ -170,13 +170,13 @@ func GetSizeCmd() *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "size",
-		Short: "Write what each pulse and field has measured into the Driftfile's memory lines",
-		Long: `Read what the slice measured for each pulse and field, and rewrite the memory
+		Short: "Write what each function and worker has measured into the Driftfile's memory lines",
+		Long: `Read what the slice measured for each function and worker, and rewrite the memory
 line of every one the slice recommends a different size for. Comments and layout
 stay as they are; the change is shown as a diff.
 
 The file is changed and nothing else: run 'drift plan' to see what the new
-bookings cost, and apply them as any other edit. A pulse nobody has called yet
+bookings cost, and apply them as any other edit. A function nobody has called yet
 is left alone, because there is nothing to size it from.`,
 		Example: "  drift size\n  drift size --dry-run",
 		Args:    cobra.NoArgs,
@@ -212,14 +212,14 @@ func runSize(out io.Writer, path string, dryRun bool) error {
 		return err
 	}
 	declared := map[string]string{}
-	for _, el := range file.Elements {
-		for _, p := range el.Pulses {
-			if key, ok := pulseBookingKey(p.Label); ok {
+	for _, el := range file.Backends {
+		for _, p := range el.Functions {
+			if key, ok := functionBookingKey(p.Label); ok {
 				declared[key] = ""
 			}
 		}
-		for _, f := range el.Fields {
-			declared["field:"+f.Name] = ""
+		for _, f := range el.Workers {
+			declared["worker:"+f.Name] = ""
 		}
 	}
 	rows, err := sizingRows(declared)
@@ -227,7 +227,7 @@ func runSize(out io.Writer, path string, dryRun bool) error {
 		return err
 	}
 	if len(measuredRecommendations(rows)) == 0 {
-		fmt.Fprintln(out, "  Nothing to size from: no pulse or field has been invoked yet, so there is no")
+		fmt.Fprintln(out, "  Nothing to size from: no function or worker has been invoked yet, so there is no")
 		fmt.Fprintln(out, "  measurement. Send some traffic and run this again.")
 		return nil
 	}

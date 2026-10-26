@@ -8,7 +8,7 @@ fn main() {
             "message": message,
             "payload": payload
         });
-        // Headers arrive through a sink rather than a fourth tuple element:
+        // Headers arrive through a sink rather than a fourth tuple backend:
         // this destructure is fixed-arity, so growing it would fail to compile
         // against every handler already written.
         if let Some(headers) = drift_sdk::take_response_headers() {

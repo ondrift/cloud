@@ -1,8 +1,8 @@
 package project
 
-// functionidentity.go — one identity for a Pulse.
+// functionidentity.go — one identity for a Function.
 //
-// A Pulse's label is its method and route, and the compiler writes them as
+// A Function's label is its method and route, and the compiler writes them as
 // `method` and `route`. Every reader downstream reads the composite
 // `method:route` from `name`, so it is composed here, once.
 //
@@ -16,13 +16,13 @@ package project
 
 import "strings"
 
-// normaliseFunctionIdentities gives every Pulse entry its booking key in
+// normaliseFunctionIdentities gives every Function entry its booking key in
 // `name`, composed from its method and route.
 //
-// A Field needs nothing here. Its identity is its `name`, which is already the
-// one string the slot is booked under once FieldSpecs prefixes it.
+// A Worker needs nothing here. Its identity is its `name`, which is already the
+// one string the slot is booked under once WorkerSpecs prefixes it.
 func normaliseFunctionIdentities(doc Node) {
-	for _, fn := range doc.Nodes("atomic", pulsesKey) {
+	for _, fn := range doc.Nodes("atomic", functionsKey) {
 		route, method := fn.Str("route"), fn.Str("method")
 		if route != "" && method != "" {
 			fn["name"] = strings.ToLower(method) + ":" + route

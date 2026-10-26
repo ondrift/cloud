@@ -305,7 +305,7 @@ func functionGroup(i int) *node {
 		children: []*node{
 			{label: "Method", kind: kindChoice, value: "post", choices: httpMethods,
 				hint: "← → to choose. Part of the slot's identity, not a detail: " +
-					"get:items and post:items are two different pulses. QUEUE names " +
+					"get:items and post:items are two different functions. QUEUE names " +
 					"a queue to drain instead of a path. FIELD books a long-running " +
 					"worker, and the route is its name."},
 			{label: "Memory", kind: kindInt, unit: "MB", minV: minMemoryMiB, maxV: maxMemoryMiB,

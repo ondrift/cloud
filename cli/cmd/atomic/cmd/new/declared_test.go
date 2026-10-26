@@ -31,9 +31,9 @@ const scaffolded = `# acme: a Drift project.
 slice "acme" {}
 
 atomic {
-  element "default" {
-    # A pulse answers one call with one result.
-    pulse "GET /hello" {
+  backend "default" {
+    # A function answers one call with one result.
+    function "GET /hello" {
       handler = "GetHello"
       memory = "32MiB"
     }
@@ -43,7 +43,7 @@ atomic {
 
 // The case this exists for: `drift file new` wrote the block, and its printed
 // hint sent the user here. Telling them to declare it again hands them a
-// duplicate of a block three lines above, and two pulses on one trigger is a
+// duplicate of a block three lines above, and two functions on one trigger is a
 // compile error, not a harmless repeat.
 func TestDeclaredRouteFindsWhatFileNewScaffolded(t *testing.T) {
 	inDir(t, scaffolded)
@@ -52,12 +52,12 @@ func TestDeclaredRouteFindsWhatFileNewScaffolded(t *testing.T) {
 	}
 }
 
-// A pulse the Driftfile does not name must still get the snippet: that is the
+// A function the Driftfile does not name must still get the snippet: that is the
 // normal path and the overwhelmingly common one.
-func TestDeclaredRouteIgnoresADifferentPulse(t *testing.T) {
+func TestDeclaredRouteIgnoresADifferentFunction(t *testing.T) {
 	inDir(t, scaffolded)
 	if declaredRoute("post", "hello", "", false) {
-		t.Error("a different METHOD on the same route was treated as declared: GET /hello and POST /hello are different pulses")
+		t.Error("a different METHOD on the same route was treated as declared: GET /hello and POST /hello are different functions")
 	}
 	if declaredRoute("get", "goodbye", "", false) {
 		t.Error("a different route was treated as declared")
@@ -74,10 +74,10 @@ func TestDeclaredRouteFailsOpen(t *testing.T) {
 	}{
 		{"no Driftfile at all", ""},
 		{"not HCL", "{{{ this is not hcl"},
-		{"a YAML Driftfile", "slice: acme\natomic:\n  pulses:\n    - route: hello\n      method: get\n"},
-		{"no element", "slice \"acme\" {}\n"},
-		{"a pulse outside any element", "slice \"acme\" {}\npulse \"GET /hello\" {}\n"},
-		{"an element outside the atomic block", "slice \"acme\" {}\nelement \"default\" {\n  pulse \"GET /hello\" {}\n}\n"},
+		{"a YAML Driftfile", "slice: acme\natomic:\n  functions:\n    - route: hello\n      method: get\n"},
+		{"no backend", "slice \"acme\" {}\n"},
+		{"a function outside any backend", "slice \"acme\" {}\nfunction \"GET /hello\" {}\n"},
+		{"a backend outside the atomic block", "slice \"acme\" {}\nbackend \"default\" {\n  function \"GET /hello\" {}\n}\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -89,24 +89,24 @@ func TestDeclaredRouteFailsOpen(t *testing.T) {
 	}
 }
 
-// A queue pulse is labelled with QUEUE and the queue it drains, which is the
+// A queue function is labelled with QUEUE and the queue it drains, which is the
 // vocabulary the Driftfile uses and not the one the flags use.
-func TestDeclaredRouteUnderstandsAQueuePulse(t *testing.T) {
-	inDir(t, "atomic {\n  element \"default\" {\n    pulse \"QUEUE jobs\" {\n      handler = \"ProcessJobs\"\n    }\n  }\n}\n")
+func TestDeclaredRouteUnderstandsAQueueFunction(t *testing.T) {
+	inDir(t, "atomic {\n  backend \"default\" {\n    function \"QUEUE jobs\" {\n      handler = \"ProcessJobs\"\n    }\n  }\n}\n")
 	if !declaredRoute("queue", "process-jobs", "jobs", true) {
-		t.Error("a queue pulse is declared by its QUEUE name, not the pulse's name, and was not matched")
+		t.Error("a queue function is declared by its QUEUE name, not the function's name, and was not matched")
 	}
 	if declaredRoute("queue", "process-jobs", "other", true) {
 		t.Error("a different queue was treated as declared")
 	}
 }
 
-// A pulse declared inside a named element is recognised too, so the user is
+// A function declared inside a named backend is recognised too, so the user is
 // not handed a duplicate of it.
-func TestDeclaredRouteFindsAPulseInsideANamedElement(t *testing.T) {
-	inDir(t, "atomic {\n  element \"ml\" {\n    pulse \"POST /train\" {\n      handler = \"post_train\"\n    }\n  }\n}\n")
+func TestDeclaredRouteFindsAFunctionInsideANamedBackend(t *testing.T) {
+	inDir(t, "atomic {\n  backend \"ml\" {\n    function \"POST /train\" {\n      handler = \"post_train\"\n    }\n  }\n}\n")
 	if !declaredRoute("post", "train", "", false) {
-		t.Error("a pulse declared inside an element was not recognised")
+		t.Error("a function declared inside a backend was not recognised")
 	}
 	if declaredRoute("get", "train", "", false) {
 		t.Error("a different method was treated as declared")

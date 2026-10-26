@@ -204,9 +204,9 @@ func TestInstallPHPDeps_SDKOnlyNeedsNoDocker(t *testing.T) {
 	}
 }
 
-// ─── An element that declares nothing still needs the SDK ───────────────────
+// ─── A backend that declares nothing still needs the SDK ───────────────────
 //
-// The generated wrapper requires the SDK unconditionally, so a bare element —
+// The generated wrapper requires the SDK unconditionally, so a bare backend —
 // one source file and no manifest — needs it vendored exactly as much as one
 // that declares it. Every *SDKOnly helper reports a missing manifest as
 // SDK-only for this reason. Nothing declared is the shape `drift apply`
@@ -222,7 +222,7 @@ func TestInstallNodeDeps_NoManifestStillVendorsTheSDK(t *testing.T) {
 		"const drift = require('@ondrift/sdk');\nmodule.exports = { handle: () => {} };\n")
 
 	if err := installNodeDeps(elem, stage); err != nil {
-		t.Fatalf("installNodeDeps failed for a manifest-less element: %v", err)
+		t.Fatalf("installNodeDeps failed for a manifest-less backend: %v", err)
 	}
 	// app.js does require('@ondrift/sdk'); without this the function deploys
 	// clean and 500s with "Cannot find module '@ondrift/sdk'".
@@ -239,7 +239,7 @@ func TestInstallPythonDeps_NoManifestStillVendorsTheSDK(t *testing.T) {
 	writeFile(t, filepath.Join(elem, "health.py"), "import drift\n\n\ndef handle(req):\n    return None\n")
 
 	if err := installPythonDeps(elem, stage); err != nil {
-		t.Fatalf("installPythonDeps failed for a manifest-less element: %v", err)
+		t.Fatalf("installPythonDeps failed for a manifest-less backend: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(stage, "vendor", "drift.py")); err != nil {
 		t.Errorf("expected the SDK vendored with no requirements.txt present: %v", err)
@@ -254,7 +254,7 @@ func TestInstallRubyDeps_NoManifestStillVendorsTheSDK(t *testing.T) {
 	writeFile(t, filepath.Join(elem, "health.rb"), "require 'drift'\n\ndef handle(req)\nend\n")
 
 	if err := installRubyDeps(elem, stage); err != nil {
-		t.Fatalf("installRubyDeps failed for a manifest-less element: %v", err)
+		t.Fatalf("installRubyDeps failed for a manifest-less backend: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(stage, "drift.rb")); err != nil {
 		t.Errorf("expected the SDK vendored with no Gemfile present: %v", err)
@@ -269,7 +269,7 @@ func TestInstallPHPDeps_NoManifestStillVendorsTheSDK(t *testing.T) {
 	writeFile(t, filepath.Join(elem, "health.php"), "<?php\nfunction handle($req) {}\n")
 
 	if err := installPHPDeps(elem, stage); err != nil {
-		t.Fatalf("installPHPDeps failed for a manifest-less element: %v", err)
+		t.Fatalf("installPHPDeps failed for a manifest-less backend: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(stage, "vendor", "php", "drift.php")); err != nil {
 		t.Errorf("expected the SDK vendored with no composer.json present: %v", err)
@@ -410,7 +410,7 @@ func TestSDKOnlyDetection(t *testing.T) {
 
 // ─── Cache + archive handling ───────────────────────────────────────────────
 
-// TestSDKCacheFetchesOncePerTag — an element with many functions, and repeated
+// TestSDKCacheFetchesOncePerTag — a backend with many functions, and repeated
 // deploys, must not re-download the SDK each time.
 func TestSDKCacheFetchesOncePerTag(t *testing.T) {
 	fetches := withStubbedSDK(t)
@@ -497,7 +497,7 @@ func TestSDKTagResolution_StripsAndRestoresTheNamespace(t *testing.T) {
 // TestPickLatestSemverTag pins the selection rule. The first case is the real
 // tag list; check it against the live API with
 // `gh api repos/ondrift/cloud/git/matching-refs/tags/sdk/`. The rest are the
-// ways a naive "take the first element" or a lexical sort gets it wrong.
+// ways a naive "take the first backend" or a lexical sort gets it wrong.
 func TestPickLatestSemverTag(t *testing.T) {
 	cases := []struct {
 		name string

@@ -19,13 +19,13 @@ func writeSrc(t *testing.T, path, content string) {
 
 // specs is the shape `drift apply` hands in: the Driftfile's entries,
 // with each one's directory already resolved.
-func spec(name, handler, element, dir string) FunctionSpec {
-	return FunctionSpec{Name: name, Handler: handler, Element: element, Dir: dir}
+func spec(name, handler, backend, dir string) FunctionSpec {
+	return FunctionSpec{Name: name, Handler: handler, Backend: backend, Dir: dir}
 }
 
-// Functions group into elements by what the manifest says, and each binds to
+// Functions group into backends by what the manifest says, and each binds to
 // the file declaring its handler.
-func TestBuildElements_GroupsByDeclaredElement(t *testing.T) {
+func TestBuildBackends_GroupsByDeclaredBackend(t *testing.T) {
 	root := t.TempDir()
 	writeSrc(t, filepath.Join(root, "auth.go"),
 		"package main\n\nfunc PostAuthLogin(body any, req any) {}\n")
@@ -36,23 +36,23 @@ func TestBuildElements_GroupsByDeclaredElement(t *testing.T) {
 	writeSrc(t, filepath.Join(root, "health", "health.go"),
 		"package main\n\nfunc GetHealth(req any) {}\n")
 
-	els, err := BuildElements([]FunctionSpec{
+	els, err := BuildBackends([]FunctionSpec{
 		spec("post:auth/login", "PostAuthLogin", "", root),
 		spec("get:groups", "GetGroups", "", root),
 		spec("get:health", "GetHealth", "health", filepath.Join(root, "health")),
 	})
 	if err != nil {
-		t.Fatalf("BuildElements: %v", err)
+		t.Fatalf("BuildBackends: %v", err)
 	}
 	if len(els) != 2 {
-		t.Fatalf("got %d elements, want 2 (default + health): %+v", len(els), els)
+		t.Fatalf("got %d backends, want 2 (default + health): %+v", len(els), els)
 	}
 	def, health := els[0], els[1] // sorted by name → default, health
 	if def.Name != "default" || def.Lang != "go" || len(def.Funcs) != 2 {
-		t.Errorf("default element = %+v, want {default, go, 2 funcs}", def)
+		t.Errorf("default backend = %+v, want {default, go, 2 funcs}", def)
 	}
 	if health.Name != "health" || len(health.Funcs) != 1 {
-		t.Errorf("health element = %+v, want {health, 1 func}", health)
+		t.Errorf("health backend = %+v, want {health, 1 func}", health)
 	}
 
 	// Funcs sort by declared name, so get:groups leads.
@@ -63,11 +63,11 @@ func TestBuildElements_GroupsByDeclaredElement(t *testing.T) {
 
 // A handler the manifest names and the source does not have is caught here,
 // offline, rather than as a compiler error deep inside a per-function build.
-func TestBuildElements_MissingHandlerIsRefusedUpFront(t *testing.T) {
+func TestBuildBackends_MissingHandlerIsRefusedUpFront(t *testing.T) {
 	root := t.TempDir()
 	writeSrc(t, filepath.Join(root, "a.go"), "package main\n\nfunc GetA(req any) {}\n")
 
-	_, err := BuildElements([]FunctionSpec{spec("get:b", "GetB", "", root)})
+	_, err := BuildBackends([]FunctionSpec{spec("get:b", "GetB", "", root)})
 	if err == nil {
 		t.Fatal("a handler that is not in the source must be refused")
 	}
@@ -79,11 +79,11 @@ func TestBuildElements_MissingHandlerIsRefusedUpFront(t *testing.T) {
 
 // The overwhelmingly common cause of "not found" is a case mismatch, so the
 // error says so instead of listing everything and leaving the reader to spot it.
-func TestBuildElements_CaseMismatchIsNamed(t *testing.T) {
+func TestBuildBackends_CaseMismatchIsNamed(t *testing.T) {
 	root := t.TempDir()
 	writeSrc(t, filepath.Join(root, "a.go"), "package main\n\nfunc GetUsers(req any) {}\n")
 
-	_, err := BuildElements([]FunctionSpec{spec("get:users", "Getusers", "", root)})
+	_, err := BuildBackends([]FunctionSpec{spec("get:users", "Getusers", "", root)})
 	if err == nil {
 		t.Fatal("expected a not-found error")
 	}
@@ -92,26 +92,26 @@ func TestBuildElements_CaseMismatchIsNamed(t *testing.T) {
 	}
 }
 
-// Two languages in one element directory is incoherent → loud error.
-func TestBuildElements_MixedLanguageRejected(t *testing.T) {
+// Two languages in one backend directory is incoherent → loud error.
+func TestBuildBackends_MixedLanguageRejected(t *testing.T) {
 	root := t.TempDir()
 	writeSrc(t, filepath.Join(root, "a.go"), "package main\n\nfunc GetA(req any) {}\n")
 	writeSrc(t, filepath.Join(root, "b.py"), "def get_b(req): pass\n")
 
-	_, err := BuildElements([]FunctionSpec{spec("get:a", "GetA", "", root)})
+	_, err := BuildBackends([]FunctionSpec{spec("get:a", "GetA", "", root)})
 	if err == nil {
 		t.Fatal("expected a mixed-language error, got nil")
 	}
 }
 
-// One handler declared twice in an element cannot be bound: the entry point
+// One handler declared twice in a backend cannot be bound: the entry point
 // imports it by name, so the build would pick one and drop the other.
-func TestBuildElements_AmbiguousHandlerRejected(t *testing.T) {
+func TestBuildBackends_AmbiguousHandlerRejected(t *testing.T) {
 	root := t.TempDir()
 	writeSrc(t, filepath.Join(root, "a.go"), "package main\n\nfunc Handle(req any) {}\n")
 	writeSrc(t, filepath.Join(root, "b.go"), "package main\n\nfunc Handle(req any) {}\n")
 
-	_, err := BuildElements([]FunctionSpec{spec("get:a", "Handle", "", root)})
+	_, err := BuildBackends([]FunctionSpec{spec("get:a", "Handle", "", root)})
 	if err == nil {
 		t.Fatal("a handler declared in two files must be refused")
 	}

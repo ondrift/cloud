@@ -24,7 +24,7 @@ func pinDigestSDKTag(t *testing.T, tag string, err error) *int {
 	return &calls
 }
 
-var someSpec = FunctionSpec{Name: "post:expense", Handler: "PostExpense", Element: "default"}
+var someSpec = FunctionSpec{Name: "post:expense", Handler: "PostExpense", Backend: "default"}
 
 // THE ONE THAT MATTERS: publishing a new SDK release moves the digest, so the
 // next deploy rebuilds the functions that resolve it instead of printing

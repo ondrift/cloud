@@ -17,15 +17,15 @@ import (
 func GetCmd() *cobra.Command {
 	atomicCmd := &cobra.Command{
 		Use:   "atomic",
-		Short: "Manage Atomic deployments: pulses and fields",
+		Short: "Manage Atomic deployments: functions and workers",
 		Long: "Atomic runs your code on the slice, as two kinds of work.\n\n" +
-			"Pulses: Atomic's functions, one call, one result. Fields: long-running workers.\n\n" +
-			"Both are declared in the Driftfile, as `pulse` and `field` blocks inside the `element` " +
-			"block their handler lives in (`element \"default\"` is ./atomic itself, any other name " +
+			"Functions: one call, one result. Workers: long-running processes the slice keeps running.\n\n" +
+			"Both are declared in the Driftfile, as `function` and `worker` blocks inside the `backend` " +
+			"block their handler lives in (`backend \"default\"` is ./atomic itself, any other name " +
 			"is ./atomic/<name>), each with the memory it books as a slot on the slice. " +
-			"`drift file explain element.pulse` describes the block.",
+			"`drift file explain backend.function` describes the block.",
 		Example: "  drift apply\n  drift atomic list\n  drift atomic run ./atomic\n" +
-			"  drift atomic fields\n  drift atomic new",
+			"  drift atomic workers\n  drift atomic new",
 		GroupID: "services",
 	}
 
@@ -43,8 +43,8 @@ func GetCmd() *cobra.Command {
 		cmd_run.Run(project.FunctionSpecsInDir),
 		cmd.Auth(),
 		cmd.Delete(),
-		cmd.Element(),
-		cmd.Fields(),
+		cmd.Backend(),
+		cmd.Workers(),
 		cmd.List(),
 		cmd.Logs(),
 		cmd.Metrics(),

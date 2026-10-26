@@ -1,10 +1,10 @@
-// elements_interpreted.go — multi-function element deploys for the interpreted
+// backends_interpreted.go — multi-function backend deploys for the interpreted
 // languages (Python/Node/Ruby/PHP). They all share one shape: stage the
-// element's source + install its declared dependencies ONCE, then for each
+// backend's source + install its declared dependencies ONCE, then for each
 // declared function generate that language's wrapper (which imports the handler
 // from its module) and tar the staged dir into one artifact per function.
 //
-// This mirrors DeployGoElement (one dependency resolution per element, one
+// This mirrors DeployGoBackend (one dependency resolution per backend, one
 // artifact per function); the per-function step here is cheap (write wrapper +
 // tar, no compile), so it runs sequentially.
 package atomic_cmd
@@ -35,29 +35,29 @@ var interpretedLangs = map[string]interpretedLang{
 	"php":    {label: "php", exts: map[string]bool{".php": true}, install: installPHPDeps, wrapper: generatePHPWrapper},
 }
 
-// DeployInterpretedElement builds and deploys every function in a non-Go
-// (interpreted) element. Dependencies are installed once; each function then
+// DeployInterpretedBackend builds and deploys every function in a non-Go
+// (interpreted) backend. Dependencies are installed once; each function then
 // gets its own wrapper + archive.
 //
 // out receives one line per slot as it is shipped; nil writes nothing. See
-// DeployGoElement for why it is the caller's writer.
-func DeployInterpretedElement(el Element, digest string, out io.Writer) error {
+// DeployGoBackend for why it is the caller's writer.
+func DeployInterpretedBackend(el Backend, digest string, out io.Writer) error {
 	lg, ok := interpretedLangs[el.Lang]
 	if !ok {
-		return fmt.Errorf("multi-function %s elements aren't built yet (element %q); "+
+		return fmt.Errorf("multi-function %s backends aren't built yet (backend %q); "+
 			"keep one function per folder for %s until it lands", el.Lang, el.Name, el.Lang)
 	}
 
-	stageDir, err := stageTempDir("drift-" + lg.label + "-element-")
+	stageDir, err := stageTempDir("drift-" + lg.label + "-backend-")
 	if err != nil {
 		return fmt.Errorf("create staging dir: %w", err)
 	}
 	defer os.RemoveAll(stageDir) // #nosec G104
 
-	// Stage the element's source files (one language, flat).
+	// Stage the backend's source files (one language, flat).
 	entries, err := os.ReadDir(el.Dir)
 	if err != nil {
-		return fmt.Errorf("read element dir: %w", err)
+		return fmt.Errorf("read backend dir: %w", err)
 	}
 	for _, e := range entries {
 		if e.IsDir() || !lg.exts[filepath.Ext(e.Name())] {
@@ -72,7 +72,7 @@ func DeployInterpretedElement(el Element, digest string, out io.Writer) error {
 		}
 	}
 
-	// Install declared dependencies ONCE for the whole element.
+	// Install declared dependencies ONCE for the whole backend.
 	if ierr := lg.install(el.Dir, stageDir); ierr != nil {
 		return ierr
 	}
@@ -109,7 +109,7 @@ func DeployInterpretedElement(el Element, digest string, out io.Writer) error {
 
 		serr := sendSourceToOperator(FuncArtifact{
 			Name: name, Method: method, Language: lg.label, Auth: f.Spec.Auth,
-			Element: el.Name, Stream: f.Spec.Stream, Response: f.Spec.Response,
+			Backend: el.Name, Stream: f.Spec.Stream, Response: f.Spec.Response,
 			Secrets:  f.Spec.Secrets,
 			Env:      f.Spec.Env,
 			Triggers: triggersFor(f), Digest: DeployDigest(digest, f.Spec),
@@ -135,9 +135,9 @@ func DeployInterpretedElement(el Element, digest string, out io.Writer) error {
 	return firstErr
 }
 
-// installPythonDeps installs the element's requirements.txt (the Drift SDK
+// installPythonDeps installs the backend's requirements.txt (the Drift SDK
 // among them) into stageDir/vendor — the wrapper prepends vendor/ to sys.path.
-// An element with no requirements.txt still gets the SDK vendored.
+// A backend with no requirements.txt still gets the SDK vendored.
 func installPythonDeps(absFolder, stageDir string) error {
 	reqPath := filepath.Join(absFolder, "requirements.txt")
 	// Stage requirements.txt next to the source (as node/php/ruby do their
@@ -152,7 +152,7 @@ func installPythonDeps(absFolder, stageDir string) error {
 	// Nothing but the SDK declared → copy it into vendor/ and skip the
 	// container entirely (see sdkvendor.go). A MISSING manifest lands here too,
 	// and must: the generated wrapper imports the SDK whether or not the
-	// element declared it, so returning early on absence ships a function that
+	// backend declared it, so returning early on absence ships a function that
 	// deploys clean and fails at first invocation.
 	if done, verr := tryVendorSDKOnly("python", absFolder, stageDir); verr != nil {
 		return verr
@@ -168,7 +168,7 @@ func installPythonDeps(absFolder, stageDir string) error {
 }
 
 // installNodeDeps mirrors build_node.go: copies package.json (+ lock) into the
-// stage and runs npm with linux platform resolution. An element with no
+// stage and runs npm with linux platform resolution. A backend with no
 // package.json still gets the SDK vendored.
 func installNodeDeps(absFolder, stageDir string) error {
 	if data, rerr := os.ReadFile(filepath.Join(absFolder, "package.json")); rerr == nil { // #nosec G304
@@ -180,7 +180,7 @@ func installNodeDeps(absFolder, stageDir string) error {
 		}
 	}
 	// A missing package.json reaches here and must: app.js requires the SDK
-	// whether or not the element declared it.
+	// whether or not the backend declared it.
 	if done, verr := tryVendorSDKOnly("node", absFolder, stageDir); verr != nil {
 		return verr
 	} else if done {
@@ -195,7 +195,7 @@ func installNodeDeps(absFolder, stageDir string) error {
 }
 
 // installRubyDeps mirrors build_ruby.go: copies the Gemfile (+ lock) and runs
-// `bundle install --standalone` under a host Ruby >= 3.0. An element with no
+// `bundle install --standalone` under a host Ruby >= 3.0. A backend with no
 // Gemfile still gets the SDK vendored.
 func installRubyDeps(absFolder, stageDir string) error {
 	if data, rerr := os.ReadFile(filepath.Join(absFolder, "Gemfile")); rerr == nil { // #nosec G304
@@ -207,7 +207,7 @@ func installRubyDeps(absFolder, stageDir string) error {
 		}
 	}
 	// A missing Gemfile reaches here and must: the wrapper requires 'drift'
-	// whether or not the element declared it.
+	// whether or not the backend declared it.
 	if done, verr := tryVendorSDKOnly("ruby", absFolder, stageDir); verr != nil {
 		return verr
 	} else if done {
@@ -230,7 +230,7 @@ func installRubyDeps(absFolder, stageDir string) error {
 }
 
 // installPHPDeps mirrors build_php.go: copies composer.json (+ lock) and runs
-// `composer install --no-dev`. An element with no composer.json still gets the
+// `composer install --no-dev`. A backend with no composer.json still gets the
 // SDK vendored.
 func installPHPDeps(absFolder, stageDir string) error {
 	if data, rerr := os.ReadFile(filepath.Join(absFolder, "composer.json")); rerr == nil { // #nosec G304
@@ -242,7 +242,7 @@ func installPHPDeps(absFolder, stageDir string) error {
 		}
 	}
 	// A missing composer.json reaches here and must: the wrapper require_once's
-	// vendor/autoload.php whether or not the element declared anything.
+	// vendor/autoload.php whether or not the backend declared anything.
 	if done, verr := tryVendorSDKOnly("php", absFolder, stageDir); verr != nil {
 		return verr
 	} else if done {

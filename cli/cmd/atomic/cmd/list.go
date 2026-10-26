@@ -20,7 +20,7 @@ type atomicRecord struct {
 	// the slot rather than when something was deployed into it. A reserved slot
 	// carries a route and no function name; a deployed one carries both.
 	Route     string `json:"route,omitempty"`
-	Element   string `json:"element"`
+	Backend   string `json:"backend"`
 	Language  string `json:"language"`
 	CreatedAt string `json:"created_at"`
 }
@@ -30,7 +30,7 @@ type atomicRecord struct {
 // slot the tenant has bought from one they are using.
 func (r atomicRecord) deployed() bool { return r.FunctionName != "" }
 
-// route is the path the slot answers on, from whichever field holds it. A
+// route is the path the slot answers on, from whichever worker holds it. A
 // deployed slot's function name IS its route; a reserved one has only Route.
 func (r atomicRecord) route() string {
 	if r.FunctionName != "" {
@@ -111,7 +111,7 @@ func printFlatTable(records []atomicRecord) {
 	fmt.Printf("%-12s  %-8s  %-8s  %-24s  %s\n", "ID", "LANG", "METHOD", "ROUTE", "Deployed At")
 	fmt.Printf("%-12s  %-8s  %-8s  %-24s  %s\n", "------------", "--------", "--------", "------------------------", "-------------------")
 	for _, r := range records {
-		// Org-only routing: the route is the bare function name; the element is
+		// Org-only routing: the route is the bare function name; the backend is
 		// a grouping concept (shown in the grouped view), never a path segment.
 		fmt.Printf("%-12s  %-8s  %-8s  %-24s  %s\n", r.Id, langOrDefault(r), r.Method, r.route(), deployedAt(r))
 	}
@@ -120,7 +120,7 @@ func printFlatTable(records []atomicRecord) {
 func List() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
-		Short:   "List every pulse and field slot on the slice",
+		Short:   "List every function and worker slot on the slice",
 		Example: "  drift atomic list",
 		GroupID: "operations",
 		Args:    cobra.NoArgs,
@@ -134,55 +134,55 @@ func List() *cobra.Command {
 				return err
 			}
 			if len(deployed) == 0 {
-				fmt.Println("No pulses or fields deployed.")
+				fmt.Println("No functions or workers deployed.")
 				return nil
 			}
 
-			// Check if any function belongs to an element.
-			hasElements := false
+			// Check if any function belongs to a backend.
+			hasBackends := false
 			for _, r := range deployed {
-				if r.Element != "" {
-					hasElements = true
+				if r.Backend != "" {
+					hasBackends = true
 					break
 				}
 			}
 
-			if !hasElements {
+			if !hasBackends {
 				printFlatTable(deployed)
 				return nil
 			}
 
-			// Group by element; collect ungrouped separately.
-			byElement := make(map[string][]atomicRecord)
+			// Group by backend; collect ungrouped separately.
+			byBackend := make(map[string][]atomicRecord)
 			var ungrouped []atomicRecord
 			for _, r := range deployed {
-				if r.Element == "" {
+				if r.Backend == "" {
 					ungrouped = append(ungrouped, r)
 				} else {
-					byElement[r.Element] = append(byElement[r.Element], r)
+					byBackend[r.Backend] = append(byBackend[r.Backend], r)
 				}
 			}
 
-			elementNames := make([]string, 0, len(byElement))
-			for name := range byElement {
-				elementNames = append(elementNames, name)
+			backendNames := make([]string, 0, len(byBackend))
+			for name := range byBackend {
+				backendNames = append(backendNames, name)
 			}
-			sort.Strings(elementNames)
+			sort.Strings(backendNames)
 
 			header := fmt.Sprintf("%-12s  %-8s  %-8s  %-24s  %s", "ID", "LANG", "METHOD", "ROUTE", "Deployed At")
 			rule := fmt.Sprintf("%-12s  %-8s  %-8s  %-24s  %s", "------------", "--------", "--------", "------------------------", "-------------------")
 
-			for _, name := range elementNames {
-				fmt.Printf("\n  element: %s\n", name)
+			for _, name := range backendNames {
+				fmt.Printf("\n  backend: %s\n", name)
 				fmt.Printf("  %s\n", header)
 				fmt.Printf("  %s\n", rule)
-				for _, r := range byElement[name] {
+				for _, r := range byBackend[name] {
 					fmt.Printf("  %-12s  %-8s  %-8s  %-24s  %s\n", r.Id, langOrDefault(r), r.Method, r.route(), deployedAt(r))
 				}
 			}
 
 			if len(ungrouped) > 0 {
-				fmt.Printf("\n  (no element)\n")
+				fmt.Printf("\n  (no backend)\n")
 				fmt.Printf("  %s\n", header)
 				fmt.Printf("  %s\n", rule)
 				for _, r := range ungrouped {

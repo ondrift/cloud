@@ -18,7 +18,7 @@ import (
 // follow, and both are pinned here against a stand-in for the slice, with the
 // real build and upload paths in between:
 //
-//   - a pulse whose source changed is built and uploaded by the apply itself,
+//   - a function whose source changed is built and uploaded by the apply itself,
 //     and one that did not is neither built nor uploaded on the next apply;
 //   - a site whose files changed is uploaded by the apply itself, with the new
 //     files in it.
@@ -120,8 +120,8 @@ func (f *fakeSlice) uploadCount() int {
 const shipsDriftfile = `slice "ships" {}
 
 atomic {
-  element "default" {
-    pulse "GET /hello" {
+  backend "default" {
+    function "GET /hello" {
       handler = "get_hello"
       memory  = "32MiB"
     }
@@ -145,7 +145,7 @@ func writeFile(t *testing.T, path, body string) {
 	}
 }
 
-func TestApplyShipsAPulseWhoseSourceChangedAndSkipsOneThatDidNot(t *testing.T) {
+func TestApplyShipsAFunctionWhoseSourceChangedAndSkipsOneThatDidNot(t *testing.T) {
 	withRealSchema(t)
 	slice := &fakeSlice{digests: map[string]string{}}
 	stubAPI(t, slice.handler(t))
@@ -177,7 +177,7 @@ func TestApplyShipsAPulseWhoseSourceChangedAndSkipsOneThatDidNot(t *testing.T) {
 
 	apply()
 	if got := slice.uploadCount(); got != 1 {
-		t.Errorf("an apply with nothing changed uploaded again (%d uploads in all): the pulse is rebuilt for nothing", got)
+		t.Errorf("an apply with nothing changed uploaded again (%d uploads in all): the function is rebuilt for nothing", got)
 	}
 
 	writeFile(t, hello, "def get_hello(req):\n    return 200, 'OK', {'v': 2}\n")

@@ -184,12 +184,12 @@ func gatherPlan(c *Compiled, declinedFree bool) (*planState, error) {
 	m := c.Manifest
 	p := &planState{c: c, user: common.GetUsername(), declinedFree: declinedFree}
 
-	// The build reads the source beside the file: which language each element
+	// The build reads the source beside the file: which language each backend
 	// is, where each handler lives. A failure here is what an apply would hit,
 	// so it is reported; the digests it would have given are then unknown.
 	specs := AtomicSpecs(m)
-	els, berr := atomic_cmd.BuildElements(specs)
-	if errors.Is(berr, atomic_cmd.ErrFieldLanguage) || errors.Is(berr, atomic_cmd.ErrConcurrency) {
+	els, berr := atomic_cmd.BuildBackends(specs)
+	if errors.Is(berr, atomic_cmd.ErrWorkerLanguage) || errors.Is(berr, atomic_cmd.ErrConcurrency) {
 		return nil, berr
 	}
 	p.buildErr = berr
@@ -202,7 +202,7 @@ func gatherPlan(c *Compiled, declinedFree bool) (*planState, error) {
 		atomic_cmd.SetDeclaredSchedules(declaredSchedules(m))
 		p.local = map[string]string{}
 		for _, el := range els {
-			digest, derr := atomic_cmd.ElementDigest(el.Dir, el.Name)
+			digest, derr := atomic_cmd.BackendDigest(el.Dir, el.Name)
 			if derr != nil {
 				continue
 			}
@@ -344,15 +344,15 @@ func fetchSecretNames() ([]string, error) {
 	return names, nil
 }
 
-// fetchAPIKeys reads the live keys of every Pulse the file gates with one.
+// fetchAPIKeys reads the live keys of every Function the file gates with one.
 //
 // The slice stores a key under the path `drift atomic auth set` was given,
-// and its gate accepts two spellings: `<element>/<route>` and the bare route.
+// and its gate accepts two spellings: `<backend>/<route>` and the bare route.
 // Its list matches the stored path exactly, so both are asked.
 func fetchAPIKeys(c *Compiled) (map[string][]liveAPIKey, error) {
-	elementOf := map[string]string{}
-	for _, p := range PulseEntries(c.Manifest.Slice()) {
-		elementOf[p.Str("name")] = p.Str("element")
+	backendOf := map[string]string{}
+	for _, p := range FunctionEntries(c.Manifest.Slice()) {
+		backendOf[p.Str("name")] = p.Str("backend")
 	}
 	out := map[string][]liveAPIKey{}
 	for _, w := range c.WriteOnly {
@@ -362,7 +362,7 @@ func fetchAPIKeys(c *Compiled) (map[string][]liveAPIKey, error) {
 		key := bookingKeyOf(c, w.Address)
 		_, route, _ := strings.Cut(key, ":")
 		paths := []string{route}
-		if el := elementOf[key]; el != "" {
+		if el := backendOf[key]; el != "" {
 			paths = append(paths, el+"/"+route)
 		}
 		for _, path := range paths {
@@ -443,12 +443,12 @@ func addressOf(c *Compiled, key string) string {
 	}
 	method, route, _ := strings.Cut(key, ":")
 	switch method {
-	case "field":
-		return "field " + route
+	case "worker":
+		return "worker " + route
 	case "queue":
-		return "pulse QUEUE " + route
+		return "function QUEUE " + route
 	}
-	return "pulse " + strings.ToUpper(method) + " /" + route
+	return "function " + strings.ToUpper(method) + " /" + route
 }
 
 func (p *planState) diff() *planDiff {
@@ -629,7 +629,7 @@ func shortDigest(d string) string {
 }
 
 // deployedKeyOf is the key /ops/atomic/list reports a slot under, which is
-// the booking key for everything but a queue Pulse.
+// the booking key for everything but a queue Function.
 func deployedKeyOf(bookingKey string) string {
 	method, name, _ := strings.Cut(bookingKey, ":")
 	return atomic_cmd.DeployedKey(method, name)
