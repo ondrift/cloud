@@ -1348,6 +1348,10 @@ func blockPointer(ranges map[string]docRange, want docRange, loc string) string 
 
 // ─── units ──────────────────────────────────────────────────────────────────
 
+// maxSizeBytes is the largest size a Driftfile may state: 1 PiB, far past any
+// disk, and small enough that adding a slice's sizes together cannot overflow.
+const maxSizeBytes = 1 << 50
+
 var sizeRe = regexp.MustCompile(`^([0-9]+)(KiB|MiB|GiB)$`)
 
 // parseSize reads a Driftfile size: whole KiB, MiB or GiB. "MB" is refused
@@ -1362,7 +1366,7 @@ func parseSize(s string) (int, error) {
 		return 0, fmt.Errorf("%q is too large", s)
 	}
 	scale := map[string]int{"KiB": 1024, "MiB": bytesPerMiB, "GiB": 1024 * bytesPerMiB}[m[2]]
-	if n > (1<<31-1)/scale {
+	if n > maxSizeBytes/scale {
 		return 0, fmt.Errorf("%q is too large", s)
 	}
 	return n * scale, nil
