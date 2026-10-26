@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1254,12 +1253,6 @@ func (f *shapeForm) collapseParent() {
 
 // ─── running it ─────────────────────────────────────────────────────────────
 
-// runShapeForm puts the terminal in raw mode, draws until the user submits or
-// quits, and returns what they declared.
-func runShapeForm(name string) (declaredShape, string, bool, error) {
-	return runForm(newShapeForm(name))
-}
-
 // runForm drives a form that is already built, which is how a resize opens on a
 // slice's current shape and carries its own submit.
 func runForm(f *shapeForm) (declaredShape, string, bool, error) {
@@ -1574,16 +1567,6 @@ func childValue(parent *node, label string) string {
 func intOf(s string) int {
 	n, _ := strconv.Atoi(strings.TrimSpace(s))
 	return n
-}
-
-// sortedKeys keeps a summary stable across runs of the same answers.
-func sortedKeys(m map[string]int) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // collectForTest exposes collect to tests in this package without widening its

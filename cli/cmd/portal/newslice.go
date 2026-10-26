@@ -2,8 +2,11 @@ package portal
 
 // The "+ New slice" flow has two paths, chosen from a small modal:
 //
-//   Empty slice      → suspend and run `drift slice create`, which draws the
-//                      slice's shape in the terminal.
+//   New project      → a minimal directory explorer to pick a folder, then
+//                      SUSPEND the dashboard and run `drift file new` there (it
+//                      asks the slice's name and the first pulse and writes the
+//                      Driftfile) followed by `drift apply`, which creates the
+//                      slice.
 //   From a Driftfile → a minimal directory explorer to locate a Driftfile,
 //                      then SUSPEND the dashboard and run the real
 //                      `drift apply` (it asks before the price and any removal,
@@ -43,7 +46,7 @@ type newChooser struct {
 }
 
 var sliceChooserOpts = []chooserOption{
-	{"Empty slice", "Draw the envelope here, on the form drift slice create opens."},
+	{"New project", "Pick a folder, write its Driftfile with drift file new, then drift apply creates the slice."},
 	{"From a Driftfile", "Find a Driftfile, then provision its slice + deploy the whole project."},
 }
 
@@ -63,7 +66,7 @@ func (c *newChooser) opts() []chooserOption {
 // the right pane titles "New function" in orange rather than "New slice" green).
 func (m *model) creatingFunction() bool {
 	return (m.chooser != nil && m.chooser.kind == chooserFn) ||
-		(m.explorer != nil && m.explorer.mode != exDriftfile)
+		(m.explorer != nil && m.explorer.mode != exDriftfile && m.explorer.mode != exProjectNew)
 }
 
 func (m *model) handleChooser(k key) bool {
@@ -84,8 +87,8 @@ func (m *model) handleChooser(k key) bool {
 		kind, sel := c.kind, c.sel
 		m.chooser = nil
 		switch {
-		case kind == chooserSlice && sel == 0: // build the envelope by hand
-			m.createSliceForm()
+		case kind == chooserSlice && sel == 0: // a new project in a folder
+			m.openExplorer(exProjectNew)
 		case kind == chooserSlice: // from a Driftfile
 			m.openExplorer(exDriftfile)
 		case sel == 0: // function: deploy an existing directory
@@ -136,6 +139,7 @@ const (
 	exDriftfile = iota // a Driftfile → drift apply (create or resize its slice, then deploy)
 	exFnDeploy         // a directory  → drift atomic deploy <dir>
 	exFnNew            // a directory  → drift atomic new (scaffold there)
+	exProjectNew       // a directory  → drift file new, then drift apply
 )
 
 type fileEntry struct {
@@ -314,9 +318,12 @@ func (m *model) handleExplorer(k key) bool {
 		case entryFound, entryDriftfile:
 			m.deployDriftfile(ent.path)
 		case entrySelectDir:
-			if e.mode == exFnNew {
+			switch e.mode {
+			case exProjectNew:
+				m.newProject(ent.path)
+			case exFnNew:
 				m.scaffoldFunction(ent.path)
-			} else {
+			default:
 				m.deployFunction(ent.path)
 			}
 		}
@@ -332,6 +339,8 @@ func (m *model) explorerLines() []string {
 		header, hint = bold(cOrange+"+ New function "+cReset+dim("· deploy a directory")), "g type a path · ● select to deploy"
 	case exFnNew:
 		header, hint = bold(cOrange+"+ New function "+cReset+dim("· scaffold new")), "g type a path · ● select to scaffold here"
+	case exProjectNew:
+		header, hint = bold(cGreen+"+ New slice "+cReset+dim("· new project")), "g type a path · ● select to start the project here"
 	}
 	out := []string{
 		header,
@@ -366,8 +375,11 @@ func (m *model) explorerLines() []string {
 			plain, colored = "Driftfile  → deploy", cGreen+"Driftfile"+cReset+dim("  → deploy")
 		case entrySelectDir:
 			action := "→ deploy this directory"
-			if e.mode == exFnNew {
+			switch e.mode {
+			case exFnNew:
 				action = "→ scaffold here"
+			case exProjectNew:
+				action = "→ start the project here"
 			}
 			plain, colored = "● use this directory  "+action, cOrange+"● use this directory"+cReset+dim("  "+action)
 		}
@@ -399,12 +411,23 @@ func driftExe() string {
 // for acknowledgement, then re-enters the dashboard and runs refresh. okMsg /
 // failMsg become the status line.
 func (m *model) suspendAndRun(banner string, cmd *exec.Cmd, okMsg, failMsg string, refresh func()) {
+	m.suspendAndRunSteps(banner, []*exec.Cmd{cmd}, okMsg, failMsg, refresh)
+}
+
+// suspendAndRunSteps is suspendAndRun for commands that follow one another: the
+// first to fail stops the rest.
+func (m *model) suspendAndRunSteps(banner string, cmds []*exec.Cmd, okMsg, failMsg string, refresh func()) {
 	_ = term.Restore(m.fd, m.oldState) // #nosec G104 -- best-effort
 	fmt.Print("\x1b[?25h\x1b[?1049l")  // show cursor, leave alt-screen
 	fmt.Printf("\n\x1b[1m%s\x1b[0m\n\n", banner)
 
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	runErr := cmd.Run()
+	var runErr error
+	for _, cmd := range cmds {
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if runErr = cmd.Run(); runErr != nil {
+			break
+		}
+	}
 
 	if runErr != nil {
 		fmt.Printf("\n\x1b[31mfailed: %v\x1b[0m\n", runErr)
@@ -426,18 +449,22 @@ func (m *model) suspendAndRun(banner string, cmd *exec.Cmd, okMsg, failMsg strin
 	}
 }
 
-// createSliceForm suspends the dashboard and runs the real `drift slice create`,
-// which draws the slice's shape in the terminal and waits for it to be applied.
+// newProject suspends the dashboard and runs `drift file new` in dir, which asks
+// the slice's name and the first pulse and writes the Driftfile, then `drift
+// apply` there, which creates the slice.
 //
-// Suspending is what makes this work at all: the form owns the terminal — raw
-// mode, its own key decoder, its own redraws — for as long as the user takes to
-// fill it in, and two readers of one stdin hang. Re-execing our own binary
-// rather than calling the form in-process is the same choice every other action
-// in this file makes, and it keeps one implementation of the flow.
-func (m *model) createSliceForm() {
-	cmd := exec.Command(driftExe(), "slice", "create") // #nosec G204 -- our own binary, fixed args
-	m.suspendAndRun("drift slice create  (the form opens here)", cmd,
-		"slice created", "✗ slice not created (see output above)",
+// Suspending is what makes this work at all: the prompts own the terminal for as
+// long as the user takes to answer, and two readers of one stdin hang. Re-execing
+// our own binary rather than calling them in-process is the same choice every
+// other action in this file makes, and it keeps one implementation of the flow.
+func (m *model) newProject(dir string) {
+	m.explorer = nil
+	scaffold := exec.Command(driftExe(), "file", "new") // #nosec G204 -- our own binary, fixed args
+	scaffold.Dir = dir
+	apply := exec.Command(driftExe(), "apply") // #nosec G204 -- our own binary, fixed args
+	apply.Dir = dir
+	m.suspendAndRunSteps("drift file new, then drift apply  "+abbrevHome(dir), []*exec.Cmd{scaffold, apply},
+		"slice created from "+filepath.Base(dir), "✗ slice not created (see output above)",
 		func() { m.active = common.GetActiveSlice(); m.loadSlices() })
 }
 

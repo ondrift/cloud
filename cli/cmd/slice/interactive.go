@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -276,35 +275,6 @@ func configFromSlots(slots []functionSlot) map[string]any {
 	return map[string]any{"atomic": atomic}
 }
 
-// priceOf asks the platform what a config costs. The CLI ships no rates.
-func priceOf(cfg map[string]any, months int) (int, error) {
-	body, _ := json.Marshal(map[string]any{
-		"config":                cfg,
-		"billing_period_months": months,
-	})
-	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/slice/price", bytes.NewBuffer(body))
-	if err != nil {
-		return 0, common.TransportError("price slice", err)
-	}
-	defer resp.Body.Close()
-
-	data, err := common.CheckResponse(resp, "price slice")
-	if err != nil {
-		return 0, err
-	}
-	var priced struct {
-		MonthlyCents int `json:"monthly_cents"`
-		Items        []struct {
-			Key          string `json:"key"`
-			SubtotalCent int    `json:"subtotal_cents"`
-		} `json:"items"`
-	}
-	if uerr := json.Unmarshal(data, &priced); uerr != nil {
-		return 0, fmt.Errorf("the price endpoint answered something this version cannot read: %w", uerr)
-	}
-	return priced.MonthlyCents, nil
-}
-
 // sectionOf maps a priced line to the pillar that owns it, so the bill adds up
 // the same way the form is laid out.
 //
@@ -357,129 +327,6 @@ func priceBySection(cfg map[string]any) (int, map[string]int, error) {
 	return priced.MonthlyCents, per, nil
 }
 
-// summarise prints the shape and its price, and asks to go ahead.
-//
-// The price is stated before the question and the question names it, because a
-// confirmation that does not repeat what is being agreed to is a keystroke, not
-// a decision.
-// summarise prints what is about to be created. It does NOT ask.
-//
-// The asking already happened: the form's Create row carries the price beside
-// it, so Enter on "Create   EUR 1.53/mo" is a decision made with the figure
-// under the cursor. A second y/N was belt and braces until it became the reason
-// the command hung — the form's key reader is still on stdin when it runs, and
-// two readers on one terminal means the keystroke goes to whichever asks first,
-// which was never the one waiting for it.
-func summarise(name string, shape declaredShape, monthlyCents int) {
-	slots := shape.Slots
-	fmt.Printf("\n  %s\n", name)
-
-	if shape.StorageMiB > 0 {
-		line("code & dependencies", fmt.Sprintf("%d MB", shape.StorageMiB))
-	}
-	if len(slots) == 0 {
-		fmt.Println("    no functions")
-	}
-	total := 0
-	for _, s := range slots {
-		line(strings.ToUpper(s.Method)+" "+s.Route, fmt.Sprintf("%d MB", s.Memory))
-		total += s.Memory
-	}
-	if len(slots) > 0 {
-		fmt.Printf("    %s\n", fDimPlain(fmt.Sprintf("%d function%s, %d MB booked in total",
-			len(slots), plural(len(slots)), total)))
-	}
-
-	// Named, because the name is the resource: an undeclared collection is not
-	// a smaller one, it is one the slice refuses every write to.
-	printNamed("collection", shape.Backbone.Collections, "MB")
-	printNamed("database", shape.Backbone.Databases, "MB")
-	printNamed("bucket", shape.Backbone.Buckets, "MB")
-	printNamed("queue", shape.Backbone.Queues, "deep")
-
-	if shape.CanvasMiB > 0 {
-		line("site storage", fmt.Sprintf("%d MB", shape.CanvasMiB))
-	}
-
-	if monthlyCents == 0 {
-		fmt.Printf("\n  This is the free slice — %s/month.\n", euros(0))
-	} else {
-		fmt.Printf("\n  %s/month.\n", euros(monthlyCents))
-	}
-
-}
-
-// createFromPrompts is the whole command outside --free: ask, price against the
-// server, show what was built, confirm, create.
-//
-// The price is fetched BEFORE the confirmation and the confirmation repeats it,
-// so nothing is bought at a figure that was never on screen. A shape that prices
-// at zero is sent as the free tier, which is what the platform would have
-// charged for it anyway — the difference is the tier label, and that is what
-// counts an account's one free slice.
-func createFromPrompts(name string, billingMonths int) error {
-	if !interactive() {
-		return fmt.Errorf(
-			"drift slice create draws a form, which needs a terminal.\n" +
-				"  In CI or a script, pass --free for a free slice. A configured slice is " +
-				"drawn on the form, so it needs one.")
-	}
-
-	shape, chosen, ok, err := runShapeForm(name)
-	if err != nil || !ok {
-		if err == nil {
-			fmt.Println("Nothing was created.")
-		}
-		return err
-	}
-	cfg := buildConfig(shape.StorageMiB, shape.Slots, shape.Backbone, shape.CanvasMiB, shape.BackboneScalars)
-
-	if billingMonths < 1 {
-		billingMonths = 1
-	}
-	monthlyCents, err := priceOf(cfg, billingMonths)
-	if err != nil {
-		return err
-	}
-
-	summarise(chosen, shape, monthlyCents)
-
-	payload := map[string]any{"name": chosen, "config": cfg}
-	if monthlyCents == 0 {
-		payload["tier"] = "hacker"
-	} else {
-		payload["tier"] = "custom"
-		payload["billing_period_months"] = billingMonths
-		// The stub the api still requires outside local dev. Phase G validates
-		// it against the real provider; until then sending nothing is a 400 and
-		// sending this is what every other paid path already does.
-		payload["payment_token"] = "cli"
-	}
-
-	body, _ := json.Marshal(payload)
-	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/slice/create", bytes.NewBuffer(body))
-	if err != nil {
-		return common.TransportError("create slice", err)
-	}
-	defer resp.Body.Close()
-	if _, err := common.CheckResponse(resp, "create slice"); err != nil {
-		return err
-	}
-
-	// Same wait the --free path does, and for the same reason: the record exists
-	// the moment create returns but the components behind it do not, and the
-	// documented next command is a deploy. A deploy issued into that gap is
-	// refused by something that is not listening yet, and every 5xx renders as
-	// the maintenance message — so the reader is told to wait for Drift when what
-	// they are waiting for is their own slice.
-	fmt.Printf("  Waiting for slice %q to come up...\n", chosen)
-	if werr := common.WaitForSliceReady(chosen); werr != nil {
-		return fmt.Errorf("slice %q was created and is still starting: %w", chosen, werr)
-	}
-	fmt.Printf("Slice '%s' created and set as active.\n", chosen)
-	return nil
-}
-
 // declaredShape is everything the prompts collected, kept together so the
 // summary shows the same thing that was sent rather than a second assembly of
 // it.
@@ -491,45 +338,3 @@ type declaredShape struct {
 	CanvasMiB       int
 }
 
-// printNamed lists one declared set in a stable order. Map order is randomised,
-// and a summary that reorders itself between two runs of the same answers reads
-// as the shape having changed.
-func printNamed(noun string, items map[string]int, unit string) {
-	names := make([]string, 0, len(items))
-	for n := range items {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		line(noun+" "+n, fmt.Sprintf("%d %s", items[n], unit))
-	}
-}
-
-// line is the summary's ONE column rule: a label, then its figure right-aligned
-// in a fixed column.
-//
-// Every row used its own padding before — a hardcoded run of spaces here, a
-// %-6s%-28s there — so the figures landed wherever the longest label of that
-// particular kind happened to put them, and the block read as four lists that
-// had been printed next to each other rather than one bill.
-const (
-	summaryLabelWidth = 30
-	summaryValueWidth = 9
-)
-
-func line(label, value string) {
-	if len(label) > summaryLabelWidth {
-		label = label[:summaryLabelWidth-1] + "…"
-	}
-	fmt.Printf("    %-*s %*s\n", summaryLabelWidth, label, summaryValueWidth, value)
-}
-
-// fDimPlain dims a line without importing the form's palette here.
-func fDimPlain(s string) string { return "\x1b[2m" + s + "\x1b[0m" }
-
-func plural(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
-}

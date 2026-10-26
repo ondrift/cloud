@@ -11,7 +11,6 @@ func GetCmd() *cobra.Command {
 		GroupID: "account",
 	}
 	cmd.AddCommand(
-		getCreateCmd(),
 		getResizeCmd(),
 		getListCmd(),
 		getInfoCmd(),

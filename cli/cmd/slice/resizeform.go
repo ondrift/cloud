@@ -15,8 +15,7 @@ import (
 
 // resizeform.go — changing a slice's shape without leaving the terminal.
 //
-// The same screen `drift slice create` draws, opened on what the slice already
-// is. Resizing is the half of shape-ownership that had no terminal path at all:
+// The shape form, opened on what the slice already is. Resizing is the half of shape-ownership that had no terminal path at all:
 // every spelling of `drift slice resize` handed off to a web page, so a slice
 // could be made from a prompt and only ever changed from a browser.
 //
