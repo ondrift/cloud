@@ -48,6 +48,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/hcl/v2"
 
@@ -398,6 +399,7 @@ func (c *compiler) compilePulse(p dfPulse, ptr string) Node {
 		c.at(ptr+"/concurrent", p.Concurrent.Range(), what)
 	}
 	c.compileAlerts(entry, p, route, ptr, what)
+	c.queueTuning(entry, p, method, ptr, what)
 	c.optEnvSecrets(entry, p.Env, p.Secrets, ptr, what)
 
 	switch len(p.Auth) {
@@ -501,6 +503,53 @@ func (c *compiler) compileAlerts(entry Node, p dfPulse, route, ptr, what string)
 }
 
 var alertNameRe = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
+
+// Bounds the queue grammar carries: the format publishes the same figures, and a
+// poll under the floor is a spin against the queue.
+const (
+	minPollMS     = 50
+	maxPollMS     = 60000
+	maxQueueRetry = 100
+)
+
+// queueTuning reads how often a queue pulse polls and how many times a failing
+// message is delivered again. Both belong to the queue a pulse drains, so on any
+// other pulse they are refused rather than ignored.
+func (c *compiler) queueTuning(entry Node, p dfPulse, method, ptr, what string) {
+	if method != "queue" {
+		for _, a := range []struct {
+			name string
+			expr hcl.Expression
+		}{{"poll", p.Poll}, {"max_retries", p.MaxRetries}} {
+			if present(a.expr) {
+				c.ev.errorf(a.expr.Range(), "Not a queue pulse",
+					"%s: %s tunes the queue a pulse drains, so it belongs on a pulse labelled QUEUE and the queue it drains, \"QUEUE orders\".", what, a.name)
+			}
+		}
+		return
+	}
+	if raw, ok := c.ev.str(p.Poll, what+": poll"); ok {
+		d, err := time.ParseDuration(raw)
+		switch {
+		case err != nil:
+			c.ev.errorf(p.Poll.Range(), "Not a duration", "%s: poll %q is not a duration; write one such as \"250ms\" or \"2s\".", what, raw)
+		case d.Milliseconds() < minPollMS || d.Milliseconds() > maxPollMS:
+			c.ev.errorf(p.Poll.Range(), "Out of range",
+				"%s: poll is %s; it is between %dms and %ds (below that the slice spins against its own queue).", what, raw, minPollMS, maxPollMS/1000)
+		default:
+			entry["poll_ms"] = int(d.Milliseconds())
+			c.at(ptr+"/poll_ms", p.Poll.Range(), what)
+		}
+	}
+	if n, ok := c.ev.integer(p.MaxRetries, what+": max_retries"); ok {
+		if n < 1 || n > maxQueueRetry {
+			c.ev.errorf(p.MaxRetries.Range(), "Out of range", "%s: max_retries is %d; it is between 1 and %d.", what, n, maxQueueRetry)
+		} else {
+			entry["max_retry"] = n
+			c.at(ptr+"/max_retry", p.MaxRetries.Range(), what)
+		}
+	}
+}
 
 func (c *compiler) compileField(f dfField, ptr string) Node {
 	what := fmt.Sprintf("field %q", f.Name)

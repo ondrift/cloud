@@ -56,6 +56,8 @@ func FunctionSpecs(m *Manifest) []atomic_cmd.FunctionSpec {
 			Secrets:    fn.Strings("secrets"),
 			Env:        fn.StrMap("env"),
 			Concurrent: fn.Bool("concurrent"),
+			PollMS:     fn.Int("poll_ms"),
+			MaxRetry:   fn.Int("max_retry"),
 		})
 	}
 	return specs

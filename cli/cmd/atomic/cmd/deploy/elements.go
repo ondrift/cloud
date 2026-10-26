@@ -81,6 +81,11 @@ type FunctionSpec struct {
 	// written; 0 means the Driftfile left it out. Above 1 it declares what
 	// Concurrent does, and the number is used for nothing else.
 	Concurrency int
+	// PollMS and MaxRetry are a queue Pulse's `poll` and `max_retries`, as the
+	// document carries them; 0 means the Driftfile left them out and the
+	// defaults apply (500 ms, 3 attempts).
+	PollMS   int
+	MaxRetry int
 }
 
 // IsConcurrent reports whether the Pulse was declared concurrent, in either
@@ -90,6 +95,13 @@ type FunctionSpec struct {
 func (s FunctionSpec) IsConcurrent() bool {
 	return s.Concurrent || s.Concurrency > 1
 }
+
+// What a queue Pulse polls and retries with when the Driftfile says nothing: the
+// figures the slice itself applies to a trigger that carries none.
+const (
+	defaultQueuePollMS   = 500
+	defaultQueueMaxRetry = 3
+)
 
 // FieldMethod is the method a Field's slot is booked and deployed under. No
 // HTTP request can carry it, so nothing routes to a Field: the slice's
@@ -413,8 +425,15 @@ func triggersFor(f ElementFunc) []TriggerSpec {
 	var triggers []TriggerSpec
 	method, _ := f.Spec.Wire()
 	if q := f.Spec.QueueSource(); q != "" {
+		poll, retry := f.Spec.PollMS, f.Spec.MaxRetry
+		if poll == 0 {
+			poll = defaultQueuePollMS
+		}
+		if retry == 0 {
+			retry = defaultQueueMaxRetry
+		}
 		triggers = append(triggers, TriggerSpec{
-			Type: "queue", Source: q, Method: "queue", PollMS: 500, MaxRetry: 3,
+			Type: "queue", Source: q, Method: "queue", PollMS: poll, MaxRetry: retry,
 		})
 	}
 	// A Driftfile `cron:` is additive — the function keeps its own trigger and

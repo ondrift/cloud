@@ -774,9 +774,9 @@ func (m *model) handleFnDetail(k key) bool {
 }
 
 // activateFnField is invoked by Enter on a field. These are display-only (#2):
-// element is set at deploy, queue triggers are registered via the CLI and
-// schedules are a pulse's cron in the Driftfile — so Enter surfaces what
-// changes the field rather than editing in place.
+// element is set at deploy, and queue triggers and schedules are a pulse's own
+// label and cron in the Driftfile — so Enter surfaces what changes the field
+// rather than editing in place.
 func (m *model) activateFnField() {
 	if m.detailSel < 0 || m.detailSel >= len(fnConfigKeys) {
 		return
@@ -785,7 +785,7 @@ func (m *model) activateFnField() {
 	case "element":
 		m.status = "element is set at deploy: drift atomic deploy --element <name>"
 	case "trigger":
-		m.status = "register: drift atomic trigger register queue <name> --queue <q> --target <url>"
+		m.status = "trigger: label the pulse QUEUE <name> in the Driftfile (poll, max_retries tune it), then drift apply"
 	case "schedule":
 		m.status = "schedule: write a cron on the pulse in the Driftfile, then drift apply"
 	}
