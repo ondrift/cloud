@@ -56,7 +56,7 @@ func TestSchemaMustBePresentOrTheSuiteIsTheatre(t *testing.T) {
 // accepted whatever else it could have allowed.
 //
 // The Driftfile is HCL, and the reader's block structs decide which blocks and
-// attributes a file may hold: a worker the platform's schema adds is invisible to
+// attributes a file may hold: a field the platform's schema adds is invisible to
 // this binary until a block for it exists, so the property that the schema alone
 // decides what is legal no longer holds for the file. It still holds for the
 // document the compiler writes, which is what this stub describes: `slice` and

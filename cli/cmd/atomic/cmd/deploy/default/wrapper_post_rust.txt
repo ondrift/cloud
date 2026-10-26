@@ -10,7 +10,7 @@ fn main() {
             "payload": payload
         });
         // Headers are optional and arrive through a sink rather than a fourth
-        // tuple backend: this destructure is fixed-arity, so growing it would
+        // tuple element: this destructure is fixed-arity, so growing it would
         // fail to compile against every handler already written. Setting a
         // Content-Type that is not JSON is what makes the slice write the
         // payload raw instead of wrapping it.

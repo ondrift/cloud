@@ -23,7 +23,7 @@ import (
 )
 
 // unnamedResources is what is live on the slice and unnamed by the manifest,
-// one list per class. Each reconciler fills its own worker, because the rule
+// one list per class. Each reconciler fills its own field, because the rule
 // that joins a declaration to a live name differs per class: a host and a
 // database match lowercased, a site by its slug. Holding the join beside the
 // declaration is what keeps the spellings from being restated here, where only

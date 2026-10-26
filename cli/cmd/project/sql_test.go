@@ -250,7 +250,7 @@ func TestApplySQL_AMigrationRefusalFailsTheDeploy(t *testing.T) {
 	}
 }
 
-// A slice that predates migrations takes the call, ignores the worker and
+// A slice that predates migrations takes the call, ignores the field and
 // answers the bare 204 it always gave. The files were never applied, so a
 // success here would be a lie.
 func TestApplySQL_ASliceThatPredatesMigrationsFailsTheDeploy(t *testing.T) {

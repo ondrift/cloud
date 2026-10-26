@@ -36,7 +36,7 @@ def handle(req)
   end
   result = {{FUNC}}(body, req)
   out = { 'status' => result[0], 'message' => result[1], 'payload' => result[2] }
-  # A fourth backend is optional. It carries response headers, and a
+  # A fourth element is optional. It carries response headers, and a
   # Content-Type that is not JSON makes the payload be written raw instead of
   # wrapped. A three-element return leaves result[3] nil.
   out['headers'] = result[3] if result[3]

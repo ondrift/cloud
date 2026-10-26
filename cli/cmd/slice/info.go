@@ -82,7 +82,7 @@ func FetchScheduler() (*Scheduler, error) {
 // what the slice holds and what each part of it is allowed.
 //
 // The platform emits it as the DRIFT_QUOTA_CONFIG the slice enforces
-// (tier.QuotaConfigMap), and the slice parses it by worker name, so these tags
+// (tier.QuotaConfigMap), and the slice parses it by field name, so these tags
 // are that contract's names. Only what a person asks about is decoded here.
 type Envelope struct {
 	Slots               map[string]int `json:"atomic_function_slots"`

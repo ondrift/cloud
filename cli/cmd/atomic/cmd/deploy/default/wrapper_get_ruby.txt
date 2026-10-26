@@ -31,7 +31,7 @@ require '{{SOURCE}}'
 def handle(req)
   result = {{FUNC}}(req)
   out = { 'status' => result[0], 'message' => result[1], 'payload' => result[2] }
-  # A fourth backend is optional. It carries response headers, and setting a
+  # A fourth element is optional. It carries response headers, and setting a
   # Content-Type that is not JSON is what makes the slice write the payload raw
   # instead of wrapping it in {status, message, payload} — the escape hatch a
   # spec-compliant body needs. A three-element return leaves result[3] nil.
