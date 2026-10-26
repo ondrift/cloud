@@ -41,7 +41,7 @@ func GetCmd() *cobra.Command {
 		Use:     "file",
 		Short:   "Work on a Driftfile: lint it, run what it declares locally, measure it",
 		Long:    "Everything a Driftfile does short of applying it: lint, format, explain, resolve and scaffold offline; run, test, stop and tail it locally; benchmark it against its slice. `drift plan` and `drift apply` apply it.",
-		Example: "  drift file lint\n  drift file run\n  drift file explain pulse\n  drift file logs",
+		Example: "  drift file lint\n  drift file run\n  drift file explain function\n  drift file logs",
 		GroupID: "project",
 	}
 	cmd.AddCommand(getLintCmd(), getExplainCmd(), getResolveCmd(), getFmtCmd(), getNewCmd())
@@ -130,10 +130,10 @@ func getLintCmd() *cobra.Command {
 			m := c.Manifest
 
 			// The second half of "exactly as `drift plan` would": every declared
-			// handler has to resolve to a callable in its element.
+			// handler has to resolve to a callable in its backend.
 			//
 			// The schema cannot ask this — it validates a DOCUMENT, and whether
-			// `handler = "PostUsers"` is really in its element is a question only
+			// `handler = "PostUsers"` is really in its backend is a question only
 			// this machine can answer. Without it a Driftfile lints green and then
 			// fails at apply, which is the one thing a CI gate exists to prevent.
 			//
@@ -142,12 +142,12 @@ func getLintCmd() *cobra.Command {
 			// for review, or one sitting in a directory whose source has not been
 			// checked out — and calling that invalid would refuse a file that is fine.
 			if _, serr := os.Stat(m.ResolvePath("atomic")); serr == nil {
-				els, berr := atomic_cmd.BuildElements(project.AtomicSpecs(m))
+				els, berr := atomic_cmd.BuildBackends(project.AtomicSpecs(m))
 				if berr != nil {
 					return fmt.Errorf("%s\n\n%w", common.Hint(shortPath(path)), berr)
 				}
 				// The third half: a booking the compiler accepts but the slot's
-				// LANGUAGE does not. Only reachable once the elements are built,
+				// LANGUAGE does not. Only reachable once the backends are built,
 				// because that is where the language was detected — the file
 				// never says it.
 				if cerr := project.CheckCompiledBookings(c, els); cerr != nil {

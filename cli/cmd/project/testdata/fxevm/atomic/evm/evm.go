@@ -1,4 +1,4 @@
-// Package evm stands in for the fxevm testnode's evm element: the handlers the
+// Package evm stands in for the fxevm testnode's evm backend: the handlers the
 // fixture Driftfile names, and nothing else.
 package evm
 

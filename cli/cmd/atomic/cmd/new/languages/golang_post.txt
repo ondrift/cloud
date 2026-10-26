@@ -6,7 +6,7 @@ import (
 
 // {{FUNC}}Body is the JSON shape of this handler's request body. The generated
 // wrapper unmarshals the incoming body into it before calling {{FUNC}}. Each
-// function in an element names its own body type, so they never collide.
+// function in a backend names its own body type, so they never collide.
 type {{FUNC}}Body struct {
 	Name string `json:"name"`
 }

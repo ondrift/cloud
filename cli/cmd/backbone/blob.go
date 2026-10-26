@@ -32,7 +32,7 @@ func blobPutCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			bucket, key, file := args[0], args[1], args[2]
 
-			// #nosec G304 -- path is constructed from a validated function/element/key name (regex-pinned ^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$) plus a base directory under the slice's PVC; not user-controlled.
+			// #nosec G304 -- path is constructed from a validated function/backend/key name (regex-pinned ^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$) plus a base directory under the slice's PVC; not user-controlled.
 
 			f, err := os.Open(file)
 			if err != nil {

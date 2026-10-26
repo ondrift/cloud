@@ -22,7 +22,7 @@ const fxevmLive = `{"name":"fxevm-testnode","tier":"custom","monthly_cost_cents"
   "MaxNumberOfScheduledJobs":1,"MaxStorageBytes":104857600,
   "functions":[
    {"memory_bytes":67108864,"method":"post","name":"post:rpc","route":"rpc"},
-   {"memory_bytes":67108864,"method":"field","name":"field:sequencer","route":"sequencer"},
+   {"memory_bytes":67108864,"method":"worker","name":"worker:sequencer","route":"sequencer"},
    {"memory_bytes":33554432,"method":"post","name":"post:admin/reset","route":"admin/reset"},
    {"memory_bytes":33554432,"method":"get","name":"get:bench","route":"bench"}]},
  "backbone":{"backup_retention_days":3,
@@ -131,7 +131,7 @@ func TestPlan_IssuesNoWriteButThePriceQuote(t *testing.T) {
 
 // What the plan says about the testnode as it stands: the placeholder storage
 // the free slice was created with is not in the file, so it is removed; the
-// fifth slot it was sold goes; and the field nothing has deployed would deploy.
+// fifth slot it was sold goes; and the worker nothing has deployed would deploy.
 func TestPlan_ReportsTheRealDifferences(t *testing.T) {
 	planStub(t, fxevmLive, `[{"function_name":"rpc","method":"post","digest":"aaaa1111"}]`)
 	out, err := planIn(t, nil)
@@ -182,7 +182,7 @@ func TestPlan_ABookingChangeIsPricedAndRestarts(t *testing.T) {
 		t.Fatalf("plan: %v", err)
 	}
 	for _, want := range []string{
-		"~ pulse POST /rpc",
+		"~ function POST /rpc",
 		"memory 64MiB → 128MiB",
 		"€5.76 a month → €7.68 a month",
 		"Restart   yes",
@@ -203,7 +203,7 @@ func TestPlan_ASliceThatDoesNotExistWouldBeCreated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	for _, want := range []string{"+ create", "+ pulse POST /rpc", "books 64MiB", "+ sql chain", "€5.76 a month", "Removes   nothing", "no: the slice is created"} {
+	for _, want := range []string{"+ create", "+ function POST /rpc", "books 64MiB", "+ sql chain", "€5.76 a month", "Removes   nothing", "no: the slice is created"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the plan does not say %q:\n%s", want, out)
 		}
@@ -226,14 +226,14 @@ func TestPlan_ASliceThatIsTheFileHasNothingToChange(t *testing.T) {
 	live, _ := json.Marshal(map[string]any{"name": "fxevm-testnode", "tier": "custom", "config": c.Shape})
 
 	// What the slice reports deployed is exactly what this file would deploy.
-	els, err := atomic_cmd.BuildElements(AtomicSpecs(c.Manifest))
+	els, err := atomic_cmd.BuildBackends(AtomicSpecs(c.Manifest))
 	if err != nil {
 		t.Fatal(err)
 	}
 	atomic_cmd.SetDeclaredSchedules(declaredSchedules(c.Manifest))
 	var deployed []map[string]string
 	for _, el := range els {
-		digest, err := atomic_cmd.ElementDigest(el.Dir, el.Name)
+		digest, err := atomic_cmd.BackendDigest(el.Dir, el.Name)
 		if err != nil {
 			t.Fatal(err)
 		}

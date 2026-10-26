@@ -87,7 +87,7 @@ An environment's name applies the file to that environment's own slice, with
 its variables.`,
 		Example: "  drift apply\n" +
 			"  drift apply staging\n" +
-			"  drift apply --approve-price 768 --approve-remove \"pulse GET /bench\"\n" +
+			"  drift apply --approve-price 768 --approve-remove \"function GET /bench\"\n" +
 			"  drift plan --out plan.json && drift apply plan.json",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -131,7 +131,7 @@ its variables.`,
 	cmd.Flags().BoolVar(&useFree, "use-free-slice", false, "Agree that a new slice whose shape fits the free grant takes one of your free slices")
 	cmd.Flags().StringArrayVar(&removes, "approve-remove", nil, "Agree to remove a resource, by its address as the plan prints it (repeatable)")
 	cmd.Flags().StringArrayVar(&dataLoss, "allow-data-loss", nil, "Agree that a resource's data may be lost, by its address (repeatable)")
-	cmd.Flags().BoolVar(&force, "force", false, "Redeploy every pulse and field even if its source is unchanged")
+	cmd.Flags().BoolVar(&force, "force", false, "Redeploy every function and worker even if its source is unchanged")
 	return cmd
 }
 
@@ -332,7 +332,7 @@ func runApply(o applyOptions) error {
 		return err
 	}
 
-	// 5: the alerts, after the pulses they watch exist.
+	// 5: the alerts, after the functions they watch exist.
 	if err := applyAlerts(c, p, o.out); err != nil {
 		return err
 	}

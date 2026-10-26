@@ -4,10 +4,10 @@ import "testing"
 
 // A clone is deep: writing through it never reaches the document it copied.
 func TestNodeCloneIsDeep(t *testing.T) {
-	base := Node{"atomic": Node{"pulses": []any{Node{"name": "get:a"}}}}
+	base := Node{"atomic": Node{"functions": []any{Node{"name": "get:a"}}}}
 	c := base.Clone()
-	c.Sub("atomic").Nodes("pulses")[0]["name"] = "get:b"
-	if got := base.Sub("atomic").Nodes("pulses")[0].Str("name"); got != "get:a" {
+	c.Sub("atomic").Nodes("functions")[0]["name"] = "get:b"
+	if got := base.Sub("atomic").Nodes("functions")[0].Str("name"); got != "get:a" {
 		t.Errorf("a write through the clone reached the original: %q", got)
 	}
 }

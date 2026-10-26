@@ -31,7 +31,7 @@ import (
 	drift "github.com/ondrift/cloud/sdk/go"
 )
 
-// maxSlots is the most calls one process serves at once: a Pulse's
+// maxSlots is the most calls one process serves at once: a Function's
 // `concurrency` maximum.
 const maxSlots = 64
 
@@ -47,7 +47,7 @@ const runtimeBudgetHeader = "X-User-Runtime"
 type handlerFunc = func(ctx context.Context, req drift.Request) drift.Response
 
 // Serve answers every call the slice sends this process: concurrently, up to
-// the slots the slice asks for, when it runs the process as a concurrent Pulse;
+// the slots the slice asks for, when it runs the process as a concurrent Function;
 // one envelope at a time otherwise; and over local HTTP outside a slice.
 //
 // It returns when the slice closes stdin, after the calls in flight have been

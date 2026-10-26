@@ -10,8 +10,8 @@ import (
 // about how an error is RENDERED, and pinning it to the served document would
 // make the test fail whenever the reservation's contents change.
 //
-// It describes the compiled document: `slice`, and `atomic.elements[].pulses[]`
-// with the keys a pulse compiles to.
+// It describes the compiled document: `slice`, and `atomic.backends[].functions[]`
+// with the keys a function compiles to.
 const relocateSchema = `{
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
@@ -20,19 +20,19 @@ const relocateSchema = `{
     "atomic": {
       "type": "object",
       "properties": {
-        "elements": {"type": "array", "items": {"$ref": "#/definitions/elementEntry"}}
+        "backends": {"type": "array", "items": {"$ref": "#/definitions/backendEntry"}}
       }
     }
   },
   "definitions": {
-    "elementEntry": {
+    "backendEntry": {
       "type": "object",
       "properties": {
         "name": {"type": "string"},
-        "pulses": {"type": "array", "items": {"$ref": "#/definitions/pulseEntry"}}
+        "functions": {"type": "array", "items": {"$ref": "#/definitions/functionEntry"}}
       }
     },
-    "pulseEntry": {
+    "functionEntry": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -62,16 +62,16 @@ const relocateSchema = `{
 //
 //	at '': 'not' failed
 //
-// against a whole document. That names no pulse, no key and no position: it is
+// against a whole document. That names no function, no key and no position: it is
 // the least actionable thing this package can print, and it is what a user gets
 // the first time they try to set BACKBONE_URL in `env`. Repaired, the refusal is
-// reported at the `env` attribute of the pulse that carries it.
+// reported at the `env` attribute of the function that carries it.
 func TestAReservedEnvNameIsReportedWhereItIs(t *testing.T) {
 	withSchema(t, relocateSchema)
 	body := "slice \"demo\" {}\n" + // line 1
 		"atomic {\n" + // line 2
-		"  element \"api\" {\n" + // line 3
-		"    pulse \"GET /ping\" {\n" + // line 4
+		"  backend \"api\" {\n" + // line 3
+		"    function \"GET /ping\" {\n" + // line 4
 		"      handler = \"GetPing\"\n" + // line 5
 		"      memory  = \"8MiB\"\n" + // line 6
 		"      env = {\n" + // line 7
@@ -96,10 +96,10 @@ func TestAReservedEnvNameIsReportedWhereItIs(t *testing.T) {
 	if !strings.Contains(msg, "Driftfile:7:") {
 		t.Errorf("the error must be at the env attribute (line 7), got:\n  %s", msg)
 	}
-	// The pulse it is in and the attribute, which are recoverable and are not in
+	// The function it is in and the attribute, which are recoverable and are not in
 	// the leaf the library hands over.
-	if !strings.Contains(msg, `pulse "GET /ping": env:`) {
-		t.Errorf("the error must name the pulse and its env, got:\n  %s", msg)
+	if !strings.Contains(msg, `function "GET /ping": env:`) {
+		t.Errorf("the error must name the function and its env, got:\n  %s", msg)
 	}
 }
 
@@ -108,14 +108,14 @@ func TestAReservedEnvNameIsReportedWhereItIs(t *testing.T) {
 // version that rewrote every location would scramble every other message in the
 // package while passing the test above.
 //
-// The pulse carries a valid env and a `response` the stub does not list, so the
-// refusal belongs to the pulse and must not drift onto its env.
+// The function carries a valid env and a `response` the stub does not list, so the
+// refusal belongs to the function and must not drift onto its env.
 func TestAnOrdinaryErrorKeepsItsOwnLocation(t *testing.T) {
 	withSchema(t, relocateSchema)
 	body := "slice \"demo\" {}\n" + // line 1
 		"atomic {\n" + // line 2
-		"  element \"api\" {\n" + // line 3
-		"    pulse \"GET /ping\" {\n" + // line 4
+		"  backend \"api\" {\n" + // line 3
+		"    function \"GET /ping\" {\n" + // line 4
 		"      handler  = \"GetPing\"\n" +
 		"      memory   = \"8MiB\"\n" +
 		"      env      = { MODE = \"fast\" }\n" + // line 7
@@ -129,8 +129,8 @@ func TestAnOrdinaryErrorKeepsItsOwnLocation(t *testing.T) {
 		t.Fatal("an undeclared key must be refused")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "Driftfile:4:") || !strings.Contains(msg, `pulse "GET /ping"`) {
-		t.Errorf("an ordinary error must keep pointing at its own instance, the pulse on line 4, got:\n  %s", msg)
+	if !strings.Contains(msg, "Driftfile:4:") || !strings.Contains(msg, `function "GET /ping"`) {
+		t.Errorf("an ordinary error must keep pointing at its own instance, the function on line 4, got:\n  %s", msg)
 	}
 	if !strings.Contains(msg, "response") {
 		t.Errorf("the error should name the key the stub forbids, got:\n  %s", msg)

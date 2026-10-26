@@ -21,7 +21,7 @@ var prorataFunctions = []string{
 	"post:ops", "get:ops-since", "get:proof", "post:receipt",
 }
 
-// The invariant the whole card rests on: a Pulse labelled "METHOD /route" must
+// The invariant the whole card rests on: a Function labelled "METHOD /route" must
 // book under exactly the string the slice composes, lower(method) + ":" + route.
 //
 // It is asserted as a SET, not in order, so a reordering of the file cannot fail
@@ -46,13 +46,13 @@ func TestFunctionIdentity_ALabelBooksTheKeyTheSliceComposes(t *testing.T) {
 // A route carrying colons of its own is the case a split on the LAST colon, or a
 // naive SplitN(3), gets wrong: the route is composed whole, never parsed back.
 func TestFunctionIdentity_ARouteKeepsItsOwnColons(t *testing.T) {
-	doc := Node{"atomic": map[string]any{"pulses": []any{
+	doc := Node{"atomic": map[string]any{"functions": []any{
 		map[string]any{"route": "groups/:id", "method": "get"},
 		map[string]any{"route": "items/:id/tags/:tag", "method": "delete"},
 	}}}
 	normaliseFunctionIdentities(doc)
 
-	fns := doc.Nodes("atomic", "pulses")
+	fns := doc.Nodes("atomic", "functions")
 	for i, want := range []string{"get:groups/:id", "delete:items/:id/tags/:tag"} {
 		if got := fns[i].Str("name"); got != want {
 			t.Errorf("entry %d name = %q, want %q", i, got, want)
@@ -67,12 +67,12 @@ func TestFunctionIdentity_ARouteKeepsItsOwnColons(t *testing.T) {
 // well means the pair. Deriving from the name instead would let the old string
 // win.
 func TestFunctionIdentity_ThePairWinsWhenADocumentStatesBoth(t *testing.T) {
-	doc := Node{"atomic": map[string]any{"pulses": []any{
+	doc := Node{"atomic": map[string]any{"functions": []any{
 		map[string]any{"name": "get:stale", "route": "fresh", "method": "post"},
 	}}}
 	normaliseFunctionIdentities(doc)
 
-	if got := doc.Nodes("atomic", "pulses")[0].Str("name"); got != "post:fresh" {
+	if got := doc.Nodes("atomic", "functions")[0].Str("name"); got != "post:fresh" {
 		t.Errorf("name = %q, want post:fresh — the pair is what the document means", got)
 	}
 }
@@ -80,27 +80,27 @@ func TestFunctionIdentity_ThePairWinsWhenADocumentStatesBoth(t *testing.T) {
 // The method is lowercased into the key because the runtime's lookup is exact
 // against a lowercase-method key.
 func TestFunctionIdentity_TheMethodIsLowercasedIntoTheKey(t *testing.T) {
-	doc := Node{"atomic": map[string]any{"pulses": []any{
+	doc := Node{"atomic": map[string]any{"functions": []any{
 		map[string]any{"route": "ping", "method": "GET"},
 	}}}
 	normaliseFunctionIdentities(doc)
 
-	if got := doc.Nodes("atomic", "pulses")[0].Str("name"); got != "get:ping" {
+	if got := doc.Nodes("atomic", "functions")[0].Str("name"); got != "get:ping" {
 		t.Errorf("name = %q, want get:ping — a key stored with an uppercase method "+
 			"names a pool no invocation reaches", got)
 	}
 }
 
-// A queue Pulse is the pair with the method `queue`, and Trigger() and
+// A queue Function is the pair with the method `queue`, and Trigger() and
 // QueueSource() read the composed string, so the composition has to be the one
 // they parse.
 func TestFunctionIdentity_AQueuePairComposesTheQueueKey(t *testing.T) {
-	doc := Node{"atomic": map[string]any{"pulses": []any{
+	doc := Node{"atomic": map[string]any{"functions": []any{
 		map[string]any{"route": "orders", "method": "queue", "handler": "H"},
 	}}}
 	normaliseFunctionIdentities(doc)
 
-	spec := atomic_cmd.FunctionSpec{Name: doc.Nodes("atomic", "pulses")[0].Str("name")}
+	spec := atomic_cmd.FunctionSpec{Name: doc.Nodes("atomic", "functions")[0].Str("name")}
 	if spec.Trigger() != "queue" {
 		t.Errorf("Trigger() = %q, want queue", spec.Trigger())
 	}
@@ -110,7 +110,7 @@ func TestFunctionIdentity_AQueuePairComposesTheQueueKey(t *testing.T) {
 }
 
 // bookingKeys parses a Driftfile and returns its function identities, sorted, so
-// callers compare sets rather than orderings. The default element's folder
+// callers compare sets rather than orderings. The default backend's folder
 // exists beside it.
 func bookingKeys(t *testing.T, body string) []string {
 	t.Helper()
@@ -119,21 +119,21 @@ func bookingKeys(t *testing.T, body string) []string {
 		t.Fatalf("parse failed:\n%v", err)
 	}
 	var out []string
-	for _, fn := range m.Slice().Nodes("atomic", "pulses") {
+	for _, fn := range m.Slice().Nodes("atomic", "functions") {
 		out = append(out, fn.Str("name"))
 	}
 	sort.Strings(out)
 	return out
 }
 
-// driftfileFor writes each identity as a Pulse labelled with its method and
-// route, in the default element.
+// driftfileFor writes each identity as a Function labelled with its method and
+// route, in the default backend.
 func driftfileFor(identities []string) string {
 	var b strings.Builder
-	b.WriteString("slice \"prorata\" {}\n\natomic {\n  element \"default\" {\n")
+	b.WriteString("slice \"prorata\" {}\n\natomic {\n  backend \"default\" {\n")
 	for i, id := range identities {
 		method, route, _ := strings.Cut(id, ":")
-		b.WriteString("    pulse \"" + strings.ToUpper(method) + " /" + route + "\" {\n")
+		b.WriteString("    function \"" + strings.ToUpper(method) + " /" + route + "\" {\n")
 		b.WriteString("      handler = \"H" + string(rune('A'+i%26)) + "\"\n")
 		b.WriteString("      memory = \"16MiB\"\n")
 		b.WriteString("    }\n")

@@ -12,7 +12,7 @@ import (
 // key the platform renames decodes as zero, which reads as "unbounded".
 const envelopeBody = `{
   "declaration_model": true,
-  "atomic_function_slots": {"get:ping": 33554432, "post:rpc": 67108864, "field:sequencer": 33554432},
+  "atomic_function_slots": {"get:ping": 33554432, "post:rpc": 67108864, "worker:sequencer": 33554432},
   "blob_bucket_quotas": {"uploads": 268435456},
   "queue_max_depth": 100,
   "queue_quotas": {"orders": 0, "notify": 200},

@@ -99,9 +99,9 @@ func ReportIdleDeclarations(m *Manifest, live *LiveSlice, deployed []atomic_cmd.
 // idleFunctions reports the declared slots the manifest does not name and
 // nothing runs, each with the memory it books.
 //
-// Pulse slots and Field slots are one set, as the slice holds them: a Field's
-// slot is `field:<name>`, named when this manifest declares that Field, running
-// when its record is deployed, and idle otherwise, exactly as a Pulse's is.
+// Function slots and Worker slots are one set, as the slice holds them: a Worker's
+// slot is `worker:<name>`, named when this manifest declares that Worker, running
+// when its record is deployed, and idle otherwise, exactly as a Function's is.
 func idleFunctions(m *Manifest, slots []AtomicFunction, deployed []atomic_cmd.DeployedFunction) idleClass {
 	c := idleClass{one: "atomic slot", many: "atomic slots", declared: len(slots)}
 	named := stringSet(namedFunctions(m))

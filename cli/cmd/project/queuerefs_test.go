@@ -31,7 +31,7 @@ func writeManifest(t *testing.T, body string) string {
 // A queue trigger whose queue the file never declares is reported, and the
 // document is what answers it: the live slice carries a depth and no names.
 func TestCheckQueueReferences_NamesAnUndeclaredQueue(t *testing.T) {
-	m := manifestFrom(Node{"slice": "demo", "atomic": map[string]any{"pulses": []any{
+	m := manifestFrom(Node{"slice": "demo", "atomic": map[string]any{"functions": []any{
 		map[string]any{"name": "queue:orders", "handler": "HandleOrder"},
 	}}})
 
@@ -39,8 +39,8 @@ func TestCheckQueueReferences_NamesAnUndeclaredQueue(t *testing.T) {
 	if len(warnings) != 1 {
 		t.Fatalf("an undeclared queue must be reported once, got %d: %v", len(warnings), warnings)
 	}
-	// The pulse as the file labels it, and the block that declares the queue.
-	for _, want := range []string{`pulse "QUEUE orders"`, "`queue \"orders\" {}`"} {
+	// The function as the file labels it, and the block that declares the queue.
+	for _, want := range []string{`function "QUEUE orders"`, "`queue \"orders\" {}`"} {
 		if !strings.Contains(warnings[0], want) {
 			t.Errorf("the warning must carry %q, got %q", want, warnings[0])
 		}
@@ -56,8 +56,8 @@ func TestParse_AnUndeclaredQueueIsAWarningRatherThanARefusal(t *testing.T) {
 	p := writeManifest(t, `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "QUEUE orders" {
+  backend "default" {
+    function "QUEUE orders" {
       handler = "HandleOrder"
       memory = "16MiB"
     }
@@ -81,8 +81,8 @@ func TestParse_AcceptsADeclaredQueue(t *testing.T) {
 	p := writeManifest(t, `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "QUEUE orders" {
+  backend "default" {
+    function "QUEUE orders" {
       handler = "HandleOrder"
       memory = "16MiB"
     }
@@ -110,8 +110,8 @@ func TestParse_AnHTTPFunctionNeedsNoQueue(t *testing.T) {
 	p := writeManifest(t, `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "GET /ping" {
+  backend "default" {
+    function "GET /ping" {
       handler = "GetPing"
       memory = "16MiB"
     }
@@ -135,8 +135,8 @@ func TestParse_TheQueueCheckMakesNoNetworkCall(t *testing.T) {
 	p := writeManifest(t, `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "QUEUE orders" {
+  backend "default" {
+    function "QUEUE orders" {
       handler = "HandleOrder"
       memory = "16MiB"
     }

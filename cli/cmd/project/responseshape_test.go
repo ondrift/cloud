@@ -5,16 +5,16 @@ import "testing"
 // `response` has to survive the CLI's own hop, which is the FIRST of three
 // parsers between the Driftfile and the running function.
 //
-// Each hop builds its own struct and drops what it has no field for, and none
+// Each hop builds its own struct and drops what it has no worker for, and none
 // of them fails when that happens: the deploy reports success and the endpoint
 // answers in the old shape. The only symptom is a third party unable to parse a
-// body — which is why the field is asserted at every hop rather than trusted at
+// body — which is why the worker is asserted at every hop rather than trusted at
 // any of them.
 func TestFunctionSpecCarriesTheDeclaredResponseShape(t *testing.T) {
 	withRealSchema(t)
-	m := planManifest(t, "slice \"demo\" {}\n\natomic {\n  element \"default\" {\n"+
-		"    pulse \"POST /token\" {\n      handler = \"PostToken\"\n      memory = \"16MiB\"\n      response = \"json\"\n    }\n"+
-		"    pulse \"GET /ping\" {\n      handler = \"GetPing\"\n      memory = \"16MiB\"\n    }\n  }\n}\n", "atomic/")
+	m := planManifest(t, "slice \"demo\" {}\n\natomic {\n  backend \"default\" {\n"+
+		"    function \"POST /token\" {\n      handler = \"PostToken\"\n      memory = \"16MiB\"\n      response = \"json\"\n    }\n"+
+		"    function \"GET /ping\" {\n      handler = \"GetPing\"\n      memory = \"16MiB\"\n    }\n  }\n}\n", "atomic/")
 
 	specs := FunctionSpecs(m)
 	if len(specs) != 2 {
@@ -31,7 +31,7 @@ func TestFunctionSpecCarriesTheDeclaredResponseShape(t *testing.T) {
 			"dropped at the first hop, so the slice never learns the endpoint is unwrapped", got)
 	}
 
-	// The control, and the reason the field is optional: a function that
+	// The control, and the reason the worker is optional: a function that
 	// declares nothing must resolve to nothing, not to a default spelled out
 	// here. The slice reads absent as envelope, and two places inventing that
 	// default is how they come to disagree.

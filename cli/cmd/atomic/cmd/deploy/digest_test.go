@@ -20,9 +20,9 @@ func write(t *testing.T, dir, name, content string) string {
 	return full
 }
 
-func digest(t *testing.T, dir, element string) string {
+func digest(t *testing.T, dir, backend string) string {
 	t.Helper()
-	d, err := FunctionDigest(dir, element)
+	d, err := FunctionDigest(dir, backend)
 	if err != nil {
 		t.Fatalf("FunctionDigest(%s): %v", dir, err)
 	}
@@ -79,12 +79,12 @@ func TestFunctionDigest_NewFileFlipsDigest(t *testing.T) {
 	}
 }
 
-func TestFunctionDigest_ElementMatters(t *testing.T) {
+func TestFunctionDigest_BackendMatters(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "handler.py", "x=1\n")
 
 	if a, b := digest(t, dir, ""), digest(t, dir, "billing"); a == b {
-		t.Fatalf("digest ignored element grouping: %s == %s", a, b)
+		t.Fatalf("digest ignored backend grouping: %s == %s", a, b)
 	}
 }
 

@@ -5,7 +5,7 @@
 // deployed, so a consumer polling a declared queue that nothing has pushed
 // to yet reads it empty. A queue nothing was ever pushed to and that nobody
 // declared does not exist, and the slice answers 404. A local run has to
-// answer the same way, or a Field that polls its queue from its first tick
+// answer the same way, or a Worker that polls its queue from its first tick
 // works on a slice and fails on a laptop.
 //
 // There are two local Backbones, and each learns the declared queues its own

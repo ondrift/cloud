@@ -25,8 +25,8 @@ go build -o drift ./cmd/drift
 
 ```bash
 drift account create                   # sign up (email verification)
-drift file new                         # write a Driftfile: the slice, its shape, one pulse
-drift atomic new hello -l go -m get    # write the source the pulse declares
+drift file new                         # write a Driftfile: the slice, its shape, one function
+drift atomic new hello -l go -m get    # write the source the function declares
 drift plan                             # what applying it creates, and what it costs
 drift apply                            # create the slice and deploy
 ```
@@ -55,7 +55,7 @@ block it can hold.
 
 | Command | Description |
 |---------|-------------|
-| `drift file new` | Write a starter Driftfile, asking for the slice's name and the first pulse; `drift apply` then creates the slice. |
+| `drift file new` | Write a starter Driftfile, asking for the slice's name and the first function; `drift apply` then creates the slice. |
 | `drift slice list` | List your slices; the active one is marked. |
 | `drift slice use <name>` | Set the active slice for subsequent commands. |
 | `drift slice resize [name]` | Reshape a slice on the same form, opened on what it already is (defaults to the active slice). Repricing and removal are confirmed on the form itself. |
@@ -69,7 +69,7 @@ block it can hold.
 
 | Command | Description |
 |---------|-------------|
-| `drift atomic new [name]` | Add a function to an element &mdash; a flat file under `atomic/`, not a per-function folder. HTTP or queue trigger. Flags: `-l/--lang`, `-m/--method`, `-q/--queue`, `-a/--auth`, `-e/--element`. |
+| `drift atomic new [name]` | Add a function to a backend &mdash; a flat file under `atomic/`, not a per-function folder. HTTP or queue trigger. Flags: `-l/--lang`, `-m/--method`, `-q/--queue`, `-a/--auth`, `-e/--backend`. |
 | `drift atomic fetch [path]` | Resolve dependencies for every function found under a path. |
 | `drift atomic run <dir>` | Run a function locally with hot reload. |
 | `drift atomic list` | List deployed functions. |
@@ -77,7 +77,7 @@ block it can hold.
 | `drift atomic metrics <name>` | Request count, error rate, average duration. |
 | `drift atomic redeploy\|rollback\|history <name>` | Manage deployed versions. |
 | `drift atomic trigger\|alert\|egress\|auth <name>` | Configure triggers, alerts, outbound egress, and API-key auth. |
-| `drift atomic element list` | List your elements (single-language backends) and the functions each contains. |
+| `drift atomic backend list` | List your backends (single-language backends) and the functions each contains. |
 | `drift atomic delete <name>` | Remove a function. |
 
 ### Backbone — data
@@ -102,8 +102,8 @@ A site is declared in the Driftfile (`canvas { site "/" { dir = "./site" } }`) a
 | Command | Description |
 |---------|-------------|
 | `drift plan [env]` | Compare the Driftfile with the live slice: every difference, the monthly price before and after (quoted by the platform), whether the slice restarts, and what a removal could lose. Changes nothing. `--out plan.json` records it. |
-| `drift apply [env \| plan.json]` | Make the slice what the Driftfile says: create or resize it, asking before the price moves, before anything is removed and before any data could be lost, then deploy. Pulses and fields whose source is unchanged are skipped; `--force` redeploys everything. |
-| `drift size` | Write what each pulse and field has measured into the Driftfile's `memory` lines, shown as a diff. |
+| `drift apply [env \| plan.json]` | Make the slice what the Driftfile says: create or resize it, asking before the price moves, before anything is removed and before any data could be lost, then deploy. Functions and workers whose source is unchanged are skipped; `--force` redeploys everything. |
+| `drift size` | Write what each function and worker has measured into the Driftfile's `memory` lines, shown as a diff. |
 | `drift file new` | Write a starter Driftfile. |
 | `drift file lint` | Validate the Driftfile exactly as `drift plan` would, offline and without its secrets. |
 | `drift file explain [block]` | Describe a block or attribute of the Driftfile format. |
@@ -112,7 +112,7 @@ A site is declared in the Driftfile (`canvas { site "/" { dir = "./site" } }`) a
 | `drift file run [env]` | Build and run the whole project locally in Docker — no account, no cloud. |
 | `drift file test [env]` | Run the project locally and run its `test` commands against it, always tearing the instance down afterward. |
 | `drift file stop [env]` / `logs [env]` | Stop or tail the local run. |
-| `drift file benchmark` | What each pulse and field has cost, measured by the slice, and what it should book. |
+| `drift file benchmark` | What each function and worker has cost, measured by the slice, and what it should book. |
 
 ### Migrate — leave another cloud
 

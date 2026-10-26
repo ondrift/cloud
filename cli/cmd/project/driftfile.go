@@ -3,12 +3,12 @@ package project
 // driftfile.go — the Driftfile: HCL, read into blocks.
 //
 // A Driftfile is one HCL file that declares the whole slice: what runs on it
-// (elements, their Pulses and Fields, Backbone, sites, edge) AND its shape (each
+// (backends, their Functions and Workers, Backbone, sites, edge) AND its shape (each
 // booking beside what it books, each storage size beside what it sizes, and the
 // slice's limits).
 //
 // This file reads the TEXT: its blocks and the small expression language.
-// compile.go turns the blocks into the two payloads, the flattened Pulse/Field
+// compile.go turns the blocks into the two payloads, the flattened Function/Worker
 // document every reader consumes and the SliceConfig the platform prices.
 // plan.go diffs those against the live slice.
 //
@@ -106,12 +106,12 @@ type dfFile struct {
 	Hooks        []dfHook        `hcl:"hook,block"`
 	Tests        []dfTest        `hcl:"test,block"`
 
-	// Elements, SQL, NoSQL, Blobs, Queues, Caches, Secrets and Sites carry no
+	// Backends, SQL, NoSQL, Blobs, Queues, Caches, Secrets and Sites carry no
 	// hcl tag: gohcl never decodes them directly. Each pillar's own blocks are
-	// written inside its container now — `atomic { element ... }`, `backbone {
+	// written inside its container now — `atomic { backend ... }`, `backbone {
 	// sql ... }`, `canvas { site ... }` — and flattenPillars copies them here
 	// right after decode, so compile.go reads exactly what it always has.
-	Elements []dfElement
+	Backends []dfBackend
 	SQL      []dfSQL
 	NoSQL    []dfNoSQL
 	Blobs    []dfBlobs
@@ -124,7 +124,7 @@ type dfFile struct {
 
 // pillarOfBlock names the container each pillar block is written inside.
 var pillarOfBlock = map[string]string{
-	"element":  "atomic",
+	"backend":  "atomic",
 	"sql":      "backbone",
 	"nosql":    "backbone",
 	"blobs":    "backbone",
@@ -135,9 +135,9 @@ var pillarOfBlock = map[string]string{
 	"site":     "canvas",
 }
 
-// dfAtomic is the Atomic pillar's own container: every element it declares.
+// dfAtomic is the Atomic pillar's own container: every backend it declares.
 type dfAtomic struct {
-	Elements []dfElement `hcl:"element,block"`
+	Backends []dfBackend `hcl:"backend,block"`
 	DefRange hcl.Range   `hcl:",def_range"`
 }
 
@@ -161,7 +161,7 @@ type dfCanvas struct {
 }
 
 // flattenPillars copies each pillar container's blocks onto dfFile's own
-// fields, so everything past this point (compile.go) reads the pillars the
+// workers, so everything past this point (compile.go) reads the pillars the
 // same way regardless of the container syntax above it. A second container of
 // the same kind is refused here, the same way compile.go refuses a second
 // slice or edge block.
@@ -169,7 +169,7 @@ func flattenPillars(file *dfFile, ev *dfEval) {
 	switch len(file.Atomic) {
 	case 0:
 	case 1:
-		file.Elements = file.Atomic[0].Elements
+		file.Backends = file.Atomic[0].Backends
 	default:
 		ev.errorf(file.Atomic[1].DefRange, "Duplicate atomic block", "a Driftfile has one atomic block.")
 	}
@@ -224,16 +224,16 @@ type dfLimits struct {
 	DefRange            hcl.Range      `hcl:",def_range"`
 }
 
-type dfElement struct {
+type dfBackend struct {
 	Name      string         `hcl:"name,label"`
 	NameRange hcl.Range      `hcl:"name,label_range"`
 	Dir       hcl.Expression `hcl:"dir,optional"`
-	Pulses    []dfPulse      `hcl:"pulse,block"`
-	Fields    []dfField      `hcl:"field,block"`
+	Functions []dfFunction   `hcl:"function,block"`
+	Workers   []dfWorker     `hcl:"worker,block"`
 	DefRange  hcl.Range      `hcl:",def_range"`
 }
 
-type dfPulse struct {
+type dfFunction struct {
 	Label      string         `hcl:"trigger,label"`
 	LabelRange hcl.Range      `hcl:"trigger,label_range"`
 	Handler    hcl.Expression `hcl:"handler,optional"`
@@ -267,7 +267,7 @@ type dfAuth struct {
 	DefRange hcl.Range      `hcl:",def_range"`
 }
 
-type dfField struct {
+type dfWorker struct {
 	Name      string         `hcl:"name,label"`
 	NameRange hcl.Range      `hcl:"name,label_range"`
 	Handler   hcl.Expression `hcl:"handler,optional"`

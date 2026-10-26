@@ -3,14 +3,14 @@ import importlib.util, json, os, sys, threading, time, urllib.request
 FUNCTION_NAME    = "{{FUNCTION_NAME}}"
 FUNCTION_METHOD  = "{{FUNCTION_METHOD}}"
 FUNCTION_AUTH    = "{{FUNCTION_AUTH}}"
-FUNCTION_ELEMENT = "{{FUNCTION_ELEMENT}}"
+FUNCTION_BACKEND = "{{FUNCTION_BACKEND}}"
 
 _dir = os.path.dirname(os.path.abspath(__file__))
 _vendor = os.path.join(_dir, "vendor")
 if os.path.isdir(_vendor):
     sys.path.insert(0, _vendor)
 
-registered_path = f"{FUNCTION_ELEMENT}/{FUNCTION_NAME}" if FUNCTION_ELEMENT else FUNCTION_NAME
+registered_path = f"{FUNCTION_BACKEND}/{FUNCTION_NAME}" if FUNCTION_BACKEND else FUNCTION_NAME
 
 _spec = importlib.util.spec_from_file_location("handler", os.path.join(_dir, "handler.py"))
 _mod  = importlib.util.module_from_spec(_spec)

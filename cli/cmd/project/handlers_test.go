@@ -12,7 +12,7 @@ import (
 )
 
 // demoProject writes a project whose Driftfile declares four functions across
-// two elements, including a queue-triggered one, and returns its root.
+// two backends, including a queue-triggered one, and returns its root.
 func demoProject(t *testing.T, driftfile string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -36,12 +36,12 @@ func normalise(s string) string { return s }
 const demoDriftfile = `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "GET /ping" {
+  backend "default" {
+    function "GET /ping" {
       handler = "GetPing"
       memory = "8MiB"
     }
-    pulse "POST /users" {
+    function "POST /users" {
       handler = "PostUsers"
       memory = "32MiB"
       secrets = ["STRIPE_KEY"]
@@ -49,14 +49,14 @@ atomic {
         api_key = env("USERS_KEY")
       }
     }
-    pulse "QUEUE orders" {
+    function "QUEUE orders" {
       handler = "HandleOrder"
       memory = "64MiB"
     }
   }
 
-  element "billing" {
-    pulse "POST /invoices" {
+  backend "billing" {
+    function "POST /invoices" {
       handler = "PostInvoices"
       memory = "48MiB"
     }
@@ -102,7 +102,7 @@ func TestFunctionSpecs_ResolveTheWholeDeclaration(t *testing.T) {
 		t.Errorf("get:ping auth = %q, want empty (the platform default is `none`)", ping.Auth)
 	}
 
-	// The element owns the directory; the default element is atomic/ itself.
+	// The backend owns the directory; the default backend is atomic/ itself.
 	wantDefault, _ := filepath.Abs(filepath.Join(root, "atomic"))
 	wantBilling, _ := filepath.Abs(filepath.Join(root, "atomic", "billing"))
 	if got := byName["get:ping"].Dir; got != wantDefault {
@@ -113,10 +113,10 @@ func TestFunctionSpecs_ResolveTheWholeDeclaration(t *testing.T) {
 	}
 }
 
-// Elements group by what the manifest says, and every declared handler binds to
-// the file that declares it — across two elements, and for a queue function
+// Backends group by what the manifest says, and every declared handler binds to
+// the file that declares it — across two backends, and for a queue function
 // that has no route at all.
-func TestFunctionSpecs_BuildIntoElements(t *testing.T) {
+func TestFunctionSpecs_BuildIntoBackends(t *testing.T) {
 	withRealSchema(t)
 	root := demoProject(t, demoDriftfile)
 	m, err := ParseDriftfile(filepath.Join(root, "Driftfile"))
@@ -124,18 +124,18 @@ func TestFunctionSpecs_BuildIntoElements(t *testing.T) {
 		t.Fatalf("ParseDriftfile: %v", err)
 	}
 
-	els, err := atomic_cmd.BuildElements(FunctionSpecs(m))
+	els, err := atomic_cmd.BuildBackends(FunctionSpecs(m))
 	if err != nil {
-		t.Fatalf("BuildElements: %v", err)
+		t.Fatalf("BuildBackends: %v", err)
 	}
 	if len(els) != 2 {
-		t.Fatalf("got %d elements, want 2 (billing + default): %+v", len(els), els)
+		t.Fatalf("got %d backends, want 2 (billing + default): %+v", len(els), els)
 	}
 	billing, def := els[0], els[1] // sorted by name
 	if billing.Name != "billing" || len(billing.Funcs) != 1 {
 		t.Errorf("billing = %+v, want 1 function", billing)
 	}
-	if def.Name != atomic_cmd.DefaultElementName || len(def.Funcs) != 3 {
+	if def.Name != atomic_cmd.DefaultBackendName || len(def.Funcs) != 3 {
 		t.Errorf("default = %+v, want 3 functions", def)
 	}
 	for _, f := range def.Funcs {
@@ -156,13 +156,13 @@ func TestFunctionSpecs_BuildIntoElements(t *testing.T) {
 const envDriftfile = `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "GET /ping" {
+  backend "default" {
+    function "GET /ping" {
       handler = "GetPing"
       memory = "8MiB"
       env = { REGION = "eu-central", LOG_LEVEL = "debug" }
     }
-    pulse "POST /users" {
+    function "POST /users" {
       handler = "PostUsers"
       memory = "32MiB"
       secrets = ["STRIPE_KEY"]
@@ -179,7 +179,7 @@ canvas {
 // owners were already done: a Driftfile's `env` reaching FunctionSpec.
 //
 // It is worth a test precisely because failing it is silent. Every other owner
-// on the path drops an unknown field without complaint, so a manifest declaring
+// on the path drops an unknown worker without complaint, so a manifest declaring
 // `env` would lint clean, deploy clean, and leave the variable simply absent
 // inside the function with nothing anywhere naming it.
 func TestFunctionSpecs_CarryDeclaredEnv(t *testing.T) {
@@ -206,7 +206,7 @@ func TestFunctionSpecs_CarryDeclaredEnv(t *testing.T) {
 	// The control, and it is not decoration: without it an accessor that
 	// returned the same map for every function would satisfy the assertion
 	// above. `env:` and `secrets:` are separate channels, which is the whole
-	// point of the field — a function declaring one must not acquire the other.
+	// point of the worker — a function declaring one must not acquire the other.
 	users := byName["post:users"]
 	if len(users.Env) != 0 {
 		t.Errorf("post:users declares no env, got %v", users.Env)
@@ -221,25 +221,25 @@ func TestFunctionSpecs_CarryDeclaredEnv(t *testing.T) {
 
 // --- concurrency --------------------------------------------------------------
 
-// concurrencyDriftfile declares `concurrent` on a top-level Pulse and on a
-// Pulse inside an element, and leaves it out of a third.
+// concurrencyDriftfile declares `concurrent` on a top-level Function and on a
+// Function inside a backend, and leaves it out of a third.
 const concurrencyDriftfile = `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "POST /users" {
+  backend "default" {
+    function "POST /users" {
       handler = "PostUsers"
       memory = "16MiB"
       concurrent = true
     }
-    pulse "GET /ping" {
+    function "GET /ping" {
       handler = "GetPing"
       memory = "16MiB"
     }
   }
 
-  element "billing" {
-    pulse "POST /invoices" {
+  backend "billing" {
+    function "POST /invoices" {
       handler = "PostInvoices"
       memory = "16MiB"
       concurrent = true
@@ -271,8 +271,8 @@ func parseNoting(t *testing.T, root string) (*Manifest, string) {
 	return m, notices.String()
 }
 
-// `concurrent` reaches FunctionSpec from a top-level Pulse and from one
-// flattened out of an element, a Pulse that declares none is not concurrent,
+// `concurrent` reaches FunctionSpec from a top-level Function and from one
+// flattened out of a backend, a Function that declares none is not concurrent,
 // and nothing is said about a retired key.
 func TestFunctionSpecs_CarryDeclaredConcurrency(t *testing.T) {
 	withFormatSchema(t)
@@ -286,26 +286,26 @@ func TestFunctionSpecs_CarryDeclaredConcurrency(t *testing.T) {
 			t.Errorf("%s concurrent = %v (declared: %v), want %v; all: %v", name, c, ok, want, got)
 		}
 	}
-	if _, err := atomic_cmd.BuildElements(FunctionSpecs(m)); err != nil {
-		t.Errorf("concurrent Go Pulses were refused: %v", err)
+	if _, err := atomic_cmd.BuildBackends(FunctionSpecs(m)); err != nil {
+		t.Errorf("concurrent Go Functions were refused: %v", err)
 	}
 	if notices != "" {
 		t.Errorf("a Driftfile writing `concurrent` was told about a retired key: %q", notices)
 	}
 }
 
-// A Python element's Pulse declared `concurrent = true` passes the schema,
+// A Python backend's Function declared `concurrent = true` passes the schema,
 // which cannot see the language, and is refused before anything builds,
 // naming the rule; the error is one `drift apply` reports before
 // deploying anything.
-func TestFunctionSpecs_ConcurrencyOnAPythonPulseIsRefusedBeforeBuilding(t *testing.T) {
+func TestFunctionSpecs_ConcurrencyOnAPythonFunctionIsRefusedBeforeBuilding(t *testing.T) {
 	withFormatSchema(t)
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "Driftfile"), `slice "demo" {}
 
 atomic {
-  element "py" {
-    pulse "POST /rpc" {
+  backend "py" {
+    function "POST /rpc" {
       handler = "post_rpc"
       memory = "16MiB"
       concurrent = true
@@ -318,28 +318,28 @@ atomic {
 	if err != nil {
 		t.Fatalf("ParseDriftfile: %v", err)
 	}
-	_, err = atomic_cmd.BuildElements(FunctionSpecs(m))
+	_, err = atomic_cmd.BuildBackends(FunctionSpecs(m))
 	if !errors.Is(err, atomic_cmd.ErrConcurrency) {
 		t.Fatalf("want the concurrency refusal, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "post:rpc") || !strings.Contains(err.Error(), "a concurrent Pulse runs Go in this release") {
-		t.Errorf("the refusal must name the pulse and the rule: %v", err)
+	if !strings.Contains(err.Error(), "post:rpc") || !strings.Contains(err.Error(), "a concurrent Function runs Go in this release") {
+		t.Errorf("the refusal must name the function and the rule: %v", err)
 	}
 }
 
-// The compiler and the schema refuse what they can see: a concurrent Pulse on
+// The compiler and the schema refuse what they can see: a concurrent Function on
 // a stream, and `concurrent` as a number.
 func TestParseDriftfile_TheSchemaRefusesAConcurrencyItCanSee(t *testing.T) {
 	withFormatSchema(t)
-	pulse := func(entry string) string {
-		return "slice \"demo\" {}\n\natomic {\n  element \"default\" {\n    pulse \"GET /ping\" {\n" +
+	function := func(entry string) string {
+		return "slice \"demo\" {}\n\natomic {\n  backend \"default\" {\n    function \"GET /ping\" {\n" +
 			"      handler = \"GetPing\"\n      memory = \"16MiB\"\n      " + entry + "\n    }\n  }\n}\n"
 	}
-	// The controls: the same Pulse concurrent or not is accepted, so a refusal
+	// The controls: the same Function concurrent or not is accepted, so a refusal
 	// below is about the value and not the fixture.
 	for _, entry := range []string{"concurrent = true", "concurrent = false"} {
-		if _, err := ParseDriftfile(filepath.Join(demoProject(t, pulse(entry)), "Driftfile")); err != nil {
-			t.Fatalf("a Pulse declaring %s was refused: %v", entry, err)
+		if _, err := ParseDriftfile(filepath.Join(demoProject(t, function(entry)), "Driftfile")); err != nil {
+			t.Fatalf("a Function declaring %s was refused: %v", entry, err)
 		}
 	}
 	for name, entry := range map[string]string{
@@ -347,8 +347,8 @@ func TestParseDriftfile_TheSchemaRefusesAConcurrencyItCanSee(t *testing.T) {
 		"concurrent as a number":   "concurrent = 16",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := ParseDriftfile(filepath.Join(demoProject(t, pulse(entry)), "Driftfile")); err == nil {
-				t.Errorf("a Pulse declaring %s was accepted", entry)
+			if _, err := ParseDriftfile(filepath.Join(demoProject(t, function(entry)), "Driftfile")); err == nil {
+				t.Errorf("a Function declaring %s was accepted", entry)
 			}
 		})
 	}
@@ -375,16 +375,16 @@ const floorSchema = `{
   }
 }`
 
-// checkFixture parses a project and runs the floor check over its elements.
+// checkFixture parses a project and runs the floor check over its backends.
 func checkFixture(t *testing.T, root string) error {
 	t.Helper()
 	c, err := CompileDriftfile(filepath.Join(root, "Driftfile"))
 	if err != nil {
 		t.Fatalf("CompileDriftfile: %v", err)
 	}
-	els, err := atomic_cmd.BuildElements(FunctionSpecs(c.Manifest))
+	els, err := atomic_cmd.BuildBackends(FunctionSpecs(c.Manifest))
 	if err != nil {
-		t.Fatalf("BuildElements: %v", err)
+		t.Fatalf("BuildBackends: %v", err)
 	}
 	return CheckCompiledBookings(c, els)
 }
@@ -439,8 +439,8 @@ func TestCheckCompiledBookings_LeavesInterpretedBookingsAlone(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "Driftfile"), `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "GET /ping" {
+  backend "default" {
+    function "GET /ping" {
       handler = "get_ping"
       memory = "8MiB"
     }
@@ -481,7 +481,7 @@ func TestFunctionSpecs_MissingHandlerFailsBeforeAnythingShips(t *testing.T) {
 		t.Fatalf("ParseDriftfile: %v", err)
 	}
 
-	_, err = atomic_cmd.BuildElements(FunctionSpecs(m))
+	_, err = atomic_cmd.BuildBackends(FunctionSpecs(m))
 	if err == nil {
 		t.Fatal("a declared handler with no callable behind it must stop the deploy")
 	}
@@ -495,7 +495,7 @@ func TestFunctionSpecs_MissingHandlerFailsBeforeAnythingShips(t *testing.T) {
 
 // `drift atomic run <dir>` runs a subset of the manifest, never something the
 // manifest has never heard of.
-func TestFunctionSpecsInDir_SelectsOneElement(t *testing.T) {
+func TestFunctionSpecsInDir_SelectsOneBackend(t *testing.T) {
 	withRealSchema(t)
 	root := demoProject(t, demoDriftfile)
 
@@ -530,7 +530,7 @@ func TestFindDriftfileFor_WalksUpFromTheTarget(t *testing.T) {
 	root := demoProject(t, demoDriftfile)
 	want := filepath.Join(root, "Driftfile")
 
-	// From the element folder, two levels down, with the working directory
+	// From the backend folder, two levels down, with the working directory
 	// somewhere else entirely.
 	for _, from := range []string{
 		root,

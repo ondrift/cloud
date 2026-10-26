@@ -25,7 +25,7 @@ func (m *model) loadFnMetrics() {
 		if f.FunctionName == "" {
 			continue
 		}
-		key := fnKey(f) // element/name — matches the slice's metrics key
+		key := fnKey(f) // backend/name — matches the slice's metrics key
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -45,7 +45,7 @@ func (m *model) loadFnExpand() {
 	if m.fnExp < 0 || m.fnExp >= len(m.fns) {
 		return
 	}
-	key := fnKey(m.fns[m.fnExp]) // element/name — metrics + logs share this key
+	key := fnKey(m.fns[m.fnExp]) // backend/name — metrics + logs share this key
 	if met, err := fetchMetrics(key); err == nil && m.fnMet != nil {
 		m.fnMet[key] = met
 	}
@@ -57,18 +57,18 @@ func (m *model) loadFnExpand() {
 // fnConfigKeys are the settable fields of the "configurable" card, in order —
 // the rows focusDetail navigates with up/down. Must stay in lock-step with the
 // `config` rows built by fnConfigRows (same keys, same order).
-var fnConfigKeys = []string{"element", "trigger", "schedule"}
+var fnConfigKeys = []string{"backend", "trigger", "schedule"}
 
 // fnConfigRows builds the configurable card's rows for function f, reflecting any
-// trigger bound to it (display-only, #2): element (deploy-time, read-only), the
+// trigger bound to it (display-only, #2): backend (deploy-time, read-only), the
 // event source (queue/webhook), and the cron schedule — "—" when none.
 func (m *model) fnConfigRows(f fnRow) [][2]string {
-	element := f.Element
-	if element == "" {
-		element = "—"
+	backend := f.Backend
+	if backend == "" {
+		backend = "—"
 	}
 	// Org-only routing: the route is the bare function name; the slice's trigger
-	// FuncPath is likewise bare, so this binding key must not carry the element.
+	// FuncPath is likewise bare, so this binding key must not carry the backend.
 	route := f.FunctionName
 	trigger, schedule := "—", "—"
 	for _, t := range m.triggers {
@@ -87,17 +87,17 @@ func (m *model) fnConfigRows(f fnRow) [][2]string {
 		}
 	}
 	return [][2]string{
-		{"element", element},
+		{"backend", backend},
 		{"trigger", trigger},
 		{"schedule", schedule},
 	}
 }
 
 // triggerBoundTo reports whether trigger t targets the function at `route`
-// (org-only: the bare route path, no element) or named `name`. FuncPath is the
+// (org-only: the bare route path, no backend) or named `name`. FuncPath is the
 // precise binding — the route's :params are treated as wildcards, so
 // "board/123/sync" binds "board/:id/sync".
-// FunctionName is only a fallback (it can collide across elements), used when the
+// FunctionName is only a fallback (it can collide across backends), used when the
 // slice couldn't resolve a func_path.
 func triggerBoundTo(t triggerDef, route, name string) bool {
 	if t.FuncPath != "" {
@@ -127,14 +127,14 @@ func routePathMatch(route, funcPath string) bool {
 // inventory, aggregate traffic across every function, and the registered event
 // triggers — for the row above the rail + detail.
 func (m *model) atomicServiceCards() []statCard {
-	elements := map[string]bool{}
+	backends := map[string]bool{}
 	langs := map[string]bool{}
 	var totalReq, totalErr int64
 	var sumAvg float64
 	var avgN int
 	for _, f := range m.fns {
-		if f.Element != "" {
-			elements[f.Element] = true
+		if f.Backend != "" {
+			backends[f.Backend] = true
 		}
 		langs[langLabel(f.Language)] = true
 		met := m.fnMet[fnKey(f)]
@@ -167,7 +167,7 @@ func (m *model) atomicServiceCards() []statCard {
 	return []statCard{
 		{title: "functions", rows: [][2]string{
 			{"deployed", fmt.Sprintf("%d", len(m.fns))},
-			{"elements", fmt.Sprintf("%d", len(elements))},
+			{"backends", fmt.Sprintf("%d", len(backends))},
 			{"languages", fmt.Sprintf("%d", len(langs))},
 		}},
 		{title: "traffic", rows: [][2]string{
@@ -192,7 +192,7 @@ func (m *model) fnExpandLines(width int) []string {
 	f := m.fns[m.fnExp]
 	met := m.fnMet[fnKey(f)] // per-function metrics (kept live by the Run ticker)
 
-	// Org-only routing: the path is the bare function name (no element segment).
+	// Org-only routing: the path is the bare function name (no backend segment).
 	path := "/" + f.FunctionName
 	errPct := 0.0
 	if met.TotalRequests > 0 {
@@ -220,7 +220,7 @@ func (m *model) fnExpandLines(width int) []string {
 		{"method", f.Method},
 		{"language", langLabel(f.Language)},
 	}
-	config := m.fnConfigRows(f) // element + any bound trigger/schedule (display-only)
+	config := m.fnConfigRows(f) // backend + any bound trigger/schedule (display-only)
 	metrics := [][2]string{
 		{"requests", fmt.Sprintf("%d", met.TotalRequests)},
 		{"errors", fmt.Sprintf("%d (%.1f%%)", met.ErrorRequests, errPct)},

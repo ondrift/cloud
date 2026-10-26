@@ -51,7 +51,7 @@ func cyan(s string) string { return "\x1b[36m" + s + cReset }
 type statCard struct {
 	title string
 	rows  [][2]string // {key, value}
-	hl    bool        // orange outline — the card belongs to the in-focus element
+	hl    bool        // orange outline — the card belongs to the in-focus backend
 	hlRow int         // the selected (settable) row within the card — the ▸ cursor (-1 = none)
 }
 
@@ -105,7 +105,7 @@ func statCards(width, gap int, cards []statCard) []string {
 	col := func(c statCard, kw, cw int) []string {
 		inner := maxi(1, cw-2)
 		// Two states: a dim outline (┌─┐) while idle/browsing, and the orange outline
-		// once the element is in focus (hl) — the "now you're working on this" signal.
+		// once the backend is in focus (hl) — the "now you're working on this" signal.
 		// hlRow (>= 0) marks the settable row with a bold ▸ cursor.
 		bc, tc := dim, dim
 		if c.hl {

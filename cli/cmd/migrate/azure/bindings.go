@@ -120,8 +120,8 @@ func driftHandlerName(t ManifestTrigger, fnName string) string {
 	return id
 }
 
-// driftPulse renders one Driftfile pulse block for a trigger, indented to sit
-// inside its element: the trigger it answers on, the callable that serves it,
+// driftFunction renders one Driftfile function block for a trigger, indented to sit
+// inside its backend: the trigger it answers on, the callable that serves it,
 // the memory it starts with, its gate, and the secrets it may read. keyVar is
 // the environment variable an API-key gate reads its key from.
 //
@@ -129,7 +129,7 @@ func driftHandlerName(t ManifestTrigger, fnName string) string {
 // which is exactly what makes a migrated project readable — the code that comes
 // out is the code that went in, and everything Drift needs to know about it is
 // in one file the operator can review before deploying.
-func driftPulse(t ManifestTrigger, handler string, secrets []string, memory, keyVar string) string {
+func driftFunction(t ManifestTrigger, handler string, secrets []string, memory, keyVar string) string {
 	var label string
 	switch t.Type {
 	case "http":
@@ -137,12 +137,12 @@ func driftPulse(t ManifestTrigger, handler string, secrets []string, memory, key
 	case "queue":
 		label = "QUEUE " + t.Queue
 	case "cron":
-		// A schedule is not an identity — it is something a pulse ALSO does.
-		// The migrated pulse keeps a POST route and gains the cron beside it.
+		// A schedule is not an identity — it is something a function ALSO does.
+		// The migrated function keeps a POST route and gains the cron beside it.
 		label = "POST /" + handler
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "  pulse %q {\n", label)
+	fmt.Fprintf(&sb, "  function %q {\n", label)
 	fmt.Fprintf(&sb, "    handler = %q\n", handler)
 	fmt.Fprintf(&sb, "    memory  = %q\n", memory)
 	if t.Type == "cron" && t.Schedule != "" {

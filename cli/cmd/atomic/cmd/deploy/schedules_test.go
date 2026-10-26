@@ -124,7 +124,7 @@ func TestADeclaredCronSurvivesTheWholeDeployPath(t *testing.T) {
 	// is what normaliseFunctionIdentities writes into every entry.
 	SetDeclaredSchedules(map[string]string{"get:cronprobe": "*/1 * * * *"})
 
-	f := ElementFunc{Spec: FunctionSpec{Name: "get:cronprobe", Handler: "GetCronprobe"}}
+	f := BackendFunc{Spec: FunctionSpec{Name: "get:cronprobe", Handler: "GetCronprobe"}}
 	got := triggersFor(f)
 
 	if len(got) != 1 {
@@ -146,7 +146,7 @@ func TestAQueueFunctionKeepsItsQueueTriggerAndItsSchedule(t *testing.T) {
 	t.Cleanup(func() { SetDeclaredSchedules(nil) })
 	SetDeclaredSchedules(map[string]string{"queue:orders": "0 * * * *"})
 
-	f := ElementFunc{Spec: FunctionSpec{Name: "queue:orders", Handler: "HandleOrder"}}
+	f := BackendFunc{Spec: FunctionSpec{Name: "queue:orders", Handler: "HandleOrder"}}
 	got := triggersFor(f)
 
 	if len(got) != 2 {

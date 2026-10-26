@@ -10,10 +10,10 @@ import (
 	"github.com/ondrift/cloud/cli/common"
 )
 
-// fieldsBody is what the supervisor reports for three Fields: one running, one
+// workersBody is what the supervisor reports for three Workers: one running, one
 // paused after a crash loop, one waiting out a backoff after a SIGKILL. The
 // timestamps come in both shapes a report may carry them in.
-const fieldsBody = `[
+const workersBody = `[
   {"name":"sequencer","state":"running","pid":4211,"started_at":"2026-10-06T11:57:48Z","restarts":2,
    "last_exit":{"at":"2026-10-06T11:57:47Z","status":0,"excerpt":""}},
   {"name":"mailer","state":"paused","pid":0,"started_at":null,"restarts":5,
@@ -26,28 +26,28 @@ const fieldsBody = `[
 func fixClock(t *testing.T) {
 	t.Helper()
 	now := time.Date(2026, 10, 6, 12, 1, 0, 0, time.UTC)
-	prev := fieldsNow
-	fieldsNow = func() time.Time { return now }
-	t.Cleanup(func() { fieldsNow = prev })
+	prev := workersNow
+	workersNow = func() time.Time { return now }
+	t.Cleanup(func() { workersNow = prev })
 }
 
-// `drift atomic fields` reads GET /ops/atomic/fields and prints, per Field, its
+// `drift atomic workers` reads GET /ops/atomic/workers and prints, per Worker, its
 // state, how long it has been up, its restarts and how it last stopped; then
-// what a crashed Field last wrote, and what to do about a paused one.
-func TestFields_ListsStateUptimeRestartsAndLastExit(t *testing.T) {
+// what a crashed Worker last wrote, and what to do about a paused one.
+func TestWorkers_ListsStateUptimeRestartsAndLastExit(t *testing.T) {
 	fixClock(t)
-	withAPI(t, http.StatusOK, fieldsBody)
+	withAPI(t, http.StatusOK, workersBody)
 
-	cmd := Fields()
+	cmd := Workers()
 	var out strings.Builder
 	cmd.SetOut(&out)
 	cmd.SetErr(new(strings.Builder))
 	cmd.SetArgs(nil)
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("drift atomic fields: %v", err)
+		t.Fatalf("drift atomic workers: %v", err)
 	}
 	got := out.String()
-	t.Logf("drift atomic fields:\n%s", got)
+	t.Logf("drift atomic workers:\n%s", got)
 
 	for _, want := range []string{
 		"NAME       STATE    UPTIME  RESTARTS  LAST EXIT",
@@ -55,7 +55,7 @@ func TestFields_ListsStateUptimeRestartsAndLastExit(t *testing.T) {
 		"mailer     paused   -       5         exit 1, 6m00s ago",
 		"sequencer  running  3m12s   2         exit 0, 3m13s ago",
 		"mailer last wrote, before it stopped:\n    dial tcp: connection refused\n    mailer: giving up",
-		"drift atomic fields restart mailer",
+		"drift atomic workers restart mailer",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the listing must contain %q, got:\n%s", want, got)
@@ -63,30 +63,30 @@ func TestFields_ListsStateUptimeRestartsAndLastExit(t *testing.T) {
 	}
 	// Sorted by name, whatever order the slice answered in.
 	if strings.Index(got, "indexer") > strings.Index(got, "sequencer") {
-		t.Errorf("the fields are not in name order:\n%s", got)
+		t.Errorf("the workers are not in name order:\n%s", got)
 	}
 }
 
-// A slice running no Field says so, rather than printing an empty table.
-func TestFields_NoFieldsSaysSo(t *testing.T) {
+// A slice running no Worker says so, rather than printing an empty table.
+func TestWorkers_NoWorkersSaysSo(t *testing.T) {
 	withAPI(t, http.StatusOK, `[]`)
-	cmd := Fields()
+	cmd := Workers()
 	var out strings.Builder
 	cmd.SetOut(&out)
 	cmd.SetArgs(nil)
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out.String()) != "No fields on this slice." {
+	if strings.TrimSpace(out.String()) != "No workers on this slice." {
 		t.Errorf("got %q", out.String())
 	}
 }
 
 // A refusal from the platform is the command's error, never an exit 0 with
 // nothing printed.
-func TestFields_ARefusalIsAnError(t *testing.T) {
+func TestWorkers_ARefusalIsAnError(t *testing.T) {
 	withAPI(t, http.StatusForbidden, `{"error":"slice read scope required"}`)
-	cmd := Fields()
+	cmd := Workers()
 	cmd.SetOut(new(strings.Builder))
 	cmd.SetErr(new(strings.Builder))
 	cmd.SetArgs(nil)
@@ -95,12 +95,12 @@ func TestFields_ARefusalIsAnError(t *testing.T) {
 	}
 }
 
-// `drift atomic fields restart <name>` POSTs /ops/atomic/fields/restart with
-// the Field's bare name, accepting the booking key every other surface prints.
-func TestFieldsRestart_PostsTheFieldByName(t *testing.T) {
-	var method, path, field string
+// `drift atomic workers restart <name>` POSTs /ops/atomic/workers/restart with
+// the Worker's bare name, accepting the booking key every other surface prints.
+func TestWorkersRestart_PostsTheWorkerByName(t *testing.T) {
+	var method, path, worker string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		method, path, field = r.Method, r.URL.Path, r.URL.Query().Get("field")
+		method, path, worker = r.Method, r.URL.Path, r.URL.Query().Get("worker")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{}`))
 	}))
@@ -113,36 +113,36 @@ func TestFieldsRestart_PostsTheFieldByName(t *testing.T) {
 	common.APIBaseURL = srv.URL
 	t.Cleanup(func() { common.APIBaseURL = prev })
 
-	for _, arg := range []string{"mailer", "field:mailer"} {
-		cmd := Fields()
+	for _, arg := range []string{"mailer", "worker:mailer"} {
+		cmd := Workers()
 		var out strings.Builder
 		cmd.SetOut(&out)
 		cmd.SetArgs([]string{"restart", arg})
 		if err := cmd.Execute(); err != nil {
 			t.Fatalf("restart %s: %v", arg, err)
 		}
-		if method != http.MethodPost || path != "/ops/atomic/fields/restart" || field != "mailer" {
-			t.Errorf("restart %s sent %s %s?field=%s, want POST /ops/atomic/fields/restart?field=mailer",
-				arg, method, path, field)
+		if method != http.MethodPost || path != "/ops/atomic/workers/restart" || worker != "mailer" {
+			t.Errorf("restart %s sent %s %s?worker=%s, want POST /ops/atomic/workers/restart?worker=mailer",
+				arg, method, path, worker)
 		}
-		if !strings.Contains(out.String(), `Field "mailer" is restarting`) {
+		if !strings.Contains(out.String(), `Worker "mailer" is restarting`) {
 			t.Errorf("restart %s printed %q", arg, out.String())
 		}
 	}
 }
 
-// The one-line summary `drift slice info` prints per Field.
-func TestFieldSummary(t *testing.T) {
+// The one-line summary `drift slice info` prints per Worker.
+func TestWorkerSummary(t *testing.T) {
 	fixClock(t)
 	status := 1
-	for want, f := range map[string]FieldStatus{
+	for want, f := range map[string]WorkerStatus{
 		"running, up 3m12s, 2 restarts": {Name: "sequencer", State: "running", Restarts: 2,
-			StartedAt: fieldTime{time.Date(2026, 10, 6, 11, 57, 48, 0, time.UTC)}},
+			StartedAt: workerTime{time.Date(2026, 10, 6, 11, 57, 48, 0, time.UTC)}},
 		"paused, 1 restart, last exit 1, 1m00s ago": {Name: "mailer", State: "paused", Restarts: 1,
-			LastExit: &FieldExit{At: fieldTime{time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)}, Status: &status}},
+			LastExit: &WorkerExit{At: workerTime{time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)}, Status: &status}},
 	} {
-		if got := FieldSummary(f); got != want {
-			t.Errorf("FieldSummary(%s) = %q, want %q", f.Name, got, want)
+		if got := WorkerSummary(f); got != want {
+			t.Errorf("WorkerSummary(%s) = %q, want %q", f.Name, got, want)
 		}
 	}
 }

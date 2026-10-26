@@ -32,7 +32,7 @@ func TestApply_SaysWhenTheSliceDeclaresASlotTheDriftfileDoesNotName(t *testing.T
 	// removal it is told to make. The stub keeps answering with the six slots it
 	// was given, which is the slice as the report reads it after the deploy.
 	var err error
-	out := captureStdout(t, func() { err = runApplyAgreeingToRemove(t, "pulse GET /slot-6") })
+	out := captureStdout(t, func() { err = runApplyAgreeingToRemove(t, "function GET /slot-6") })
 
 	if err != nil {
 		t.Fatalf("the apply must succeed, there is room, and the report must not change that: %v\n%s", err, out)
@@ -132,8 +132,8 @@ func TestReportIdle_WithoutTheServingListASlotIsUnnamedNotIdle(t *testing.T) {
 }
 
 // The compile folds every identity a Driftfile declares onto the booking key the
-// slice stores, and the comparison happens after it: a pulse labelled with its
-// method and route, a pulse labelled QUEUE and the queue it drains, and a nosql
+// slice stores, and the comparison happens after it: a function labelled with its
+// method and route, a function labelled QUEUE and the queue it drains, and a nosql
 // collection all match the slot they book. A false idle here would tell the
 // tenant to release the function they are running.
 func TestReportIdle_EveryDeclaredIdentityMatchesItsSlot(t *testing.T) {
@@ -141,16 +141,16 @@ func TestReportIdle_EveryDeclaredIdentityMatchesItsSlot(t *testing.T) {
 	m := planManifest(t, `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "GET /ping" {
+  backend "default" {
+    function "GET /ping" {
       handler = "GetPing"
       memory  = "16MiB"
     }
-    pulse "POST /users" {
+    function "POST /users" {
       handler = "PostUsers"
       memory  = "16MiB"
     }
-    pulse "QUEUE orders" {
+    function "QUEUE orders" {
       handler = "HandleOrders"
       memory  = "16MiB"
     }
@@ -259,9 +259,9 @@ func TestPlan_ReportsTheUnnamedSlotAndChangesNothing(t *testing.T) {
 		t.Fatalf("a plan must not fail: %v", err)
 	}
 	for _, want := range []string{
-		"- pulse GET /slot-2",
-		"Removes   pulse GET /slot-2",
-		`--approve-remove "pulse GET /slot-2"`,
+		"- function GET /slot-2",
+		"Removes   function GET /slot-2",
+		`--approve-remove "function GET /slot-2"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the plan must say %q, got:\n%s", want, out)
@@ -310,17 +310,17 @@ func idleSliceStub(tier string, slots []string) http.HandlerFunc {
 	}
 }
 
-// applyWithFunctions lays out a project declaring one interpreted GET Pulse per
+// applyWithFunctions lays out a project declaring one interpreted GET Function per
 // route, each booking 16MiB with its handler on disk. It installs the platform
 // schema, so it is called after the stub, which gives the test a HOME of its own.
 func applyWithFunctions(t *testing.T, routes []string) {
 	t.Helper()
 	var doc, src strings.Builder
-	doc.WriteString("slice \"demo\" {}\n\natomic {\n  element \"default\" {\n")
+	doc.WriteString("slice \"demo\" {}\n\natomic {\n  backend \"default\" {\n")
 	var exports []string
 	for _, r := range routes {
 		handler := "Get" + strings.ToUpper(r[:1]) + r[1:]
-		doc.WriteString("    pulse \"GET /" + r + "\" {\n      handler = \"" + handler + "\"\n      memory  = \"16MiB\"\n    }\n")
+		doc.WriteString("    function \"GET /" + r + "\" {\n      handler = \"" + handler + "\"\n      memory  = \"16MiB\"\n    }\n")
 		src.WriteString("function " + handler + "(req) { return [200, 'OK', {}]; }\n")
 		exports = append(exports, handler)
 	}

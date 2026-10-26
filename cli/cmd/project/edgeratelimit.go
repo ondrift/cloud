@@ -4,7 +4,7 @@
 // The file writes a rate as `N/s`, `N/min` or `N/h`; the slice holds a whole
 // number of requests per minute, so the compiler converts the rate here and
 // refuses one that does not convert. The result is part of the slice's shape
-// (the same field as `limits.requests_per_minute`), so it reaches the slice
+// (the same worker as `limits.requests_per_minute`), so it reaches the slice
 // with the resize `drift apply` makes, and `drift plan` shows and prices it
 // with the rest of the shape.
 package project

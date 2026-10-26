@@ -42,7 +42,7 @@ func (a *alertPlatform) handler(w http.ResponseWriter, r *http.Request) {
 	a.base(w, r)
 }
 
-// alertProject lays out a slice with one GET pulse declaring the alert blocks
+// alertProject lays out a slice with one GET function declaring the alert blocks
 // given, and the stub platform holding `live` alerts.
 func alertProject(t *testing.T, blocks, live string) *alertPlatform {
 	t.Helper()
@@ -52,8 +52,8 @@ func alertProject(t *testing.T, blocks, live string) *alertPlatform {
 	applyIn(t, `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "GET /ping" {
+  backend "default" {
+    function "GET /ping" {
       handler = "GetPing"
       memory  = "16MiB"
 `+blocks+`
@@ -205,7 +205,7 @@ func TestAnAlertWebhookMustBeAReference(t *testing.T) {
 		{one("a", `webhook = env("H")`, `window = "30s"`), "at least 1m"},
 		{one("a", `webhook = env("H")`) + "\n" + one("a", `webhook = env("H")`), "Duplicate alert"},
 	} {
-		_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {}\natomic {\n  element \"default\" {\n    pulse \"GET /ping\" {\n      handler = \"Get\"\n      memory = \"16MiB\"\n"+
+		_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {}\natomic {\n  backend \"default\" {\n    function \"GET /ping\" {\n      handler = \"Get\"\n      memory = \"16MiB\"\n"+
 			tc.blocks+"\n    }\n  }\n}\n", "atomic/"))
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v; want it to say %q", tc.blocks, err, tc.want)

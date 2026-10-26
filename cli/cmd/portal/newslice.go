@@ -4,7 +4,7 @@ package portal
 //
 //   New project      → a minimal directory explorer to pick a folder, then
 //                      SUSPEND the dashboard and run `drift file new` there (it
-//                      asks the slice's name and the first pulse and writes the
+//                      asks the slice's name and the first function and writes the
 //                      Driftfile) followed by `drift apply`, which creates the
 //                      slice.
 //   From a Driftfile → a minimal directory explorer to locate a Driftfile,
@@ -450,7 +450,7 @@ func (m *model) suspendAndRunSteps(banner string, cmds []*exec.Cmd, okMsg, failM
 }
 
 // newProject suspends the dashboard and runs `drift file new` in dir, which asks
-// the slice's name and the first pulse and writes the Driftfile, then `drift
+// the slice's name and the first function and writes the Driftfile, then `drift
 // apply` there, which creates the slice.
 //
 // Suspending is what makes this work at all: the prompts own the terminal for as

@@ -4,7 +4,7 @@ import "testing"
 
 // EVERY FIELD THE OPERATOR IS TOLD MUST MOVE THE DIGEST.
 //
-// A function whose digest matches is SKIPPED — the whole element is dropped
+// A function whose digest matches is SKIPPED — the whole backend is dropped
 // before anything is staged, built or uploaded — so a field that does not move
 // the digest is a field whose change never reaches the platform. The deploy
 // prints `(unchanged)` beside it, which is true of the code and false of the
@@ -14,7 +14,7 @@ import "testing"
 // re-applying left the function open, silently.
 func TestDeclarationDigest_EveryDeclaredFieldMovesIt(t *testing.T) {
 	base := FunctionSpec{
-		Name: "get:hello", Handler: "GetHello", Element: "default",
+		Name: "get:hello", Handler: "GetHello", Backend: "default",
 		Auth: "none", Stream: "", Response: "envelope",
 		Secrets: []string{"API_KEY"},
 		Env:     map[string]string{"REGION": "eu"},
@@ -26,7 +26,7 @@ func TestDeclarationDigest_EveryDeclaredFieldMovesIt(t *testing.T) {
 		"the stream mode":    func(s *FunctionSpec) { s.Stream = "sse" },
 		"the reply shape":    func(s *FunctionSpec) { s.Response = "raw" },
 		"the handler":        func(s *FunctionSpec) { s.Handler = "GetGoodbye" },
-		"the element":        func(s *FunctionSpec) { s.Element = "billing" },
+		"the backend":        func(s *FunctionSpec) { s.Backend = "billing" },
 		"a secret added":     func(s *FunctionSpec) { s.Secrets = []string{"API_KEY", "DB_URL"} },
 		"a secret removed":   func(s *FunctionSpec) { s.Secrets = nil },
 		"a secret renamed":   func(s *FunctionSpec) { s.Secrets = []string{"OTHER_KEY"} },

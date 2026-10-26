@@ -82,7 +82,7 @@ func FetchScheduler() (*Scheduler, error) {
 // what the slice holds and what each part of it is allowed.
 //
 // The platform emits it as the DRIFT_QUOTA_CONFIG the slice enforces
-// (tier.QuotaConfigMap), and the slice parses it by field name, so these tags
+// (tier.QuotaConfigMap), and the slice parses it by worker name, so these tags
 // are that contract's names. Only what a person asks about is decoded here.
 type Envelope struct {
 	Slots               map[string]int `json:"atomic_function_slots"`
@@ -242,13 +242,13 @@ func getInfoCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "info",
 		Short: "Show what the active slice is doing right now",
-		Long: "What the slice's scheduler is currently holding and refusing: per pulse and\n" +
-			"field the memory booked and the memory in use, plus the slice-wide ceiling every\n" +
+		Long: "What the slice's scheduler is currently holding and refusing: per function and\n" +
+			"worker the memory booked and the memory in use, plus the slice-wide ceiling every\n" +
 			"invocation shares, how many are running, how many workers are parked, and\n" +
-			"what has been stopped for overrunning its booking. Then each field: whether it\n" +
+			"what has been stopped for overrunning its booking. Then each worker: whether it\n" +
 			"is running, for how long, and how often it has been restarted.\n\n" +
 			"Read this when something is slow. `drift file benchmark` answers the other\n" +
-			"question: what a pulse or field has cost and what it should therefore book.",
+			"question: what a function or worker has cost and what it should therefore book.",
 		Example: "  drift slice info",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -275,9 +275,9 @@ func getInfoCmd() *cobra.Command {
 
 			if len(s.Pools) == 0 {
 				// Not an error and not an empty slice: a slice with no
-				// registered pulses or fields has no pools, which is a different
+				// registered functions or workers has no pools, which is a different
 				// fact from a slice whose pools could not be read.
-				fmt.Printf("\n  no pulses or fields deployed\n")
+				fmt.Printf("\n  no functions or workers deployed\n")
 			} else {
 				fmt.Printf("\n  pools\n")
 				for _, p := range s.Pools {
@@ -285,10 +285,10 @@ func getInfoCmd() *cobra.Command {
 				}
 			}
 
-			// The fields, after the pools they hold: a field's pool shows what
+			// The workers, after the pools they hold: a worker's pool shows what
 			// it is holding, and this shows whether it is running at all.
-			fields, ferr := atomic_cmd.FetchFields()
-			printFieldsSection(cmd.OutOrStdout(), fields, ferr)
+			workers, ferr := atomic_cmd.FetchWorkers()
+			printWorkersSection(cmd.OutOrStdout(), workers, ferr)
 
 			// What it holds and costs, last: the compute above is what is
 			// happening now, and this is what was bought.
@@ -302,19 +302,19 @@ func getInfoCmd() *cobra.Command {
 	}
 }
 
-// printFieldsSection is the fields part of `drift slice info`: one line per
-// field, or one line saying they could not be read. A slice with no fields
+// printWorkersSection is the workers part of `drift slice info`: one line per
+// worker, or one line saying they could not be read. A slice with no workers
 // prints nothing here, as it has nothing to say about them.
-func printFieldsSection(w io.Writer, fields []atomic_cmd.FieldStatus, err error) {
+func printWorkersSection(w io.Writer, workers []atomic_cmd.WorkerStatus, err error) {
 	if err != nil {
-		fmt.Fprintf(w, "\n  fields         couldn't be read: %v\n", err)
+		fmt.Fprintf(w, "\n  workers         couldn't be read: %v\n", err)
 		return
 	}
-	if len(fields) == 0 {
+	if len(workers) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "\n  fields\n")
-	for _, f := range fields {
-		fmt.Fprintf(w, "    %-28s %s\n", f.Name, atomic_cmd.FieldSummary(f))
+	fmt.Fprintf(w, "\n  workers\n")
+	for _, f := range workers {
+		fmt.Fprintf(w, "    %-28s %s\n", f.Name, atomic_cmd.WorkerSummary(f))
 	}
 }

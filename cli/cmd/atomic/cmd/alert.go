@@ -1,4 +1,4 @@
-// alert.go — `drift atomic alert list`. Alerts are declared on a pulse in the
+// alert.go — `drift atomic alert list`. Alerts are declared on a function in the
 // Driftfile and `drift apply` sets them; this only shows what the slice holds.
 package atomic_cmd
 
@@ -26,7 +26,7 @@ func Alert() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "alert",
 		Short: "List the alerts a slice holds",
-		Long: "A pulse's alerts are declared in the Driftfile, in an `alert` block inside the pulse, and " +
+		Long: "A function's alerts are declared in the Driftfile, in an `alert` block inside the function, and " +
 			"`drift apply` sets them and deletes the ones the file does not name. Nothing here adds or " +
 			"removes one; `list` shows what the slice holds.",
 		GroupID: "operations",
@@ -57,7 +57,7 @@ func getAlertListCmd() *cobra.Command {
 				return nil
 			}
 			fmt.Printf("%-24s  %-24s  %-8s  %-9s  %-7s  %s\n",
-				"NAME", "PULSE", "TRIGGER", "THRESHOLD", "WINDOW", "NOTIFY")
+				"NAME", "FUNCTION", "TRIGGER", "THRESHOLD", "WINDOW", "NOTIFY")
 			for _, s := range specs {
 				// The webhook is a credential: its type is shown, never its URL.
 				fmt.Printf("%-24s  %-24s  %-8s  %-9d  %-7s  %s\n",

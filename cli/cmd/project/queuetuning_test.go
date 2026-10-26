@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// compileQueue compiles a slice with one pulse labelled as given and the extra
+// compileQueue compiles a slice with one function labelled as given and the extra
 // lines inside its block.
 func compileQueue(t *testing.T, label, extra string) (*Compiled, error) {
 	t.Helper()
@@ -13,8 +13,8 @@ func compileQueue(t *testing.T, label, extra string) (*Compiled, error) {
 	body := `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "` + label + `" {
+  backend "default" {
+    function "` + label + `" {
       handler = "Handle"
       memory = "16MiB"
 ` + extra + `
@@ -30,38 +30,38 @@ backbone {
 }
 
 // `poll` and `max_retries` were the two knobs of `drift atomic trigger register
-// queue`. They are a queue pulse's own attributes now, written to the document
-// as poll_ms and max_retry, and reach the deploy as the pulse's trigger.
-func TestAQueuePulseDeclaresItsPollAndRetries(t *testing.T) {
+// queue`. They are a queue function's own attributes now, written to the document
+// as poll_ms and max_retry, and reach the deploy as the function's trigger.
+func TestAQueueFunctionDeclaresItsPollAndRetries(t *testing.T) {
 	c, err := compileQueue(t, "QUEUE orders", "      poll = \"250ms\"\n      max_retries = 5")
 	if err != nil {
-		t.Fatalf("a queue pulse with poll and max_retries was refused: %v", err)
+		t.Fatalf("a queue function with poll and max_retries was refused: %v", err)
 	}
 	specs := FunctionSpecs(c.Manifest)
 	if len(specs) != 1 || specs[0].PollMS != 250 || specs[0].MaxRetry != 5 {
-		t.Errorf("the pulse's spec = %+v, want poll 250 ms and 5 retries", specs)
+		t.Errorf("the function's spec = %+v, want poll 250 ms and 5 retries", specs)
 	}
 }
 
 // Left out, nothing is written, so the slice's own defaults apply and every
 // document written before these existed is unchanged.
-func TestAQueuePulseThatSaysNothingWritesNothing(t *testing.T) {
+func TestAQueueFunctionThatSaysNothingWritesNothing(t *testing.T) {
 	c, err := compileQueue(t, "QUEUE orders", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s := FunctionSpecs(c.Manifest); s[0].PollMS != 0 || s[0].MaxRetry != 0 {
-		t.Errorf("a pulse that declares no tuning carries %+v", s[0])
+		t.Errorf("a function that declares no tuning carries %+v", s[0])
 	}
 }
 
-// An HTTP pulse has no queue to look in, so the attributes are refused at the
+// An HTTP function has no queue to look in, so the attributes are refused at the
 // attribute rather than accepted and ignored.
-func TestPollAndMaxRetriesBelongToAQueuePulse(t *testing.T) {
+func TestPollAndMaxRetriesBelongToAQueueFunction(t *testing.T) {
 	for _, attr := range []string{`poll = "250ms"`, `max_retries = 5`} {
 		_, err := compileQueue(t, "POST /orders", "      "+attr)
-		if err == nil || !strings.Contains(err.Error(), "Not a queue pulse") {
-			t.Errorf("%s on an HTTP pulse: %v; want it refused as not a queue pulse", attr, err)
+		if err == nil || !strings.Contains(err.Error(), "Not a queue function") {
+			t.Errorf("%s on an HTTP function: %v; want it refused as not a queue function", attr, err)
 		}
 	}
 }

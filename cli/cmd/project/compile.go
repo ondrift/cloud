@@ -2,7 +2,7 @@ package project
 
 // compile.go — a Driftfile, compiled to its two payloads.
 //
-//  1. The DOCUMENT: the flattened Pulse/Field document, validated against the
+//  1. The DOCUMENT: the flattened Function/Worker document, validated against the
 //     platform's schema and run through finishParse. FunctionSpecs, the build,
 //     the digests and every edge reader read it.
 //  2. The SHAPE: a SliceConfig, the payload the platform prices, creates and
@@ -18,18 +18,18 @@ package project
 //
 // Decided: the smallest shape that runs what the file names. Per field:
 //
-//   - A booking or a storage size has no default. A Pulse, Field, database,
+//   - A booking or a storage size has no default. A Function, Worker, database,
 //     collection or bucket the file names must state its size, because the
 //     platform refuses a booking or a size of zero (tier.ValidateFunctionMemory,
 //     ValidateDeclaredStorage), and a figure nobody chose is one nobody can be
 //     held to.
 //   - A queue's depth defaults to 0, which the platform reads as "the slice's
 //     queue_depth" (models.BackboneQueues: `<= 0` falls back to MaxDepthEach).
-//   - The slot count is the number of Pulses and Fields, and the database
+//   - The slot count is the number of Functions and Workers, and the database
 //     count is the number of `sql` blocks. Both are derived: the platform
 //     enforces a stored 0 as the free slice's 5 slots and 1 database, which
 //     would refuse a sixth slot or a second database the file declares.
-//   - scheduled_jobs defaults to the number of Pulses with a `cron`, the
+//   - scheduled_jobs defaults to the number of Functions with a `cron`, the
 //     fewest that run them. Fewer than that is refused.
 //   - Every other limit defaults to 0. The platform accepts a 0 for each of
 //     them at create and resize, prices it at nothing, and enforces it as the
@@ -89,25 +89,25 @@ type Compiled struct {
 	// Domains is how many custom domains the file declares.
 	Domains int
 	// Addresses maps each booking key to the address the plan prints it under
-	// ("post:rpc" → "pulse POST /rpc").
+	// ("post:rpc" → "function POST /rpc").
 	Addresses map[string]string
 }
 
 // WriteOnlyRef is one value the platform stores and never returns.
 type WriteOnlyRef struct {
-	Address string // "secret STRIPE_KEY", "pulse POST /admin/reset", "site_auth drift"
+	Address string // "secret STRIPE_KEY", "function POST /admin/reset", "site_auth drift"
 	Kind    string // "secret", "api_key", "site_password", "alert_webhook"
 	Env     string // the environment variable it is read from
 }
 
-// DeclaredAlert is one alert a pulse declares. The webhook it notifies is not
+// DeclaredAlert is one alert a function declares. The webhook it notifies is not
 // here: it is a write-only value, read from Env when the alert is applied.
 type DeclaredAlert struct {
 	Name string
-	// Function is the key the slice watches: the pulse's route, without its method.
+	// Function is the key the slice watches: the function's route, without its method.
 	Function string
-	// Pulse is the pulse as the file labels it, for the plan.
-	Pulse     string
+	// Function is the function as the file labels it, for the plan.
+	Function  string
 	On        string
 	Threshold int
 	WindowSec int
@@ -138,8 +138,8 @@ type compiler struct {
 	ranges map[string]docRange
 	out    *Compiled
 	crons  int
-	// alertNames is every alert declared so far and the pulse that declared it:
-	// an alert's name is the slice's, not its pulse's.
+	// alertNames is every alert declared so far and the function that declared it:
+	// an alert's name is the slice's, not its function's.
 	alertNames map[string]string
 }
 
@@ -204,7 +204,7 @@ func (c *compiler) at(ptr string, rng hcl.Range, what string) {
 
 func (c *compiler) compile(f *dfFile) {
 	c.compileSlice(f)
-	c.compileElements(f.Elements)
+	c.compileBackends(f.Backends)
 	c.compileBackbone(f)
 	c.compileSites(f.Sites)
 	c.compileEdge(f.Edge)
@@ -275,20 +275,20 @@ func (c *compiler) compileSlice(f *dfFile) {
 
 // ─── atomic ─────────────────────────────────────────────────────────────────
 
-// pulseLabelRe reads a Pulse's label: an HTTP method and its route, written
+// functionLabelRe reads a Function's label: an HTTP method and its route, written
 // the way people write a route, or QUEUE and the queue it drains.
-var pulseLabelRe = regexp.MustCompile(`^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /(.*)$|^QUEUE ([^ /]+)$`)
+var functionLabelRe = regexp.MustCompile(`^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /(.*)$|^QUEUE ([^ /]+)$`)
 
-func (c *compiler) compileElements(elements []dfElement) {
+func (c *compiler) compileBackends(backends []dfBackend) {
 	var list []any
 	seen := map[string]bool{}
 	slots := 0
-	for i, el := range elements {
-		ptr := fmt.Sprintf("/atomic/elements/%d", i)
-		what := fmt.Sprintf("element %q", el.Name)
+	for i, el := range backends {
+		ptr := fmt.Sprintf("/atomic/backends/%d", i)
+		what := fmt.Sprintf("backend %q", el.Name)
 		c.at(ptr, el.NameRange, what)
 		if seen[el.Name] {
-			c.ev.errorf(el.DefRange, "Duplicate element", "element %q is declared twice; an element is one folder, declared once.", el.Name)
+			c.ev.errorf(el.DefRange, "Duplicate backend", "backend %q is declared twice; a backend is one folder, declared once.", el.Name)
 			continue
 		}
 		seen[el.Name] = true
@@ -303,49 +303,49 @@ func (c *compiler) compileElements(elements []dfElement) {
 		}
 		c.checkDir(dir, el, what)
 
-		var pulses []any
-		for j, p := range el.Pulses {
-			if n := c.compilePulse(p, fmt.Sprintf("%s/pulses/%d", ptr, j)); n != nil {
-				pulses = append(pulses, map[string]any(n))
+		var functions []any
+		for j, p := range el.Functions {
+			if n := c.compileFunction(p, fmt.Sprintf("%s/functions/%d", ptr, j)); n != nil {
+				functions = append(functions, map[string]any(n))
 			}
 			slots++
 		}
-		var fields []any
-		for j, f := range el.Fields {
-			if n := c.compileField(f, fmt.Sprintf("%s/fields/%d", ptr, j)); n != nil {
-				fields = append(fields, map[string]any(n))
+		var workers []any
+		for j, f := range el.Workers {
+			if n := c.compileWorker(f, fmt.Sprintf("%s/workers/%d", ptr, j)); n != nil {
+				workers = append(workers, map[string]any(n))
 			}
 			slots++
 		}
-		if len(el.Pulses) == 0 && len(el.Fields) == 0 {
-			c.ev.errorf(el.DefRange, "Empty element", "element %q declares no pulse and no field, so it books nothing and runs nothing.", el.Name)
+		if len(el.Functions) == 0 && len(el.Workers) == 0 {
+			c.ev.errorf(el.DefRange, "Empty backend", "backend %q declares no function and no worker, so it books nothing and runs nothing.", el.Name)
 			continue
 		}
-		if len(pulses) > 0 {
-			entry["pulses"] = pulses
+		if len(functions) > 0 {
+			entry["functions"] = functions
 		}
-		if len(fields) > 0 {
-			entry["fields"] = fields
+		if len(workers) > 0 {
+			entry["workers"] = workers
 		}
 		list = append(list, map[string]any(entry))
 	}
 	if slots > slice.MaxFunctionSlots {
-		c.ev.errorf(elements[0].DefRange, "Too many slots",
-			"the file declares %d pulses and fields, and a slice holds at most %d.", slots, slice.MaxFunctionSlots)
+		c.ev.errorf(backends[0].DefRange, "Too many slots",
+			"the file declares %d functions and workers, and a slice holds at most %d.", slots, slice.MaxFunctionSlots)
 	}
 	if len(list) > 0 {
-		c.doc["atomic"] = map[string]any{"elements": list}
+		c.doc["atomic"] = map[string]any{"backends": list}
 	}
 }
 
-// checkDir refuses an element whose folder is not on this machine, at the
-// element's own position. The element named "default" is ./atomic itself,
-// where `drift atomic new` writes without --element; every other is
+// checkDir refuses a backend whose folder is not on this machine, at the
+// backend's own position. The backend named "default" is ./atomic itself,
+// where `drift atomic new` writes without --backend; every other is
 // ./atomic/<name>.
-func (c *compiler) checkDir(dir string, el dfElement, what string) {
+func (c *compiler) checkDir(dir string, el dfBackend, what string) {
 	switch {
 	case dir != "":
-	case el.Name == atomic_cmd.DefaultElementName:
+	case el.Name == atomic_cmd.DefaultBackendName:
 		dir = "atomic"
 	default:
 		dir = filepath.Join("atomic", el.Name)
@@ -363,13 +363,13 @@ func (c *compiler) checkDir(dir string, el dfElement, what string) {
 	}
 }
 
-func (c *compiler) compilePulse(p dfPulse, ptr string) Node {
-	m := pulseLabelRe.FindStringSubmatch(p.Label)
-	what := fmt.Sprintf("pulse %q", p.Label)
+func (c *compiler) compileFunction(p dfFunction, ptr string) Node {
+	m := functionLabelRe.FindStringSubmatch(p.Label)
+	what := fmt.Sprintf("function %q", p.Label)
 	c.at(ptr, p.LabelRange, what)
 	if m == nil {
-		c.ev.errorf(p.LabelRange, "Not a pulse trigger",
-			`%s: a pulse is labelled with its method and route, "POST /rpc", or with QUEUE and the queue it drains, "QUEUE orders".`, what)
+		c.ev.errorf(p.LabelRange, "Not a function trigger",
+			`%s: a function is labelled with its method and route, "POST /rpc", or with QUEUE and the queue it drains, "QUEUE orders".`, what)
 		return nil
 	}
 	method, route := strings.ToLower(m[1]), m[2]
@@ -409,7 +409,7 @@ func (c *compiler) compilePulse(p dfPulse, ptr string) Node {
 			entry["auth"] = "apikey"
 			c.at(ptr+"/auth", p.Auth[0].DefRange, what)
 			c.out.WriteOnly = append(c.out.WriteOnly, WriteOnlyRef{
-				Address: "pulse " + p.Label, Kind: "api_key", Env: env,
+				Address: "function " + p.Label, Kind: "api_key", Env: env,
 			})
 		} else if !present(p.Auth[0].APIKey) {
 			c.ev.errorf(p.Auth[0].DefRange, "Missing api_key", `%s: an auth block names the key: api_key = env("NAME").`, what)
@@ -419,17 +419,17 @@ func (c *compiler) compilePulse(p dfPulse, ptr string) Node {
 	}
 
 	key := method + ":" + route
-	c.out.Addresses[key] = "pulse " + p.Label
+	c.out.Addresses[key] = "function " + p.Label
 	c.booking(key, route, method, p.Memory, p.DefRange, what)
 	return entry
 }
 
-// compileAlerts reads a pulse's `alert` blocks: a condition on the pulse, and the
+// compileAlerts reads a function's `alert` blocks: a condition on the function, and the
 // webhook told when it holds. The webhook URL carries whatever credential the
 // endpoint needs (a chat hook's path is one), so it is write-only like every
 // other value of that kind: written env("NAME"), read when the alert is applied,
 // and never in the document or the plan.
-func (c *compiler) compileAlerts(entry Node, p dfPulse, route, ptr, what string) {
+func (c *compiler) compileAlerts(entry Node, p dfFunction, route, ptr, what string) {
 	var list []any
 	for i, a := range p.Alerts {
 		aptr := fmt.Sprintf("%s/alerts/%d", ptr, i)
@@ -493,7 +493,7 @@ func (c *compiler) compileAlerts(entry Node, p dfPulse, route, ptr, what string)
 		c.at(aptr+"/name", a.NameRange, awhat)
 		c.out.WriteOnly = append(c.out.WriteOnly, WriteOnlyRef{Address: "alert " + a.Name, Kind: "alert_webhook", Env: env})
 		c.out.Alerts = append(c.out.Alerts, DeclaredAlert{
-			Name: a.Name, Function: route, Pulse: strings.TrimPrefix(what, "pulse "),
+			Name: a.Name, Function: route, Function: strings.TrimPrefix(what, "function "),
 			On: on, Threshold: threshold, WindowSec: window, Env: env,
 		})
 	}
@@ -512,18 +512,18 @@ const (
 	maxQueueRetry = 100
 )
 
-// queueTuning reads how often a queue pulse polls and how many times a failing
-// message is delivered again. Both belong to the queue a pulse drains, so on any
-// other pulse they are refused rather than ignored.
-func (c *compiler) queueTuning(entry Node, p dfPulse, method, ptr, what string) {
+// queueTuning reads how often a queue function polls and how many times a failing
+// message is delivered again. Both belong to the queue a function drains, so on any
+// other function they are refused rather than ignored.
+func (c *compiler) queueTuning(entry Node, p dfFunction, method, ptr, what string) {
 	if method != "queue" {
 		for _, a := range []struct {
 			name string
 			expr hcl.Expression
 		}{{"poll", p.Poll}, {"max_retries", p.MaxRetries}} {
 			if present(a.expr) {
-				c.ev.errorf(a.expr.Range(), "Not a queue pulse",
-					"%s: %s tunes the queue a pulse drains, so it belongs on a pulse labelled QUEUE and the queue it drains, \"QUEUE orders\".", what, a.name)
+				c.ev.errorf(a.expr.Range(), "Not a queue function",
+					"%s: %s tunes the queue a function drains, so it belongs on a function labelled QUEUE and the queue it drains, \"QUEUE orders\".", what, a.name)
 			}
 		}
 		return
@@ -551,8 +551,8 @@ func (c *compiler) queueTuning(entry Node, p dfPulse, method, ptr, what string) 
 	}
 }
 
-func (c *compiler) compileField(f dfField, ptr string) Node {
-	what := fmt.Sprintf("field %q", f.Name)
+func (c *compiler) compileWorker(f dfWorker, ptr string) Node {
+	what := fmt.Sprintf("worker %q", f.Name)
 	c.at(ptr, f.NameRange, what)
 	entry := Node{"name": f.Name}
 	c.at(ptr+"/name", f.NameRange, what)
@@ -565,14 +565,14 @@ func (c *compiler) compileField(f dfField, ptr string) Node {
 	c.optDir(entry, f.Dir, ptr, what)
 	c.optEnvSecrets(entry, f.Env, f.Secrets, ptr, what)
 
-	key := "field:" + f.Name
-	c.out.Addresses[key] = "field " + f.Name
-	if bytes := c.booking(key, f.Name, "field", f.Memory, f.DefRange, what); bytes > 0 {
-		// A Field runs Go and nothing else, so its language is known here and
+	key := "worker:" + f.Name
+	c.out.Addresses[key] = "worker " + f.Name
+	if bytes := c.booking(key, f.Name, "worker", f.Memory, f.DefRange, what); bytes > 0 {
+		// A Worker runs Go and nothing else, so its language is known here and
 		// the compiled floor binds now, as tier.ValidateAtomicMemory binds it.
 		if floor := CompiledMemoryFloor(); floor.Bytes > 0 && bytes < floor.Bytes {
 			c.ev.errorf(f.Memory.Range(), "Below the compiled floor",
-				"%s books %s; a Field runs Go, and a compiled slot needs at least %s.", what, sizeLabel(bytes), sizeLabel(floor.Bytes))
+				"%s books %s; a Worker runs Go, and a compiled slot needs at least %s.", what, sizeLabel(bytes), sizeLabel(floor.Bytes))
 		}
 	}
 	return entry
@@ -1185,10 +1185,10 @@ func (c *compiler) compileLimits(f *dfFile) {
 		c.out.FreeMisfit = freeEnvelopeViolation(free, c.out.Domains)
 		// The second pass's own refusals were dropped above, and one of them is a
 		// fact about the free reading rather than a fault in the file: more
-		// scheduled pulses than the free slice allows jobs for. That is a shape
+		// scheduled functions than the free slice allows jobs for. That is a shape
 		// the free slice cannot hold.
 		if c.out.FreeMisfit == nil && free.Atomic.MaxNumberOfScheduledJobs < c.crons {
-			c.out.FreeMisfit = fmt.Errorf("%d pulses carry a cron, and the free slice grants %d scheduled job%s",
+			c.out.FreeMisfit = fmt.Errorf("%d functions carry a cron, and the free slice grants %d scheduled job%s",
 				c.crons, free.Atomic.MaxNumberOfScheduledJobs, map[bool]string{true: "", false: "s"}[free.Atomic.MaxNumberOfScheduledJobs == 1])
 		}
 		c.out.FitsFree = c.out.FreeMisfit == nil
@@ -1254,7 +1254,7 @@ func (c *compiler) limitsFor(f *dfFile, shape SliceConfig, free bool) SliceConfi
 			rng = lim.ScheduledJobs.Range()
 		}
 		c.ev.errorf(rng, "Too few scheduled jobs",
-			"%d pulses carry a cron and the slice allows %d scheduled jobs.", c.crons, sh.Atomic.MaxNumberOfScheduledJobs)
+			"%d functions carry a cron and the slice allows %d scheduled jobs.", c.crons, sh.Atomic.MaxNumberOfScheduledJobs)
 	}
 	return shape
 }

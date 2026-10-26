@@ -1,4 +1,4 @@
-// schedules.go — a pulse's `cron` in the Driftfile, carried into the deploy
+// schedules.go — a function's `cron` in the Driftfile, carried into the deploy
 // artifact.
 //
 // # Why this goes on the artifact and not through the trigger API
@@ -34,7 +34,7 @@ var (
 	declaredSchedules map[string]string
 )
 
-// SetDeclaredSchedules records the pulses' `cron` expressions from a Driftfile,
+// SetDeclaredSchedules records the functions' `cron` expressions from a Driftfile,
 // keyed by function name. Called once by every deploy path before any function
 // ships; a nil or empty map clears it.
 //
@@ -73,7 +73,7 @@ func DeclaredScheduleFor(functionName string) string {
 // (method, path), so a schedule registered under the wrong verb resolves to
 // nothing and fires into a 404 forever — silently, because a trigger that
 // cannot find its function still exists and still ticks. It is the function's
-// OWN method because a pulse's `cron` is additive: same code, two triggers.
+// OWN method because a function's `cron` is additive: same code, two triggers.
 func scheduleTriggerFor(functionName, method string) []TriggerSpec {
 	expr := DeclaredScheduleFor(functionName)
 	if expr == "" {

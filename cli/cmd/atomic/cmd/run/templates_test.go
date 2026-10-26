@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// The dev server `drift atomic run` generates for a Go Pulse compiles against
+// The dev server `drift atomic run` generates for a Go Function compiles against
 // the SDK in this repository (cli/ and sdk/ are one repository), for every
 // handler shape it can call. A Go build resolves the SDK at @latest, so a
 // template naming something the SDK does not have fails every `drift atomic
-// run` of a Go Pulse in a file its author never wrote.
+// run` of a Go Function in a file its author never wrote.
 func TestEveryGoDevServerCompilesAgainstTheSDK(t *testing.T) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {

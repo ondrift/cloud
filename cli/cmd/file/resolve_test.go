@@ -18,8 +18,8 @@ slice "demo" {
 }
 
 atomic {
-  element "default" {
-    pulse "POST /rpc" {
+  backend "default" {
+    function "POST /rpc" {
       handler = "PostRPC"
       memory  = var.rpc_memory
     }
@@ -74,7 +74,7 @@ func TestResolve_PrintsTheResolvedShape(t *testing.T) {
 	out := resolveOut(t, resolveFile)
 	for _, want := range []string{
 		"slice demo  (priced)",
-		"pulse POST /rpc", "64MiB",
+		"function POST /rpc", "64MiB",
 		"events", "20MiB",
 		"jobs", "the slice's queue depth",
 		"limits.timeout", "30s",

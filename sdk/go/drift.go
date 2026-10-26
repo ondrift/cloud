@@ -780,7 +780,7 @@ func callBackbone(method, path string, body any) ([]byte, error) {
 }
 
 // backboneIdleConnsPerHost is how many idle loopback connections the Backbone
-// client keeps per host: the most calls one process serves at once (a Pulse's
+// client keeps per host: the most calls one process serves at once (a Function's
 // `concurrency` maximum), so each call in flight can keep its own.
 const backboneIdleConnsPerHost = 64
 

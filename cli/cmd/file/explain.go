@@ -2,7 +2,7 @@ package file
 
 // explain.go — what a Driftfile BLOCK or ATTRIBUTE is, and what it may contain.
 //
-// `drift file explain atomic.element.pulse` answers the question kubectl answers for
+// `drift file explain atomic.backend.function` answers the question kubectl answers for
 // a manifest field: what it is, what it takes, and what goes inside it.
 //
 // It renders project.DriftfileFormat, whose structure is read from the very
@@ -30,12 +30,12 @@ func getExplainCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "explain [path]",
 		Short: "Describe a Driftfile block or attribute: what it means, and what it takes",
-		Long: "Walks a dotted path into the Driftfile format (`atomic.element.pulse`, " +
-			"`atomic.element.pulse.memory`) and prints what it is, the labels and attributes it takes, " +
+		Long: "Walks a dotted path into the Driftfile format (`atomic.backend.function`, " +
+			"`atomic.backend.function.memory`) and prints what it is, the labels and attributes it takes, " +
 			"and the blocks inside it. Bare `drift file explain` lists the blocks a Driftfile can " +
 			"hold.\n\nFor what one FILE resolves to, see `drift file resolve`.",
-		Example: "  drift file explain\n  drift file explain atomic.element.pulse\n" +
-			"  drift file explain atomic.element.pulse.memory\n  drift file explain slice.limits\n" +
+		Example: "  drift file explain\n  drift file explain atomic.backend.function\n" +
+			"  drift file explain atomic.backend.function.memory\n  drift file explain slice.limits\n" +
 			"  drift file explain --recursive",
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
@@ -94,13 +94,13 @@ func guardOldUsage(cmd *cobra.Command, path string) error {
 	}
 	if path != "" && looksLikeFile(path) {
 		return fmt.Errorf("%q is a path on disk, and `drift file explain` takes a block or attribute\n"+
-			"  to describe a block:         drift file explain atomic.element.pulse\n"+
+			"  to describe a block:         drift file explain atomic.backend.function\n"+
 			"  to resolve that file:        drift file resolve %s", path, path)
 	}
 	return nil
 }
 
-// header is how a block is written, labels included: `pulse "trigger"`.
+// header is how a block is written, labels included: `function "trigger"`.
 func header(b project.FormatBlock) string {
 	if b.Name == "" {
 		return "Driftfile"

@@ -42,13 +42,13 @@ func runApplyAgreeingToRemove(t *testing.T, removes ...string) error {
 
 const helloHandler = "function GetHello(req) { return [200, 'OK', {}]; }\nmodule.exports = { GetHello };\n"
 
-// orderDriftfile declares one Pulse that runs against a database and a queue
+// orderDriftfile declares one Function that runs against a database and a queue
 // the same file declares.
 const orderDriftfile = `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "GET /hello" {
+  backend "default" {
+    function "GET /hello" {
       handler = "GetHello"
       memory  = "32MiB"
     }
@@ -66,7 +66,7 @@ backbone {
 }
 `
 
-// orderProject lays out a project whose one Pulse runs against a database and a
+// orderProject lays out a project whose one Function runs against a database and a
 // queue the same Driftfile declares, beside a slice stub that already holds the
 // file's shape.
 func orderProject(t *testing.T) *recorder {
@@ -118,10 +118,10 @@ func (r *recorder) position(want string) int {
 	return -1
 }
 
-// BACKBONE BEFORE ATOMIC. A Field starts the moment it is deployed and a Pulse
+// BACKBONE BEFORE ATOMIC. A Worker starts the moment it is deployed and a Function
 // can be called the moment it is, so the tables, the seed and the queues they
 // use have to exist first. The apply ran Atomic, Backbone and Canvas together
-// and the SQL schemas after all three, so a Field's first query met no table.
+// and the SQL schemas after all three, so a Worker's first query met no table.
 func TestApply_AppliesBackboneBeforeAtomicDeploys(t *testing.T) {
 	rec := orderProject(t)
 	if err := applyAgreeingAtZero(t); err != nil {
@@ -130,7 +130,7 @@ func TestApply_AppliesBackboneBeforeAtomicDeploys(t *testing.T) {
 
 	deploy := rec.position("POST /ops/atomic")
 	if deploy < 0 {
-		t.Fatal("apply never deployed the Pulse, so this proves nothing about order")
+		t.Fatal("apply never deployed the Function, so this proves nothing about order")
 	}
 	for _, want := range []string{
 		"POST /ops/backbone/sql/admin/load-schema",
@@ -143,13 +143,13 @@ func TestApply_AppliesBackboneBeforeAtomicDeploys(t *testing.T) {
 			continue
 		}
 		if at > deploy {
-			t.Errorf("%s came after the Pulse was deployed (call %d, deploy at %d): "+
-				"the Pulse could run before what it uses exists", want, at, deploy)
+			t.Errorf("%s came after the Function was deployed (call %d, deploy at %d): "+
+				"the Function could run before what it uses exists", want, at, deploy)
 		}
 	}
 }
 
-// A Backbone failure stops the apply before Atomic: deploying the Pulse anyway
+// A Backbone failure stops the apply before Atomic: deploying the Function anyway
 // would start it against the very resource that just failed to apply.
 func TestApply_ABackboneFailureDeploysNoAtomic(t *testing.T) {
 	live := ""
@@ -170,8 +170,8 @@ func TestApply_ABackboneFailureDeploysNoAtomic(t *testing.T) {
 	applyIn(t, `slice "demo" {}
 
 atomic {
-  element "default" {
-    pulse "GET /hello" {
+  backend "default" {
+    function "GET /hello" {
       handler = "GetHello"
       memory  = "32MiB"
     }
@@ -191,11 +191,11 @@ backbone {
 		t.Fatalf("a queue that failed to initialise must fail the apply naming it, got %v", err)
 	}
 	if n := rec.count("POST /ops/atomic"); n != 0 {
-		t.Errorf("apply deployed %d Pulse(s) after Backbone failed", n)
+		t.Errorf("apply deployed %d Function(s) after Backbone failed", n)
 	}
 }
 
-// Every section reads in order under its own heading. The element deployers
+// Every section reads in order under its own heading. The backend deployers
 // wrote each slot's line straight to stdout while the section around them was
 // buffered, so the slots printed above the "Atomic" heading they belong to.
 func TestApply_EverySlotLinePrintsUnderItsHeading(t *testing.T) {

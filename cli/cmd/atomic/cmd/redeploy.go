@@ -15,8 +15,8 @@ func Redeploy() *cobra.Command {
 	var method string
 	cmd := &cobra.Command{
 		Use:     "redeploy <name>",
-		Short:   "Re-deploy the last known artifact for a pulse or field",
-		Example: "  drift atomic redeploy send-email\n  drift atomic redeploy users --method get\n  drift atomic redeploy sequencer --method field",
+		Short:   "Re-deploy the last known artifact for a function or worker",
+		Example: "  drift atomic redeploy send-email\n  drift atomic redeploy users --method get\n  drift atomic redeploy sequencer --method worker",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -47,6 +47,6 @@ func Redeploy() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path, or `field` for a field")
+	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path, or `worker` for a worker")
 	return cmd
 }

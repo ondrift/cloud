@@ -13,7 +13,7 @@ def handle(req):
         body = json.loads(body)
     result = {{FUNC}}(body, req)
     out = {"status": result[0], "message": result[1], "payload": result[2]}
-    # A fourth element is optional. It carries response headers, and setting a
+    # A fourth backend is optional. It carries response headers, and setting a
     # Content-Type that is not JSON is what makes the payload be written raw
     # instead of wrapped in {status, message, payload}. Indexed rather than
     # unpacked, because unpacking is strict on arity and a three-element return

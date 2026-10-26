@@ -56,8 +56,8 @@ var defaultMuxServerPost string
 //go:embed default/server_get_mux.txt
 var defaultMuxServerGet string
 
-//go:embed default/field_native.txt
-var defaultNativeField string
+//go:embed default/worker_native.txt
+var defaultNativeWorker string
 
 //go:embed default/wrapper_post_python.txt
 var wrapperPostPython string
@@ -118,25 +118,25 @@ func goEntryOf(spec FunctionSpec) goEntry {
 }
 
 // generateMain writes the main.go that wraps the user's Go handler, chosen by
-// pulseMainTemplate. For body-shaped triggers it binds `var body <T>` to the
+// functionMainTemplate. For body-shaped triggers it binds `var body <T>` to the
 // handler's actual body type (GoHandlerShape) rather than a hardcoded name, so
-// several POST handlers can coexist in one element — each with its own body
+// several POST handlers can coexist in one backend — each with its own body
 // struct — without colliding on a shared `RequestBody`; and it passes the
 // call's context to a handler whose first parameter is a context.Context.
 //
-// A Field gets an entry point of its own: no request is read, the handler runs
+// A Worker gets an entry point of its own: no request is read, the handler runs
 // until the slice asks it to stop, and the exit status says whether it stopped
-// because it was asked to. See default/field_native.txt.
+// because it was asked to. See default/worker_native.txt.
 //
 // A combination no template can serve is refused here, before anything
 // compiles.
 func generateMain(dir string, e goEntry, sdk goSDK) error {
 	var code string
-	if e.method == FieldMethod {
-		code = strings.NewReplacer("{{FUNC}}", e.handler).Replace(defaultNativeField)
+	if e.method == WorkerMethod {
+		code = strings.NewReplacer("{{FUNC}}", e.handler).Replace(defaultNativeWorker)
 	} else {
 		bodyType, takesContext := GoHandlerShape(dir, e.handler)
-		tpl, err := pulseMainTemplate(e, takesContext, sdk)
+		tpl, err := functionMainTemplate(e, takesContext, sdk)
 		if err != nil {
 			return err
 		}
@@ -152,7 +152,7 @@ func generateMain(dir string, e goEntry, sdk goSDK) error {
 	return nil
 }
 
-// isBodyMethod reports whether a Pulse of this method is handed a body: the
+// isBodyMethod reports whether a Function of this method is handed a body: the
 // methods whose handler takes `body T` before the request.
 func isBodyMethod(method string) bool {
 	switch method {
@@ -162,9 +162,9 @@ func isBodyMethod(method string) bool {
 	return false
 }
 
-// pulseMainTemplate chooses the template a Pulse's main is rendered from.
+// functionMainTemplate chooses the template a Function's main is rendered from.
 //
-// A buffered Pulse is served by the SDK's genmain package (default/
+// A buffered Function is served by the SDK's genmain package (default/
 // server_*_mux.txt): concurrently when it is declared concurrent and the
 // slice asks for it, one call at a time otherwise, byte for byte as the native
 // templates answer. Either way the protocol keeps the process's real stdout
@@ -174,13 +174,13 @@ func isBodyMethod(method string) bool {
 //
 // The native templates (default/server_*_native.txt) serve the rest:
 //
-//   - a streaming Pulse, whose stdout IS the stream it writes to the client;
+//   - a streaming Function, whose stdout IS the stream it writes to the client;
 //   - a build whose resolved SDK predates genmain (goSDK.genmain).
 //
 // Neither can call a handler with a context or serve calls concurrently, so a
-// handler taking a context.Context, or a concurrent Pulse, is refused there
+// handler taking a context.Context, or a concurrent Function, is refused there
 // rather than compiled into an error in a file the author never wrote.
-func pulseMainTemplate(e goEntry, takesContext bool, sdk goSDK) (string, error) {
+func functionMainTemplate(e goEntry, takesContext bool, sdk goSDK) (string, error) {
 	native, mux := defaultNativeServerGet, defaultMuxServerGet
 	if isBodyMethod(e.method) {
 		native, mux = defaultNativeServerPost, defaultMuxServerPost
@@ -188,8 +188,8 @@ func pulseMainTemplate(e goEntry, takesContext bool, sdk goSDK) (string, error) 
 	switch {
 	case e.stream != "":
 		if takesContext {
-			return "", fmt.Errorf("pulse %q streams its reply (stream: %s), and its handler %s takes a context.Context: "+
-				"a streaming Pulse writes its stream on stdout and is not given a context in this release. "+
+			return "", fmt.Errorf("function %q streams its reply (stream: %s), and its handler %s takes a context.Context: "+
+				"a streaming Function writes its stream on stdout and is not given a context in this release. "+
 				"Drop the context.Context parameter, or the stream", e.name, e.stream, e.handler)
 		}
 		return native, nil
@@ -199,11 +199,11 @@ func pulseMainTemplate(e goEntry, takesContext bool, sdk goSDK) (string, error) 
 			sdkName += " (" + sdk.version + ")"
 		}
 		if e.concurrent {
-			return "", fmt.Errorf("pulse %q is declared concurrent, and %s predates concurrent Pulses. "+
+			return "", fmt.Errorf("function %q is declared concurrent, and %s predates concurrent Functions. "+
 				"Deploy it again once a newer SDK is published, or set concurrent to false", e.name, sdkName)
 		}
 		if takesContext {
-			return "", fmt.Errorf("pulse %q has a handler, %s, that takes a context.Context, and %s predates handlers "+
+			return "", fmt.Errorf("function %q has a handler, %s, that takes a context.Context, and %s predates handlers "+
 				"that take one. Deploy it again once a newer SDK is published, or drop the context.Context parameter",
 				e.name, e.handler, sdkName)
 		}
@@ -218,7 +218,7 @@ func pulseMainTemplate(e goEntry, takesContext bool, sdk goSDK) (string, error) 
 // The body type is the type of the first parameter after any context, e.g.
 // `LoginBody` from `func PostLogin(body LoginBody, req drift.Request)` or from
 // `func PostLogin(ctx context.Context, body LoginBody, req drift.Request)`. This
-// lets each POST handler in an element declare its own body struct; the
+// lets each POST handler in a backend declare its own body struct; the
 // generated main unmarshals into exactly that type. It falls back to
 // "RequestBody" (the historical name) when the signature can't be read, so
 // single-function and legacy deploys are byte-for-byte unchanged.
@@ -506,7 +506,7 @@ func parseTriggerComments(dir string) ([]TriggerSpec, error) {
 //
 // # Why this REFUSES rather than ignoring the comment
 //
-// A schedule is a pulse's `cron` in the Driftfile: declared in the file,
+// A schedule is a function's `cron` in the Driftfile: declared in the file,
 // honoured by every deploy path, and METERED, because it travels on the
 // artifact through the operator, which counts it against the slice's envelope
 // and bills it (tier.CentsPerScheduledJob). A comment in source declares
@@ -526,7 +526,7 @@ func refuseScheduleComments(dir string) error {
 			}
 			return fmt.Errorf(
 				"%s carries `// drift:schedule %s`, which declares nothing.\n"+
-					"       Declare the schedule in the Driftfile instead, on this pulse:\n\n"+
+					"       Declare the schedule in the Driftfile instead, on this function:\n\n"+
 					"         cron = \"%s\"\n\n"+
 					"       That is honoured by every deploy path, and is counted against the\n"+
 					"       slice's envelope rather than registered unmetered.",
@@ -578,25 +578,25 @@ func invocationProtocol(language string) string {
 	return ""
 }
 
-// slotProtocol is invocationProtocol for one slot. A Field is Go but reads no
+// slotProtocol is invocationProtocol for one slot. A Worker is Go but reads no
 // envelopes at all, so it declares none: "loop" would tell the slice it may hand
 // the process a request, and nothing ever does.
 func slotProtocol(method, language string) string {
-	if method == FieldMethod {
+	if method == WorkerMethod {
 		return ""
 	}
 	return invocationProtocol(language)
 }
 
 func operatorSink(a FuncArtifact) error {
-	name, method, language, auth, element, stream := a.Name, a.Method, a.Language, a.Auth, a.Element, a.Stream
+	name, method, language, auth, backend, stream := a.Name, a.Method, a.Language, a.Auth, a.Backend, a.Stream
 	secrets, sourcePath, userSourcePath, triggers, digest := a.Secrets, a.SourcePath, a.UserSourcePath, a.Triggers, a.Digest
 	fields := map[string]any{
 		"name":     name,
 		"method":   method,
 		"language": language,
 		"auth":     auth,
-		"element":  element,
+		"backend":  backend,
 		"stream":   stream,
 		"secrets":  secrets,
 		// Declared plain configuration, separate from `secrets` on purpose —
@@ -617,7 +617,7 @@ func operatorSink(a FuncArtifact) error {
 		// first of the three parsers it has to survive.
 		"response": a.Response,
 	}
-	// Only when true, so a Pulse that is not concurrent is sent exactly the
+	// Only when true, so a Function that is not concurrent is sent exactly the
 	// metadata it always was, and an operator or slice that predates the key
 	// never reads it for one. The deprecated count is never sent: the slice
 	// decides the number.
@@ -646,7 +646,7 @@ func operatorSink(a FuncArtifact) error {
 	}
 	srcPart, err := mw.CreateFormFile("source", filepath.Base(sourcePath))
 	if err != nil {
-		return fmt.Errorf("failed to create source field: %w", err)
+		return fmt.Errorf("failed to create source worker: %w", err)
 	}
 	if _, err := io.Copy(srcPart, f); err != nil {
 		return fmt.Errorf("failed to buffer source: %w", err)
@@ -688,9 +688,9 @@ func operatorSink(a FuncArtifact) error {
 		)
 		if err != nil {
 			// Transport error (a timeout or a momentary blip — common when an
-			// element ships many functions at once and the API is briefly
+			// backend ships many functions at once and the API is briefly
 			// saturated). The deploy is idempotent, so retry within the deadline
-			// rather than failing the whole element on one slow upload.
+			// rather than failing the whole backend on one slow upload.
 			if time.Now().Before(deadline) {
 				time.Sleep(2 * time.Second)
 				continue
@@ -729,7 +729,7 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	// unreachable from /api/* while the in-process trigger registry can still
 	// look it up by (method, name) — and the queue's own name.
 	method, name := spec.Wire()
-	element := spec.Element
+	backend := spec.Backend
 	auth, stream, secrets := spec.Auth, spec.Stream, spec.Secrets
 	response := spec.Response
 
@@ -739,9 +739,9 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	}
 	language, sourceFile := atomic_common.BuildLanguage(callable.Language), callable.SourceFile
 
-	// The one-function path reaches here without BuildElements, so it applies
-	// the Field language rule itself, from the same owner.
-	if err := refuseNonGoField(spec, language); err != nil {
+	// The one-function path reaches here without BuildBackends, so it applies
+	// the Worker language rule itself, from the same owner.
+	if err := refuseNonGoWorker(spec, language); err != nil {
 		return err
 	}
 	if err := refuseConcurrency(spec, language); err != nil {
@@ -762,14 +762,14 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 			langLabel = "go"
 		}
 		switch q := spec.QueueSource(); {
-		case spec.IsField():
-			fmt.Printf("Deploying field '%s' (%s)\n", name, langLabel)
+		case spec.IsWorker():
+			fmt.Printf("Deploying worker '%s' (%s)\n", name, langLabel)
 		case q != "":
 			fmt.Printf("Deploying queue handler '%s' (%s, source: %s)\n", name, langLabel, q)
 		default:
-			// Org-only routing: a pulse is served at /<name>; the element is
+			// Org-only routing: a function is served at /<name>; the backend is
 			// never a route segment.
-			fmt.Printf("Deploying pulse '%s /%s' (%s, auth: %s)\n", method, name, langLabel, auth)
+			fmt.Printf("Deploying function '%s /%s' (%s, auth: %s)\n", method, name, langLabel, auth)
 		}
 	}
 
@@ -777,21 +777,21 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	// function that already has its own trigger — a handler consuming from
 	// several queues. It stacks with the one the Driftfile declares.
 	//
-	// A Field takes none: nothing invokes it, and the operator refuses a Field
+	// A Worker takes none: nothing invokes it, and the operator refuses a Worker
 	// that carries a trigger.
 	var triggers []TriggerSpec
-	if !spec.IsField() {
+	if !spec.IsWorker() {
 		triggers, err = parseTriggerComments(absFolder)
 		if err != nil {
 			return fmt.Errorf("failed to parse trigger comments: %w", err)
 		}
 	}
 	// A `// drift:schedule` comment is refused rather than ignored: a schedule
-	// is a pulse's `cron` in the Driftfile. See refuseScheduleComments.
+	// is a function's `cron` in the Driftfile. See refuseScheduleComments.
 	if err := refuseScheduleComments(absFolder); err != nil {
 		return err
 	}
-	triggers = append(triggers, triggersFor(ElementFunc{Spec: spec, SourceFile: sourceFile})...)
+	triggers = append(triggers, triggersFor(BackendFunc{Spec: spec, SourceFile: sourceFile})...)
 
 	if len(triggers) > 0 && !quiet {
 		fmt.Printf("  %d trigger(s) found: ", len(triggers))
@@ -844,7 +844,7 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	// won't be skippable next time (an empty digest never matches, and
 	// DeployDigest keeps it empty rather than hashing the emptiness into a value
 	// that could).
-	buildDigest, dErr := FunctionDigest(absFolder, element)
+	buildDigest, dErr := FunctionDigest(absFolder, backend)
 	if dErr != nil {
 		buildDigest = ""
 	}
@@ -863,7 +863,7 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 
 	if err := sendSourceToOperator(FuncArtifact{
 		Name: name, Method: method, Language: language, Auth: auth,
-		Element: element, Stream: stream, Response: response, Secrets: secrets,
+		Backend: backend, Stream: stream, Response: response, Secrets: secrets,
 		Env:        spec.Env,
 		Concurrent: spec.IsConcurrent(),
 		Triggers:   triggers, Digest: digest,
@@ -874,10 +874,10 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	}
 
 	if !quiet {
-		if spec.IsField() {
-			fmt.Printf("  Field '%s' deployed successfully!\n", name)
+		if spec.IsWorker() {
+			fmt.Printf("  Worker '%s' deployed successfully!\n", name)
 		} else {
-			fmt.Printf("  Pulse '%s /%s' deployed successfully!\n", method, name)
+			fmt.Printf("  Function '%s /%s' deployed successfully!\n", method, name)
 		}
 	}
 	return nil

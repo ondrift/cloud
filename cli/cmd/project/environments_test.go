@@ -8,7 +8,7 @@ import (
 )
 
 // withEnvironments turns the fxevm fixture into a file with a staging
-// environment: the rpc Pulse's memory is a variable, 64MiB by default and
+// environment: the rpc Function's memory is a variable, 64MiB by default and
 // 32MiB in staging.
 func withEnvironments(extra string) func(string) string {
 	return func(s string) string {

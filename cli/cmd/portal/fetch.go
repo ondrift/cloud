@@ -24,7 +24,7 @@ import (
 type fnRow struct {
 	FunctionName string `json:"function_name"`
 	Method       string `json:"method"`
-	Element      string `json:"element"`
+	Backend      string `json:"backend"`
 	Language     string `json:"language"`
 }
 
@@ -319,13 +319,13 @@ type fnMetrics struct {
 	RSSShared bool `json:"rss_shared"`
 }
 
-// fnKey is the metrics/logs key the slice stores a function under: "element/name"
+// fnKey is the metrics/logs key the slice stores a function under: "backend/name"
 // (or bare "name"). It MUST match the slice's function_key (atomic/observe.rs);
 // the portal queries /ops/atomic/{metrics,logs} and keys m.fnMet with this — not
-// the bare name — so element-scoped functions resolve instead of showing "—".
+// the bare name — so backend-scoped functions resolve instead of showing "—".
 func fnKey(f fnRow) string {
-	if f.Element != "" {
-		return f.Element + "/" + f.FunctionName
+	if f.Backend != "" {
+		return f.Backend + "/" + f.FunctionName
 	}
 	return f.FunctionName
 }

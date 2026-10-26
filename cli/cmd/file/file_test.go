@@ -60,7 +60,7 @@ func TestSchemaMustBePresentOrTheScaffoldTestsProveNothing(t *testing.T) {
 // ─── new ────────────────────────────────────────────────────────────────────
 
 // starterProject writes the starter beside the folders it names, as a project
-// has them once `drift atomic new` has written the pulse's source.
+// has them once `drift atomic new` has written the function's source.
 func starterProject(t *testing.T, canvasDir string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -79,7 +79,7 @@ func starterProject(t *testing.T, canvasDir string) string {
 // The scaffold's whole claim is that it produces a file that DEPLOYS, not one
 // that merely parses. So the test is a round trip through the real compiler
 // rather than a string comparison: the shape it writes fits a free
-// slice, and its one pulse is booked.
+// slice, and its one function is booked.
 func TestNew_ScaffoldCompiles(t *testing.T) {
 	withServedSchema(t)
 	for _, canvas := range []string{"", "site"} {
@@ -92,10 +92,10 @@ func TestNew_ScaffoldCompiles(t *testing.T) {
 		}
 		specs := project.FunctionSpecs(c.Manifest)
 		if len(specs) != 1 || specs[0].Name != starterMethod+":"+starterRoute || specs[0].Handler == "" {
-			t.Errorf("the scaffold declares %+v, want one booked pulse with a handler", specs)
+			t.Errorf("the scaffold declares %+v, want one booked function with a handler", specs)
 		}
 		if f := c.Shape.Atomic.Functions; len(f) != 1 || f[0].MemoryBytes != 32<<20 {
-			t.Errorf("the scaffold books %+v, want its pulse at %s", f, starterMemory)
+			t.Errorf("the scaffold books %+v, want its function at %s", f, starterMemory)
 		}
 		if sites := c.Manifest.Slice().Entries("dir", "canvas", "sites"); (canvas != "") != (len(sites) == 1) {
 			t.Errorf("canvas %q produced sites %+v", canvas, sites)
@@ -147,12 +147,12 @@ queue "a" {}
 // The canonical layout: two-space indentation and the `=` of neighbouring
 // attributes aligned.
 func TestFmt_LaysOutCanonically(t *testing.T) {
-	src := []byte("element \"api\" {\n    pulse \"GET /a\" {\n  handler = \"A\"\n      memory = \"16MiB\"\n    }\n}\n")
+	src := []byte("backend \"api\" {\n    function \"GET /a\" {\n  handler = \"A\"\n      memory = \"16MiB\"\n    }\n}\n")
 	out, err := formatDriftfile("Driftfile", src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "element \"api\" {\n  pulse \"GET /a\" {\n    handler = \"A\"\n    memory  = \"16MiB\"\n  }\n}\n"
+	want := "backend \"api\" {\n  function \"GET /a\" {\n    handler = \"A\"\n    memory  = \"16MiB\"\n  }\n}\n"
 	if string(out) != want {
 		t.Errorf("fmt:\n got:\n%s\nwant:\n%s", out, want)
 	}
@@ -199,7 +199,7 @@ func TestLint_RefusesAHandlerThatIsNotThere(t *testing.T) {
 	if err == nil {
 		t.Fatal("a handler with no callable behind it must fail lint")
 	}
-	// The message has to name the pulse AND list what is actually there —
+	// The message has to name the function AND list what is actually there —
 	// "not found" is not actionable when the handler looks right.
 	for _, want := range []string{"get:ping", "GetPong", "GetPing"} {
 		if !strings.Contains(err.Error(), want) {
@@ -251,9 +251,9 @@ func TestLint_RefusesAYAMLDriftfile(t *testing.T) {
 	}
 }
 
-// An element whose folder is not on this machine is what `drift plan` would
-// refuse, so lint refuses it too, at the element.
-func TestLint_RefusesAnElementWithNoFolder(t *testing.T) {
+// A backend whose folder is not on this machine is what `drift plan` would
+// refuse, so lint refuses it too, at the backend.
+func TestLint_RefusesABackendWithNoFolder(t *testing.T) {
 	withServedSchema(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Driftfile"), []byte(lintDriftfile("GetPing")), 0o600); err != nil {
@@ -261,7 +261,7 @@ func TestLint_RefusesAnElementWithNoFolder(t *testing.T) {
 	}
 	err := getLintCmd().RunE(nil, []string{dir})
 	if err == nil || !strings.Contains(err.Error(), "atomic is not a directory") {
-		t.Fatalf("an element with no folder: got %v", err)
+		t.Fatalf("a backend with no folder: got %v", err)
 	}
 }
 
@@ -359,15 +359,15 @@ func bumpMinor(v string) string {
 	return parts[0] + "." + strconv.Itoa(minor+1) + ".0"
 }
 
-// 16MiB, not 8: the fixture's source is Go, and a compiled pulse books at least
+// 16MiB, not 8: the fixture's source is Go, and a compiled function books at least
 // the compiled floor the schema publishes. At 8MiB these tests would be
 // asserting a lint result on a Driftfile the platform refuses.
 func lintDriftfile(handler string) string {
 	return "slice \"lintdemo\" {}\n" +
-		"atomic {\n  element \"default\" {\n    pulse \"GET /ping\" {\n      handler = \"" + handler + "\"\n      memory = \"16MiB\"\n    }\n  }\n}\n"
+		"atomic {\n  backend \"default\" {\n    function \"GET /ping\" {\n      handler = \"" + handler + "\"\n      memory = \"16MiB\"\n    }\n  }\n}\n"
 }
 
-// lintFixture writes a one-pulse project whose source declares GetPing, and
+// lintFixture writes a one-function project whose source declares GetPing, and
 // whose Driftfile names whichever handler the caller asks for.
 func lintFixture(t *testing.T, handler string) string {
 	t.Helper()

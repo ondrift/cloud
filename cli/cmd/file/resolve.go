@@ -80,15 +80,15 @@ func printResolved(c *project.Compiled) {
 	}
 
 	if specs := project.FunctionSpecs(m); len(specs) > 0 {
-		fmt.Printf("\n  pulses (%d)\n", len(specs))
+		fmt.Printf("\n  functions (%d)\n", len(specs))
 		for _, p := range specs {
-			fmt.Printf("    · %-34s %s%s\n", c.Addresses[p.Name], sizeOf(booked[p.Name]), inElement(p.Element))
+			fmt.Printf("    · %-34s %s%s\n", c.Addresses[p.Name], sizeOf(booked[p.Name]), inBackend(p.Backend))
 		}
 	}
-	if specs := project.FieldSpecs(m); len(specs) > 0 {
+	if specs := project.WorkerSpecs(m); len(specs) > 0 {
 		fmt.Printf("\n  fields (%d)\n", len(specs))
 		for _, f := range specs {
-			fmt.Printf("    · %-34s %s%s\n", c.Addresses[f.Name], sizeOf(booked[f.Name]), inElement(f.Element))
+			fmt.Printf("    · %-34s %s%s\n", c.Addresses[f.Name], sizeOf(booked[f.Name]), inBackend(f.Backend))
 		}
 	}
 
@@ -181,11 +181,11 @@ func printResolved(c *project.Compiled) {
 	fmt.Printf("\n  %s\n", common.Hint("the price comes from the platform: drift plan"))
 }
 
-// inElement names the element a Pulse or Field belongs to, and nothing for
-// the default element.
-func inElement(element string) string {
-	if element != "" {
-		return "  " + common.Hint("(element "+element+")")
+// inBackend names the backend a Function or Worker belongs to, and nothing for
+// the default backend.
+func inBackend(backend string) string {
+	if backend != "" {
+		return "  " + common.Hint("(backend "+backend+")")
 	}
 	return ""
 }

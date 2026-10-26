@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// projectWith returns a Manifest whose atomic.pulses are fns.
+// projectWith returns a Manifest whose atomic.functions are fns.
 //
 // It needs no source tree: what a project declares is a property of the
 // document, so every count below runs on the manifest alone.
@@ -15,7 +15,7 @@ func projectWith(t *testing.T, fns []Node) *Manifest {
 	for i, fn := range fns {
 		items[i] = map[string]any(fn)
 	}
-	slice := Node{"name": "test", "atomic": map[string]any{"pulses": items}}
+	slice := Node{"name": "test", "atomic": map[string]any{"functions": items}}
 	return &Manifest{doc: slice, slice: slice, baseDir: t.TempDir()}
 }
 
@@ -42,7 +42,7 @@ func TestCountScheduledFunctions_CountsTheDriftfileField(t *testing.T) {
 // runs before any deploy, and returning zero there would size a slice for no
 // scheduled jobs and then let it register them unmetered.
 func TestCountScheduledFunctions_SurvivesAnUnreadableTree(t *testing.T) {
-	slice := Node{"name": "test", "atomic": map[string]any{"pulses": []any{
+	slice := Node{"name": "test", "atomic": map[string]any{"functions": []any{
 		map[string]any{"name": "post:nightly-rollup", "handler": "Rollup", "cron": "0 2 * * *"},
 		map[string]any{"name": "get:menu", "handler": "GetMenu"},
 	}}}
@@ -86,10 +86,10 @@ func TestCountAtomicFunctions_IsTheDeclaredList(t *testing.T) {
 		t.Errorf("three declared functions is three billed functions, got %d", got)
 	}
 
-	// A Field is a slot too, and counts as one.
-	m.slice.Sub("atomic")["fields"] = []any{map[string]any{"name": "sequencer", "handler": "Run"}}
+	// A Worker is a slot too, and counts as one.
+	m.slice.Sub("atomic")["workers"] = []any{map[string]any{"name": "sequencer", "handler": "Run"}}
 	if got, _ := CountAtomicFunctions(m); got != 4 {
-		t.Errorf("three pulses and a field are four slots, got %d", got)
+		t.Errorf("three functions and a worker are four slots, got %d", got)
 	}
 }
 
@@ -97,7 +97,7 @@ func TestCountAtomicFunctions_IsTheDeclaredList(t *testing.T) {
 // function NAME because that is what the operator resolves the trigger target
 // from — for an HTTP function the deployed name IS its route.
 func TestDeclaredSchedules_KeyedByFunctionName(t *testing.T) {
-	slice := Node{"atomic": map[string]any{"pulses": []any{
+	slice := Node{"atomic": map[string]any{"functions": []any{
 		map[string]any{"name": "get:menu", "handler": "GetMenu"},
 		map[string]any{"name": "post:nightly-rollup", "handler": "Rollup", "cron": "0 2 * * *"},
 		map[string]any{"name": "", "cron": "0 5 * * *"}, // nameless: unroutable, must be dropped
@@ -130,7 +130,7 @@ func TestTheScheduleKeyIsTheKeyTheDeployLooksUp(t *testing.T) {
 	// `method`, no `name`. A hand-written `name` happens to look like the
 	// composite the normaliser produces, so only a document without one proves
 	// the composition.
-	doc := Node{"slice": "lab", "atomic": map[string]any{"pulses": []any{
+	doc := Node{"slice": "lab", "atomic": map[string]any{"functions": []any{
 		map[string]any{"route": "cronprobe", "method": "get", "handler": "GetCronprobe", "cron": "*/1 * * * *"},
 		map[string]any{"route": "menu", "method": "get", "handler": "GetMenu"},
 	}}}
@@ -160,7 +160,7 @@ func TestTheScheduleKeyIsTheKeyTheDeployLooksUp(t *testing.T) {
 // And the composite is what it is, stated once so a change to the normaliser
 // has to come past this line.
 func TestAScheduleIsKeyedByMethodAndRouteTogether(t *testing.T) {
-	doc := Node{"atomic": map[string]any{"pulses": []any{
+	doc := Node{"atomic": map[string]any{"functions": []any{
 		map[string]any{"route": "cronprobe", "method": "GET", "handler": "H", "cron": "*/1 * * * *"},
 	}}}
 	normaliseFunctionIdentities(doc)

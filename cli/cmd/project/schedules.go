@@ -1,5 +1,5 @@
-// schedules.go — resolving a pulse's `cron` into what the deploy artifact
-// carries. Only a Pulse is scheduled; a Field runs all the time.
+// schedules.go — resolving a function's `cron` into what the deploy artifact
+// carries. Only a Function is scheduled; a Worker runs all the time.
 
 package project
 
@@ -21,7 +21,7 @@ import (
 // trigger on it. TestTheScheduleKeyIsTheKeyTheDeployLooksUp is the seam.
 func declaredSchedules(m *Manifest) map[string]string {
 	out := map[string]string{}
-	for _, fn := range PulseEntries(m.Slice()) {
+	for _, fn := range FunctionEntries(m.Slice()) {
 		if fn.Str("cron") != "" && fn.Str("name") != "" {
 			out[fn.Str("name")] = fn.Str("cron")
 		}
@@ -33,7 +33,7 @@ func declaredSchedules(m *Manifest) map[string]string {
 // for the deploy summary.
 func ScheduledFunctionNames(m *Manifest) []string {
 	var names []string
-	for _, fn := range PulseEntries(m.Slice()) {
+	for _, fn := range FunctionEntries(m.Slice()) {
 		if fn.Str("cron") != "" && fn.Str("name") != "" {
 			names = append(names, fn.Str("name"))
 		}

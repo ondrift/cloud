@@ -16,7 +16,7 @@ func History() *cobra.Command {
 	var method string
 	cmd := &cobra.Command{
 		Use:     "history <name>",
-		Short:   "Show deployment history for a pulse or field",
+		Short:   "Show deployment history for a function or worker",
 		Example: "  drift atomic history send-email\n  drift atomic history users --method get",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(1),
@@ -67,6 +67,6 @@ func History() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path, or `field` for a field")
+	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path, or `worker` for a worker")
 	return cmd
 }

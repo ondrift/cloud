@@ -80,7 +80,7 @@ func TestARemovedDriftfileVerbSaysWhatReplacedIt(t *testing.T) {
 		{[]string{"file", "diff"}, "drift plan"},
 		{[]string{"project", "apply"}, "drift apply"},
 		{[]string{"atomic", "deploy", "./atomic"}, "drift apply"},
-		{[]string{"atomic", "deploy", "./atomic/billing", "--element", "billing"}, "drift apply"},
+		{[]string{"atomic", "deploy", "./atomic/billing", "--backend", "billing"}, "drift apply"},
 		{[]string{"canvas", "deploy", "./dist"}, "drift apply"},
 		{[]string{"canvas", "deploy", "./dist", "--route", "/admin"}, "drift apply"},
 	} {

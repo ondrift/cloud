@@ -9,7 +9,7 @@ import (
 	"syscall"
 )
 
-// A Field: the one long-running process the slice keeps for this declaration.
+// A Worker: the one long-running process the slice keeps for this declaration.
 // Nothing arrives on stdin and nothing is written for the slice to parse. The
 // slice starts this binary, sends SIGTERM when a deploy replaces it or the
 // slice shuts down, waits, and then kills it; whatever it writes to stdout and
@@ -19,7 +19,7 @@ import (
 // SIGTERM or SIGINT, which is the handler's cue to finish what it holds and
 // return. Returning nil, or the context's own cancellation, after being asked
 // to stop is a clean exit. Anything else is a failure the slice records, and it
-// starts the Field again either way.
+// starts the Worker again either way.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	err := {{FUNC}}(ctx)
@@ -30,9 +30,9 @@ func main() {
 	case asked && (err == nil || errors.Is(err, context.Canceled)):
 		os.Exit(0)
 	case err != nil:
-		fmt.Fprintf(os.Stderr, "field handler {{FUNC}} returned an error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "worker handler {{FUNC}} returned an error: %v\n", err)
 	default:
-		fmt.Fprintln(os.Stderr, "field handler {{FUNC}} returned before it was asked to stop")
+		fmt.Fprintln(os.Stderr, "worker handler {{FUNC}} returned before it was asked to stop")
 	}
 	os.Exit(1)
 }

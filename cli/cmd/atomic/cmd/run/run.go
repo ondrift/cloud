@@ -95,12 +95,12 @@ func Run(resolve func(dir string) ([]atomic_cmd.FunctionSpec, error)) *cobra.Com
 	var quiet bool
 	var pick string
 	cmd := &cobra.Command{
-		Use:   "run [pulse folder]",
-		Short: "Run a declared pulse locally with hot reload",
-		Long: "Serve one of the project's pulses on localhost, rebuilding it whenever the " +
-			"source changes.\n\nWhich pulse, and everything about it, comes from the " +
+		Use:   "run [function folder]",
+		Short: "Run a declared function locally with hot reload",
+		Long: "Serve one of the project's functions on localhost, rebuilding it whenever the " +
+			"source changes.\n\nWhich function, and everything about it, comes from the " +
 			"Driftfile. A folder declaring several needs --function to say which one to run. " +
-			"Fields are not served here: `drift file run` runs them beside the pulses.",
+			"Workers are not served here: `drift file run` runs them beside the functions.",
 		Example: "  drift atomic run ./atomic\n  drift atomic run ./atomic --function post:users",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
@@ -114,7 +114,7 @@ func Run(resolve func(dir string) ([]atomic_cmd.FunctionSpec, error)) *cobra.Com
 			if err != nil {
 				return err
 			}
-			spec, err := selectFunction(pulsesOnly(specs), pick, srcDir)
+			spec, err := selectFunction(functionsOnly(specs), pick, srcDir)
 			if err != nil {
 				return err
 			}
@@ -140,7 +140,7 @@ func Run(resolve func(dir string) ([]atomic_cmd.FunctionSpec, error)) *cobra.Com
 			}
 
 			if !quiet {
-				fmt.Printf("▶️  Running %s pulse '%s /%s' on http://localhost:%d\n", language, strings.ToUpper(method), name, port)
+				fmt.Printf("▶️  Running %s function '%s /%s' on http://localhost:%d\n", language, strings.ToUpper(method), name, port)
 			}
 
 			// Create a persistent temp workspace for this run session
@@ -184,18 +184,18 @@ func Run(resolve func(dir string) ([]atomic_cmd.FunctionSpec, error)) *cobra.Com
 
 	cmd.Flags().IntVar(&portOverride, "port", 0, "Bind to this port (default 3000)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress the startup banner")
-	cmd.Flags().StringVar(&pick, "function", "", "Which declared pulse to run, by name (e.g. post:users)")
+	cmd.Flags().StringVar(&pick, "function", "", "Which declared function to run, by name (e.g. post:users)")
 
 	return cmd
 }
 
-// pulsesOnly drops the Fields from a folder's declarations. This command serves
-// one pulse over HTTP; a Field answers no request, and runs under `drift file
+// functionsOnly drops the Workers from a folder's declarations. This command serves
+// one function over HTTP; a Worker answers no request, and runs under `drift file
 // run`, where the runner's supervisor starts it as a slice does.
-func pulsesOnly(specs []atomic_cmd.FunctionSpec) []atomic_cmd.FunctionSpec {
+func functionsOnly(specs []atomic_cmd.FunctionSpec) []atomic_cmd.FunctionSpec {
 	out := make([]atomic_cmd.FunctionSpec, 0, len(specs))
 	for _, s := range specs {
-		if !s.IsField() {
+		if !s.IsWorker() {
 			out = append(out, s)
 		}
 	}
@@ -212,7 +212,7 @@ func selectFunction(specs []atomic_cmd.FunctionSpec, pick, dir string) (atomic_c
 				return s, nil
 			}
 		}
-		return atomic_cmd.FunctionSpec{}, fmt.Errorf("no pulse called %q is declared in %s; declared there: %s",
+		return atomic_cmd.FunctionSpec{}, fmt.Errorf("no function called %q is declared in %s; declared there: %s",
 			pick, dir, strings.Join(specNames(specs), ", "))
 	}
 	if len(specs) == 1 {
@@ -220,10 +220,10 @@ func selectFunction(specs []atomic_cmd.FunctionSpec, pick, dir string) (atomic_c
 	}
 	if len(specs) == 0 {
 		return atomic_cmd.FunctionSpec{}, fmt.Errorf(
-			"%s declares no pulses, only fields; a field answers no request, so run it with `drift file run`", dir)
+			"%s declares no functions, only workers; a worker answers no request, so run it with `drift file run`", dir)
 	}
 	return atomic_cmd.FunctionSpec{}, fmt.Errorf(
-		"%s declares %d pulses and this serves one at a time; pick it with --function: %s",
+		"%s declares %d functions and this serves one at a time; pick it with --function: %s",
 		dir, len(specs), strings.Join(specNames(specs), ", "))
 }
 

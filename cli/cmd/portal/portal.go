@@ -187,7 +187,7 @@ func Run(version string) error {
 			if m.tab == tabAtomic && m.fnExp >= 0 && m.fnExp < len(m.fns) &&
 				m.detail == nil && m.chooser == nil &&
 				m.explorer == nil && m.input == nil && m.conf == nil && m.platform == nil {
-				fn = fnKey(m.fns[m.fnExp]) // element/name — the slice's metrics key
+				fn = fnKey(m.fns[m.fnExp]) // backend/name — the slice's metrics key
 			}
 			mu.Unlock()
 			if fn == "" {
@@ -438,7 +438,7 @@ func (m *model) handle(k key) bool {
 	if m.focus == focusSidebar {
 		return m.handleSidebar(k)
 	}
-	// focusDetail: inside an Atomic function's settable fields (element / trigger /
+	// focusDetail: inside an Atomic function's settable fields (backend / trigger /
 	// schedule) — its own up/down/enter/esc nav; everything else is swallowed.
 	if m.focus == focusDetail {
 		return m.handleFnDetail(k)
@@ -716,7 +716,7 @@ func (m *model) rowCount(tab int) int {
 func (m *model) act() {
 	// Slice switching is the sidebar's job; on the Atomic tab Enter opens the
 	// new-function chooser on the bottom row, otherwise it "expands" the selected
-	// function — moving focus into its settable fields (element/trigger/schedule).
+	// function — moving focus into its settable fields (backend/trigger/schedule).
 	if m.tab != tabAtomic {
 		return
 	}
@@ -734,7 +734,7 @@ func (m *model) act() {
 
 // handleFnDetail applies keys while focus is inside an Atomic function's detail:
 // up/down move over its settable fields, Enter activates the selected one (the
-// element/trigger/schedule setup — wired in #2), Esc returns to the rail. It is
+// backend/trigger/schedule setup — wired in #2), Esc returns to the rail. It is
 // self-contained (like handleSidebar): tab-switch, refresh and quit still work;
 // everything else is swallowed so the rail's hotkeys don't leak through.
 func (m *model) handleFnDetail(k key) bool {
@@ -750,7 +750,7 @@ func (m *model) handleFnDetail(k key) bool {
 			m.detailSel++
 		}
 	case keyEnter:
-		m.activateFnField()
+		m.activateFnWorker()
 	case keyFull: // 'f' — toggle full-screen logs for the open function
 		m.logsFull = !m.logsFull
 	case keySet: // 's' — toggle the service stat cards (also works while focused)
@@ -773,21 +773,21 @@ func (m *model) handleFnDetail(k key) bool {
 	return false
 }
 
-// activateFnField is invoked by Enter on a field. These are display-only (#2):
-// element is set at deploy, and queue triggers and schedules are a pulse's own
+// activateFnWorker is invoked by Enter on a worker. These are display-only (#2):
+// backend is set at deploy, and queue triggers and schedules are a function's own
 // label and cron in the Driftfile — so Enter surfaces what changes the field
 // rather than editing in place.
-func (m *model) activateFnField() {
+func (m *model) activateFnWorker() {
 	if m.detailSel < 0 || m.detailSel >= len(fnConfigKeys) {
 		return
 	}
 	switch fnConfigKeys[m.detailSel] {
-	case "element":
-		m.status = "element: the pulse sits in an element block of the Driftfile, then drift apply"
+	case "backend":
+		m.status = "backend: the function sits in a backend block of the Driftfile, then drift apply"
 	case "trigger":
-		m.status = "trigger: label the pulse QUEUE <name> in the Driftfile (poll, max_retries tune it), then drift apply"
+		m.status = "trigger: label the function QUEUE <name> in the Driftfile (poll, max_retries tune it), then drift apply"
 	case "schedule":
-		m.status = "schedule: write a cron on the pulse in the Driftfile, then drift apply"
+		m.status = "schedule: write a cron on the function in the Driftfile, then drift apply"
 	}
 }
 
@@ -1032,7 +1032,7 @@ func (m *model) renderAtomic(b *strings.Builder) {
 
 	var rail []string
 	for i, f := range m.fns {
-		// Org-only routing: the element is never a route segment.
+		// Org-only routing: the backend is never a route segment.
 		route := "/" + f.FunctionName
 		routeW := railW - 1 - colMethod - 1 // " METHOD route"
 		if routeW < 6 {
@@ -1085,7 +1085,7 @@ func (m *model) renderAtomic(b *strings.Builder) {
 // lines that fit are shown (tail-style), so new logs keep streaming at the bottom.
 func (m *model) renderFullLogs(b *strings.Builder) {
 	f := m.fns[m.fnExp]
-	// Org-only routing: the element is never a route segment.
+	// Org-only routing: the backend is never a route segment.
 	route := "/" + f.FunctionName
 	fmt.Fprintf(b, "  %s %s  %s   %s\r\n\r\n",
 		dim("logs"), cGreen+"●"+cReset, bold(route), dim("[f] exit full-screen"))

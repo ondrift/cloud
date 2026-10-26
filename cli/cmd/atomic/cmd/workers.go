@@ -1,16 +1,16 @@
 package atomic_cmd
 
-// fields.go — `drift atomic fields`: what the slice's Field supervisor is doing.
+// workers.go — `drift atomic workers`: what the slice's Worker supervisor is doing.
 //
-// A Field is the one long-running process the slice keeps per declaration. It
+// A Worker is the one long-running process the slice keeps per declaration. It
 // has no invocations to count and no requests to log against, so the questions
-// worth asking about one are different from a pulse's: is it running, how long
+// worth asking about one are different from a function's: is it running, how long
 // has it been up, how often has it been restarted, and why did it last stop.
-// The supervisor answers all four at GET /fields, which the api relays as
-// GET /ops/atomic/fields under the caller's own credentials.
+// The supervisor answers all four at GET /workers, which the api relays as
+// GET /ops/atomic/workers under the caller's own credentials.
 //
-// A Field that crashes five times in ten minutes is PAUSED and not restarted
-// again until its next deploy, a slice restart, or `drift atomic fields
+// A Worker that crashes five times in ten minutes is PAUSED and not restarted
+// again until its next deploy, a slice restart, or `drift atomic workers
 // restart <name>`, which is the one write this file makes.
 
 import (
@@ -30,32 +30,32 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// FieldStatus is one Field as the slice's supervisor reports it.
-type FieldStatus struct {
+// WorkerStatus is one Worker as the slice's supervisor reports it.
+type WorkerStatus struct {
 	Name string `json:"name"`
 	// State is running, backoff, paused or stopped.
-	State     string     `json:"state"`
-	PID       int        `json:"pid"`
-	StartedAt fieldTime  `json:"started_at"`
-	Restarts  int        `json:"restarts"`
-	LastExit  *FieldExit `json:"last_exit"`
+	State     string      `json:"state"`
+	PID       int         `json:"pid"`
+	StartedAt workerTime  `json:"started_at"`
+	Restarts  int         `json:"restarts"`
+	LastExit  *WorkerExit `json:"last_exit"`
 }
 
-// FieldExit is how a Field's process last ended: an exit status or the signal
+// WorkerExit is how a Worker's process last ended: an exit status or the signal
 // that ended it, and a bounded excerpt of what it wrote to stderr on the way.
-type FieldExit struct {
-	At      fieldTime   `json:"at"`
-	Status  *int        `json:"status"`
-	Signal  fieldSignal `json:"signal"`
-	Excerpt string      `json:"excerpt"`
+type WorkerExit struct {
+	At      workerTime   `json:"at"`
+	Status  *int         `json:"status"`
+	Signal  workerSignal `json:"signal"`
+	Excerpt string       `json:"excerpt"`
 }
 
-// fieldTime reads a timestamp in either shape a supervisor may write: an
+// workerTime reads a timestamp in either shape a supervisor may write: an
 // RFC 3339 string, or a number of Unix seconds (milliseconds when the number is
 // too large to be seconds). The zero value means the report carried none.
-type fieldTime struct{ time.Time }
+type workerTime struct{ time.Time }
 
-func (t *fieldTime) UnmarshalJSON(b []byte) error {
+func (t *workerTime) UnmarshalJSON(b []byte) error {
 	raw := strings.TrimSpace(string(b))
 	if raw == "" || raw == "null" {
 		return nil
@@ -70,14 +70,14 @@ func (t *fieldTime) UnmarshalJSON(b []byte) error {
 		}
 		parsed, err := time.Parse(time.RFC3339Nano, s)
 		if err != nil {
-			return fmt.Errorf("a field timestamp %q is not RFC 3339: %w", s, err)
+			return fmt.Errorf("a worker timestamp %q is not RFC 3339: %w", s, err)
 		}
 		t.Time = parsed
 		return nil
 	}
 	n, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
-		return fmt.Errorf("a field timestamp %s is neither a string nor a number", raw)
+		return fmt.Errorf("a worker timestamp %s is neither a string nor a number", raw)
 	}
 	if n <= 0 {
 		return nil
@@ -93,11 +93,11 @@ func (t *fieldTime) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// fieldSignal reads the signal that ended a process, as a name ("SIGKILL") or
+// workerSignal reads the signal that ended a process, as a name ("SIGKILL") or
 // a number (9). Empty means the process exited rather than being signalled.
-type fieldSignal string
+type workerSignal string
 
-func (s *fieldSignal) UnmarshalJSON(b []byte) error {
+func (s *workerSignal) UnmarshalJSON(b []byte) error {
 	raw := strings.TrimSpace(string(b))
 	switch {
 	case raw == "" || raw == "null":
@@ -107,121 +107,121 @@ func (s *fieldSignal) UnmarshalJSON(b []byte) error {
 		if err := json.Unmarshal(b, &name); err != nil {
 			return err
 		}
-		*s = fieldSignal(name)
+		*s = workerSignal(name)
 	default:
-		*s = fieldSignal("signal " + raw)
+		*s = workerSignal("signal " + raw)
 	}
 	return nil
 }
 
-// FetchFields reads the active slice's Fields. Data-only so `drift slice info`
+// FetchWorkers reads the active slice's Workers. Data-only so `drift slice info`
 // can share it.
-func FetchFields() ([]FieldStatus, error) {
-	resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/atomic/fields", nil)
+func FetchWorkers() ([]WorkerStatus, error) {
+	resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/atomic/workers", nil)
 	if err != nil {
-		return nil, common.TransportError("read the slice's fields", err)
+		return nil, common.TransportError("read the slice's workers", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := common.CheckResponse(resp, "read the slice's fields")
+	body, err := common.CheckResponse(resp, "read the slice's workers")
 	if err != nil {
 		return nil, err
 	}
 
 	// The supervisor answers a bare list. A relay that wraps it in an object is
-	// read too, rather than decoded into nothing and reported as no fields.
-	var fields []FieldStatus
-	if err := json.Unmarshal(body, &fields); err != nil {
+	// read too, rather than decoded into nothing and reported as no workers.
+	var workers []WorkerStatus
+	if err := json.Unmarshal(body, &workers); err != nil {
 		var wrapped struct {
-			Fields []FieldStatus `json:"fields"`
+			Workers []WorkerStatus `json:"workers"`
 		}
 		if werr := json.Unmarshal(body, &wrapped); werr != nil {
-			return nil, fmt.Errorf("Couldn't read the slice's fields: the API response didn't look right (%w)", err)
+			return nil, fmt.Errorf("Couldn't read the slice's workers: the API response didn't look right (%w)", err)
 		}
-		fields = wrapped.Fields
+		workers = wrapped.Workers
 	}
-	sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
-	return fields, nil
+	sort.Slice(workers, func(i, j int) bool { return workers[i].Name < workers[j].Name })
+	return workers, nil
 }
 
-// RestartField asks the supervisor to start a Field again now: a paused one
+// RestartWorker asks the supervisor to start a Worker again now: a paused one
 // leaves the pause, one in backoff stops waiting, and a running one is stopped
 // gracefully and started again.
-func RestartField(name string) error {
-	target := common.APIBaseURL + "/ops/atomic/fields/restart?field=" + url.QueryEscape(name)
+func RestartWorker(name string) error {
+	target := common.APIBaseURL + "/ops/atomic/workers/restart?worker=" + url.QueryEscape(name)
 	resp, err := common.DoRequest(http.MethodPost, target, nil)
 	if err != nil {
-		return common.TransportError("restart the field", err)
+		return common.TransportError("restart the worker", err)
 	}
 	defer resp.Body.Close()
-	_, err = common.CheckResponse(resp, "restart the field")
+	_, err = common.CheckResponse(resp, "restart the worker")
 	return err
 }
 
-// fieldsNow is the clock uptimes and ages are measured against, so a test can
+// workersNow is the clock uptimes and ages are measured against, so a test can
 // fix it.
-var fieldsNow = time.Now
+var workersNow = time.Now
 
-// Fields is `drift atomic fields` and its `restart` subcommand.
-func Fields() *cobra.Command {
+// Workers is `drift atomic workers` and its `restart` subcommand.
+func Workers() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "fields",
-		Short: "List the slice's fields: state, uptime, restarts and last exit",
-		Long: "A field is a long-running worker: the slice keeps exactly one process for each " +
-			"declared field, restarts it when it exits, and pauses it after five exits in ten " +
-			"minutes.\n\nThis lists every field the slice runs, with its state (running, backoff, " +
+		Use:   "workers",
+		Short: "List the slice's workers: state, uptime, restarts and last exit",
+		Long: "A worker is a long-running process: the slice keeps exactly one process for each " +
+			"declared worker, restarts it when it exits, and pauses it after five exits in ten " +
+			"minutes.\n\nThis lists every worker the slice runs, with its state (running, backoff, " +
 			"paused or stopped), how long it has been up, how often it has been restarted, and how " +
-			"it last stopped. Its output is in `drift atomic logs <field>`.",
-		Example: "  drift atomic fields\n  drift atomic fields restart sequencer\n  drift atomic logs sequencer",
+			"it last stopped. Its output is in `drift atomic logs <worker>`.",
+		Example: "  drift atomic workers\n  drift atomic workers restart sequencer\n  drift atomic logs sequencer",
 		GroupID: "operations",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fields, err := FetchFields()
+			workers, err := FetchWorkers()
 			if err != nil {
 				return err
 			}
-			RenderFields(cmd.OutOrStdout(), fields)
+			RenderWorkers(cmd.OutOrStdout(), workers)
 			return nil
 		},
 	}
-	cmd.AddCommand(fieldsRestartCmd())
+	cmd.AddCommand(workersRestartCmd())
 	return cmd
 }
 
-func fieldsRestartCmd() *cobra.Command {
+func workersRestartCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "restart <field>",
-		Short: "Start a field again now, including one paused after a crash loop",
-		Long: "Asks the slice to start the field again: a paused field leaves the pause, one " +
+		Use:   "restart <worker>",
+		Short: "Start a worker again now, including one paused after a crash loop",
+		Long: "Asks the slice to start the worker again: a paused worker leaves the pause, one " +
 			"waiting out a backoff starts now, and a running one is stopped gracefully (SIGTERM, " +
 			"then SIGKILL after ten seconds) and started again. Nothing is rebuilt or redeployed.",
-		Example:      "  drift atomic fields restart sequencer",
+		Example:      "  drift atomic workers restart sequencer",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// The booking key every other surface prints is accepted as well
-			// as the bare name the supervisor keys a field by.
-			name := strings.TrimPrefix(args[0], deploy.FieldMethod+":")
-			if err := RestartField(name); err != nil {
+			// as the bare name the supervisor keys a worker by.
+			name := strings.TrimPrefix(args[0], deploy.WorkerMethod+":")
+			if err := RestartWorker(name); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Field %q is restarting. `drift atomic fields` shows when it is up.\n", name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Worker %q is restarting. `drift atomic workers` shows when it is up.\n", name)
 			return nil
 		},
 	}
 }
 
-// RenderFields prints the table, then the stderr excerpt of every field that
-// last stopped with one, then what to do about a paused field.
-func RenderFields(w io.Writer, fields []FieldStatus) {
-	if len(fields) == 0 {
-		fmt.Fprintln(w, "No fields on this slice.")
+// RenderWorkers prints the table, then the stderr excerpt of every worker that
+// last stopped with one, then what to do about a paused worker.
+func RenderWorkers(w io.Writer, workers []WorkerStatus) {
+	if len(workers) == 0 {
+		fmt.Fprintln(w, "No workers on this slice.")
 		return
 	}
-	now := fieldsNow()
+	now := workersNow()
 
 	rows := [][]string{{"NAME", "STATE", "UPTIME", "RESTARTS", "LAST EXIT"}}
-	for _, f := range fields {
+	for _, f := range workers {
 		rows = append(rows, []string{f.Name, stateLabel(f.State), uptimeLabel(f, now),
 			strconv.Itoa(f.Restarts), lastExitLabel(f.LastExit, now)})
 	}
@@ -243,7 +243,7 @@ func RenderFields(w io.Writer, fields []FieldStatus) {
 		fmt.Fprintln(w, strings.TrimRight(b.String(), " "))
 	}
 
-	for _, f := range fields {
+	for _, f := range workers {
 		if f.LastExit == nil || strings.TrimSpace(f.LastExit.Excerpt) == "" {
 			continue
 		}
@@ -253,19 +253,19 @@ func RenderFields(w io.Writer, fields []FieldStatus) {
 		}
 	}
 
-	for _, f := range fields {
+	for _, f := range workers {
 		if f.State == "paused" {
 			fmt.Fprintf(w, "\n%s is paused after exiting repeatedly. Fix what its last exit names, "+
-				"redeploy it, or start it again with `drift atomic fields restart %s`.\n", f.Name, f.Name)
+				"redeploy it, or start it again with `drift atomic workers restart %s`.\n", f.Name, f.Name)
 		}
 	}
 }
 
-// FieldSummary is one field on one line, for a view with room for no table:
+// WorkerSummary is one worker on one line, for a view with room for no table:
 // its state, its uptime when running, its restarts, and its last exit when it
 // is not running.
-func FieldSummary(f FieldStatus) string {
-	now := fieldsNow()
+func WorkerSummary(f WorkerStatus) string {
+	now := workersNow()
 	parts := []string{stateLabel(f.State)}
 	if up := uptimeLabel(f, now); up != "-" {
 		parts = append(parts, "up "+up)
@@ -291,9 +291,9 @@ func stateLabel(state string) string {
 	return state
 }
 
-// uptimeLabel is how long a running field's current process has been up. A
-// field that is not running has no uptime, which is a dash rather than a zero.
-func uptimeLabel(f FieldStatus, now time.Time) string {
+// uptimeLabel is how long a running worker's current process has been up. A
+// worker that is not running has no uptime, which is a dash rather than a zero.
+func uptimeLabel(f WorkerStatus, now time.Time) string {
 	if f.State != "running" || f.StartedAt.IsZero() {
 		return "-"
 	}
@@ -301,7 +301,7 @@ func uptimeLabel(f FieldStatus, now time.Time) string {
 }
 
 // lastExitLabel says how the previous process ended and how long ago.
-func lastExitLabel(e *FieldExit, now time.Time) string {
+func lastExitLabel(e *WorkerExit, now time.Time) string {
 	if e == nil {
 		return "-"
 	}

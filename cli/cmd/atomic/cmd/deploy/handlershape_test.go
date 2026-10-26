@@ -57,7 +57,7 @@ func TestHandlerShapeHint_StaysSilentOnAnOrdinaryBuildError(t *testing.T) {
 }
 
 // The mismatch has to be about THIS handler. An assignment mismatch somewhere
-// else in the element is the user's own bug, and claiming it is the entry point's
+// else in the backend is the user's own bug, and claiming it is the entry point's
 // shape points them at the wrong file.
 func TestHandlerShapeHint_OnlyFiresForTheFunctionBeingBuilt(t *testing.T) {
 	other := `./lib.go:9:2: assignment mismatch: 2 variables but helper returns 1 value`

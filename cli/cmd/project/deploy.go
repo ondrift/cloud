@@ -41,7 +41,7 @@ var atomicForce bool
 // preflightManifest is everything that can refuse a file before the network is
 // asked, returned with the build it read so the caller can hold the bookings to
 // the live slice.
-func preflightManifest(m *Manifest) ([]atomic_cmd.Element, error, error) {
+func preflightManifest(m *Manifest) ([]atomic_cmd.Backend, error, error) {
 	// Route collisions, before the slice diff and the cost-confirm, so a path
 	// clash fails at once rather than mid-deploy.
 	if err := checkRouteCollisions(m); err != nil {
@@ -58,12 +58,12 @@ func preflightManifest(m *Manifest) ([]atomic_cmd.Element, error, error) {
 	// needs (CheckSlotBookings), which the Driftfile cannot say.
 	//
 	// A build failure is not reported here: applyAtomic surfaces a missing
-	// handler or a mixed-language element with the message built for it. A
-	// Field written in anything but Go, and a concurrency the Pulse cannot
-	// have, ARE: BuildElements refuses each before anything is built, and that
+	// handler or a mixed-language backend with the message built for it. A
+	// Worker written in anything but Go, and a concurrency the Function cannot
+	// have, ARE: BuildBackends refuses each before anything is built, and that
 	// refusal is the message.
-	els, berr := atomic_cmd.BuildElements(AtomicSpecs(m))
-	if errors.Is(berr, atomic_cmd.ErrFieldLanguage) || errors.Is(berr, atomic_cmd.ErrConcurrency) {
+	els, berr := atomic_cmd.BuildBackends(AtomicSpecs(m))
+	if errors.Is(berr, atomic_cmd.ErrWorkerLanguage) || errors.Is(berr, atomic_cmd.ErrConcurrency) {
 		return nil, nil, berr
 	}
 
@@ -138,7 +138,7 @@ func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.
 	// The list outlives this check: the idle-slot report at the end reads it.
 	deployedFns, derr := atomic_cmd.DeployedFunctions()
 	if derr != nil {
-		fmt.Fprintf(out, "  %s couldn't check for pulses or fields the Driftfile no longer names: %v\n",
+		fmt.Fprintf(out, "  %s couldn't check for functions or workers the Driftfile no longer names: %v\n",
 			common.Hint("·"), derr)
 	} else {
 		ReportOrphanedFunctions(m, deployedFns, out)
@@ -170,7 +170,7 @@ func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.
 		return err
 	}
 	// Alerts are not reconciled here: `drift apply` plans them, asks about the
-	// ones the file no longer names, and sets them once the pulses they watch
+	// ones the file no longer names, and sets them once the functions they watch
 	// are deployed (see applyAlerts).
 	// Canvas is asked separately: applyCanvas returns early when the manifest
 	// declares no sites, the case where every live site is unnamed.
@@ -264,13 +264,13 @@ func checkRouteCollisions(m *Manifest) error {
 	return atomic_cmd.CheckCollisions(AtomicSpecs(m))
 }
 
-// applyAtomic ships every Pulse and Field the Driftfile declares, element by
-// element.
+// applyAtomic ships every Function and Worker the Driftfile declares, backend by
+// backend.
 //
-// There is ONE path. Which slots exist, which element each belongs to and how
+// There is ONE path. Which slots exist, which backend each belongs to and how
 // each is guarded all come from the manifest, so the deploy no longer has a
-// layout to detect: an element is a group of declared slots, and its directory
-// follows from its name. A Field is built in its element beside the Pulses,
+// layout to detect: a backend is a group of declared slots, and its directory
+// follows from its name. A Worker is built in its backend beside the Functions,
 // with its own entry point.
 func applyAtomic(m *Manifest, out io.Writer) error {
 	// Publish the Driftfile's declared schedules before anything ships. Every
@@ -283,23 +283,23 @@ func applyAtomic(m *Manifest, out io.Writer) error {
 	if len(specs) == 0 {
 		return nil
 	}
-	elements, err := atomic_cmd.BuildElements(specs)
+	backends, err := atomic_cmd.BuildBackends(specs)
 	if err != nil {
-		return err // a missing handler, a mixed-language element — surface loudly
+		return err // a missing handler, a mixed-language backend — surface loudly
 	}
-	return applyAtomicElements(elements, out)
+	return applyAtomicBackends(backends, out)
 }
 
-// elementUnchanged reports whether every function in el already matches the
-// deployed digest (so the whole element can be skipped — no stage, no build).
+// backendUnchanged reports whether every function in el already matches the
+// deployed digest (so the whole backend can be skipped — no stage, no build).
 //
-// PER FUNCTION, against DeployDigest, which is the element's build digest plus
-// that function's own declaration. The comparison was against the bare element
+// PER FUNCTION, against DeployDigest, which is the backend's build digest plus
+// that function's own declaration. The comparison was against the bare backend
 // digest, so a function whose source was untouched skipped even when its gate,
 // its secrets, its env or its `cron:` had changed — and a skip sends nothing at
 // all, so the change never reached the operator. The deploy printed
 // `(unchanged)` beside it, which was true of the code and false of the function.
-func elementUnchanged(el atomic_cmd.Element, digest string, deployed map[string]string) bool {
+func backendUnchanged(el atomic_cmd.Backend, digest string, deployed map[string]string) bool {
 	if digest == "" {
 		return false
 	}
@@ -311,10 +311,10 @@ func elementUnchanged(el atomic_cmd.Element, digest string, deployed map[string]
 	return true
 }
 
-// applyAtomicElements deploys the project's Atomic functions Element by Element.
-// Each Go element is staged + dependency-resolved once, then every function is
-// compiled and shipped; an unchanged element is skipped wholesale.
-func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
+// applyAtomicBackends deploys the project's Atomic functions Backend by Backend.
+// Each Go backend is staged + dependency-resolved once, then every function is
+// compiled and shipped; an unchanged backend is skipped wholesale.
+func applyAtomicBackends(backends []atomic_cmd.Backend, out io.Writer) error {
 	fmt.Fprintf(out, "  %s\n", common.AtomicHeader())
 
 	// (Route collisions are caught pre-network in checkRouteCollisions, run by
@@ -325,25 +325,25 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 		if d, err := atomic_cmd.DeployedDigests(); err == nil {
 			deployed = d
 		} else {
-			fmt.Fprintf(out, "  %s couldn't check which pulses and fields are unchanged, so deploying all of them\n", common.Hint("·"))
+			fmt.Fprintf(out, "  %s couldn't check which functions and workers are unchanged, so deploying all of them\n", common.Hint("·"))
 		}
 	}
 
 	deployedCount, skippedCount := 0, 0
-	for _, el := range elements {
-		// One flat digest per element — any top-level source change rebuilds all
-		// its functions; named-element subdirs never bleed into a Default digest.
-		digest, _ := atomic_cmd.ElementDigest(el.Dir, el.Name)
+	for _, el := range backends {
+		// One flat digest per backend — any top-level source change rebuilds all
+		// its functions; named-backend subdirs never bleed into a Default digest.
+		digest, _ := atomic_cmd.BackendDigest(el.Dir, el.Name)
 
-		// Header the element only when the layout is non-trivial (>1 element or
-		// a named one) — a lone Default element shouldn't add visual noise. An
-		// unchanged element is headed too, so every slot line sits under the
-		// element it belongs to.
-		if len(elements) > 1 || el.Name != atomic_cmd.DefaultElementName {
-			fmt.Fprintf(out, "  %s\n", common.Hint(fmt.Sprintf("element %s (%s)", el.Name, el.Lang)))
+		// Header the backend only when the layout is non-trivial (>1 backend or
+		// a named one) — a lone Default backend shouldn't add visual noise. An
+		// unchanged backend is headed too, so every slot line sits under the
+		// backend it belongs to.
+		if len(backends) > 1 || el.Name != atomic_cmd.DefaultBackendName {
+			fmt.Fprintf(out, "  %s\n", common.Hint(fmt.Sprintf("backend %s (%s)", el.Name, el.Lang)))
 		}
 
-		if !atomicForce && elementUnchanged(el, digest, deployed) {
+		if !atomicForce && backendUnchanged(el, digest, deployed) {
 			for _, f := range el.Funcs {
 				fmt.Fprintf(out, "    %s %s %s\n", common.Check(), f.MethodPath(), common.Hint("(unchanged)"))
 				skippedCount++
@@ -356,13 +356,13 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 		// done, so a line written anywhere else lands above the heading.
 		switch {
 		case el.Lang == "go":
-			if err := atomic_cmd.DeployGoElement(el, digest, out); err != nil {
-				return fmt.Errorf("atomic deploy failed in element %q: %w", el.Name, err)
+			if err := atomic_cmd.DeployGoBackend(el, digest, out); err != nil {
+				return fmt.Errorf("atomic deploy failed in backend %q: %w", el.Name, err)
 			}
 			deployedCount += len(el.Funcs)
 		case el.Lang == "python" || el.Lang == "node" || el.Lang == "ruby" || el.Lang == "php":
-			if err := atomic_cmd.DeployInterpretedElement(el, digest, out); err != nil {
-				return fmt.Errorf("atomic deploy failed in element %q: %w", el.Name, err)
+			if err := atomic_cmd.DeployInterpretedBackend(el, digest, out); err != nil {
+				return fmt.Errorf("atomic deploy failed in backend %q: %w", el.Name, err)
 			}
 			deployedCount += len(el.Funcs)
 		case len(el.Funcs) == 1:
@@ -373,8 +373,8 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 			fmt.Fprintf(out, "    %s %s\n", common.Check(), el.Funcs[0].MethodPath())
 			deployedCount++
 		default:
-			return fmt.Errorf("element %q is %s with %d functions — multi-function %s "+
-				"elements aren't built yet; keep one function per folder for %s until it lands",
+			return fmt.Errorf("backend %q is %s with %d functions — multi-function %s "+
+				"backends aren't built yet; keep one function per folder for %s until it lands",
 				el.Name, el.Lang, len(el.Funcs), el.Lang, el.Lang)
 		}
 	}
@@ -395,11 +395,11 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 //
 // # Why Backbone goes first
 //
-// An Atomic slot runs the moment it is deployed. A Field is started by the
-// slice's supervisor at once, and a Pulse can be called as soon as it is
+// An Atomic slot runs the moment it is deployed. A Worker is started by the
+// slice's supervisor at once, and a Function can be called as soon as it is
 // routed, so whatever it reads and writes has to exist by then. Run together,
-// a Field's first query could meet no table, and a seed that only runs into an
-// empty database was skipped for good once the Field had written its first row.
+// a Worker's first query could meet no table, and a seed that only runs into an
+// empty database was skipped for good once the Worker had written its first row.
 //
 // The order is safe because nothing in Backbone depends on Atomic. Every step
 // above reads only the Driftfile and the files it names, and talks only to the

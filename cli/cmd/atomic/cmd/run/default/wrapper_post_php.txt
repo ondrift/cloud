@@ -11,7 +11,7 @@ function handle($req) {
     }
     $result = {{FUNC}}($body, $req);
     $out = ['status' => $result[0], 'message' => $result[1], 'payload' => $result[2]];
-    // A fourth element is optional. It carries response headers, and a
+    // A fourth backend is optional. It carries response headers, and a
     // Content-Type that is not JSON makes the payload be written raw instead of
     // wrapped. A three-element return has no [3], and isset() keeps that from
     // being a notice.

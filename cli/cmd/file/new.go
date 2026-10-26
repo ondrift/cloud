@@ -2,12 +2,12 @@ package file
 
 // new.go — scaffold a Driftfile that deploys.
 //
-// The starter file writes what the format requires (each pulse's handler and
+// The starter file writes what the format requires (each function's handler and
 // memory) and comments what it does not, because the gap
 // between a file that parses and one that deploys is where a first run stalls.
 //
-// The scaffold ships one complete pulse rather than an empty element: an empty
-// element is refused and teaches nothing, and a user's first edit should be
+// The scaffold ships one complete function rather than an empty backend: an empty
+// backend is refused and teaches nothing, and a user's first edit should be
 // changing a real block rather than inventing the shape of one.
 //
 // # Guided, at a terminal
@@ -15,7 +15,7 @@ package file
 // A person starting a project has no file to edit yet, and `drift apply`
 // creates the slice the file names, so the file is where a new slice begins. At
 // a terminal this asks the handful of things the platform cannot guess (the
-// slice's name, the first pulse's method, route and language, and a folder to serve as the site) and writes the file from the
+// slice's name, the first function's method, route and language, and a folder to serve as the site) and writes the file from the
 // answers. Anything given as a flag is not asked, and `--yes` takes every default,
 // so a script gets the same file a person gets by pressing Enter.
 
@@ -42,10 +42,10 @@ func getNewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "new [path]",
 		Short: "Write a starter Driftfile, asking for the few things it needs",
-		Long: "Creates a Driftfile declaring a slice and one pulse, with everything the format " +
+		Long: "Creates a Driftfile declaring a slice and one function, with everything the format " +
 			"requires already written, so the first `drift plan` is not a validation error.\n\n" +
 			"At a terminal it asks for the slice's name, the first " +
-			"pulse's method, route and language, and a folder to serve as the site. A flag answers " +
+			"function's method, route and language, and a folder to serve as the site. A flag answers " +
 			"its question in advance, and --yes accepts every default, which is what a script gets.\n\n" +
 			"`drift apply` then creates the slice the file names.",
 		Example: "  drift file new\n" +
@@ -114,12 +114,12 @@ func getNewCmd() *cobra.Command {
 				fmt.Printf("  %s\n", common.Hint("named after the directory: pass --name, or edit the slice block by hand"))
 			}
 			// NAME THE COMMAND THAT WRITES THE SOURCE, because this file declares
-			// a pulse that does not exist yet.
+			// a function that does not exist yet.
 			//
-			// The scaffolded block is `pulse "GET /hello"` with `handler =
+			// The scaffolded block is `function "GET /hello"` with `handler =
 			// "GetHello"`, and nothing on disk defines GetHello — a Driftfile
-			// declares pulses, it does not create them. So `drift file new`
-			// followed by `drift plan` fails at the element's folder, and the
+			// declares functions, it does not create them. So `drift file new`
+			// followed by `drift plan` fails at the backend's folder, and the
 			// failure names what is missing rather than the command that would
 			// produce it. A new user's second command dead-ends on their first.
 			//
@@ -136,9 +136,9 @@ func getNewCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.Name, "name", "", "slice name (default: DRIFT_SLICE, else the directory name)")
-	cmd.Flags().StringVar(&opts.Method, "method", "", "the first pulse's HTTP method (default get)")
-	cmd.Flags().StringVar(&opts.Route, "route", "", "the first pulse's route under /api/ (default hello)")
-	cmd.Flags().StringVar(&opts.Lang, "lang", "", "the first pulse's language: go, python, node, ruby, php or rust (default go)")
+	cmd.Flags().StringVar(&opts.Method, "method", "", "the first function's HTTP method (default get)")
+	cmd.Flags().StringVar(&opts.Route, "route", "", "the first function's route under /api/ (default hello)")
+	cmd.Flags().StringVar(&opts.Lang, "lang", "", "the first function's language: go, python, node, ruby, php or rust (default go)")
 	cmd.Flags().StringVar(&opts.Canvas, "canvas", "", "path to a static site directory to serve")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing Driftfile")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask: take a flag's value or the default for everything")
@@ -163,11 +163,11 @@ func nameLooksValid(s string) bool {
 	return true
 }
 
-// The ONE pulse the starter Driftfile declares when nothing says otherwise, and
+// The ONE function the starter Driftfile declares when nothing says otherwise, and
 // the only place its default route, method, language and booking are written
 // down.
 //
-// Two things are generated from these values: the pulse block in the
+// Two things are generated from these values: the function block in the
 // scaffolded file, and the `drift atomic new` command printed beside it. They
 // have to agree — the block names a handler that only that exact command
 // produces — and a second copy of "hello"/"get" in either half is how they stop
@@ -178,7 +178,7 @@ const (
 	starterMethod = "get"
 	starterLang   = "go"
 	// starterMemory is above the floor a compiled language needs, so the
-	// starter's Go pulse is not refused by the language it is written in.
+	// starter's Go function is not refused by the language it is written in.
 	starterMemory = "32MiB"
 )
 
@@ -274,7 +274,7 @@ func (o *starterOptions) guide(cmd *cobra.Command, nameFrom string, ask func(lab
 	}); err != nil {
 		return err
 	}
-	if err := pick("method", &o.Method, "First pulse's method ("+strings.Join(starterMethods, "/")+")", starterMethod, func() error {
+	if err := pick("method", &o.Method, "First function's method ("+strings.Join(starterMethods, "/")+")", starterMethod, func() error {
 		if !contains(starterMethods, strings.ToLower(o.Method)) {
 			return fmt.Errorf("%q must be one of %s", o.Method, strings.Join(starterMethods, ", "))
 		}
@@ -303,7 +303,7 @@ func (o *starterOptions) guide(cmd *cobra.Command, nameFrom string, ask func(lab
 }
 
 // fnCommand is the `drift atomic new` invocation that writes source for the
-// pulse the Driftfile declares.
+// function the Driftfile declares.
 func (o starterOptions) fnCommand() string {
 	return fmt.Sprintf("drift atomic new %s -l %s -m %s", o.Route, o.Lang, o.Method)
 }
@@ -333,16 +333,16 @@ func (o starterOptions) render() string {
 	b.WriteString("# can be one of your free slices, and `drift plan` says which it is.\n")
 	b.WriteString("slice \"" + o.Name + "\" {}\n\n")
 
-	b.WriteString("# The Atomic pillar: every element the slice runs. An element is one folder\n")
+	b.WriteString("# The Atomic pillar: every backend the slice runs. A backend is one folder\n")
 	b.WriteString("# of one language's source: \"default\" is ./atomic itself, and any other name\n")
-	b.WriteString("# is ./atomic/<name>. Each pulse and field is declared inside the element its\n")
+	b.WriteString("# is ./atomic/<name>. Each function and worker is declared inside the backend its\n")
 	b.WriteString("# handler lives in; nothing in your source declares one.\n")
 	b.WriteString("atomic {\n")
-	b.WriteString("  element \"" + atomic_cmd.DefaultElementName + "\" {\n")
-	b.WriteString("    # A pulse answers one call with one result. It is labelled with its method\n")
+	b.WriteString("  backend \"" + atomic_cmd.DefaultBackendName + "\" {\n")
+	b.WriteString("    # A function answers one call with one result. It is labelled with its method\n")
 	b.WriteString("    # and route, or with QUEUE and the queue it drains: \"QUEUE orders\".\n")
-	b.WriteString("    # Long-running workers are `field` blocks beside it.\n")
-	b.WriteString("    pulse \"" + strings.ToUpper(o.Method) + " /" + o.Route + "\" {\n")
+	b.WriteString("    # Long-running processes are `worker` blocks beside it.\n")
+	b.WriteString("    function \"" + strings.ToUpper(o.Method) + " /" + o.Route + "\" {\n")
 	// Derived, never written out. This handler exists only once
 	// `fnCommand()` has been run, and that command's own naming rule is the one
 	// that decides what it will be called.

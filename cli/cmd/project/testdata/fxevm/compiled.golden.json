@@ -2,17 +2,17 @@
   "fitsFree": false,
   "document": {
     "atomic": {
-      "elements": [
+      "backends": [
         {
           "dir": "atomic/evm",
-          "fields": [
+          "workers": [
             {
               "handler": "Sequencer",
               "name": "sequencer"
             }
           ],
           "name": "evm",
-          "pulses": [
+          "functions": [
             {
               "concurrent": true,
               "handler": "PostRPC",
@@ -32,7 +32,7 @@
         {
           "dir": "atomic/bench",
           "name": "bench",
-          "pulses": [
+          "functions": [
             {
               "handler": "GetBench",
               "method": "get",
@@ -87,7 +87,7 @@
     {
       "Name": "post:rpc",
       "Handler": "PostRPC",
-      "Element": "evm",
+      "Backend": "evm",
       "Dir": "atomic/evm",
       "Auth": "",
       "Response": "json",
@@ -96,7 +96,7 @@
     {
       "Name": "post:admin/reset",
       "Handler": "PostReset",
-      "Element": "evm",
+      "Backend": "evm",
       "Dir": "atomic/evm",
       "Auth": "apikey",
       "Response": "json",
@@ -105,16 +105,16 @@
     {
       "Name": "get:bench",
       "Handler": "GetBench",
-      "Element": "bench",
+      "Backend": "bench",
       "Dir": "atomic/bench",
       "Auth": "",
       "Response": "json",
       "Concurrent": false
     },
     {
-      "Name": "field:sequencer",
+      "Name": "worker:sequencer",
       "Handler": "Sequencer",
-      "Element": "evm",
+      "Backend": "evm",
       "Dir": "atomic/evm",
       "Auth": "",
       "Response": "",
@@ -148,10 +148,10 @@
           "method": "post"
         },
         {
-          "name": "field:sequencer",
+          "name": "worker:sequencer",
           "memory_bytes": 67108864,
           "route": "sequencer",
-          "method": "field"
+          "method": "worker"
         },
         {
           "name": "get:bench",
@@ -206,7 +206,7 @@
   },
   "write_only": [
     {
-      "Address": "pulse POST /admin/reset",
+      "Address": "function POST /admin/reset",
       "Kind": "api_key",
       "Env": "RESET_KEY"
     },
