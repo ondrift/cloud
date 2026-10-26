@@ -178,7 +178,7 @@ var formatDocs = map[string]formatDoc{
 		"warm process serve many calls at once; how many is the slice's to decide."},
 	"atomic.backend.function.stream": {typ: tString, doc: `Hold the connection open: "sse" for Server-Sent Events, ` +
 		`"ws" for WebSocket.`},
-	"atomic.backend.function.cron": {typ: tString, doc: "A five-worker cron expression that also runs the function on a " +
+	"atomic.backend.function.cron": {typ: tString, doc: "A five-field cron expression that also runs the function on a " +
 		"schedule. An HTTP function with a cron stays callable over HTTP."},
 	"atomic.backend.function.poll": {typ: tString, doc: `How often the slice looks in the queue this function drains, as a duration ` +
 		`from "50ms" to "60s". Only on a function labelled QUEUE. Left out, every 500ms.`},
@@ -229,7 +229,7 @@ var formatDocs = map[string]formatDoc{
 		"is billed at. A write past it is refused."},
 	"backbone.nosql.seed": {typ: tString, doc: "A JSONL file, one document per line, each with an _id, upserted on deploy."},
 	"backbone.nosql.ttl":  {typ: tDuration, doc: "How long a document lives after its last write."},
-	"backbone.nosql.unique": {typ: tList, doc: "Workers whose values must be unique in the collection; a write that " +
+	"backbone.nosql.unique": {typ: tList, doc: "Fields whose values must be unique in the collection; a write that " +
 		"repeats one is refused."},
 
 	"backbone.blobs":      {doc: "A bucket in the slice's blob store."},

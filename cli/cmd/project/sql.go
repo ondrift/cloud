@@ -158,7 +158,7 @@ func fetchLiveSQL() ([]liveSQLDatabase, error) {
 // call and prints what the slice applied.
 //
 // The 200 report is REQUIRED. A slice that predates migrations takes the call,
-// runs the schema, ignores the worker and answers 204, so anything but a report
+// runs the schema, ignores the field and answers 204, so anything but a report
 // means the files were never applied.
 func applyMigrations(m *Manifest, name string, entry Node, out io.Writer) error {
 	dir := entry.Str("migrations")

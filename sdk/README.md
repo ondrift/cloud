@@ -231,7 +231,7 @@ require "drift"   # requires Ruby 3.0+
 # Declared in the Driftfile as: name get:reviewer/queue, handler get_reviewer_queue
 def get_reviewer_queue(req)
   rows = Drift::Backbone::Nosql.collection("submissions").list
-  [200, "OK", { "count" => rows.length }]   # a 3-backend ARRAY, not a hash
+  [200, "OK", { "count" => rows.length }]   # a 3-element ARRAY, not a hash
 end
 # No Drift.run here: the generated wrapper calls it.
 ```

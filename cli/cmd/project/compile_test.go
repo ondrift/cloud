@@ -638,7 +638,7 @@ func TestCompile_TheBillingKeyIsRefused(t *testing.T) {
 	}
 }
 
-// edge.rate_limit and limits.requests_per_minute are one worker of the shape,
+// edge.rate_limit and limits.requests_per_minute are one field of the shape,
 // so the file may write it once.
 func TestCompile_TheRateLimitHasOneHome(t *testing.T) {
 	withRealSchema(t)

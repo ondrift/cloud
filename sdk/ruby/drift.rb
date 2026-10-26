@@ -7,7 +7,7 @@
 #
 #   1. be a top-level `def`, so the wrapper can call it by the name the
 #      Driftfile's `handler:` gives.
-#   2. return the 3-backend array `[status, message, payload]`.
+#   2. return the 3-element array `[status, message, payload]`.
 #
 # The signature differs by method, because the wrapper unwraps the body for
 # you on writes:

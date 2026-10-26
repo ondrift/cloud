@@ -5,10 +5,10 @@ import "testing"
 // `response` has to survive the CLI's own hop, which is the FIRST of three
 // parsers between the Driftfile and the running function.
 //
-// Each hop builds its own struct and drops what it has no worker for, and none
+// Each hop builds its own struct and drops what it has no field for, and none
 // of them fails when that happens: the deploy reports success and the endpoint
 // answers in the old shape. The only symptom is a third party unable to parse a
-// body — which is why the worker is asserted at every hop rather than trusted at
+// body — which is why the field is asserted at every hop rather than trusted at
 // any of them.
 func TestFunctionSpecCarriesTheDeclaredResponseShape(t *testing.T) {
 	withRealSchema(t)

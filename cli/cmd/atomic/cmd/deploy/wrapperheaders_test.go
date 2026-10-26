@@ -18,7 +18,7 @@ import (
 // that cannot name a header simply cannot reach it. That is what stopped a Node
 // function serving an OpenID4VP request object a wallet could parse.
 //
-// The wrapper was the only thing in the way: it destructured three backends and
+// The wrapper was the only thing in the way: it destructured three elements and
 // rebuilt three keys, so the header never left the function.
 //
 // Asserted on the generated source rather than by running it, because no
@@ -33,7 +33,7 @@ func TestNodeWrapperForwardsHandlerHeaders(t *testing.T) {
 		}
 		src := readFile(t, filepath.Join(dir, "app.js"))
 
-		// The fourth backend exists and reaches the response.
+		// The fourth element exists and reaches the response.
 		for _, want := range []string{
 			", headers]", // destructured off the handler's return
 			"out.headers = headers",
@@ -45,7 +45,7 @@ func TestNodeWrapperForwardsHandlerHeaders(t *testing.T) {
 		}
 
 		// And it is OPTIONAL, which is what keeps this additive: every handler
-		// already written returns three backends, and an unconditional
+		// already written returns three elements, and an unconditional
 		// assignment would put an empty headers key on every one of them.
 		if !strings.Contains(src, "if (headers)") {
 			t.Errorf("%s: headers are set unconditionally — a three-element return would "+
@@ -87,7 +87,7 @@ func TestPythonWrapperForwardsHandlerHeaders(t *testing.T) {
 		// four-element return raises ValueError inside the user's function and
 		// reads as their bug.
 		if strings.Contains(src, "status, message, payload = ") {
-			t.Errorf("%s: the wrapper unpacks a fixed three, so a fourth backend raises "+
+			t.Errorf("%s: the wrapper unpacks a fixed three, so a fourth element raises "+
 				"ValueError rather than being ignored:\n%s", method, src)
 		}
 
@@ -97,7 +97,7 @@ func TestPythonWrapperForwardsHandlerHeaders(t *testing.T) {
 	}
 }
 
-// Ruby tolerates a fourth backend in a multiple assignment silently, which is
+// Ruby tolerates a fourth element in a multiple assignment silently, which is
 // worse than Python's ValueError: a handler that returned headers would have
 // them discarded with no error anywhere. Indexing makes the discard impossible.
 func TestRubyWrapperForwardsHandlerHeaders(t *testing.T) {
@@ -117,7 +117,7 @@ func TestPHPWrapperForwardsHandlerHeaders(t *testing.T) {
 	})
 }
 
-// Rust is the one language that could not take a fourth tuple backend.
+// Rust is the one language that could not take a fourth tuple element.
 //
 // `let (status, message, payload) = f(req)` is fixed-arity and checked at
 // compile time, so widening it would fail to build against every handler
@@ -138,7 +138,7 @@ func TestRustWrapperForwardsHandlerHeaders(t *testing.T) {
 	}
 	src := readFile(t, filepath.Join(dir, "src", "main.rs"))
 	if !strings.Contains(src, "let (status, message, payload) =") {
-		t.Errorf("the wrapper no longer destructures exactly three backends, so every "+
+		t.Errorf("the wrapper no longer destructures exactly three elements, so every "+
 			"existing Rust handler fails to compile:\n%s", src)
 	}
 }

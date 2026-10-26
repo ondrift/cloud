@@ -97,7 +97,7 @@ func (n Node) List(path ...string) []any {
 	return l
 }
 
-// Nodes returns a list of objects, skipping any backend that is not one.
+// Nodes returns a list of objects, skipping any element that is not one.
 func (n Node) Nodes(path ...string) []Node {
 	raw := n.List(path...)
 	out := make([]Node, 0, len(raw))
@@ -188,7 +188,7 @@ func asNode(v any) (Node, bool) {
 	return nil, false
 }
 
-// Entries reads a list whose backends may be a bare STRING or a map, and yields
+// Entries reads a list whose elements may be a bare STRING or a map, and yields
 // them uniformly as Nodes — a bare string becoming {scalarKey: value}.
 //
 // The compiler writes `backbone.queues` as bare names and every other list as

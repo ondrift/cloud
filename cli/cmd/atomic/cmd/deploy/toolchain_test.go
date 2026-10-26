@@ -9,7 +9,7 @@ import "testing"
 // CEILING: a module declaring a newer patch than the image ships dies with
 // `go.mod requires go >= X (running Y; GOTOOLCHAIN=local)` and the only escape a
 // user has is DRIFT_BUILD_IMAGE_GO. Every module in the platform repo declares
-// 1.26.6 and this image is 1.26.2, so that was every platform backend.
+// 1.26.6 and this image is 1.26.2, so that was every platform element.
 
 // GOTOOLCHAIN=auto turns the tag into a FLOOR — Go fetches what the module asks
 // for. Without it the pin has to be chased forward on every Go release, and a
