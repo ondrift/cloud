@@ -436,8 +436,8 @@ func layoutCanvas(m *Manifest, dir string) error {
 // sets none of them.
 func thinDockerfile(base string) string {
 	return fmt.Sprintf(`FROM %s
-COPY runner $RUNNER_DIR
-COPY canvas $CANVAS_DATA_DIR
+COPY --chmod=a+rX runner $RUNNER_DIR
+COPY --chmod=a+rX canvas $CANVAS_DATA_DIR
 `, base)
 }
 
