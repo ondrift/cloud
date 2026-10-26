@@ -31,7 +31,7 @@ func fieldProject(t *testing.T, driftfile string) string {
 	return path
 }
 
-const fieldDriftfile = `slice "demo" { billing = "monthly" }
+const fieldDriftfile = `slice "demo" {}
 atomic {
   element "default" {
     pulse "GET /ping" {

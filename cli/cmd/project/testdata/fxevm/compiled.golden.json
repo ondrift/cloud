@@ -1,5 +1,5 @@
 {
-  "billing": "monthly",
+  "fitsFree": false,
   "document": {
     "atomic": {
       "elements": [

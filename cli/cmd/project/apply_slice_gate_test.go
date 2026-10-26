@@ -80,13 +80,13 @@ func assertApplyRefusesBeforeAnyRoute(t *testing.T, body, want string) {
 // the preflight accepts, which does reach the slice.
 func TestApply_ThePreflightRunsBeforeAnyRoute(t *testing.T) {
 	assertApplyRefusesBeforeAnyRoute(t,
-		"slice \"demo\" { billing = \"monthly\" }\ncanvas {\n  site \"/\" { dir = \"site\" }\n  site \"/a\" { dir = \"site\" }\n  site \"/a/\" { dir = \"site\" }\n}\n",
+		"slice \"demo\" {}\ncanvas {\n  site \"/\" { dir = \"site\" }\n  site \"/a\" { dir = \"site\" }\n  site \"/a/\" { dir = \"site\" }\n}\n",
 		`canvas site collision — these sites share a slug and would overwrite each other on the slice:
   - "a" is served by 2 sites: site → /a, site → /a`)
 
 	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
 	withRealSchema(t)
-	applyIn(t, "slice \"demo\" { billing = \"monthly\" }\ncanvas {\n  site \"/\" { dir = \"site\" }\n}\n", "site")
+	applyIn(t, "slice \"demo\" {}\ncanvas {\n  site \"/\" { dir = \"site\" }\n}\n", "site")
 	_ = runApply(applyOptions{noEnvFile: true, answers: noAnswers(), out: os.Stdout, in: strings.NewReader("")})
 	if rec.count("GET /ops/slice/get") == 0 {
 		t.Error("a file the preflight accepts never reached the slice, so the refusal above proves nothing")

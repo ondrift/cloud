@@ -68,7 +68,7 @@ const relocateSchema = `{
 // reported at the `env` attribute of the pulse that carries it.
 func TestAReservedEnvNameIsReportedWhereItIs(t *testing.T) {
 	withSchema(t, relocateSchema)
-	body := "slice \"demo\" { billing = \"monthly\" }\n" + // line 1
+	body := "slice \"demo\" {}\n" + // line 1
 		"atomic {\n" + // line 2
 		"  element \"api\" {\n" + // line 3
 		"    pulse \"GET /ping\" {\n" + // line 4
@@ -112,7 +112,7 @@ func TestAReservedEnvNameIsReportedWhereItIs(t *testing.T) {
 // refusal belongs to the pulse and must not drift onto its env.
 func TestAnOrdinaryErrorKeepsItsOwnLocation(t *testing.T) {
 	withSchema(t, relocateSchema)
-	body := "slice \"demo\" { billing = \"monthly\" }\n" + // line 1
+	body := "slice \"demo\" {}\n" + // line 1
 		"atomic {\n" + // line 2
 		"  element \"api\" {\n" + // line 3
 		"    pulse \"GET /ping\" {\n" + // line 4

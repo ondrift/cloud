@@ -12,7 +12,7 @@ import (
 // platform.
 func TestApplyDomains_AWildcardDomainIsAddedAsOne(t *testing.T) {
 	withRealSchema(t)
-	c, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {\n  billing = \"monthly\"\n}\n\n"+
+	c, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {}\n\n"+
 		"edge {\n  domain \"shop.example.com\" {\n    wildcard = true\n  }\n\n  domain \"plain.example.com\" {}\n}\n"))
 	if err != nil {
 		t.Fatalf("compile: %v", err)

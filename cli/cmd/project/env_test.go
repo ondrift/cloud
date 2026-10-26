@@ -109,7 +109,7 @@ func TestASecretReferenceResolvesFromTheEnvFile(t *testing.T) {
 
 	df := filepath.Join(dir, "Driftfile")
 	_ = os.WriteFile(df, []byte(
-		"slice \"app\" { billing = \"monthly\" }\nbackbone {\n  secret \"DB_PASS\" { value = env(\"DB_PASSWORD\") }\n}\n"), 0o600)
+		"slice \"app\" {}\nbackbone {\n  secret \"DB_PASS\" { value = env(\"DB_PASSWORD\") }\n}\n"), 0o600)
 
 	if _, err := applyVariableSources(dir, nil, true, ""); err != nil {
 		t.Fatal(err)

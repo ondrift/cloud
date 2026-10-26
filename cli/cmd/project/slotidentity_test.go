@@ -34,7 +34,7 @@ func TestSlotIdentity_TwoPathSitesKeepDistinctSlugs(t *testing.T) {
 
 // A collection entry names the slot it seeds.
 func TestSlotIdentity_ANosqlEntryNamesItsSlot(t *testing.T) {
-	m := parseSlots(t, "slice \"demo\" { billing = \"monthly\" }\nbackbone {\n  nosql \"ops\" { size = \"5MiB\" }\n}\n")
+	m := parseSlots(t, "slice \"demo\" {}\nbackbone {\n  nosql \"ops\" { size = \"5MiB\" }\n}\n")
 
 	entries := m.Slice().Entries("slot", "backbone", "nosql")
 	if len(entries) != 1 || entries[0].Str("slot") != "ops" {
@@ -47,7 +47,7 @@ func TestSlotIdentity_ANosqlEntryNamesItsSlot(t *testing.T) {
 // entry. Losing it turns a TTL'd collection into kept-forever with nothing
 // reporting it.
 func TestSlotIdentity_ANosqlEntryKeepsItsTTLAndItsOrder(t *testing.T) {
-	m := parseSlots(t, "slice \"demo\" { billing = \"monthly\" }\n"+
+	m := parseSlots(t, "slice \"demo\" {}\n"+
 		"backbone {\n  nosql \"ops\" {\n    size = \"5MiB\"\n    ttl  = \"30d\"\n  }\n"+
 		"  nosql \"events\" { size = \"5MiB\" }\n}\n")
 
@@ -67,7 +67,7 @@ func TestSlotIdentity_ANosqlEntryKeepsItsTTLAndItsOrder(t *testing.T) {
 // collection it neither seeds nor expires, and demanding either would make the
 // reference form unwriteable.
 func TestSlotIdentity_ASlotAloneIsAValidEntry(t *testing.T) {
-	if _, err := tryParseSlots(t, "slice \"demo\" { billing = \"monthly\" }\nbackbone {\n  nosql \"ops\" { size = \"5MiB\" }\n}\n"); err != nil {
+	if _, err := tryParseSlots(t, "slice \"demo\" {}\nbackbone {\n  nosql \"ops\" { size = \"5MiB\" }\n}\n"); err != nil {
 		t.Fatalf("a nosql block with neither seed nor ttl must parse: %v", err)
 	}
 }
@@ -75,7 +75,7 @@ func TestSlotIdentity_ASlotAloneIsAValidEntry(t *testing.T) {
 // canvasDriftfile writes one site per mount path, each serving the next
 // ./site-<letter> folder.
 func canvasDriftfile(paths ...string) string {
-	body := "slice \"demo\" { billing = \"monthly\" }\ncanvas {\n"
+	body := "slice \"demo\" {}\ncanvas {\n"
 	for i, p := range paths {
 		body += "  site \"" + p + "\" { dir = \"site-" + string(rune('a'+i)) + "\" }\n"
 	}

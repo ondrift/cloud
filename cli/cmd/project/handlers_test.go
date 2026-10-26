@@ -33,7 +33,7 @@ func normalise(s string) string { return s }
 	return root
 }
 
-const demoDriftfile = `slice "demo" { billing = "monthly" }
+const demoDriftfile = `slice "demo" {}
 
 atomic {
   element "default" {
@@ -153,7 +153,7 @@ func TestFunctionSpecs_BuildIntoElements(t *testing.T) {
 
 // --- declared configuration -------------------------------------------------
 
-const envDriftfile = `slice "demo" { billing = "monthly" }
+const envDriftfile = `slice "demo" {}
 
 atomic {
   element "default" {
@@ -223,7 +223,7 @@ func TestFunctionSpecs_CarryDeclaredEnv(t *testing.T) {
 
 // concurrencyDriftfile declares `concurrent` on a top-level Pulse and on a
 // Pulse inside an element, and leaves it out of a third.
-const concurrencyDriftfile = `slice "demo" { billing = "monthly" }
+const concurrencyDriftfile = `slice "demo" {}
 
 atomic {
   element "default" {
@@ -301,7 +301,7 @@ func TestFunctionSpecs_CarryDeclaredConcurrency(t *testing.T) {
 func TestFunctionSpecs_ConcurrencyOnAPythonPulseIsRefusedBeforeBuilding(t *testing.T) {
 	withFormatSchema(t)
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "Driftfile"), `slice "demo" { billing = "monthly" }
+	mustWrite(t, filepath.Join(root, "Driftfile"), `slice "demo" {}
 
 atomic {
   element "py" {
@@ -332,7 +332,7 @@ atomic {
 func TestParseDriftfile_TheSchemaRefusesAConcurrencyItCanSee(t *testing.T) {
 	withFormatSchema(t)
 	pulse := func(entry string) string {
-		return "slice \"demo\" { billing = \"monthly\" }\n\natomic {\n  element \"default\" {\n    pulse \"GET /ping\" {\n" +
+		return "slice \"demo\" {}\n\natomic {\n  element \"default\" {\n    pulse \"GET /ping\" {\n" +
 			"      handler = \"GetPing\"\n      memory = \"16MiB\"\n      " + entry + "\n    }\n  }\n}\n"
 	}
 	// The controls: the same Pulse concurrent or not is accepted, so a refusal
@@ -436,7 +436,7 @@ func TestCheckCompiledBookings_LeavesInterpretedBookingsAlone(t *testing.T) {
 	withSchema(t, floorSchema)
 
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "Driftfile"), `slice "demo" { billing = "monthly" }
+	mustWrite(t, filepath.Join(root, "Driftfile"), `slice "demo" {}
 
 atomic {
   element "default" {

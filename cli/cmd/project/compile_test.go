@@ -93,10 +93,10 @@ func TestIsYAML_ReadsTheFirstTokens(t *testing.T) {
 		{"slice: demo\n", true},
 		{"# a comment\n\nname: demo\natomic:\n  pulses: []\n", true},
 		{"---\nslice: demo\n", true},
-		{"slice \"demo\" { billing = \"monthly\" }\n", false},
+		{"slice \"demo\" {}\n", false},
 		{"# a comment\n// another\nslice \"demo\" {\n}\n", false},
 		{"variable \"m\" { default = \"32MiB\" }\n", false},
-		{"slice \"demo\" {\n  billing = ", false}, // broken HCL is HCL, reported at its line
+		{"slice \"demo\" {\n  labels = ", false}, // broken HCL is HCL, reported at its line
 		{"", false},
 	} {
 		if got := isYAML([]byte(tc.text)); got != tc.want {
@@ -126,7 +126,7 @@ func TestEveryReaderRefusesAYAMLDriftfileTheSameWay(t *testing.T) {
 	}
 
 	// The control: the same readers accept the same slice written in HCL.
-	hcl := writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n")
+	hcl := writeDriftfile(t, "slice \"demo\" {}\n")
 	for name, read := range map[string]func() error{
 		"compile": func() error { _, err := CompileDriftfile(hcl); return err },
 		"name":    func() error { _, err := ParseProjectName(hcl, ""); return err },
@@ -151,7 +151,7 @@ func TestCompile_AFileWithNoSliceBlockIsRefusedAtItsStart(t *testing.T) {
 // carry no element, as the build expects of the default one.
 func TestCompile_TheDefaultElementIsTheAtomicFolderItself(t *testing.T) {
 	withRealSchema(t)
-	body := "slice \"demo\" { billing = \"monthly\" }\n" +
+	body := "slice \"demo\" {}\n" +
 		"atomic {\n  element \"default\" {\n    pulse \"GET /hello\" {\n      handler = \"GetHello\"\n      memory = \"32MiB\"\n    }\n  }\n}\n"
 	path := writeDriftfile(t, body, "atomic/")
 	c, err := CompileDriftfile(path)
@@ -186,7 +186,7 @@ func TestCompile_APillarBlockAtTheTopIsRefusedNamingItsContainer(t *testing.T) {
 		{"realtime {}", "backbone"},
 		{"site \"/\" {}", "canvas"},
 	} {
-		_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+tc.block+"\n"))
+		_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {}\n"+tc.block+"\n"))
 		want := "inside the " + tc.pillar + " block"
 		if err == nil || !strings.Contains(err.Error(), "Driftfile:2:1") || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s at the top: got %v, want a refusal at 2:1 saying %q", tc.block, err, want)
@@ -198,7 +198,7 @@ func TestCompile_APillarBlockAtTheTopIsRefusedNamingItsContainer(t *testing.T) {
 func TestCompile_AContainerIsWrittenOnce(t *testing.T) {
 	withRealSchema(t)
 	for _, name := range []string{"atomic", "backbone", "canvas"} {
-		body := "slice \"demo\" { billing = \"monthly\" }\n" + name + " {}\n" + name + " {}\n"
+		body := "slice \"demo\" {}\n" + name + " {}\n" + name + " {}\n"
 		_, err := CompileDriftfile(writeDriftfile(t, body))
 		if err == nil || !strings.Contains(err.Error(), "Driftfile:3:1") || !strings.Contains(err.Error(), "has one "+name+" block") {
 			t.Errorf("two %s blocks: got %v, want a refusal at 3:1", name, err)
@@ -210,7 +210,7 @@ func TestCompile_AContainerIsWrittenOnce(t *testing.T) {
 // its format, and an unknown block is refused like any other.
 func TestCompile_ADriftBlockIsNotPartOfTheFormat(t *testing.T) {
 	withRealSchema(t)
-	_, err := CompileDriftfile(writeDriftfile(t, "drift {\n  format = \"2.0\"\n}\nslice \"demo\" { billing = \"monthly\" }\n"))
+	_, err := CompileDriftfile(writeDriftfile(t, "drift {\n  format = \"2.0\"\n}\nslice \"demo\" {}\n"))
 	if err == nil || !strings.Contains(err.Error(), "Driftfile:1:1") || !strings.Contains(err.Error(), "drift") {
 		t.Fatalf("got %v, want the drift block refused at 1:1", err)
 	}
@@ -221,7 +221,7 @@ func TestCompile_ADriftBlockIsNotPartOfTheFormat(t *testing.T) {
 // compiledGolden is what the fxevm fixture compiles to, in a form that does
 // not depend on the machine: directories relative to the Driftfile.
 type compiledGolden struct {
-	Billing   string         `json:"billing"`
+	FitsFree  bool           `json:"fitsFree"`
 	Document  Node           `json:"document"`
 	Slots     []goldenSpec   `json:"slots"`
 	Shape     SliceConfig    `json:"shape"`
@@ -244,7 +244,7 @@ func TestCompile_FxevmGolden(t *testing.T) {
 		t.Fatalf("the fxevm fixture does not compile:\n%v", err)
 	}
 
-	g := compiledGolden{Billing: c.Billing, Document: c.Manifest.Doc(), Shape: c.Shape, WriteOnly: c.WriteOnly}
+	g := compiledGolden{FitsFree: c.FitsFree, Document: c.Manifest.Doc(), Shape: c.Shape, WriteOnly: c.WriteOnly}
 	for _, s := range AtomicSpecs(c.Manifest) {
 		rel, _ := filepath.Rel(base, s.Dir)
 		g.Slots = append(g.Slots, goldenSpec{s.Name, s.Handler, s.Element, rel, s.Auth, s.Response, s.Concurrent})
@@ -316,7 +316,7 @@ func TestCompile_TheReadersReadWhatTheFileSays(t *testing.T) {
 func TestParseDriftfile_ResolvesTheReferencesTheCompileKeeps(t *testing.T) {
 	withRealSchema(t)
 	t.Setenv("STRIPE_KEY", "sk_test_value")
-	path := writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\nbackbone {\n  secret \"STRIPE_KEY\" { value = env(\"STRIPE_KEY\") }\n}\n")
+	path := writeDriftfile(t, "slice \"demo\" {}\nbackbone {\n  secret \"STRIPE_KEY\" { value = env(\"STRIPE_KEY\") }\n}\n")
 	m, err := ParseDriftfile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -354,7 +354,7 @@ func TestCompile_RefusesAWriteOnlyValueThatIsNotAReference(t *testing.T) {
 		{"site password from file", "edge {\n  site_auth {\n    paths = [\"*\"]\n    user \"a\" { password = file(\"pw\") }\n  }\n}"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			path := writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+tc.body+"\n", "atomic/api/", "pw")
+			path := writeDriftfile(t, "slice \"demo\" {}\n"+tc.body+"\n", "atomic/api/", "pw")
 			_, err := CompileDriftfile(path)
 			if err == nil {
 				t.Fatal("a write-only value written as something other than env(\"NAME\") compiled")
@@ -374,7 +374,7 @@ func TestCompile_RefusesAWriteOnlyValueThatIsNotAReference(t *testing.T) {
 func TestCompile_AWriteOnlyReferenceCompilesWithoutItsValue(t *testing.T) {
 	withRealSchema(t)
 	t.Setenv("STRIPE_KEY", "sk_live_do_not_print")
-	path := writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\nbackbone {\n  secret \"STRIPE_KEY\" { value = env(\"STRIPE_KEY\") }\n}\n")
+	path := writeDriftfile(t, "slice \"demo\" {}\nbackbone {\n  secret \"STRIPE_KEY\" { value = env(\"STRIPE_KEY\") }\n}\n")
 	c, err := CompileDriftfile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -399,7 +399,7 @@ func TestCompile_ExpressionsAreSmall(t *testing.T) {
 	t.Setenv("RPC_HANDLER", "PostRPC")
 	body := `
 variable "rpc_memory" { default = "48MiB" }
-slice "demo" { billing = "monthly" }
+slice "demo" {}
 atomic {
   element "api" {
     pulse "POST /rpc" {
@@ -433,7 +433,7 @@ atomic {
 
 	// Anything else is not a function this format has.
 	for _, expr := range []string{`upper("x")`, `timestamp()`, `lookup({}, "a", "b")`} {
-		path := writeDriftfile(t, "slice \"demo\" {\n  billing = "+expr+"\n}\n")
+		path := writeDriftfile(t, "slice \"demo\" {\n  labels = { a = "+expr+" }\n}\n")
 		_, err := CompileDriftfile(path)
 		if err == nil || !strings.Contains(err.Error(), "no function named") {
 			t.Errorf("%s compiled, or failed for another reason: %v", expr, err)
@@ -445,7 +445,7 @@ atomic {
 // where a value can come from.
 func TestCompile_AnUnsetEnvIsRefusedWhereItIsRead(t *testing.T) {
 	withRealSchema(t)
-	path := writeDriftfile(t, "slice \"demo\" {\n  billing = env(\"DRIFT_TEST_SURELY_UNSET\")\n}\n")
+	path := writeDriftfile(t, "slice \"demo\" {\n  labels = { a = env(\"DRIFT_TEST_SURELY_UNSET\") }\n}\n")
 	_, err := CompileDriftfile(path)
 	if err == nil || !strings.Contains(err.Error(), "Driftfile:2:") || !strings.Contains(err.Error(), "--var") {
 		t.Fatalf("got %v, want a refusal at line 2 naming --var", err)
@@ -473,7 +473,7 @@ func TestCompile_HoldsBookingsToThePlatformsGrid(t *testing.T) {
 		{"no memory at all", "atomic {\n  element \"api\" {\n    pulse \"POST /x\" { handler = \"PostX\" }\n  }\n}\n", "Missing memory"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			path := writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+tc.body, "atomic/api/")
+			path := writeDriftfile(t, "slice \"demo\" {}\n"+tc.body, "atomic/api/")
 			_, err := CompileDriftfile(path)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want %q", err, tc.want)
@@ -483,7 +483,7 @@ func TestCompile_HoldsBookingsToThePlatformsGrid(t *testing.T) {
 
 	// The controls, so the refusals above cannot be passing for one reason.
 	for _, ok := range []string{pulse("8MiB"), pulse("256MiB"), field("16MiB")} {
-		path := writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n"+ok, "atomic/api/")
+		path := writeDriftfile(t, "slice \"demo\" {}\n"+ok, "atomic/api/")
 		if _, err := CompileDriftfile(path); err != nil {
 			t.Errorf("a booking on the grid was refused: %v", err)
 		}
@@ -493,7 +493,7 @@ func TestCompile_HoldsBookingsToThePlatformsGrid(t *testing.T) {
 func TestCompile_RefusesMoreSlotsThanASliceHolds(t *testing.T) {
 	withRealSchema(t)
 	var b strings.Builder
-	b.WriteString("slice \"demo\" { billing = \"monthly\" }\natomic {\n  element \"api\" {\n")
+	b.WriteString("slice \"demo\" {}\natomic {\n  element \"api\" {\n")
 	for i := 0; i < 65; i++ {
 		b.WriteString("    pulse \"GET /r" + strconv.Itoa(i) + "\" {\n      handler = \"H\"\n      memory = \"8MiB\"\n    }\n")
 	}
@@ -509,7 +509,7 @@ func TestCompile_RefusesMoreSlotsThanASliceHolds(t *testing.T) {
 // the pulse's label.
 func TestCompile_ASchemaRefusalCarriesTheFilesPosition(t *testing.T) {
 	withRealSchema(t)
-	body := "slice \"demo\" { billing = \"monthly\" }\n" +
+	body := "slice \"demo\" {}\n" +
 		"atomic {\n  element \"api\" {\n" +
 		"    pulse \"POST /Rpc\" {\n" + // line 4
 		"      handler = \"PostRPC\"\n      memory = \"32MiB\"\n    }\n  }\n}\n"
@@ -529,7 +529,7 @@ func TestCompile_ASchemaRefusalCarriesTheFilesPosition(t *testing.T) {
 // scheduled jobs counted from the crons.
 func TestCompile_WhatTheFileLeavesOutIsTheSmallestShape(t *testing.T) {
 	withRealSchema(t)
-	body := `slice "demo" { billing = "monthly" }
+	body := `slice "demo" {}
 atomic {
   element "api" {
     pulse "GET /a" {
@@ -572,27 +572,30 @@ backbone {
 	}
 
 	// Fewer scheduled jobs than crons is refused.
-	short := strings.Replace(body, `slice "demo" { billing = "monthly" }`,
-		"slice \"demo\" {\n  billing = \"monthly\"\n  limits { scheduled_jobs = 1 }\n}", 1)
+	short := strings.Replace(body, `slice "demo" {}`,
+		"slice \"demo\" {\n  limits { scheduled_jobs = 1 }\n}", 1)
 	if _, err := CompileDriftfile(writeDriftfile(t, short, "atomic/api/")); err == nil || !strings.Contains(err.Error(), "Too few scheduled jobs") {
 		t.Errorf("one scheduled job for two crons: got %v", err)
 	}
 }
 
-// billing = "free" is the free slice: what the file leaves out is the free
-// preset's figure, and a shape outside the free envelope is refused offline,
-// naming the bound it crosses.
-func TestCompile_FreeBillingIsHeldToTheFreeEnvelope(t *testing.T) {
+// A shape inside the free grant has FitsFree and a FreeShape carrying the free
+// preset's figures for what the file leaves out; a shape outside it has
+// FitsFree false and a FreeMisfit naming the bound it crosses.
+func TestCompile_FreeFitIsHeldToTheFreeEnvelope(t *testing.T) {
 	withRealSchema(t)
-	fits := "slice \"demo\" { billing = \"free\" }\n" +
+	fits := "slice \"demo\" {}\n" +
 		"atomic {\n  element \"api\" {\n    pulse \"GET /a\" {\n      handler = \"A\"\n      memory = \"16MiB\"\n    }\n  }\n}\n"
 	c, err := CompileDriftfile(writeDriftfile(t, fits, "atomic/api/"))
 	if err != nil {
 		t.Fatalf("a shape inside the free slice was refused: %v", err)
 	}
-	if c.Shape.Atomic.MaxNumberOfRequestsPerMinute != 60 || c.Shape.Canvas.TotalMaxSizeInBytes != 50*bytesPerMiB {
+	if !c.FitsFree || c.FreeMisfit != nil {
+		t.Errorf("a shape inside the free slice: FitsFree %v, FreeMisfit %v", c.FitsFree, c.FreeMisfit)
+	}
+	if c.FreeShape.Atomic.MaxNumberOfRequestsPerMinute != 60 || c.FreeShape.Canvas.TotalMaxSizeInBytes != 50*bytesPerMiB {
 		t.Errorf("an omitted limit on a free slice is not the preset's: rpm %d, canvas %d",
-			c.Shape.Atomic.MaxNumberOfRequestsPerMinute, c.Shape.Canvas.TotalMaxSizeInBytes)
+			c.FreeShape.Atomic.MaxNumberOfRequestsPerMinute, c.FreeShape.Canvas.TotalMaxSizeInBytes)
 	}
 
 	for _, tc := range []struct{ name, extra, want string }{
@@ -604,16 +607,34 @@ func TestCompile_FreeBillingIsHeldToTheFreeEnvelope(t *testing.T) {
 			body := fits + tc.extra
 			switch tc.name {
 			case "a limit above the grant":
-				body = strings.Replace(body, `slice "demo" { billing = "free" }`,
-					"slice \"demo\" {\n  billing = \"free\"\n  limits { requests_per_minute = 61 }\n}", 1)
+				body = strings.Replace(body, `slice "demo" {}`,
+					"slice \"demo\" {\n  limits { requests_per_minute = 61 }\n}", 1)
 			case "too much memory":
 				body = strings.Replace(body, `memory = "16MiB"`, `memory = "96MiB"`, 1)
 			}
-			_, err := CompileDriftfile(writeDriftfile(t, body, "atomic/api/"))
-			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "Not the free slice") {
-				t.Fatalf("got %v, want a free-envelope refusal naming %q", err, tc.want)
+			c, err := CompileDriftfile(writeDriftfile(t, body, "atomic/api/"))
+			if err != nil {
+				t.Fatalf("a shape outside the free slice is a priced slice, not a refusal: %v", err)
+			}
+			if c.FitsFree || c.FreeMisfit == nil || !strings.Contains(c.FreeMisfit.Error(), tc.want) {
+				t.Fatalf("FitsFree %v, FreeMisfit %v, want a misfit naming %q", c.FitsFree, c.FreeMisfit, tc.want)
 			}
 		})
+	}
+}
+
+// The billing key is gone from the slice block and from an environment block:
+// a file that still sets it is refused, with the sentence saying to delete it.
+func TestCompile_TheBillingKeyIsRefused(t *testing.T) {
+	withRealSchema(t)
+	for name, body := range map[string]string{
+		"slice":       "slice \"demo\" {\n  billing = \"monthly\"\n}\n",
+		"environment": "slice \"demo\" {}\nenvironment \"staging\" {\n  slice = \"demo-staging\"\n  billing = \"monthly\"\n}\n",
+	} {
+		_, err := CompileDriftfile(writeDriftfile(t, body))
+		if err == nil || !strings.Contains(err.Error(), "billing is gone") || !strings.Contains(err.Error(), "no longer says how a slice is paid for") {
+			t.Errorf("%s: got %v, want the billing-is-gone refusal", name, err)
+		}
 	}
 }
 
@@ -621,11 +642,11 @@ func TestCompile_FreeBillingIsHeldToTheFreeEnvelope(t *testing.T) {
 // so the file may write it once.
 func TestCompile_TheRateLimitHasOneHome(t *testing.T) {
 	withRealSchema(t)
-	body := "slice \"demo\" {\n  billing = \"monthly\"\n  limits { requests_per_minute = 600 }\n}\nedge { rate_limit = \"10/s\" }\n"
+	body := "slice \"demo\" {\n  limits { requests_per_minute = 600 }\n}\nedge { rate_limit = \"10/s\" }\n"
 	if _, err := CompileDriftfile(writeDriftfile(t, body)); err == nil || !strings.Contains(err.Error(), "one place") {
 		t.Fatalf("both spellings compiled: %v", err)
 	}
-	c, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\nedge { rate_limit = \"10/s\" }\n"))
+	c, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {}\nedge { rate_limit = \"10/s\" }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,8 +658,8 @@ func TestCompile_TheRateLimitHasOneHome(t *testing.T) {
 // Every environment block is validated, whichever one the file is compiled for.
 func TestCompile_EnvironmentsAreValidated(t *testing.T) {
 	withRealSchema(t)
-	body := "variable \"m\" { default = \"32MiB\" }\nslice \"demo\" { billing = \"monthly\" }\n" +
-		"environment \"staging\" {\n  slice = \"demo-staging\"\n  billing = \"free\"\n  vars = { m = \"16MiB\" }\n}\n"
+	body := "variable \"m\" { default = \"32MiB\" }\nslice \"demo\" {}\n" +
+		"environment \"staging\" {\n  slice = \"demo-staging\"\n  vars = { m = \"16MiB\" }\n}\n"
 	c, err := CompileDriftfile(writeDriftfile(t, body))
 	if err != nil || len(c.Environments) != 1 {
 		t.Fatalf("a valid environment: %v, %v", c, err)

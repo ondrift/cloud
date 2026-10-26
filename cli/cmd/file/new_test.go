@@ -26,19 +26,19 @@ func (s *scripted) ask(label string) string {
 	return a
 }
 
-// The guide asks for the slice's name, its billing, the first pulse's method,
+// The guide asks for the slice's name, the first pulse's method,
 // route and language, and a site folder, in that order, and the file it writes is
 // the answers: the pulse's handler is the one `drift atomic new` produces for
 // them, so the two halves still compose.
 func TestNew_AGuidedRunWritesTheFileFromTheAnswers(t *testing.T) {
 	cmd := getNewCmd()
-	in := &scripted{answers: []string{"orders-app", "monthly", "post", "orders", "python", "site"}}
+	in := &scripted{answers: []string{"orders-app", "post", "orders", "python", "site"}}
 	o := starterOptions{Name: "from-the-directory"}
 	if err := o.guide(cmd, "the directory name", in.ask); err != nil {
 		t.Fatal(err)
 	}
-	if len(in.asked) != 6 {
-		t.Fatalf("asked %d questions, want 6: %q", len(in.asked), in.asked)
+	if len(in.asked) != 5 {
+		t.Fatalf("asked %d questions, want 5: %q", len(in.asked), in.asked)
 	}
 	o.fillDefaults()
 	if err := o.validate(); err != nil {
@@ -46,8 +46,7 @@ func TestNew_AGuidedRunWritesTheFileFromTheAnswers(t *testing.T) {
 	}
 	df := o.render()
 	for _, want := range []string{
-		`slice "orders-app"`,
-		`billing = "monthly"`,
+		`slice "orders-app" {}`,
 		`pulse "POST /orders"`,
 		`handler = "` + atomic_cmd_new.HandlerName("post", "orders", "python") + `"`,
 		`site "/"`,
@@ -80,12 +79,12 @@ func TestNew_EnterEverywhereIsTheDefaultFile(t *testing.T) {
 // A flag answers its question in advance: it is not asked, and its value stands.
 func TestNew_AFlagIsNotAsked(t *testing.T) {
 	cmd := getNewCmd()
-	for flag, v := range map[string]string{"name": "fixed", "billing": "monthly", "method": "put", "lang": "node"} {
+	for flag, v := range map[string]string{"name": "fixed", "method": "put", "lang": "node"} {
 		if err := cmd.Flags().Set(flag, v); err != nil {
 			t.Fatal(err)
 		}
 	}
-	o := starterOptions{Name: "fixed", Billing: "monthly", Method: "put", Lang: "node"}
+	o := starterOptions{Name: "fixed", Method: "put", Lang: "node"}
 	in := &scripted{answers: []string{"jobs", ""}}
 	if err := o.guide(cmd, "--name", in.ask); err != nil {
 		t.Fatal(err)
@@ -93,7 +92,7 @@ func TestNew_AFlagIsNotAsked(t *testing.T) {
 	if len(in.asked) != 2 {
 		t.Fatalf("asked %q, want only the route and the site folder", in.asked)
 	}
-	if o.Name != "fixed" || o.Billing != "monthly" || o.Method != "put" || o.Lang != "node" || o.Route != "jobs" {
+	if o.Name != "fixed" || o.Method != "put" || o.Lang != "node" || o.Route != "jobs" {
 		t.Errorf("answers = %+v", o)
 	}
 }
@@ -102,7 +101,7 @@ func TestNew_AFlagIsNotAsked(t *testing.T) {
 // took it, and asked again, rather than written and found by `drift lint`.
 func TestNew_ABadAnswerIsAskedAgain(t *testing.T) {
 	cmd := getNewCmd()
-	in := &scripted{answers: []string{"Bad Name", "good-name", "", "", "/leading", "orders"}}
+	in := &scripted{answers: []string{"Bad Name", "good-name", "", "/leading", "orders"}}
 	o := starterOptions{Name: "demo"}
 	if err := o.guide(cmd, "the directory name", in.ask); err != nil {
 		t.Fatal(err)
@@ -116,7 +115,7 @@ func TestNew_ABadAnswerIsAskedAgain(t *testing.T) {
 func TestNew_WithYesItAsksNothingAndWritesTheFlagsAndDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cmd := getNewCmd()
-	cmd.SetArgs([]string{filepath.Join(dir, "Driftfile"), "--name", "demo", "--billing", "monthly", "--route", "orders", "--yes"})
+	cmd.SetArgs([]string{filepath.Join(dir, "Driftfile"), "--name", "demo", "--route", "orders", "--yes"})
 	cmd.SilenceUsage, cmd.SilenceErrors = true, true
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
@@ -125,7 +124,7 @@ func TestNew_WithYesItAsksNothingAndWritesTheFlagsAndDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`slice "demo"`, `billing = "monthly"`, `pulse "GET /orders"`} {
+	for _, want := range []string{`slice "demo" {}`, `pulse "GET /orders"`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("the file does not contain %q:\n%s", want, raw)
 		}
@@ -134,7 +133,6 @@ func TestNew_WithYesItAsksNothingAndWritesTheFlagsAndDefaults(t *testing.T) {
 
 func TestNew_RefusesAnAnswerTheFileCannotBeAppliedWith(t *testing.T) {
 	for name, o := range map[string]starterOptions{
-		"billing":  {Name: "demo", Billing: "yearly"},
 		"method":   {Name: "demo", Method: "trace"},
 		"language": {Name: "demo", Lang: "cobol"},
 		"slash":    {Name: "demo", Route: "/orders"},

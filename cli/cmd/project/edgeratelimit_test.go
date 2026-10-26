@@ -28,8 +28,8 @@ type edgeStub struct {
 }
 
 // edgeFreeDemo opens a Driftfile for the slice the edge stubs hold: the free
-// one, which a file declares as billing = "free".
-const edgeFreeDemo = "slice \"demo\" { billing = \"free\" }\n"
+// one, which a file reaches by declaring a shape inside the free grant.
+const edgeFreeDemo = "slice \"demo\" {}\n"
 
 type edgeReply struct {
 	status int
@@ -232,7 +232,7 @@ func TestApply_PostsAnHourlyRateAsRequestsPerMinute(t *testing.T) {
 // writes both is refused before any route is called.
 func TestApply_RefusesTheRateLimitWrittenTwiceBeforeAnyRoute(t *testing.T) {
 	assertEdgeApplyRefuses(t,
-		"slice \"demo\" {\n  billing = \"free\"\n  limits {\n    requests_per_minute = 30\n  }\n}\n"+
+		"slice \"demo\" {\n  limits {\n    requests_per_minute = 30\n  }\n}\n"+
 			"canvas {\n  site \"/\" { dir = \"site\" }\n}\nedge {\n  rate_limit = \"30/min\"\n}\n",
 		"edge.rate_limit and limits.requests_per_minute are one limit; write it in one place")
 }

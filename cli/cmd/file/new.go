@@ -2,8 +2,8 @@ package file
 
 // new.go — scaffold a Driftfile that deploys.
 //
-// The starter file writes what the format requires (the slice's billing, each
-// pulse's handler and memory) and comments what it does not, because the gap
+// The starter file writes what the format requires (each pulse's handler and
+// memory) and comments what it does not, because the gap
 // between a file that parses and one that deploys is where a first run stalls.
 //
 // The scaffold ships one complete pulse rather than an empty element: an empty
@@ -15,8 +15,7 @@ package file
 // A person starting a project has no file to edit yet, and `drift apply`
 // creates the slice the file names, so the file is where a new slice begins. At
 // a terminal this asks the handful of things the platform cannot guess (the
-// slice's name, how it is paid for, the first pulse's method, route and
-// language, and a folder to serve as the site) and writes the file from the
+// slice's name, the first pulse's method, route and language, and a folder to serve as the site) and writes the file from the
 // answers. Anything given as a flag is not asked, and `--yes` takes every default,
 // so a script gets the same file a person gets by pressing Enter.
 
@@ -45,12 +44,12 @@ func getNewCmd() *cobra.Command {
 		Short: "Write a starter Driftfile, asking for the few things it needs",
 		Long: "Creates a Driftfile declaring a slice and one pulse, with everything the format " +
 			"requires already written, so the first `drift plan` is not a validation error.\n\n" +
-			"At a terminal it asks for the slice's name, its billing (free or monthly), the first " +
+			"At a terminal it asks for the slice's name, the first " +
 			"pulse's method, route and language, and a folder to serve as the site. A flag answers " +
 			"its question in advance, and --yes accepts every default, which is what a script gets.\n\n" +
 			"`drift apply` then creates the slice the file names.",
 		Example: "  drift file new\n" +
-			"  drift file new --name my-app --billing monthly --route orders --method post --lang python --yes\n" +
+			"  drift file new --name my-app --route orders --method post --lang python --yes\n" +
 			"  drift file new ./service --canvas site",
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
@@ -136,7 +135,6 @@ func getNewCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.Name, "name", "", "slice name (default: your active slice, else the directory name)")
-	cmd.Flags().StringVar(&opts.Billing, "billing", "", `how the slice is paid for: "free" or "monthly" (default free)`)
 	cmd.Flags().StringVar(&opts.Method, "method", "", "the first pulse's HTTP method (default get)")
 	cmd.Flags().StringVar(&opts.Route, "route", "", "the first pulse's route under /api/ (default hello)")
 	cmd.Flags().StringVar(&opts.Lang, "lang", "", "the first pulse's language: go, python, node, ruby, php or rust (default go)")
@@ -181,9 +179,6 @@ const (
 	// starterMemory is above the floor a compiled language needs, so the
 	// starter's Go pulse is not refused by the language it is written in.
 	starterMemory = "32MiB"
-	// starterBilling is the shape inside the free slice, which is what a first
-	// project runs on.
-	starterBilling = "free"
 )
 
 var (
@@ -197,14 +192,11 @@ var (
 
 // starterOptions are the answers a starter Driftfile is written from.
 type starterOptions struct {
-	Name, Billing, Method, Route, Lang, Canvas string
+	Name, Method, Route, Lang, Canvas string
 }
 
 // fillDefaults gives every answer not yet given its default.
 func (o *starterOptions) fillDefaults() {
-	if o.Billing == "" {
-		o.Billing = starterBilling
-	}
 	if o.Method == "" {
 		o.Method = starterMethod
 	}
@@ -214,7 +206,7 @@ func (o *starterOptions) fillDefaults() {
 	if o.Lang == "" {
 		o.Lang = starterLang
 	}
-	o.Method, o.Lang, o.Billing = strings.ToLower(o.Method), strings.ToLower(o.Lang), strings.ToLower(o.Billing)
+	o.Method, o.Lang = strings.ToLower(o.Method), strings.ToLower(o.Lang)
 }
 
 // validate refuses an answer the file could not be applied with, naming it.
@@ -222,9 +214,6 @@ func (o starterOptions) validate() error {
 	if !nameLooksValid(o.Name) {
 		return fmt.Errorf("project name %q must be 1–32 lowercase letters, numbers or hyphens "+
 			"(not starting or ending with one) — pass --name", o.Name)
-	}
-	if o.Billing != "free" && o.Billing != "monthly" {
-		return fmt.Errorf(`billing %q must be "free" or "monthly"`, o.Billing)
 	}
 	if !contains(starterMethods, o.Method) {
 		return fmt.Errorf("method %q must be one of %s", o.Method, strings.Join(starterMethods, ", "))
@@ -284,14 +273,6 @@ func (o *starterOptions) guide(cmd *cobra.Command, nameFrom string, ask func(lab
 	}); err != nil {
 		return err
 	}
-	if err := pick("billing", &o.Billing, "Billing: free (inside the free slice) or monthly", starterBilling, func() error {
-		if b := strings.ToLower(o.Billing); b != "free" && b != "monthly" {
-			return fmt.Errorf(`%q must be "free" or "monthly"`, o.Billing)
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
 	if err := pick("method", &o.Method, "First pulse's method ("+strings.Join(starterMethods, "/")+")", starterMethod, func() error {
 		if !contains(starterMethods, strings.ToLower(o.Method)) {
 			return fmt.Errorf("%q must be one of %s", o.Method, strings.Join(starterMethods, ", "))
@@ -301,7 +282,7 @@ func (o *starterOptions) guide(cmd *cobra.Command, nameFrom string, ask func(lab
 		return err
 	}
 	if err := pick("route", &o.Route, "Its route under /api/", starterRoute, func() error {
-		return starterOptions{Name: "x", Billing: "free", Method: "get", Route: o.Route, Lang: "go"}.validate()
+		return starterOptions{Name: "x", Method: "get", Route: o.Route, Lang: "go"}.validate()
 	}); err != nil {
 		return err
 	}
@@ -347,11 +328,9 @@ func (o starterOptions) render() string {
 	b.WriteString("# checks it without deploying, and `drift plan` shows what applying it does and\n")
 	b.WriteString("# what that costs.\n\n")
 
-	b.WriteString("slice \"" + o.Name + "\" {\n")
-	b.WriteString("  # How the slice is paid for: \"free\" for a shape inside the free slice,\n")
-	b.WriteString("  # or \"monthly\".\n")
-	b.WriteString("  billing = \"" + o.Billing + "\"\n")
-	b.WriteString("}\n\n")
+	b.WriteString("# The file does not say how the slice is paid for: a shape inside the free grant\n")
+	b.WriteString("# can be one of your free slices, and `drift plan` says which it is.\n")
+	b.WriteString("slice \"" + o.Name + "\" {}\n\n")
 
 	b.WriteString("# The Atomic pillar: every element the slice runs. An element is one folder\n")
 	b.WriteString("# of one language's source: \"default\" is ./atomic itself, and any other name\n")
@@ -385,9 +364,7 @@ func (o starterOptions) render() string {
 
 	b.WriteString("\n# An environment is a slice of its own, <slice>-<name> unless it names one:\n")
 	b.WriteString("#\n")
-	b.WriteString("#   environment \"staging\" {\n")
-	b.WriteString("#     billing = \"free\"\n")
-	b.WriteString("#   }\n")
+	b.WriteString("#   environment \"staging\" {}\n")
 	b.WriteString("#\n")
 	b.WriteString("# `drift plan staging` and `drift apply staging` work on it.\n")
 	return b.String()

@@ -33,7 +33,7 @@ func elementProject(t *testing.T, driftfile string) string {
 }
 
 // The fxevm testnode: two elements holding their Pulses and a Field.
-const nestedDriftfile = `slice "fxevm-testnode" { billing = "monthly" }
+const nestedDriftfile = `slice "fxevm-testnode" {}
 
 atomic {
   element "evm" {
@@ -122,7 +122,7 @@ func TestElements_NormaliseIntoTheFlatModel(t *testing.T) {
 // its element's. The default element's slots belong to no named element and
 // build from ./atomic itself.
 func TestElements_ASlotsOwnDirEnvAndSecrets(t *testing.T) {
-	path := elementProject(t, `slice "demo" { billing = "monthly" }
+	path := elementProject(t, `slice "demo" {}
 atomic {
   element "default" {
     pulse "GET /ping" {
@@ -174,7 +174,7 @@ atomic {
 // What the schema cannot express is refused across the whole Driftfile, each
 // naming what to change.
 func TestElements_ValidationAcrossTheWholeDriftfile(t *testing.T) {
-	const head = "slice \"demo\" { billing = \"monthly\" }\n"
+	const head = "slice \"demo\" {}\n"
 	pulse := func(label, handler string) string {
 		return "  pulse \"" + label + "\" {\n    handler = \"" + handler + "\"\n    memory = \"32MiB\"\n  }\n"
 	}

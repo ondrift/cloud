@@ -52,7 +52,7 @@ func TestTheBookingRangeIsReadFromTheRootBlock(t *testing.T) {
 			t.Fatal("this schema publishes the booking range nowhere")
 		}
 	})
-	_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n\n"+
+	_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {}\n\n"+
 		"atomic {\n  element \"default\" {\n    pulse \"GET /big\" {\n      handler = \"GetBig\"\n      memory  = \"512MiB\"\n    }\n  }\n}\n", "atomic/"))
 	if err == nil || !strings.Contains(err.Error(), "Memory out of range") {
 		t.Fatalf("a 512MiB booking compiled against a schema publishing the range only in x-drift: %v", err)
@@ -63,7 +63,7 @@ func TestTheBookingRangeIsReadFromTheRootBlock(t *testing.T) {
 // format it is, the same booking is refused.
 func TestABookingOutsideTheRangeIsRefusedByTheServedSchema(t *testing.T) {
 	withRealSchema(t)
-	_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" { billing = \"monthly\" }\n\n"+
+	_, err := CompileDriftfile(writeDriftfile(t, "slice \"demo\" {}\n\n"+
 		"atomic {\n  element \"default\" {\n    pulse \"GET /big\" {\n      handler = \"GetBig\"\n      memory  = \"512MiB\"\n    }\n  }\n}\n", "atomic/"))
 	if err == nil || !strings.Contains(err.Error(), "Memory out of range") {
 		t.Fatalf("a 512MiB booking compiled against the served schema: %v", err)

@@ -3,7 +3,7 @@ package file
 // resolve.go — what THIS Driftfile will actually provision.
 //
 // The value is the RESOLVED shape, not a re-print of the file. Variables take
-// their values, an environment names its own slice and billing, and every
+// their values, an environment names its own slice, and every
 // booking, storage size and limit is printed as the platform will be asked for
 // it, so the answer to "what does staging actually get" is a command rather
 // than an inference.
@@ -63,7 +63,11 @@ func printResolved(c *project.Compiled) {
 	m := c.Manifest
 	s := m.Slice()
 
-	title := fmt.Sprintf("slice %s  (%s)", m.Name(), c.Billing)
+	paid := "priced"
+	if c.FitsFree {
+		paid = "fits a free slice"
+	}
+	title := fmt.Sprintf("slice %s  (%s)", m.Name(), paid)
 	if c.Environment != "" {
 		title += fmt.Sprintf("  environment %s", c.Environment)
 	}

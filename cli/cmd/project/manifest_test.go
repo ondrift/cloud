@@ -91,7 +91,7 @@ func TestParseDriftfile_MissingEnvref(t *testing.T) {
 // The platform's schema refuses a slice name out of its shape, at the label.
 func TestParseDriftfile_InvalidName(t *testing.T) {
 	withRealSchema(t)
-	_, err := ParseDriftfile(writeDriftfile(t, "slice \"BAD_Name_With_Underscores\" { billing = \"monthly\" }\n"))
+	_, err := ParseDriftfile(writeDriftfile(t, "slice \"BAD_Name_With_Underscores\" {}\n"))
 	if err == nil {
 		t.Fatal("expected a refusal for an invalid slice name, got nil")
 	}
@@ -105,11 +105,11 @@ func TestParseDriftfile_InvalidName(t *testing.T) {
 func TestParseDriftfile_UnknownBlocksAndAttributesAreRefused(t *testing.T) {
 	withRealSchema(t)
 	for _, tc := range []struct{ body, want string }{
-		{"slice \"hello\" { billing = \"monthly\" }\nqeue \"jobs\" {}\n", "qeue"},
-		{"slice \"hello\" {\n  billing = \"monthly\"\n  bliling = \"free\"\n}\n", "bliling"},
+		{"slice \"hello\" {}\nqeue \"jobs\" {}\n", "qeue"},
+		{"slice \"hello\" {\n  bliling = \"free\"\n}\n", "bliling"},
 		// An option nothing implements is refused rather than accepted and
 		// ignored: a redelivery cap the file states and nothing enforces is a lie.
-		{"slice \"hello\" { billing = \"monthly\" }\nbackbone {\n  queue \"jobs\" { max_receives = 3 }\n}\n", "max_receives"},
+		{"slice \"hello\" {}\nbackbone {\n  queue \"jobs\" { max_receives = 3 }\n}\n", "max_receives"},
 	} {
 		_, err := ParseDriftfile(writeDriftfile(t, tc.body))
 		if err == nil || !contains(err.Error(), tc.want) || !contains(err.Error(), "Driftfile:") {
@@ -123,7 +123,7 @@ func TestParseDriftfile_UnknownBlocksAndAttributesAreRefused(t *testing.T) {
 func TestParseDriftfile_StorageWithoutASizeIsRefused(t *testing.T) {
 	withRealSchema(t)
 	for _, block := range []string{"sql", "nosql", "blobs"} {
-		_, err := ParseDriftfile(writeDriftfile(t, "slice \"hello\" { billing = \"monthly\" }\nbackbone {\n  "+block+" \"thing\" {}\n}\n"))
+		_, err := ParseDriftfile(writeDriftfile(t, "slice \"hello\" {}\nbackbone {\n  "+block+" \"thing\" {}\n}\n"))
 		if err == nil || !contains(err.Error(), "Missing size") {
 			t.Errorf("%s with no size: got %v", block, err)
 		}
@@ -136,7 +136,7 @@ func writeRestaurantFixture(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
-slice "la-cucina" { billing = "monthly" }
+slice "la-cucina" {}
 
 atomic {
   element "api" {
@@ -181,7 +181,7 @@ canvas {
 func TestCheckRouteCollisions(t *testing.T) {
 	withRealSchema(t)
 	two := func(a, b string) string {
-		return "slice \"shop\" { billing = \"monthly\" }\natomic {\n  element \"api\" {\n" +
+		return "slice \"shop\" {}\natomic {\n  element \"api\" {\n" +
 			"    pulse \"" + a + "\" {\n      handler = \"A\"\n      memory = \"32MiB\"\n    }\n" +
 			"    pulse \"" + b + "\" {\n      handler = \"B\"\n      memory = \"32MiB\"\n    }\n  }\n}\n"
 	}
@@ -222,7 +222,7 @@ func mustWrite(t *testing.T, path, content string) {
 // surfacing later as a build error about no input files.
 func TestParseDriftfile_LocalPathsMustExist(t *testing.T) {
 	withRealSchema(t)
-	const head = "slice \"hello\" { billing = \"monthly\" }\n"
+	const head = "slice \"hello\" {}\n"
 	for _, tc := range []struct{ name, body, want string }{
 		{"a pulse's own dir", "atomic {\n  element \"default\" {\n    pulse \"GET /menu\" {\n      handler = \"GetMenu\"\n      memory = \"8MiB\"\n      dir = \"src/menu\"\n    }\n  }\n}\n",
 			"pulse \"GET /menu\": dir: src/menu does not exist"},
@@ -248,7 +248,7 @@ func TestParseDriftfile_SeedRecordsMustBeLoadable(t *testing.T) {
 	withRealSchema(t)
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"),
-		"slice \"hello\" { billing = \"monthly\" }\nbackbone {\n  nosql \"menu\" {\n    size = \"10MiB\"\n    seed = \"seeds/menu.jsonl\"\n  }\n}\n")
+		"slice \"hello\" {}\nbackbone {\n  nosql \"menu\" {\n    size = \"10MiB\"\n    seed = \"seeds/menu.jsonl\"\n  }\n}\n")
 	mustWrite(t, filepath.Join(tmp, "seeds", "menu.jsonl"),
 		`{"_id":"pizza","price":9}`+"\n"+
 			`{"price":11}`+"\n"+ // no _id
@@ -279,7 +279,7 @@ func mustMkdir(t *testing.T, path string) {
 // ParseHooks reads the hooks without compiling the rest of the file, so a
 // pre_deploy build can make what the compile then checks for.
 func TestParseHooks(t *testing.T) {
-	path := writeDriftfile(t, `slice "hello" { billing = "monthly" }
+	path := writeDriftfile(t, `slice "hello" {}
 canvas {
   site "/" { dir = "dist" }
 }
@@ -310,7 +310,6 @@ func TestParseDriftfileEnv_AnEnvironmentCanSetZero(t *testing.T) {
 	withRealSchema(t)
 	path := writeDriftfile(t, `variable "history" { default = 5 }
 slice "hello" {
-  billing = "monthly"
   limits { deploy_history = var.history }
 }
 environment "staging" { vars = { history = 0 } }
@@ -331,7 +330,7 @@ environment "staging" { vars = { history = 0 } }
 func TestParseDriftfileEnv_ResolvesSecretsForTheEnvironment(t *testing.T) {
 	withRealSchema(t)
 	t.Setenv("DRIFT_TEST_SECRET_VALUE", "s3cr3t")
-	path := writeDriftfile(t, `slice "hello" { billing = "monthly" }
+	path := writeDriftfile(t, `slice "hello" {}
 backbone {
   secret "API_TOKEN" { value = env("DRIFT_TEST_SECRET_VALUE") }
 }

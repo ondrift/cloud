@@ -6,7 +6,7 @@ import (
 )
 
 const identityFile = `variable "m" { default = "32MiB" }
-slice "prorata" { billing = "monthly" }
+slice "prorata" {}
 environment "staging" {}
 environment "prod" {}
 environment "demo" {
@@ -54,7 +54,7 @@ func TestSliceIdentity_TheCheapReadNamesWhatTheCompileNames(t *testing.T) {
 // The cheap read needs nothing the compile needs: a variable read from an unset
 // environment variable does not stop it.
 func TestSliceIdentity_TheCheapReadNeedsNoVariable(t *testing.T) {
-	path := writeDriftfile(t, "variable \"k\" { default = env(\"DRIFT_TEST_SURELY_UNSET\") }\nslice \"prorata\" { billing = \"monthly\" }\n")
+	path := writeDriftfile(t, "variable \"k\" { default = env(\"DRIFT_TEST_SURELY_UNSET\") }\nslice \"prorata\" {}\n")
 	if got, err := ParseProjectName(path, ""); err != nil || got != "prorata" {
 		t.Errorf("ParseProjectName = %q, %v; want prorata with no variable set", got, err)
 	}
@@ -67,7 +67,7 @@ func TestSliceIdentity_TheCheapReadRefusesWhatItCannotName(t *testing.T) {
 	for _, tc := range []struct{ body, env, want string }{
 		{"queue \"jobs\" {}\n", "", `add slice "<name>"`},
 		{identityFile, "nope", `there is no environment "nope"`},
-		{"variable \"s\" { default = \"x\" }\nslice \"p\" { billing = \"monthly\" }\nenvironment \"e\" { slice = var.s }\n",
+		{"variable \"s\" { default = \"x\" }\nslice \"p\" {}\nenvironment \"e\" { slice = var.s }\n",
 			"e", "write it as a string"},
 	} {
 		_, err := ParseProjectName(writeDriftfile(t, tc.body), tc.env)
@@ -89,7 +89,7 @@ func TestSliceIdentity_ADerivedNameOverTheLimitIsRefused(t *testing.T) {
 			"check is skipped entirely rather than failed")
 	}
 	long := strings.Repeat("a", 28) // 28 + len("-staging") = 36, over the 32 limit
-	path := writeDriftfile(t, "slice \""+long+"\" { billing = \"monthly\" }\nenvironment \"staging\" {}\n")
+	path := writeDriftfile(t, "slice \""+long+"\" {}\nenvironment \"staging\" {}\n")
 	if _, err := CompileDriftfileEnv(path, "staging"); err == nil || !strings.Contains(err.Error(), "not a slice name") {
 		t.Fatalf("a derived slice name of %d characters: got %v", len(long)+len("-staging"), err)
 	}

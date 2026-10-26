@@ -11,7 +11,6 @@ import (
 const resolveFile = `variable "rpc_memory" { default = "64MiB" }
 
 slice "demo" {
-  billing = "monthly"
   limits {
     timeout        = "30s"
     deploy_history = 3
@@ -74,7 +73,7 @@ func TestResolve_PrintsTheResolvedShape(t *testing.T) {
 	t.Setenv("STRIPE_KEY", "sk_live_never_printed")
 	out := resolveOut(t, resolveFile)
 	for _, want := range []string{
-		"slice demo  (monthly)",
+		"slice demo  (priced)",
 		"pulse POST /rpc", "64MiB",
 		"events", "20MiB",
 		"jobs", "the slice's queue depth",
@@ -111,7 +110,7 @@ func TestResolve_AnEnvironmentResolvesToItsOwnSlice(t *testing.T) {
 // An empty allowlist is a declaration, and resolves to a slice every address
 // reaches.
 func TestResolve_SaysAnEmptyAllowlistAdmitsEveryone(t *testing.T) {
-	out := resolveOut(t, "slice \"demo\" { billing = \"monthly\" }\nedge { allow = [] }\n")
+	out := resolveOut(t, "slice \"demo\" {}\nedge { allow = [] }\n")
 	if !strings.Contains(out, "inbound allowlist (0)") || !strings.Contains(out, "every address reaches the slice") {
 		t.Errorf("resolve does not say an empty allowlist admits everyone:\n%s", out)
 	}
