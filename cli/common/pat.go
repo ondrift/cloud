@@ -10,7 +10,7 @@ package common
 // So a token is presented through the ENVIRONMENT and nothing is written to disk:
 //
 //	export DRIFT_TOKEN=drift_pat_…
-//	export DRIFT_SLICE=my-slice      # what `drift slice use` would have set
+//	export DRIFT_SLICE=my-slice      # the slice the commands act on
 //	drift apply
 //
 // # It is EXCHANGED, not sent
@@ -51,9 +51,10 @@ const (
 	// file entirely — nothing is read from disk and nothing is written to it.
 	TokenEnv = "DRIFT_TOKEN"
 
-	// SliceEnv is what `drift slice use` would have recorded. A token carries an
-	// account, not a slice, so a scripted caller has to say which one — and
-	// without this the whole feature stops at the first command that needs one.
+	// SliceEnv names the slice a command acts on. A token carries an account,
+	// not a slice, so a scripted caller has to say which one — and without this
+	// the whole feature stops at the first command that needs one. Inside a
+	// project the Driftfile names it instead; see slicetarget.go.
 	SliceEnv = "DRIFT_SLICE"
 
 	// patPrefix marks a Drift personal access token, matching what the platform

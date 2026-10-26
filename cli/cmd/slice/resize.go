@@ -57,8 +57,8 @@ func getResizeCmd() *cobra.Command {
   drift slice resize my-slice --config shape.json --acknowledge-monthly-cents 1200`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// No name given → resize the currently active slice (the one
-			// `drift slice use` selected), matching every other slice subcommand.
+			// No name given → resize the slice this directory's Driftfile or
+			// DRIFT_SLICE names, matching every other slice subcommand.
 			var name string
 			if len(args) == 1 {
 				name = args[0]

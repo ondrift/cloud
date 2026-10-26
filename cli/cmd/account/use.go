@@ -18,10 +18,6 @@ func GetAccountListCmd() *cobra.Command {
 		Short: "List the accounts you are logged in to",
 		Long: `List the accounts you are logged in to, marking the current one.
 
-Each account keeps its OWN active slice, which is the reason profiles exist:
-with one shared slice, logging in as a second account left the first account's
-slice selected — pointing at a slice the new account may not even own.
-
 To act as another account for a single command, without switching:
 
     DRIFT_ACCOUNT=other drift slice list`,
@@ -41,11 +37,7 @@ To act as another account for a single command, without switching:
 				if n == current {
 					marker = "* "
 				}
-				slice := common.ActiveSliceFor(n)
-				if slice == "" {
-					slice = "(no active slice)"
-				}
-				fmt.Printf("%s%-20s %s\n", marker, n, slice)
+				fmt.Printf("%s%s\n", marker, n)
 			}
 			fmt.Printf("\n%d account(s); * is current\n", len(names))
 			return nil
@@ -69,12 +61,7 @@ nothing on disk, which is what makes it safe in a script:
 			if err := common.UseAccount(args[0]); err != nil {
 				return err
 			}
-			slice := common.ActiveSliceFor(args[0])
-			if slice == "" {
-				fmt.Printf("Now acting as %s (no active slice — run `drift slice use <name>`)\n", args[0])
-				return nil
-			}
-			fmt.Printf("Now acting as %s, on slice %s\n", args[0], slice)
+			fmt.Printf("Now acting as %s\n", args[0])
 			return nil
 		},
 	}

@@ -69,16 +69,17 @@ func getNewCmd() *cobra.Command {
 				return fmt.Errorf("%s already exists — pass --force to overwrite it", shortPath(abs))
 			}
 
-			// THE ACTIVE SLICE FIRST, and the directory name only as a fallback.
+			// DRIFT_SLICE FIRST, and the directory name only as a fallback.
 			//
 			// `drift apply` creates the slice a Driftfile names when it does not
 			// exist, so a file naming the directory would buy a second slice beside
-			// the one the account already made. Naming the active slice applies the
-			// file into that one.
+			// the one the account already made. Naming the slice in DRIFT_SLICE
+			// applies the file into that one. A Driftfile further up the tree is
+			// deliberately not consulted: a new project inside another is its own.
 			chosen := "the directory name"
 			if opts.Name == "" {
-				if active := common.GetActiveSlice(); active != "" && nameLooksValid(active) {
-					opts.Name, chosen = active, "your active slice"
+				if named := strings.TrimSpace(os.Getenv(common.SliceEnv)); named != "" && nameLooksValid(named) {
+					opts.Name, chosen = named, common.SliceEnv
 				} else {
 					opts.Name = filepath.Base(filepath.Dir(abs))
 				}
@@ -110,7 +111,7 @@ func getNewCmd() *cobra.Command {
 			fmt.Printf("%s wrote %s — slice %q, from %s\n",
 				common.Hint("✓"), shortPath(abs), opts.Name, chosen)
 			if chosen == "the directory name" {
-				fmt.Printf("  %s\n", common.Hint("no active slice — run `drift slice use <name>` and re-run, or edit the slice block by hand"))
+				fmt.Printf("  %s\n", common.Hint("named after the directory: pass --name, or edit the slice block by hand"))
 			}
 			// NAME THE COMMAND THAT WRITES THE SOURCE, because this file declares
 			// a pulse that does not exist yet.
@@ -134,7 +135,7 @@ func getNewCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&opts.Name, "name", "", "slice name (default: your active slice, else the directory name)")
+	cmd.Flags().StringVar(&opts.Name, "name", "", "slice name (default: DRIFT_SLICE, else the directory name)")
 	cmd.Flags().StringVar(&opts.Method, "method", "", "the first pulse's HTTP method (default get)")
 	cmd.Flags().StringVar(&opts.Route, "route", "", "the first pulse's route under /api/ (default hello)")
 	cmd.Flags().StringVar(&opts.Lang, "lang", "", "the first pulse's language: go, python, node, ruby, php or rust (default go)")

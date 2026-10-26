@@ -126,11 +126,11 @@ func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.
 		return err
 	}
 
-	// The slice exists and holds what the manifest names, so it becomes the
-	// active one, BEFORE anything that resolves a slice from the session: the
-	// orphan check below sends the active slice as `X-Slice`.
-	if err := common.SaveActiveSlice(m.Name()); err != nil {
-		return fmt.Errorf("set active slice: %w", err)
+	// The slice exists and holds what the manifest names, so this process acts on
+	// it, BEFORE anything that resolves a slice: the orphan check below sends it
+	// as `X-Slice`. Nothing is stored; the next command names its own.
+	if err := os.Setenv(common.SliceEnv, m.Name()); err != nil {
+		return fmt.Errorf("target slice %s: %w", m.Name(), err)
 	}
 
 	// What the slice serves and the manifest no longer names. A fetch failure

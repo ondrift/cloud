@@ -34,8 +34,8 @@ func TestBackboneRefusesWithoutAnActiveSlice(t *testing.T) {
 	if err == nil {
 		t.Fatal("with no active slice selected, the group's check admitted the command")
 	}
-	if !strings.Contains(err.Error(), "no active slice") {
-		t.Errorf("the refusal does not say what is wrong.\n  got:  %v\n  want: something containing %q", err, "no active slice")
+	if !strings.Contains(err.Error(), "no slice to act on") {
+		t.Errorf("the refusal does not say what is wrong.\n  got:  %v\n  want: something containing %q", err, "no slice to act on")
 	}
 
 	// The control. Without it the check could be refusing unconditionally and

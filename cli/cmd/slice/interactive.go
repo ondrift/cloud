@@ -474,13 +474,7 @@ func createFromPrompts(name string, billingMonths int) error {
 	// they are waiting for is their own slice.
 	fmt.Printf("  Waiting for slice %q to come up...\n", chosen)
 	if werr := common.WaitForSliceReady(chosen); werr != nil {
-		if serr := common.SaveActiveSlice(chosen); serr != nil {
-			fmt.Println("Warning: couldn't mark the new slice as active —", serr)
-		}
 		return fmt.Errorf("slice %q was created and is still starting: %w", chosen, werr)
-	}
-	if serr := common.SaveActiveSlice(chosen); serr != nil {
-		fmt.Println("Warning: couldn't mark the new slice as active —", serr)
 	}
 	fmt.Printf("Slice '%s' created and set as active.\n", chosen)
 	return nil

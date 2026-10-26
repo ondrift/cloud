@@ -75,11 +75,6 @@ func getDeleteCmd() *cobra.Command {
 				return err
 			}
 
-			// Clear active slice if it was the deleted one.
-			if common.GetActiveSlice() == name {
-				_ = common.SaveActiveSlice("")
-			}
-
 			fmt.Printf("Slice '%s' deleted.\n", name)
 			return nil
 		},
@@ -128,7 +123,7 @@ func sliceExists(name string) bool {
 func printDeleteWarning(name string) {
 	active := ""
 	if common.GetActiveSlice() == name {
-		active = "  (this is your currently active slice)"
+		active = "  (this is the slice your Driftfile or DRIFT_SLICE names here)"
 	}
 	fmt.Printf(`
 ────────────────────────────────────────────────────────────

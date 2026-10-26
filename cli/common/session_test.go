@@ -89,87 +89,18 @@ func TestSessionRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSessionPreservesActiveSlice(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	SaveSession("tok1", "ref1")
-	SaveActiveSlice("myapp")
-
-	// Re-saving session should preserve active_slice.
-	SaveSession("tok2", "ref2")
-
-	got := GetActiveSlice()
-	if got != "myapp" {
-		t.Fatalf("active slice lost after re-save: got %q", got)
-	}
-}
-
-func TestActiveSliceRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	SaveSession("tok", "ref")
-	SaveActiveSlice("staging")
-
-	got := GetActiveSlice()
-	if got != "staging" {
-		t.Fatalf("active slice: got %q, want staging", got)
-	}
-}
-
-func TestGetActiveSlice_NoSession(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	got := GetActiveSlice()
-	if got != "" {
-		t.Fatalf("expected empty, got %q", got)
-	}
-}
-
-func TestRequireActiveSlice_Set(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	SaveSession("tok", "ref")
-	SaveActiveSlice("prod")
-
-	s, err := RequireActiveSlice()
-	if err != nil {
-		t.Fatalf("RequireActiveSlice: %v", err)
-	}
-	if s != "prod" {
-		t.Fatalf("got %q", s)
-	}
-}
-
-func TestRequireActiveSlice_NotSet(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	SaveSession("tok", "ref")
-
-	_, err := RequireActiveSlice()
-	if err == nil {
-		t.Fatal("expected error when no active slice")
-	}
-}
-
-// The file holds ACCOUNTS now, each with its own active slice.
+// The file holds ACCOUNTS now, each with its credentials and nothing about a
+// slice.
 //
-// It used to be flat — one token, one refresh token, one active slice — and this
-// test asserted that shape. The change is deliberate and the migration below is
-// what makes it safe.
+// It used to be flat — one token, one refresh token — and this test asserted
+// that shape. The change is deliberate and the migration below is what makes it
+// safe.
 func TestSessionFileFormat(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv(AccountEnv, "")
 
 	SaveSession("tok", "ref")
-	if err := SaveActiveSlice("myslice"); err != nil {
-		t.Fatalf("SaveActiveSlice: %v", err)
-	}
 
 	path := filepath.Join(dir, ".drift", "session.json")
 	data, err := os.ReadFile(path)
@@ -194,8 +125,11 @@ func TestSessionFileFormat(t *testing.T) {
 	if !ok {
 		t.Fatalf("the current account %q is not in the file: %s", f.Current, data)
 	}
-	if p.Token != "tok" || p.RefreshToken != "ref" || p.ActiveSlice != "myslice" {
+	if p.Token != "tok" || p.RefreshToken != "ref" {
 		t.Fatalf("profile round-tripped wrong: %+v", p)
+	}
+	if p.ActiveSlice != "" {
+		t.Fatalf("a slice was written to the session file: %q", p.ActiveSlice)
 	}
 }
 
@@ -230,18 +164,16 @@ func TestAFlatSessionFileStillWorksAndKeepsItsName(t *testing.T) {
 	if gotTok != token || gotRef != "ref" {
 		t.Errorf("credentials did not survive migration: %q / %q", gotTok, gotRef)
 	}
-	if got := GetActiveSlice(); got != "oldslice" {
-		t.Errorf("the active slice did not survive migration: %q", got)
+	if got := GetActiveSlice(); got != "" {
+		t.Errorf("an old stored slice still decides the target after migration: %q", got)
 	}
 	if got := CurrentAccount(); got != "alice" {
 		t.Errorf("the migrated profile is named %q, want the token's own username", got)
 	}
 }
 
-// Logging in as a second account ADDS rather than replaces, and each keeps its
-// own slice. This is the bug the flat file had: one stored slice, shared by
-// every account, pointing at a slice the current one may not own.
-func TestASecondLoginAddsAnAccountAndKeepsEachSliceSeparate(t *testing.T) {
+// Logging in as a second account ADDS rather than replaces.
+func TestASecondLoginAddsAnAccount(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv(AccountEnv, "")
@@ -255,14 +187,8 @@ func TestASecondLoginAddsAnAccountAndKeepsEachSliceSeparate(t *testing.T) {
 	if err := SaveSession(tokenFor("alice"), "ref-a"); err != nil {
 		t.Fatalf("login alice: %v", err)
 	}
-	if err := SaveActiveSlice("alice-slice"); err != nil {
-		t.Fatalf("slice alice: %v", err)
-	}
 	if err := SaveSession(tokenFor("bob"), "ref-b"); err != nil {
 		t.Fatalf("login bob: %v", err)
-	}
-	if err := SaveActiveSlice("bob-slice"); err != nil {
-		t.Fatalf("slice bob: %v", err)
 	}
 
 	names, current, err := Accounts()
@@ -275,18 +201,8 @@ func TestASecondLoginAddsAnAccountAndKeepsEachSliceSeparate(t *testing.T) {
 	if current != "bob" {
 		t.Errorf("current is %q, want the account just logged in", current)
 	}
-	if got := GetActiveSlice(); got != "bob-slice" {
-		t.Errorf("bob's active slice is %q", got)
-	}
-
-	// THE assertion: switching back restores alice's OWN slice, rather than
-	// leaving bob's selected against alice's account.
 	if err := UseAccount("alice"); err != nil {
 		t.Fatalf("UseAccount: %v", err)
-	}
-	if got := GetActiveSlice(); got != "alice-slice" {
-		t.Errorf("after switching to alice the active slice is %q — that is the "+
-			"cross-account leak profiles exist to fix", got)
 	}
 	if _, ref, _ := GetTokenFromSession(); ref != "ref-a" {
 		t.Errorf("switching account did not switch credentials: %q", ref)
@@ -305,16 +221,11 @@ func TestTheAccountEnvironmentOverridesWithoutPersisting(t *testing.T) {
 		return "h." + p + ".s"
 	}
 	_ = SaveSession(tokenFor("alice"), "ref-a")
-	_ = SaveActiveSlice("alice-slice")
 	_ = SaveSession(tokenFor("bob"), "ref-b")
-	_ = SaveActiveSlice("bob-slice")
 
 	t.Setenv(AccountEnv, "alice")
 	if got := CurrentAccount(); got != "alice" {
 		t.Errorf("%s did not take effect: %q", AccountEnv, got)
-	}
-	if got := GetActiveSlice(); got != "alice-slice" {
-		t.Errorf("the override did not carry the account's own slice: %q", got)
 	}
 
 	// Nothing was written: with the variable gone, bob is still current.
@@ -410,14 +321,8 @@ func TestTwoMembersOfOneAccountDoNotOverwriteEachOther(t *testing.T) {
 	if err := SaveSession(memberToken("isrand", "erica"), "ref-e"); err != nil {
 		t.Fatalf("login erica: %v", err)
 	}
-	if err := SaveActiveSlice("erica-slice"); err != nil {
-		t.Fatalf("slice erica: %v", err)
-	}
 	if err := SaveSession(memberToken("isrand", "sam"), "ref-s"); err != nil {
 		t.Fatalf("login sam: %v", err)
-	}
-	if err := SaveActiveSlice("sam-slice"); err != nil {
-		t.Fatalf("slice sam: %v", err)
 	}
 
 	names, current, err := Accounts()
@@ -437,9 +342,6 @@ func TestTwoMembersOfOneAccountDoNotOverwriteEachOther(t *testing.T) {
 	}
 	if _, ref, _ := GetTokenFromSession(); ref != "ref-e" {
 		t.Errorf("switching to erica produced %q — the two members share credentials", ref)
-	}
-	if got := GetActiveSlice(); got != "erica-slice" {
-		t.Errorf("erica's active slice is %q — the two members share one", got)
 	}
 }
 

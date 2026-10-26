@@ -4,65 +4,6 @@ import (
 	"testing"
 )
 
-// DRIFT_SLICE WINS over the session file, and this is the test that keeps it
-// that way.
-//
-// A token carries an account rather than a slice, so a scripted caller has no
-// `drift slice use` to have run. But the sharper case is a pipeline running on a
-// developer's own machine, where a session file DOES exist: if the stored value
-// won, the job would target whichever slice that developer last used rather than
-// the one it names — silently, and differently on every machine.
-func TestTheEnvironmentsSliceBeatsTheStoredOne(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv(SliceEnv, "")
-
-	if err := writeSession(sessionFile{
-		Current: "alice",
-		Accounts: map[string]AccountProfile{
-			"alice": {Token: "x", RefreshToken: "y", ActiveSlice: "the-stored-one"},
-		},
-	}); err != nil {
-		t.Fatalf("seed session: %v", err)
-	}
-	if got := GetActiveSlice(); got != "the-stored-one" {
-		t.Fatalf("with no %s set the stored slice must win, got %q", SliceEnv, got)
-	}
-
-	t.Setenv(SliceEnv, "the-named-one")
-	if got := GetActiveSlice(); got != "the-named-one" {
-		t.Errorf("%s did not win over the session file: got %q", SliceEnv, got)
-	}
-}
-
-// Whitespace is trimmed, because a value pasted into CI config arrives with a
-// trailing newline more often than not — and an untrimmed name goes into a URL
-// authority, where it is a 400 at best.
-func TestTheEnvironmentsSliceIsTrimmedAndBlankIsIgnored(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := writeSession(sessionFile{
-		Current: "alice",
-		Accounts: map[string]AccountProfile{
-			"alice": {Token: "x", RefreshToken: "y", ActiveSlice: "stored"},
-		},
-	}); err != nil {
-		t.Fatalf("seed session: %v", err)
-	}
-
-	t.Setenv(SliceEnv, "  spaced  \n")
-	if got := GetActiveSlice(); got != "spaced" {
-		t.Errorf("got %q, want the trimmed value", got)
-	}
-
-	// A variable set to whitespace is set to NOTHING, and must not beat the
-	// stored value — otherwise an empty CI variable silently unsets the slice.
-	t.Setenv(SliceEnv, "   ")
-	if got := GetActiveSlice(); got != "stored" {
-		t.Errorf("a blank %s overrode the stored slice: got %q", SliceEnv, got)
-	}
-}
-
 // A PAT caller's access token is minted on demand and re-minted on a 401, so
 // there is no "expired" state for them to act on. Answering true would send a
 // pipeline down the re-login path, which is advice for a person at a terminal.

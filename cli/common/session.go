@@ -5,17 +5,10 @@ package common
 //
 // # One file, several accounts
 //
-// The file used to be flat — one token, one refresh token, one active slice —
-// so logging in as a second account overwrote the first. Two things made that
-// worth changing, and the second is the one that matters:
-//
-//   - An agent or a colleague logging in to try something clobbered the
-//     operator's own session. That is real, and it is the weaker argument: an
-//     isolated HOME already works around it.
-//   - `active_slice` LIVES IN THIS FILE AND DOES NOT BELONG TO THE TOKEN. So
-//     logging in as a second account left the PREVIOUS account's active slice
-//     selected, pointing at a slice the new account may not even own. The flat
-//     design already had the bug that per-account profiles fix.
+// The file used to be flat, so logging in as a second account overwrote the
+// first: an agent or a colleague logging in to try something clobbered the
+// operator's own session. (It also held a stored "active slice", which did not
+// belong to the token; no slice is stored any more, see slicetarget.go.)
 //
 // # Which account a command acts as
 //
@@ -79,18 +72,11 @@ func init() {
 	}
 }
 
-type Session struct {
-	Username    string `json:"username"`
-	ActiveSlice string `json:"active_slice,omitempty"`
-}
-
-// AccountProfile is one logged-in account: its credentials and the slice it is
-// pointed at. The active slice is per-account BY CONSTRUCTION here, which is the
-// whole point of the shape.
+// AccountProfile is one logged-in account: its credentials. A slice is never
+// stored here; see slicetarget.go.
 type AccountProfile struct {
 	Token        string `json:"token"`
 	RefreshToken string `json:"refresh_token"`
-	ActiveSlice  string `json:"active_slice,omitempty"`
 }
 
 // sessionFile is the on-disk shape.
@@ -157,10 +143,7 @@ func migrate(raw map[string]json.RawMessage) sessionFile {
 	if rt, ok := raw["refresh_token"]; ok {
 		_ = json.Unmarshal(rt, &flat.RefreshToken)
 	}
-	if s, ok := raw["active_slice"]; ok {
-		_ = json.Unmarshal(s, &flat.ActiveSlice)
-	}
-	if flat.Token == "" && flat.RefreshToken == "" && flat.ActiveSlice == "" {
+	if flat.Token == "" && flat.RefreshToken == "" {
 		return out
 	}
 
@@ -220,19 +203,6 @@ func Accounts() (names []string, current string, err error) {
 	return names, CurrentAccount(), nil
 }
 
-// ActiveSliceFor reports one account's own active slice, for the listing.
-//
-// It does NOT consult DRIFT_SLICE, unlike GetActiveSlice: this answers "what is
-// stored against this profile", and folding an environment override into it
-// would make `drift account list` report the same slice for every account.
-func ActiveSliceFor(name string) string {
-	s, err := readSession()
-	if err != nil {
-		return ""
-	}
-	return s.Accounts[name].ActiveSlice
-}
-
 // UseAccount makes name the current profile.
 func UseAccount(name string) error {
 	s, err := readSession()
@@ -251,8 +221,7 @@ func UseAccount(name string) error {
 // It writes into the account the token itself NAMES, not into whichever profile
 // happened to be current. That is what makes `drift account login` ADD rather
 // than replace: logging in as a second account cannot overwrite the first, and
-// re-logging in as the same one lands in the same profile and keeps its active
-// slice.
+// re-logging in as the same one lands in the same profile.
 func SaveSession(token, refreshToken string) error {
 	s, err := readSession()
 	if err != nil {
@@ -273,7 +242,7 @@ func SaveSession(token, refreshToken string) error {
 		}
 	}
 
-	p := s.Accounts[name] // zero value when new; keeps ActiveSlice when not
+	p := s.Accounts[name] // zero value when new
 	p.Token = token
 	p.RefreshToken = refreshToken
 	s.Accounts[name] = p
@@ -360,45 +329,6 @@ func readSessionMap() (map[string]json.RawMessage, error) {
 		return nil, err
 	}
 	return data, nil
-}
-
-// SaveActiveSlice persists the active slice against the CURRENT account.
-func SaveActiveSlice(name string) error {
-	s, err := readSession()
-	if err != nil {
-		return fmt.Errorf("no active session — log in first")
-	}
-	cur := CurrentAccount()
-	p, ok := s.Accounts[cur]
-	if !ok {
-		return fmt.Errorf("no active session — log in first")
-	}
-	p.ActiveSlice = name
-	s.Accounts[cur] = p
-	return writeSession(s)
-}
-
-// GetActiveSlice returns the active slice name, or empty string if none set.
-//
-// DRIFT_SLICE WINS, and it has to. A personal access token carries an account
-// rather than a slice, so a scripted caller has no `drift slice use` to have
-// run and no profile to have recorded it in. Reading the environment first also
-// makes the override behave like every other one in this CLI: an explicit value
-// beats a stored one, so a pipeline on a developer's own machine targets the
-// slice it names rather than whichever one that developer last used.
-//
-// Below that it is PER ACCOUNT, which is the bug the flat file had: one stored
-// slice, shared by every account that logged in, pointing at a slice the current
-// account may not own.
-func GetActiveSlice() string {
-	if s := strings.TrimSpace(os.Getenv(SliceEnv)); s != "" {
-		return s
-	}
-	sess, err := readSession()
-	if err != nil {
-		return ""
-	}
-	return sess.Accounts[CurrentAccount()].ActiveSlice
 }
 
 // decodeTokenClaims decodes a JWT's payload segment (base64url, unverified —
@@ -564,14 +494,4 @@ func GetOrCreateDeviceID() string {
 	}
 	_ = os.WriteFile(path, []byte(id), 0o600)
 	return id
-}
-
-// RequireActiveSlice returns the active slice or an error instructing the user
-// to select one with "drift slice use <name>".
-func RequireActiveSlice() (string, error) {
-	s := GetActiveSlice()
-	if s == "" {
-		return "", fmt.Errorf("no active slice — run 'drift slice use <name>', or write a Driftfile with 'drift file new' and run 'drift apply', first")
-	}
-	return s, nil
 }

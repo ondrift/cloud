@@ -111,15 +111,9 @@ func createHeadless(name string) error {
 	// gets a 409, which is a worse place to leave someone.
 	fmt.Printf("  Waiting for slice %q to come up...\n", name)
 	if err := common.WaitForSliceReady(name); err != nil {
-		if serr := common.SaveActiveSlice(name); serr != nil {
-			fmt.Println("Warning: couldn't mark the new slice as active —", serr)
-		}
 		return fmt.Errorf("slice %q was created and is still starting: %w", name, err)
 	}
 
-	if err := common.SaveActiveSlice(name); err != nil {
-		fmt.Println("Warning: couldn't mark the new slice as active —", err)
-	}
 	fmt.Printf("Slice '%s' created and set as active.\n", name)
 	return nil
 }
