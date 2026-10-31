@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ondrift/cloud/cli/common"
 
@@ -23,6 +24,12 @@ type SliceEntry struct {
 	Name             string `json:"name"`
 	Tier             string `json:"tier"`
 	MonthlyCostCents int    `json:"monthly_cost_cents"`
+
+	// CooledAt is set while the platform has scaled the slice's pod to zero for want
+	// of requests, and WarmingAt while it is coming back. Both are absent on a
+	// running slice.
+	CooledAt  *time.Time `json:"cooled_at,omitempty"`
+	WarmingAt *time.Time `json:"warming_at,omitempty"`
 
 	// Config is the slice's declared shape, decoded only as far as the tenant's
 	// own labels.
@@ -114,6 +121,18 @@ func LabelsLine(labels map[string]string) string {
 	return strings.Join(parts, "  ")
 }
 
+// cooledNote says, after a slice's price, that its pod is scaled to zero for want
+// of requests. It is a plain statement and a pointer to the command that undoes it.
+func cooledNote(s SliceEntry) string {
+	switch {
+	case s.CooledAt != nil:
+		return "  cooled down (drift slice warmup)"
+	case s.WarmingAt != nil:
+		return "  warming up"
+	}
+	return ""
+}
+
 func getListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
@@ -131,7 +150,7 @@ func getListCmd() *cobra.Command {
 				if s.Name == active {
 					marker = "* "
 				}
-				fmt.Printf("%s%-20s %s\n", marker, s.Name, PriceLabel(s.Tier, s.MonthlyCostCents))
+				fmt.Printf("%s%-20s %s%s\n", marker, s.Name, PriceLabel(s.Tier, s.MonthlyCostCents), cooledNote(s))
 				// On its own line, and only when there are any. Labels are free
 				// text up to 256 bytes each and a slice may carry 32 of them, so
 				// appending them to the row above would wrap the one column a
