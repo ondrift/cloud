@@ -77,6 +77,38 @@ func TestApply_ANewSliceInsideTheFreeGrantNeedsTheFreeSliceAnswered(t *testing.T
 	}
 }
 
+// A free slice is made from the file, not from the preset: the create carries the
+// shape and says it is the file's whole declaration, so the platform stores the
+// names the file declares and none of the free preset's placeholders. A file with
+// no function therefore makes a slice that declares none, and the resize that
+// follows says so too (the functions key is present, null), because a resize is a
+// patch and an absent key would keep whatever the slice holds.
+func TestApply_ANewFreeSliceIsCreatedFromTheFilesWholeDeclaration(t *testing.T) {
+	freeSlotsAre(t, 3)
+	p, _ := freeApplyFixture(t, "slice \"demo\" {}\n")
+
+	a := noAnswers()
+	a.useFree = true
+	if _, err := runFreeApply(t, a, false, ""); err != nil {
+		t.Fatalf("apply --use-free-slice: %v", err)
+	}
+	bodies := p.bodies["POST /ops/slice/create"]
+	if len(bodies) != 1 {
+		t.Fatalf("create bodies = %v", bodies)
+	}
+	if bodies[0]["declared"] != true {
+		t.Errorf("the create does not say its config is the file's whole declaration: %v", bodies[0])
+	}
+	cfg, ok := bodies[0]["config"].(map[string]any)
+	if !ok {
+		t.Fatalf("the create carries no config: %v", bodies[0])
+	}
+	atomic, _ := cfg["atomic"].(map[string]any)
+	if fns, present := atomic["functions"]; !present || fns != nil {
+		t.Errorf("a file with no function must send functions as null (present=%v, value=%v)", present, fns)
+	}
+}
+
 func TestApply_TheFreeQuestionNamesTheNumbersAndNoMeansPriced(t *testing.T) {
 	freeSlotsAre(t, 3, "one", "two")
 	p, _ := freeApplyFixture(t, "slice \"demo\" {}\n")

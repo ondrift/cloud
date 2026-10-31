@@ -22,12 +22,17 @@ import (
 )
 
 // CreateWithShape creates a slice from a compiled shape, and waits for it to
-// answer. A free slice is created from the free preset, as `--free` does; any
-// other is created with the shape and billed monthly.
+// answer. A free slice takes the free preset's limits and the names the file
+// declares, none of the preset's placeholders for what it leaves out: the shape
+// goes with the request, marked as the file's whole declaration, so the slice
+// the platform stores is the one the next plan compares against. Any other is
+// created with the shape and billed monthly.
 func CreateWithShape(name string, shape any, free bool) error {
 	payload := map[string]any{"name": name}
 	if free {
 		payload["tier"] = "hacker"
+		payload["config"] = shape
+		payload["declared"] = true
 	} else {
 		payload["tier"] = "custom"
 		payload["config"] = shape

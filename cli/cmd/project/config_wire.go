@@ -61,7 +61,12 @@ type AtomicLimits struct {
 	// Functions is the slot list the slice was sold — each identity with the
 	// memory it books. A function's memory is its own admission pool AND what it
 	// is priced at, so nothing here is defaulted.
-	Functions []AtomicFunction `json:"functions,omitempty"`
+	//
+	// Never omitted. A resize is a patch, and a key it does not mention keeps
+	// what the slice holds, so a file that declares no function would leave the
+	// slice's functions standing, the free preset's five placeholders included,
+	// while the plan said it removed them. `null` is how a file says none.
+	Functions []AtomicFunction `json:"functions"`
 }
 
 // AtomicFunction mirrors drift-common/models.AtomicFunction's wire shape.
