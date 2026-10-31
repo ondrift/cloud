@@ -135,7 +135,7 @@ func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reade
 		}
 	}
 
-	send := func() (*http.Response, error) {
+	sendOnce := func() (*http.Response, error) {
 		req, err := newAuthenticatedRequestCtx(ctx, method, url, bytes.NewReader(bodyBytes))
 		if err != nil {
 			return nil, err
@@ -145,6 +145,9 @@ func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reade
 		}
 		return httpClient.Do(req)
 	}
+	// A slice cooled for want of requests answers its first call with a 503 that
+	// says it is warming. That is a wait, not a failure: see warming.go.
+	send := func() (*http.Response, error) { return waitWhileWarming(ctx, sendOnce) }
 
 	// First contact with the platform in this invocation also refreshes this
 	// machine's copy of the Driftfile format. It rides along here rather than
