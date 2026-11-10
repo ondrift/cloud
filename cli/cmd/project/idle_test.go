@@ -95,8 +95,8 @@ func TestApply_SaysNothingWhenTheSetsAreEqual(t *testing.T) {
 }
 
 // A slot serving a function this Driftfile does not name is not idle. Another
-// project on the same slice may own it, and ReportOrphanedFunctions already
-// names it; calling it idle would tell the tenant to release a live function.
+// project on the same slice may own it; calling it idle would tell the tenant to
+// release a live function.
 func TestReportIdle_AServingSlotIsNotIdle(t *testing.T) {
 	m := manifestNaming([]string{"get:ping"}, nil, nil, nil)
 	live := idleLive("custom", []string{"get:ping", "get:theirs", "get:slot-3"})

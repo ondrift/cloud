@@ -155,8 +155,7 @@ func TestReportUnnamedResources_NamesEachClassAndHowToRemoveIt(t *testing.T) {
 }
 
 // The control: nothing unnamed prints nothing at all, so an ordinary apply
-// gains no noise. It matches ReportOrphanedFunctions, which is the section this
-// one sits beside.
+// gains no noise.
 func TestReportUnnamedResources_NothingUnnamedPrintsNothing(t *testing.T) {
 	var out bytes.Buffer
 	reportUnnamedResources(unnamedResources{}, &out)
