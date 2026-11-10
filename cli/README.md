@@ -78,7 +78,8 @@ block it can hold.
 | `drift atomic redeploy\|rollback\|history <name>` | Manage deployed versions. |
 | `drift atomic trigger\|alert\|egress\|auth <name>` | Configure triggers, alerts, outbound egress, and API-key auth. |
 | `drift atomic backend list` | List your backends (single-language backends) and the functions each contains. |
-| `drift atomic delete <name>` | Remove a function. |
+
+A function or worker is removed by deleting its block from the Driftfile and running `drift apply`: the plan names the removal and the code, triggers and history that go with it.
 
 ### Backbone — data
 

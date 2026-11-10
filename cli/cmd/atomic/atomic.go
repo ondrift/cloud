@@ -42,7 +42,6 @@ func GetCmd() *cobra.Command {
 	atomicCmd.AddCommand(
 		cmd_run.Run(project.FunctionSpecsInDir),
 		cmd.Auth(),
-		cmd.Delete(),
 		cmd.Backend(),
 		cmd.Workers(),
 		cmd.List(),

@@ -50,8 +50,8 @@ func TestLocalQuotaConfig_ForwardsThePlatformsBytesUnchanged(t *testing.T) {
 }
 
 // The manifest names the slice being run. Reading it off the session instead
-// asks the platform about whatever this machine last used, which is how the
-// orphan check spent its whole life asking about "default".
+// asks the platform about whatever this machine last used, not about the slice
+// the manifest names.
 func TestLocalQuotaConfig_AsksAboutTheSliceTheManifestNames(t *testing.T) {
 	asked := quotaStub(t, http.StatusOK, sliceQuotaBody)
 

@@ -127,21 +127,21 @@ func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.
 	}
 
 	// The slice exists and holds what the manifest names, so this process acts on
-	// it, BEFORE anything that resolves a slice: the orphan check below sends it
-	// as `X-Slice`. Nothing is stored; the next command names its own.
+	// it, BEFORE anything that resolves a slice: the deployed-function read below
+	// sends it as `X-Slice`. Nothing is stored; the next command names its own.
 	if err := os.Setenv(common.SliceEnv, m.Name()); err != nil {
 		return fmt.Errorf("target slice %s: %w", m.Name(), err)
 	}
 
-	// What the slice serves and the manifest no longer names. A fetch failure
-	// is STATED rather than swallowed: silence here would be a false all-clear.
-	// The list outlives this check: the idle-slot report at the end reads it.
+	// What the slice serves, which the idle-slot report at the end reads. A
+	// function the file no longer declares is not reported here: the plan named
+	// it as a removal, and the resize that follows deletes it. A fetch failure
+	// is STATED rather than swallowed: silence would let that report read as a
+	// clean slice.
 	deployedFns, derr := atomic_cmd.DeployedFunctions()
 	if derr != nil {
-		fmt.Fprintf(out, "  %s couldn't check for functions or workers the Driftfile no longer names: %v\n",
+		fmt.Fprintf(out, "  %s couldn't read which functions are deployed, so the idle-slot report below is incomplete: %v\n",
 			common.Hint("·"), derr)
-	} else {
-		ReportOrphanedFunctions(m, deployedFns, out)
 	}
 
 	// A slice can be mid-provision or mid-Recreate for reasons this command did
@@ -404,8 +404,8 @@ func applyAtomicBackends(backends []atomic_cmd.Backend, out io.Writer) error {
 // The order is safe because nothing in Backbone depends on Atomic. Every step
 // above reads only the Driftfile and the files it names, and talks only to the
 // slice's Backbone; a seed is SQL or JSONL the project ships, never the output
-// of a function. The things that do depend on Atomic stay after it: the orphan
-// and idle reports read what Atomic deployed.
+// of a function. The thing that does depend on Atomic stays after it: the idle
+// report reads what Atomic deployed.
 //
 // A Backbone failure stops the apply before Atomic, for the same reason: a
 // slot deployed after its table or queue failed to apply starts against the
