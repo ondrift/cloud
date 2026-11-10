@@ -18,6 +18,7 @@ import (
 	project "github.com/ondrift/cloud/cli/cmd/project"
 	slice "github.com/ondrift/cloud/cli/cmd/slice"
 	upgrade "github.com/ondrift/cloud/cli/cmd/upgrade"
+	wallet "github.com/ondrift/cloud/cli/cmd/wallet"
 	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
@@ -178,6 +179,9 @@ func newRootCmd(shownVersion string) *cobra.Command {
 
 		// Account (signup, login, usage, upgrade)
 		account.GetAccountCmd(),
+
+		// Wallet (the euro balance: balance, history, topup)
+		wallet.GetCmd(),
 
 		// Self-update: reinstall the CLI at latest (or a pinned version)
 		upgrade.GetCmd(),
