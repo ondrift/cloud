@@ -30,6 +30,12 @@ type SliceEntry struct {
 	// running slice.
 	CooledAt  *time.Time `json:"cooled_at,omitempty"`
 	WarmingAt *time.Time `json:"warming_at,omitempty"`
+	// Hibernation is where the slice is once it has been cooled long enough for its
+	// data to be stored away as an archive: "hibernated" while it is, "restoring"
+	// while it comes back. Absent on a slice whose data is on its disks.
+	Hibernation *struct {
+		State string `json:"state"`
+	} `json:"hibernation,omitempty"`
 
 	// Config is the slice's declared shape, decoded only as far as the tenant's
 	// own labels.
@@ -124,7 +130,15 @@ func LabelsLine(labels map[string]string) string {
 // cooledNote says, after a slice's price, that its pod is scaled to zero for want
 // of requests. It is a plain statement and a pointer to the command that undoes it.
 func cooledNote(s SliceEntry) string {
+	state := ""
+	if s.Hibernation != nil {
+		state = s.Hibernation.State
+	}
 	switch {
+	case s.CooledAt != nil && state == "hibernated":
+		return "  stored away (drift slice warmup restores it)"
+	case s.WarmingAt != nil && state == "restoring":
+		return "  being restored"
 	case s.CooledAt != nil:
 		return "  cooled down (drift slice warmup)"
 	case s.WarmingAt != nil:
