@@ -8,6 +8,10 @@ package common
 // out: it says so once, sleeps the Retry-After the platform gave, and sends the
 // same request again, for as long as a warm-up takes. Past that it hands the 503
 // to the caller as what it is.
+//
+// A slice that no request has reached for months has its data stored away as an
+// archive, and the same answer carries X-Drift-Restoring beside X-Drift-Warming:
+// bringing it back takes minutes, so the command says that and waits longer.
 
 import (
 	"context"
@@ -23,10 +27,19 @@ const (
 	// WarmingHeader marks a 503 as a slice warming.
 	WarmingHeader = "X-Drift-Warming"
 
+	// RestoringHeader marks the warm-up as a restore from an archive. It rides with
+	// WarmingHeader, never instead of it.
+	RestoringHeader = "X-Drift-Restoring"
+
 	// warmingMaxWait bounds the wait. A warm-up takes about twenty seconds; the
 	// platform gives up on a pod that is not ready after three minutes, and so
 	// does a command that has waited this long.
 	warmingMaxWait = 3 * time.Minute
+
+	// restoringMaxWait bounds the wait for a restore: the platform allows its pod
+	// three minutes to be ready and the replay of the archive eight more, and a
+	// command that has waited this long has waited out both.
+	restoringMaxWait = 12 * time.Minute
 
 	// warmingDefaultDelay is the pause when the answer names none.
 	warmingDefaultDelay = 10 * time.Second
@@ -56,22 +69,37 @@ func IsWarming(resp *http.Response) bool {
 	return resp != nil && resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get(WarmingHeader) == "1"
 }
 
+// IsRestoring reports whether a warming response is a restore from an archive,
+// which takes minutes and not seconds.
+func IsRestoring(resp *http.Response) bool {
+	return IsWarming(resp) && resp.Header.Get(RestoringHeader) == "1"
+}
+
 // waitWhileWarming sends the request and, while the answer is a slice warming,
 // waits and sends it again. send must build a fresh request each time.
 func waitWhileWarming(ctx context.Context, send func() (*http.Response, error)) (*http.Response, error) {
 	var waited time.Duration
-	told := false
+	limit := warmingMaxWait
+	told, toldRestoring := false, false
 	for {
 		resp, err := send()
 		if err != nil || !IsWarming(resp) {
 			return resp, err
 		}
+		restoring := IsRestoring(resp)
+		if restoring {
+			limit = restoringMaxWait
+		}
 		delay := warmingDelay(resp)
-		if waited+delay > warmingMaxWait {
+		if waited+delay > limit {
 			return resp, nil // still warming after the limit: the caller sees the 503
 		}
 		_ = resp.Body.Close()
-		if !told {
+		switch {
+		case restoring && !toldRestoring:
+			fmt.Fprintln(warmingNotice, "This slice was stored away after months without requests. Restoring it takes a few minutes...")
+			told, toldRestoring = true, true
+		case !told:
 			fmt.Fprintln(warmingNotice, "This slice was cooled down for want of requests. Warming it up, about 20 seconds...")
 			told = true
 		}

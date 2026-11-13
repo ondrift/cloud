@@ -60,6 +60,59 @@ func TestWaitWhileWarming_WaitsOutAWarmingSlice(t *testing.T) {
 	}
 }
 
+// restoring is the warming answer a slice stored away as an archive gives.
+func restoring(retryAfter string) *http.Response {
+	r := answer(http.StatusServiceUnavailable, true, retryAfter)
+	r.Header.Set(RestoringHeader, "1")
+	return r
+}
+
+// A slice being restored from an archive is waited for in minutes, and the person
+// is told it takes minutes, once, and not that it takes twenty seconds.
+func TestWaitWhileWarming_WaitsOutARestore(t *testing.T) {
+	pauses, out := noWaiting(t)
+	calls := 0
+	resp, err := waitWhileWarming(t.Context(), func() (*http.Response, error) {
+		calls++
+		if calls < 20 { // 19 pauses of 30 seconds: past a warm-up's limit, inside a restore's
+			return restoring("30"), nil
+		}
+		return answer(http.StatusOK, false, ""), nil
+	})
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("got %v, %v; want the 200 once the slice is restored", resp, err)
+	}
+	var total time.Duration
+	for _, p := range *pauses {
+		total += p
+	}
+	if total <= warmingMaxWait {
+		t.Errorf("gave up after %s, inside the %s a warm-up gets; a restore takes longer", total, warmingMaxWait)
+	}
+	if total > restoringMaxWait {
+		t.Errorf("waited %s, more than the limit %s", total, restoringMaxWait)
+	}
+	if strings.Count(out.String(), "few minutes") != 1 || strings.Contains(out.String(), "20 seconds") {
+		t.Errorf("the notice should say minutes, once, and not seconds:\n%s", out.String())
+	}
+}
+
+// A restore that does not finish is not waited for forever either.
+func TestWaitWhileWarming_GivesUpOnARestoreAfterItsLimit(t *testing.T) {
+	pauses, _ := noWaiting(t)
+	resp, _ := waitWhileWarming(t.Context(), func() (*http.Response, error) { return restoring("30"), nil })
+	if !IsRestoring(resp) {
+		t.Fatalf("after the limit the caller should see the restoring 503, got %v", resp)
+	}
+	var total time.Duration
+	for _, p := range *pauses {
+		total += p
+	}
+	if total > restoringMaxWait || total+30*time.Second <= restoringMaxWait {
+		t.Errorf("waited %s, want it to stop at the %s limit", total, restoringMaxWait)
+	}
+}
+
 // A 503 that is not the slice warming is a real 503, handed back at once.
 func TestWaitWhileWarming_LeavesAnOrdinary503Alone(t *testing.T) {
 	pauses, _ := noWaiting(t)

@@ -93,6 +93,51 @@ func TestWarmup_GivesUpOnASliceThatNeverComesBack(t *testing.T) {
 	}
 }
 
+// A slice stored away as an archive is restored, the command says it takes minutes,
+// and it waits past the limit a plain warm-up gets.
+func TestWarmup_WaitsOutARestoreBeyondTheWarmUpLimit(t *testing.T) {
+	oldPoll, oldLimit, oldRestore := warmupPoll, warmupLimit, restoreLimit
+	warmupPoll, warmupLimit, restoreLimit = 2*time.Millisecond, 10*time.Millisecond, 3*time.Second
+	t.Cleanup(func() { warmupPoll, warmupLimit, restoreLimit = oldPoll, oldLimit, oldRestore })
+
+	started := time.Now()
+	stubLinkAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if time.Since(started) > 60*time.Millisecond { // past the warm-up limit, inside the restore's
+			_, _ = io.WriteString(w, `{"state":"running"}`)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"state":"warming","restoring":true}`)
+	})
+
+	var err error
+	out := captured(t, func() { err = getWarmupCmd().RunE(getWarmupCmd(), nil) })
+	if err != nil {
+		t.Fatalf("a restore that finished inside its limit was given up on: %v", err)
+	}
+	if !strings.Contains(out, "stored away") || !strings.Contains(out, "few minutes") || strings.Contains(out, "20 seconds") {
+		t.Errorf("the output should say the slice is being restored, in minutes:\n%s", out)
+	}
+}
+
+// `drift slice list` says when a slice's data is stored away and when it is coming
+// back, in words the person can act on.
+func TestList_NamesAStoredAwaySlice(t *testing.T) {
+	now := time.Now()
+	asleep := SliceEntry{CooledAt: &now, Hibernation: &struct {
+		State string `json:"state"`
+	}{State: "hibernated"}}
+	if got := cooledNote(asleep); !strings.Contains(got, "stored away") || !strings.Contains(got, "drift slice warmup") {
+		t.Errorf("hibernated note = %q, want it to say stored away and name the command", got)
+	}
+	coming := SliceEntry{WarmingAt: &now, Hibernation: &struct {
+		State string `json:"state"`
+	}{State: "restoring"}}
+	if got := cooledNote(coming); !strings.Contains(got, "restored") {
+		t.Errorf("restoring note = %q", got)
+	}
+}
+
 // `drift slice list` shows a cooled slice as one, and a running slice as nothing
 // at all.
 func TestList_NamesACooledSlice(t *testing.T) {
