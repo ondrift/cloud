@@ -116,7 +116,7 @@ func (p *planState) diffAlerts(d *planDiff, creating bool) {
 		case creating:
 			d.add("+", addr, "%s", what)
 		case p.alertsErr != nil:
-			d.add(" ", addr, "live alerts unknown (%v)", p.alertsErr)
+			d.unread(addr, "alerts", p.alertsErr)
 		case !held:
 			d.add("+", addr, "%s", what)
 		default:
