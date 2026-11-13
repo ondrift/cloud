@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -37,10 +38,15 @@ const fxevmLive = `{"name":"fxevm-testnode","tier":"custom","monthly_cost_cents"
  "labels":null}}`
 
 // planStub answers every read a plan makes. live is the /ops/slice/get body,
-// or "" for a slice that does not exist; deployed is /ops/atomic/list.
-func planStub(t *testing.T, live, deployed string) *recorder {
+// or "" for a slice that does not exist; deployed is /ops/atomic/list. A path
+// in failing answers 500 instead of its body, for the read a plan cannot make.
+func planStub(t *testing.T, live, deployed string, failing ...string) *recorder {
 	t.Helper()
 	return stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if slices.Contains(failing, r.URL.Path) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		switch r.URL.Path {
 		case "/ops/slice/get":
 			if live == "" {
@@ -81,8 +87,9 @@ func planStub(t *testing.T, live, deployed string) *recorder {
 }
 
 // planIn runs `drift plan` in a copy of the fxevm fixture, with the file's
-// write-only values set, and returns what it printed.
-func planIn(t *testing.T, edit func(string) string) (string, error) {
+// write-only values set, and returns what it printed. args are flags and
+// arguments for the command beyond the ones every test passes.
+func planIn(t *testing.T, edit func(string) string, args ...string) (string, error) {
 	t.Helper()
 	withRealSchema(t)
 	dir := t.TempDir()
@@ -105,7 +112,7 @@ func planIn(t *testing.T, edit func(string) string) (string, error) {
 	t.Setenv("EXPLORER_PASS", "explorer-pass")
 	t.Setenv("DRIFT_SLICE", "")
 
-	return planOutput(t, "--no-env-file")
+	return planOutput(t, append([]string{"--no-env-file"}, args...)...)
 }
 
 // THE read-only property. A plan reads the live slice and asks for a price,
