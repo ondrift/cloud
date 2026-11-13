@@ -150,7 +150,7 @@ func (p *planState) diffClientChannels(d *planDiff, creating bool) {
 		// Said when the file declares the list. A file that does not is not
 		// asking anything of a slice that cannot report.
 		if declared {
-			d.add(" ", "realtime", "live client channels unknown (%v)", p.channelsErr)
+			d.unread("realtime", "client channels", p.channelsErr)
 		}
 		return
 	}

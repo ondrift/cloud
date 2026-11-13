@@ -426,6 +426,10 @@ type planDiff struct {
 	// billingChanged is whether the file moves the slice between free and
 	// monthly.
 	billingChanged bool
+	// unreadFacts is every fact the plan could not read, in the order the diff
+	// met it. A write-only value (a secret, a key, a gate password) is never
+	// read back by design and is not in it.
+	unreadFacts []unreadFact
 }
 
 func (d *planDiff) add(mark, address, format string, args ...any) {
@@ -433,6 +437,27 @@ func (d *planDiff) add(mark, address, format string, args ...any) {
 	if mark != " " {
 		d.changed = true
 	}
+}
+
+// unreadFact is something the plan could not read: the plan line it belongs to,
+// what kind of fact it is ("sites", "secrets", "code"), and why it could not be
+// read.
+type unreadFact struct {
+	address, what string
+	err           error
+}
+
+// unread adds the blank-marked line for a live fact the plan could not read and
+// records it. The line sets no mark: a fact the plan never saw is no difference.
+func (d *planDiff) unread(address, what string, err error) {
+	d.add(" ", address, "live %s unknown (%v)", what, err)
+	d.noteUnread(address, what, err)
+}
+
+// noteUnread records a fact the plan could not read, for a line that says so in
+// its own words or for none. It is the one place a fact enters unreadFacts.
+func (d *planDiff) noteUnread(address, what string, err error) {
+	d.unreadFacts = append(d.unreadFacts, unreadFact{address, what, err})
 }
 
 // addressOf renders a booking key the way the file addresses it, for a slot
@@ -485,6 +510,7 @@ func (p *planState) diff() *planDiff {
 			switch {
 			case p.deployedErr != nil:
 				d.add("-", addr, "booking removed (whether code is deployed in it is unknown: %v)", p.deployedErr)
+				d.noteUnread(addr, "code", p.deployedErr)
 			case deployed:
 				d.add("-", addr, "deployed code, triggers and history are deleted")
 			default:
@@ -498,7 +524,7 @@ func (p *planState) diff() *planDiff {
 					d.removes = append(d.removes, addr+" (booking shrinks)")
 				}
 			}
-			code, codeChanged := p.codeStatus(key, deployed, deployedDigest)
+			code, codeChanged := p.codeStatus(d, addr, key, deployed, deployedDigest)
 			if codeChanged {
 				changes = append(changes, code)
 			}
@@ -604,17 +630,28 @@ func (p *planState) diff() *planDiff {
 	return d
 }
 
+// errBuildCannotRead is why a slot's code is not compared when the build gave no
+// digest for it and no error of its own.
+var errBuildCannotRead = errors.New("the build cannot read it here")
+
 // codeStatus says whether a slot's code and declaration match what is
-// deployed, by the same digest the deploy skips unchanged work with.
-func (p *planState) codeStatus(key string, deployed bool, digest string) (string, bool) {
+// deployed, by the same digest the deploy skips unchanged work with. A slot
+// whose code it could not compare is recorded on d as unread.
+func (p *planState) codeStatus(d *planDiff, addr, key string, deployed bool, digest string) (string, bool) {
 	local, known := p.local[key]
 	switch {
 	case p.deployedErr != nil:
+		d.noteUnread(addr, "code", p.deployedErr)
 		return fmt.Sprintf("code not compared (%v)", p.deployedErr), false
 	case !deployed:
 		return "not deployed yet: deploys", true
 	case p.buildErr != nil || !known || local == "":
-		return "code not compared (the build cannot read it here)", false
+		reason := p.buildErr
+		if reason == nil {
+			reason = errBuildCannotRead
+		}
+		d.noteUnread(addr, "code", reason)
+		return fmt.Sprintf("code not compared (%v)", errBuildCannotRead), false
 	case digest == local:
 		return "unchanged (digest " + shortDigest(digest) + ")", false
 	}
@@ -653,7 +690,7 @@ func (p *planState) diffSites(d *planDiff, creating bool) {
 		case creating:
 			d.add("+", addr, "uploads %s", s.Dir)
 		case p.sitesErr != nil:
-			d.add(" ", addr, "live sites unknown (%v)", p.sitesErr)
+			d.unread(addr, "sites", p.sitesErr)
 		case !liveSlugs[s.Slug]:
 			d.add("+", addr, "uploads %s", s.Dir)
 		default:
@@ -670,6 +707,7 @@ func (p *planState) diffSites(d *planDiff, creating bool) {
 }
 
 func (p *planState) diffSecrets(d *planDiff, creating bool) {
+	recorded := len(d.unreadFacts)
 	live := map[string]bool{}
 	for _, n := range p.secrets {
 		live[n] = true
@@ -688,11 +726,17 @@ func (p *planState) diffSecrets(d *planDiff, creating bool) {
 		case creating || (p.secretsErr == nil && !live[name]):
 			d.add("+", w.Address, "set from $%s", w.Env)
 		case p.secretsErr != nil:
-			d.add(" ", w.Address, "live secrets unknown (%v)", p.secretsErr)
+			d.unread(w.Address, "secrets", p.secretsErr)
 		default:
 			// A secret's value is never read back, so it is set again.
 			d.add(" ", w.Address, "present; set again from $%s on apply (write-only, not compared)", w.Env)
 		}
+	}
+	// The slice's list is also how a secret the file does not name is found, so a
+	// plan that could not read it cannot say that none would be deleted, whether
+	// or not the file declares a secret to hang a line on.
+	if !creating && p.secretsErr != nil && len(d.unreadFacts) == recorded {
+		d.noteUnread("secrets", "secrets", p.secretsErr)
 	}
 	names := append([]string{}, p.secrets...)
 	sort.Strings(names)
@@ -725,7 +769,7 @@ func (p *planState) diffKeys(d *planDiff, creating bool) {
 		case creating:
 			d.add("+", addr, "set from $%s", w.Env)
 		case p.keysErr != nil:
-			d.add(" ", addr, "live key unknown (%v)", p.keysErr)
+			d.unread(addr, "key", p.keysErr)
 		case live == nil:
 			d.add("+", addr, "set from $%s", w.Env)
 		case keyFingerprint(os.Getenv(w.Env)) == live.Fingerprint:
@@ -755,7 +799,7 @@ func (p *planState) diffEdge(d *planDiff, creating bool) {
 			case creating || (p.gateErr == nil && !p.gate.Enabled):
 				d.add("+", "site_auth", "the gate is turned on (realm %s)", realmOrNone(realm))
 			case p.gateErr != nil:
-				d.add(" ", "site_auth", "live gate unknown (%v)", p.gateErr)
+				d.unread("site_auth", "gate", p.gateErr)
 			case p.gate.Realm != realm:
 				d.add("~", "site_auth", "realm %s → %s", realmOrNone(p.gate.Realm), realmOrNone(realm))
 			default:
@@ -802,7 +846,7 @@ func (p *planState) diffEdge(d *planDiff, creating bool) {
 		case creating:
 			d.add("+", "egress", "%s %s", mode, strings.Join(hosts, ", "))
 		case p.egressErr != nil:
-			d.add(" ", "egress", "live egress unknown (%v)", p.egressErr)
+			d.unread("egress", "egress", p.egressErr)
 		case egressInSync(mode, hosts, p.egress):
 			d.add(" ", "egress", "unchanged (%s)", mode)
 		default:
@@ -817,7 +861,7 @@ func (p *planState) diffEdge(d *planDiff, creating bool) {
 
 	listDiff := func(noun string, want, have []string, herr error) {
 		if herr != nil && !creating {
-			d.add(" ", noun, "live %s unknown (%v)", noun, herr)
+			d.unread(noun, noun, herr)
 			return
 		}
 		haveSet, wantSet := map[string]bool{}, map[string]bool{}

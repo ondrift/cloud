@@ -91,6 +91,14 @@ func planStub(t *testing.T, live, deployed string, failing ...string) *recorder 
 // arguments for the command beyond the ones every test passes.
 func planIn(t *testing.T, edit func(string) string, args ...string) (string, error) {
 	t.Helper()
+	inFixture(t, edit)
+	return planOutput(t, append([]string{"--no-env-file"}, args...)...)
+}
+
+// inFixture makes a copy of the fxevm fixture, edited by edit, the working
+// directory, with the file's write-only values set.
+func inFixture(t *testing.T, edit func(string) string) {
+	t.Helper()
 	withRealSchema(t)
 	dir := t.TempDir()
 	src := filepath.Join(mustAbs(t, "testdata"), "fxevm")
@@ -111,8 +119,6 @@ func planIn(t *testing.T, edit func(string) string, args ...string) (string, err
 	t.Setenv("RESET_KEY", "reset-key-4321")
 	t.Setenv("EXPLORER_PASS", "explorer-pass")
 	t.Setenv("DRIFT_SLICE", "")
-
-	return planOutput(t, append([]string{"--no-env-file"}, args...)...)
 }
 
 // THE read-only property. A plan reads the live slice and asks for a price,
