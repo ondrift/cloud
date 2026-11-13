@@ -646,9 +646,9 @@ func (p *planState) codeStatus(d *planDiff, addr, key string, deployed bool, dig
 	case !deployed:
 		return "not deployed yet: deploys", true
 	case p.buildErr != nil || !known || local == "":
-		reason := p.buildErr
-		if reason == nil {
-			reason = errBuildCannotRead
+		reason := errBuildCannotRead
+		if p.buildErr != nil {
+			reason = fmt.Errorf("the build cannot read this project: %w", p.buildErr)
 		}
 		d.noteUnread(addr, "code", reason)
 		return fmt.Sprintf("code not compared (%v)", errBuildCannotRead), false
@@ -821,6 +821,9 @@ func (p *planState) diffEdge(d *planDiff, creating bool) {
 				switch {
 				case !envSet(e.Env):
 					d.add("!", addr, "$%s is not set here: apply would refuse", e.Env)
+				case !creating && p.gateErr != nil:
+					// The gate's own line says it could not be read. A user is not
+					// absent from a gate nobody saw, so none is added to it.
 				case creating || !liveUsers[e.User]:
 					d.add("+", addr, "password from $%s", e.Env)
 				default:
@@ -978,11 +981,21 @@ func ShapeLimits(c *Compiled) []LimitLine {
 
 // ─── printing ───────────────────────────────────────────────────────────────
 
-// render prints the plan, then how to apply it.
+// render prints the plan, then how to apply it. A plan with nothing to apply
+// ends on what the verdict says: that the slice is the file, or that nothing
+// differs in what could be read, with each fact that could not be.
 func (p *planState) render(out io.Writer) {
 	d := p.renderBody(out)
-	if !d.changed && p.live != nil {
+	switch v := p.verdict(d); v.State {
+	case VerdictMatch:
 		fmt.Fprintf(out, "  Nothing to change.\n\n")
+		return
+	case VerdictUnread:
+		fmt.Fprintf(out, "  Nothing differs in what could be read.\n")
+		for _, line := range v.Unread {
+			fmt.Fprintf(out, "    %s\n", line)
+		}
+		fmt.Fprintln(out)
 		return
 	}
 	hint := "drift apply"
@@ -1035,14 +1048,7 @@ func (p *planState) renderBody(out io.Writer) *planDiff {
 		who = p.user + "/" + who
 	}
 
-	status := "unchanged"
-	switch {
-	case p.live == nil:
-		status = "+ create"
-	case d.changed:
-		status = "~ change"
-	}
-	fmt.Fprintf(out, "\n  %-50s %s\n\n", "slice "+who, status)
+	fmt.Fprintf(out, "\n  %-50s %s\n\n", "slice "+who, p.verdict(d).State.header())
 
 	width := 24
 	for _, l := range d.lines {

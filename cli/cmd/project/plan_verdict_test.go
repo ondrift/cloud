@@ -77,8 +77,8 @@ type unreadCase struct {
 	fact, reason string
 }
 
-// plan runs `drift plan` on the matching slice with this fact unreadable.
-func (c unreadCase) plan(t *testing.T, args ...string) (string, error) {
+// stub answers as the platform of the matching slice, with this fact unreadable.
+func (c unreadCase) stub(t *testing.T) {
 	t.Helper()
 	live, deployed := matchingSlice(t)
 	var failing []string
@@ -86,11 +86,21 @@ func (c unreadCase) plan(t *testing.T, args ...string) (string, error) {
 		failing = append(failing, c.failing)
 	}
 	planStub(t, live, deployed, failing...)
-	var edit func(string) string
-	if c.edit != nil {
-		edit = func(s string) string { return c.edit(t, s) }
+}
+
+// editor is the edit of the fixture that makes this fact unreadable, or nil.
+func (c unreadCase) editor(t *testing.T) func(string) string {
+	if c.edit == nil {
+		return nil
 	}
-	return planIn(t, edit, args...)
+	return func(s string) string { return c.edit(t, s) }
+}
+
+// plan runs `drift plan` on the matching slice with this fact unreadable.
+func (c unreadCase) plan(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	c.stub(t)
+	return planIn(t, c.editor(t), args...)
 }
 
 // unreadCases are the facts a plan reads that the fxevm file makes it read, one
@@ -115,12 +125,12 @@ func unreadCases() []unreadCase {
 }
 
 // headerOf is what the plan's slice line says about the slice: the text after
-// its name.
+// its name, which is padded to 50 columns.
 func headerOf(t *testing.T, out string) string {
 	t.Helper()
 	for _, line := range strings.Split(out, "\n") {
-		if _, status, ok := strings.Cut(line, "slice fxevm-testnode"); ok {
-			return strings.TrimSpace(status)
+		if strings.HasPrefix(line, "  slice ") && len(line) > 53 {
+			return strings.TrimSpace(line[53:])
 		}
 	}
 	t.Fatalf("the plan has no slice line:\n%s", out)
@@ -134,17 +144,12 @@ const (
 )
 
 // Why a test below is skipped, and which task makes it pass.
-const (
-	skipUntilTheVerdictDecidesTheText = "fails until #3024: the header and the closing line read only the marked lines, " +
-		"so a plan that could not read a fact says it has nothing to change"
-	skipUntilTheFlagExists = "fails until #3026: drift plan has no --exit-code flag"
-)
+const skipUntilTheFlagExists = "fails until #3026: drift plan has no --exit-code flag"
 
 // A plan that could not read a fact does not say the slice has nothing to
 // change. It says nothing differs in what it could read, names each fact it
 // could not and why, and its header says the slice was not fully read.
 func TestPlan_ABlindPlanDoesNotClaimAMatch(t *testing.T) {
-	t.Skip(skipUntilTheVerdictDecidesTheText)
 	for _, c := range unreadCases() {
 		t.Run(c.name, func(t *testing.T) {
 			out, err := c.plan(t)
@@ -174,53 +179,57 @@ func TestPlan_ABlindPlanDoesNotClaimAMatch(t *testing.T) {
 // verdictCase is one of the four things a plan concludes, with the slice that
 // makes it conclude that.
 type verdictCase struct {
-	name string // create, differs, unread or match
-	run  func(t *testing.T, args ...string) (string, error)
+	name    string // create, differs, unread or match
+	verdict VerdictState
+	// stub answers as the platform of that slice.
+	stub func(t *testing.T)
 	// header is the plan's slice line status; closing the line it ends on;
 	// notClosing the lines of the other verdicts it must not end on.
 	header, closing string
 	notClosing      []string
 	// exit is the status `drift plan --exit-code` ends with.
 	exit int
-	// skip is why the case cannot pass yet, and which task makes it pass.
-	skip string
+}
+
+// run runs `drift plan` on that slice.
+func (c verdictCase) run(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	c.stub(t)
+	return planIn(t, nil, args...)
+}
+
+// state gathers the plan of that slice.
+func (c verdictCase) state(t *testing.T) *planState {
+	t.Helper()
+	c.stub(t)
+	return planStateIn(t, nil)
 }
 
 func verdictCases() []verdictCase {
 	return []verdictCase{
 		{
-			name: "create",
-			run: func(t *testing.T, args ...string) (string, error) {
-				planStub(t, "", `[]`)
-				return planIn(t, nil, args...)
-			},
+			name: "create", verdict: VerdictCreate,
+			stub:   func(t *testing.T) { planStub(t, "", `[]`) },
 			header: "+ create", closing: closingApply, notClosing: []string{closingMatch, closingUnread}, exit: 2,
 		},
 		{
-			name: "differs",
-			run: func(t *testing.T, args ...string) (string, error) {
-				planStub(t, fxevmLive, `[]`)
-				return planIn(t, nil, args...)
-			},
+			name: "differs", verdict: VerdictDiffers,
+			stub:   func(t *testing.T) { planStub(t, fxevmLive, `[]`) },
 			header: "~ change", closing: closingApply, notClosing: []string{closingMatch, closingUnread}, exit: 2,
 		},
 		{
 			// The slice's sites are the unread fact, the first of the cases above.
-			name: "unread",
-			run: func(t *testing.T, args ...string) (string, error) {
-				return unreadCases()[0].plan(t, args...)
-			},
+			name: "unread", verdict: VerdictUnread,
+			stub:   unreadCases()[0].stub,
 			header: "unchanged (not fully read)", closing: closingUnread, notClosing: []string{closingMatch}, exit: 3,
-			skip: skipUntilTheVerdictDecidesTheText,
 		},
 		{
 			// The write-only lines of the fxevm file (a key and a gate password the
 			// slice never reads back) are in this plan, and it is still a match.
-			name: "match",
-			run: func(t *testing.T, args ...string) (string, error) {
+			name: "match", verdict: VerdictMatch,
+			stub: func(t *testing.T) {
 				live, deployed := matchingSlice(t)
 				planStub(t, live, deployed)
-				return planIn(t, nil, args...)
 			},
 			header: "unchanged", closing: closingMatch, notClosing: []string{closingUnread, closingApply}, exit: 0,
 		},
@@ -232,9 +241,6 @@ func verdictCases() []verdictCase {
 func TestPlan_EachVerdictHasItsOwnHeaderAndClosingLine(t *testing.T) {
 	for _, c := range verdictCases() {
 		t.Run(c.name, func(t *testing.T) {
-			if c.skip != "" {
-				t.Skip(c.skip)
-			}
 			out, err := c.run(t)
 			if err != nil {
 				t.Fatalf("plan: %v", err)
