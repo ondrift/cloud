@@ -84,6 +84,12 @@
       "meaning": "The platform is limiting how often you can do this, and the limit clears by itself.",
       "remedy": "Wait for the time the message names, then run it again. Nothing needs freeing or buying: this is a rate limit, not a quota, and resizing a slice does not lift it. Logins and signups are limited per address, control-plane calls per account each minute, restarts per slice, and transfer offers per account each day. A retry before the time is up is refused again.",
       "command": ""
+    },
+    {
+      "code": "DRIFT-1015",
+      "meaning": "The platform speaks a newer API version than this drift, and it answered not found to a request this drift made.",
+      "remedy": "The platform states the API version it speaks on every reply. When that is ahead of the one this drift was built for, a request for a path the platform no longer serves comes back as a plain not found. `drift upgrade` installs the release that speaks the platform's version. If the same request still says not found after upgrading, the thing you named does not exist: see DRIFT-1003.",
+      "command": "drift upgrade"
     }
   ]
 }

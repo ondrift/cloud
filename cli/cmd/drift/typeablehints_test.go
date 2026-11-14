@@ -36,6 +36,12 @@ var typeableHints = map[string][]string{
 	// Printed on stderr by the request helper the first time the platform states a
 	// route contract ahead of this binary's.
 	"the older-than-the-platform line": {common.NewerPlatformNotice(common.ImplementedRouteContract + 1)},
+	// A bare 404 from a platform ahead of this binary (DRIFT-1015).
+	"the not-found from a newer platform (DRIFT-1015)": {(&common.APIError{
+		Op:                 "delete function",
+		Status:             404,
+		PlatformAPIVersion: common.ImplementedRouteContract + 1,
+	}).Error()},
 }
 
 // yamlRefusal is the message every reader gives a YAML Driftfile.

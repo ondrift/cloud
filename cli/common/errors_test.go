@@ -501,3 +501,153 @@ func TestDetailForStatus_NoViolationsIsUnchanged(t *testing.T) {
 		t.Errorf("empty violations: got %q, want nope", got)
 	}
 }
+
+// A 404 FROM A PLATFORM A MAJOR AHEAD IS A VERSION DIFFERENCE, NOT A MISSING
+// RESOURCE.
+//
+// The api answers a path it no longer serves with the bare {"error":"not found"}
+// and states its route-contract major beside it. Printing "not found" sends a
+// person looking for a typo when the thing to do is upgrade. Only a BARE answer
+// is read that way: a 404 that names its resource ("slice not found: demo") is
+// the platform having found the route and missed the thing, which is a missing
+// resource whatever major the platform speaks.
+
+// refusalFrom returns the error CheckResponse builds for a reply with the given
+// status and body from a platform that states `stated` as its API version ("" is
+// no statement at all).
+func refusalFrom(t *testing.T, status int, stated, body string) *APIError {
+	t.Helper()
+	resp := &http.Response{
+		StatusCode: status,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+	if stated != "" {
+		resp.Header.Set(APIVersionHeader, stated)
+	}
+	_, err := CheckResponse(resp, "delete function")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	return apiErr
+}
+
+func TestAPIError_ABareNotFoundFromAPlatformAheadIsAVersionDifference(t *testing.T) {
+	for name, body := range map[string]string{
+		"the api's own route miss": `{"error":"not found"}`,
+		"an empty body":            ``,
+		"a router's default text":  "404 page not found\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := refusalFrom(t, http.StatusNotFound, "2", body)
+			got := e.Error()
+
+			for _, want := range []string{
+				"older than the platform",
+				"API version 1",
+				"the platform speaks 2",
+				"`drift upgrade`",
+				"DRIFT-1015",
+			} {
+				if !strings.Contains(got, want) {
+					t.Errorf("the error does not say %q:\n%s", want, got)
+				}
+			}
+			if strings.Contains(got, "wasn't found") || strings.Contains(got, ": not found.") {
+				t.Errorf("a version difference was reported as a missing resource:\n%s", got)
+			}
+			if _, ok := LookupErrorCode(e.code()); !ok {
+				t.Errorf("%s is rendered but not registered, so `doctor explain` cannot answer it", e.code())
+			}
+		})
+	}
+}
+
+// THE CONTROLS. Each of these is a 404 that stays what it was: a named resource
+// from a platform ahead, and the bare answer from a platform that is not ahead or
+// states nothing readable. Without them the test above passes for a change that
+// turns every 404 into advice to upgrade.
+func TestAPIError_ANotFoundThatIsAMissingResourceStaysOne(t *testing.T) {
+	for name, tc := range map[string]struct {
+		stated, body, want string
+	}{
+		"a named resource, platform ahead":    {"2", `{"error":"slice not found: demo"}`, "slice not found: demo"},
+		"a named function, platform ahead":    {"2", `{"error":"function not found"}`, "function not found"},
+		"the bare answer, the same major":     {"1", `{"error":"not found"}`, "not found"},
+		"the bare answer, no statement":       {"", `{"error":"not found"}`, "not found"},
+		"the bare answer, an unreadable one":  {"latest", `{"error":"not found"}`, "not found"},
+		"an empty body, the same major":       {"1", ``, "wasn't found"},
+		"an empty body, no statement":         {"", ``, "wasn't found"},
+		"a router's default, no statement":    {"", "404 page not found\n", "404 page not found"},
+		"a router's default, the same major":  {"1", "404 page not found\n", "404 page not found"},
+		"a named resource, no statement":      {"", `{"error":"secret not found"}`, "secret not found"},
+		"a named resource, the same major":    {"1", `{"error":"secret not found"}`, "secret not found"},
+		"a named resource, several ahead":     {"9", `{"error":"queue orders not found"}`, "queue orders not found"},
+		"the bare answer, an older statement": {"0", `{"error":"not found"}`, "not found"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := refusalFrom(t, http.StatusNotFound, tc.stated, tc.body)
+			got := e.Error()
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("the missing resource lost its words, want %q in:\n%s", tc.want, got)
+			}
+			if strings.Contains(got, "drift upgrade") || strings.Contains(got, "older than the platform") {
+				t.Errorf("a missing resource was reported as a version difference:\n%s", got)
+			}
+			if e.code() != "DRIFT-1003" {
+				t.Errorf("code() = %q, want DRIFT-1003", e.code())
+			}
+		})
+	}
+}
+
+// Only a 404 is read this way. A refusal or a fault from a platform ahead keeps
+// its own words and its own code: the platform said something specific, and it is
+// not a path that moved.
+func TestAPIError_OnlyANotFoundIsReadAsAVersionDifference(t *testing.T) {
+	withStatusFeed(t, 200, feedOK)
+
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+		want   string
+		code   string
+	}{
+		"a refusal":     {http.StatusForbidden, `{"error":"not the owner"}`, "not the owner", "DRIFT-1002"},
+		"a conflict":    {http.StatusConflict, `{"error":"name taken"}`, "name taken", "DRIFT-1013"},
+		"a quota":       {http.StatusTooManyRequests, `{"error":"function limit reached"}`, "function limit reached", "DRIFT-1004"},
+		"a bad request": {http.StatusBadRequest, `{"error":"not found"}`, "not found", ""},
+		"a fault":       {http.StatusInternalServerError, `{"error":"not found"}`, "having trouble", "DRIFT-1005"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := refusalFrom(t, tc.status, "2", tc.body)
+			got := e.Error()
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("want %q in:\n%s", tc.want, got)
+			}
+			if strings.Contains(got, "drift upgrade") {
+				t.Errorf("a status other than 404 was reported as a version difference:\n%s", got)
+			}
+			if e.code() != tc.code {
+				t.Errorf("code() = %q, want %q", e.code(), tc.code)
+			}
+		})
+	}
+}
+
+// The remedy the registry names for DRIFT-1015 is the upgrade command, in at most
+// three words, and it leaves the way back open: a 404 that survives an upgrade is
+// an ordinary missing resource.
+func TestErrorCodes_ThePlatformAheadRemedyIsTheUpgradeCommand(t *testing.T) {
+	c, ok := LookupErrorCode("DRIFT-1015")
+	if !ok {
+		t.Fatal("DRIFT-1015 is not in the registry")
+	}
+	if c.Command != "drift upgrade" {
+		t.Errorf("Command = %q, want %q", c.Command, "drift upgrade")
+	}
+	if !strings.Contains(c.Remedy, "DRIFT-1003") {
+		t.Errorf("the remedy does not say what a 404 that survives the upgrade means:\n%s", c.Remedy)
+	}
+}

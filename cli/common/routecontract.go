@@ -67,6 +67,24 @@ func NewerPlatformNotice(platform int) string {
 		"Run `drift upgrade`.", ImplementedRouteContract, platform)
 }
 
+// isBareNotFound reports whether a 404's detail names no thing: empty, the api's
+// own answer for a path it does not serve (exactly "not found"), or a router's
+// default ("404 page not found"). A 404 that names what it could not find, such
+// as "slice not found: demo", is the platform having found the route and missed
+// the thing.
+//
+// Recognised by those words because the platform sends no machine-readable key on
+// a route miss, the same footing as isSessionRevoked. A slice's own bare "not
+// found", relayed through the api, reads the same, which is why the sentence built
+// on this says "may".
+func isBareNotFound(detail string) bool {
+	switch strings.ToLower(strings.TrimRight(strings.TrimSpace(detail), ".")) {
+	case "", "not found", "404 page not found":
+		return true
+	}
+	return false
+}
+
 // routeContractNoticeOnce keeps the notice to one per process, which is one per
 // command: a deploy makes many requests and each of them carries the header.
 var routeContractNoticeOnce sync.Once
