@@ -66,7 +66,7 @@ func TestApply_PrintsTheHeaderThePlanPrintsForAnUnreadSlice(t *testing.T) {
 	live := ""
 	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/ops/slice/get":
+		case "/ops/slice":
 			_, _ = w.Write([]byte(live))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
@@ -225,7 +225,7 @@ func TestPlanVerdict_ReadsTheFilesSliceAndLeavesTheActiveSliceAlone(t *testing.T
 		t.Run(c.name, func(t *testing.T) {
 			var asked []string
 			stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/ops/slice/get" {
+				if r.URL.Path == "/ops/slice" {
 					asked = append(asked, r.Header.Get("X-Slice"))
 				}
 				w.WriteHeader(http.StatusNotFound)
@@ -294,7 +294,7 @@ func TestPlanVerdict_WithoutASessionOrTheNetworkIsTheErrorAndNoVerdict(t *testin
 			if !reflect.DeepEqual(v, Verdict{}) {
 				t.Errorf("with %s PlanVerdict returns the verdict %+v beside its error", c.name, v)
 			}
-			if n := rec.count("GET /ops/slice/get"); n != 0 {
+			if n := rec.count("GET /ops/slice"); n != 0 {
 				t.Errorf("with %s the platform stub still answered %d reads of the slice", c.name, n)
 			}
 		})

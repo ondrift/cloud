@@ -14,7 +14,7 @@ import (
 )
 
 // SliceEntry is one slice in the caller's account, as returned by
-// /ops/slice/list. Exported so the `drift portal` TUI can reuse the fetch.
+// GET /ops/slice. Exported so the `drift portal` TUI can reuse the fetch.
 //
 // MonthlyCostCents is the price stored on the slice, fixed when it was created
 // or last resized. It is read, never recomputed from the config: the stored
@@ -58,7 +58,7 @@ type SliceEntry struct {
 // FetchSlices returns the caller's slices. Data-only (no printing) so both the
 // `slice list` command and the portal dashboard can share it.
 func FetchSlices() ([]SliceEntry, error) {
-	resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/slice/list", nil)
+	resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/slice", nil)
 	if err != nil {
 		return nil, common.TransportError("list slices", err)
 	}

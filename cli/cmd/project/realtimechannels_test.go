@@ -176,7 +176,7 @@ func realtimeSlice(t *testing.T, body string, s *channelsSlice) {
 	live := ""
 	s.rec = stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/ops/slice/get":
+		case "/ops/slice":
 			_, _ = w.Write([]byte(live))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))

@@ -24,10 +24,10 @@ type LiveSlice struct {
 	MonthlyCostCents int         `json:"monthly_cost_cents"`
 }
 
-// FetchLiveSlice GETs /ops/slice/get?name=<name>. Returns nil if the
+// FetchLiveSlice GETs /ops/slice?name=<name>. Returns nil if the
 // slice doesn't exist (404), error for any other failure.
 func FetchLiveSlice(name string) (*LiveSlice, error) {
-	u := common.APIBaseURL + "/ops/slice/get?name=" + url.QueryEscape(name)
+	u := common.APIBaseURL + "/ops/slice?name=" + url.QueryEscape(name)
 	resp, err := common.DoJSONRequest(http.MethodGet, u, nil)
 	if err != nil {
 		return nil, common.TransportError("fetch slice", err)

@@ -71,7 +71,7 @@ func TestApply_ANewSliceInsideTheFreeGrantNeedsTheFreeSliceAnswered(t *testing.T
 	if _, err := runFreeApply(t, a, false, ""); err != nil {
 		t.Fatalf("apply --use-free-slice: %v", err)
 	}
-	bodies := p.bodies["POST /ops/slice/create"]
+	bodies := p.bodies["POST /ops/slice"]
 	if len(bodies) != 1 || bodies[0]["tier"] != "hacker" {
 		t.Fatalf("the free slice was not created as one: %v", bodies)
 	}
@@ -92,7 +92,7 @@ func TestApply_ANewFreeSliceIsCreatedFromTheFilesWholeDeclaration(t *testing.T) 
 	if _, err := runFreeApply(t, a, false, ""); err != nil {
 		t.Fatalf("apply --use-free-slice: %v", err)
 	}
-	bodies := p.bodies["POST /ops/slice/create"]
+	bodies := p.bodies["POST /ops/slice"]
 	if len(bodies) != 1 {
 		t.Fatalf("create bodies = %v", bodies)
 	}
@@ -120,7 +120,7 @@ func TestApply_TheFreeQuestionNamesTheNumbersAndNoMeansPriced(t *testing.T) {
 	if !strings.Contains(out, "You have 2 of 3 free slices — make this the 3rd?") {
 		t.Errorf("the question does not carry the platform's numbers:\n%s", out)
 	}
-	if got := p.bodies["POST /ops/slice/create"]; len(got) != 1 || got[0]["tier"] != "hacker" {
+	if got := p.bodies["POST /ops/slice"]; len(got) != 1 || got[0]["tier"] != "hacker" {
 		t.Fatalf("yes did not create a free slice: %v", got)
 	}
 }
@@ -154,7 +154,7 @@ func TestApply_ChoosingPricedOverAnOpenFreeSlotNeedsTheQuotedPrice(t *testing.T)
 	if _, err := runFreeApply(t, a, false, ""); err != nil {
 		t.Fatalf("apply --approve-price 0: %v", err)
 	}
-	bodies := p.bodies["POST /ops/slice/create"]
+	bodies := p.bodies["POST /ops/slice"]
 	if len(bodies) != 1 || bodies[0]["tier"] != "custom" {
 		t.Fatalf("agreeing to a price did not create a priced slice: %v", bodies)
 	}

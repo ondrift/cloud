@@ -65,7 +65,7 @@ func (m *model) deleteLines() []string {
 // deleteSliceByName calls the control-plane delete endpoint for one slice.
 func deleteSliceByName(name string) error {
 	resp, err := common.DoRequest(http.MethodDelete,
-		common.APIBaseURL+"/ops/slice/delete?name="+url.QueryEscape(name), nil)
+		common.APIBaseURL+"/ops/slice?name="+url.QueryEscape(name), nil)
 	if err != nil {
 		return common.TransportError("delete slice", err)
 	}

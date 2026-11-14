@@ -88,7 +88,7 @@ func TestApply_ThePreflightRunsBeforeAnyRoute(t *testing.T) {
 	withRealSchema(t)
 	applyIn(t, "slice \"demo\" {}\ncanvas {\n  site \"/\" { dir = \"site\" }\n}\n", "site")
 	_ = runApply(applyOptions{noEnvFile: true, answers: noAnswers(), out: os.Stdout, in: strings.NewReader("")})
-	if rec.count("GET /ops/slice/get") == 0 {
+	if rec.count("GET /ops/slice") == 0 {
 		t.Error("a file the preflight accepts never reached the slice, so the refusal above proves nothing")
 	}
 }

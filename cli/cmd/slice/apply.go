@@ -43,7 +43,7 @@ func CreateWithShape(name string, shape any, free bool) error {
 	if err != nil {
 		return err
 	}
-	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/slice/create", bytes.NewBuffer(body))
+	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/slice", bytes.NewBuffer(body))
 	if err != nil {
 		return common.TransportError("create slice", err)
 	}

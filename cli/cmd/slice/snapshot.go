@@ -186,7 +186,7 @@ func getSnapshotListCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/slice/snapshot/list", nil)
+			resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/slice/snapshot", nil)
 			if err != nil {
 				return common.TransportError("list snapshots", err)
 			}

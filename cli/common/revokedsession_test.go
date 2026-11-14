@@ -56,7 +56,7 @@ func reject(body string) func(w http.ResponseWriter) {
 
 func askForSomething(t *testing.T) error {
 	t.Helper()
-	_, err := DoRequest(http.MethodGet, APIBaseURL+"/ops/slice/list", nil)
+	_, err := DoRequest(http.MethodGet, APIBaseURL+"/ops/slice", nil)
 	return err
 }
 

@@ -189,7 +189,7 @@ func stubSliceWithEdge(t *testing.T, edge http.HandlerFunc) *edgeRecorder {
 	er.recorder = stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		er.noteQuery(r)
 		switch r.URL.Path {
-		case "/ops/slice/get":
+		case "/ops/slice":
 			_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{}}`))
 			return
 		case "/ops/slice/status":

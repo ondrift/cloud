@@ -156,7 +156,7 @@ func TestEnvironment_PlanAndApplyAnEnvironmentAgainstItsOwnSlice(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("apply staging: %v", aerr)
 	}
-	bodies := p.bodies["POST /ops/slice/create"]
+	bodies := p.bodies["POST /ops/slice"]
 	if len(bodies) != 1 || bodies[0]["name"] != "fxevm-testnode-staging" {
 		t.Fatalf("apply staging did not create staging's slice: %v", bodies)
 	}
@@ -174,7 +174,7 @@ func TestEnvironment_APlanFileAppliesTheEnvironmentItWasPlannedFor(t *testing.T)
 	if _, err := runApplyTest(t, noAnswers(), planFile); err != nil {
 		t.Fatalf("apply plan.json: %v", err)
 	}
-	bodies := p.bodies["POST /ops/slice/create"]
+	bodies := p.bodies["POST /ops/slice"]
 	if len(bodies) != 1 || bodies[0]["name"] != "fxevm-testnode-staging" {
 		t.Fatalf("the plan file's environment was not the one applied: %v", bodies)
 	}

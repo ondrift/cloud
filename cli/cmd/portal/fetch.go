@@ -354,7 +354,7 @@ type snapshotRow struct {
 }
 
 func fetchSnapshots() ([]snapshotRow, error) {
-	return getJSON[[]snapshotRow]("/ops/slice/snapshot/list", "list snapshots")
+	return getJSON[[]snapshotRow]("/ops/slice/snapshot", "list snapshots")
 }
 
 func createSnapshot(name string) error {
@@ -446,7 +446,7 @@ func createSlice(name, tier string, config map[string]any, months int) error {
 		payload["billing_period_months"] = months
 	}
 	body, _ := json.Marshal(payload)
-	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/slice/create", bytes.NewReader(body))
+	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/slice", bytes.NewReader(body))
 	if err != nil {
 		return common.TransportError("create slice", err)
 	}
@@ -469,7 +469,7 @@ func resizeSlice(name string, config map[string]any, months int) error {
 	return err
 }
 
-// sliceDoc mirrors the fields of GET /ops/slice/get we use: the current config
+// sliceDoc mirrors the fields of GET /ops/slice?name= we use: the current config
 // (to display, and to open the resize form on) plus tier/billing/price.
 type sliceDoc struct {
 	Name                string   `json:"name"`
@@ -513,7 +513,7 @@ type sliceCfg struct {
 }
 
 func fetchSliceDoc(name string) (*sliceDoc, error) {
-	doc, err := getJSON[sliceDoc]("/ops/slice/get?name="+url.QueryEscape(name), "get slice")
+	doc, err := getJSON[sliceDoc]("/ops/slice?name="+url.QueryEscape(name), "get slice")
 	if err != nil {
 		return nil, err
 	}
