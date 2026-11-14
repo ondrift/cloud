@@ -8,10 +8,10 @@
 //
 // It does not, and these tests are why we can keep saying so. DoLoginErr
 // returns on the first error and only reaches SaveSession on a fully
-// successful response, and ClearSession is called from exactly one place
-// (`drift account delete`). Nothing here is new behaviour — it was true and
-// simply had nothing pinning it, so a future refactor could have quietly taken
-// it away.
+// successful response, and ClearSession is called only from `drift account
+// delete` and `drift account logout`. Nothing here is new behaviour — it was
+// true and simply had nothing pinning it, so a future refactor could have
+// quietly taken it away.
 package account
 
 import (

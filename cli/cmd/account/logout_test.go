@@ -116,8 +116,6 @@ func filesHolding(t *testing.T, dir, needle string) []string {
 
 // THE CONTRACT: the stored session is gone, and the output says whose it was.
 func TestLogout_EndsTheSessionAndNamesTheAccount(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	home := logoutSession(t, "alice")
 
 	// The control. If the seeded session were unreadable, "gone afterwards" would
@@ -151,8 +149,6 @@ func TestLogout_EndsTheSessionAndNamesTheAccount(t *testing.T) {
 // The first assertion is the control: it shows the walk below finds the token
 // when it is there, so finding nothing afterwards means something.
 func TestLogout_TakesTheRefreshTokenWithIt(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	home := logoutSession(t, "alice")
 	dot := filepath.Join(home, ".drift")
 
@@ -174,8 +170,6 @@ func TestLogout_TakesTheRefreshTokenWithIt(t *testing.T) {
 // After logout, whoami reports that nobody is logged in: an error and an empty
 // stdout, never an empty line a script would read as a username.
 func TestLogout_ThenWhoamiReportsNobody(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	logoutSession(t, "alice")
 	if who, err := runWhoami(t); err != nil || strings.TrimSpace(who) != "alice" {
 		t.Fatalf("before logout whoami answers %q (%v), want alice", who, err)
@@ -200,8 +194,6 @@ func TestLogout_ThenWhoamiReportsNobody(t *testing.T) {
 // After logout, a command that needs a session says to log in, with the remedy
 // the error registry holds for it: `drift account login`, three words.
 func TestLogout_ThenACommandThatNeedsASessionSaysToLogIn(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	logoutSession(t, "alice")
 	const target = "http://127.0.0.1:1/never-sent"
 
@@ -246,8 +238,6 @@ func TestLogout_ThenACommandThatNeedsASessionSaysToLogIn(t *testing.T) {
 // their sessions, and the output says who is still logged in, because whoami
 // answers with one of them afterwards.
 func TestLogout_EndsTheCurrentAccountAndLeavesTheOthers(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	home := logoutSession(t, "alice", "bob") // bob is current
 
 	out, err := runLogout(t)
@@ -279,8 +269,6 @@ func TestLogout_EndsTheCurrentAccountAndLeavesTheOthers(t *testing.T) {
 // A profile is filed under the PERSON, so a member is told their own name and
 // not the owner's account they act on.
 func TestLogout_NamesAMemberByTheirOwnName(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	logoutSession(t)
 	if err := common.SaveSession(memberTokenFor("isrand", "erica"), "refresh-erica"); err != nil {
 		t.Fatalf("seeding the member's session: %v", err)
@@ -301,8 +289,6 @@ func TestLogout_NamesAMemberByTheirOwnName(t *testing.T) {
 // DRIFT_ACCOUNT names a profile that is not logged in: there is nothing to end,
 // and the account that IS logged in is left alone.
 func TestLogout_AnUnknownDriftAccountEndsNothing(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	home := logoutSession(t, "alice")
 	t.Setenv(common.AccountEnv, "ghost")
 
@@ -323,8 +309,6 @@ func TestLogout_AnUnknownDriftAccountEndsNothing(t *testing.T) {
 // With no session, logout says so and exits 0. It must not create a file to
 // have something to remove.
 func TestLogout_WithNobodyLoggedInSaysSoAndSucceeds(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	home := logoutSession(t)
 
 	out, err := runLogout(t)
@@ -342,8 +326,6 @@ func TestLogout_WithNobodyLoggedInSaysSoAndSucceeds(t *testing.T) {
 // Running it twice is harmless: the first names the account, the second says
 // nobody is left. Both exit 0.
 func TestLogout_TwiceIsHarmless(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	logoutSession(t, "alice")
 
 	first, err := runLogout(t)
@@ -362,8 +344,6 @@ func TestLogout_TwiceIsHarmless(t *testing.T) {
 // A file with the right shape and no accounts in it is a session in name only.
 // It is removed, so "no session" stays a missing file.
 func TestLogout_AFileHoldingNoAccountsIsRemoved(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	home := logoutSession(t)
 	writeSessionFile(t, home, []byte(`{"current":"","accounts":{}}`))
 
@@ -389,8 +369,6 @@ func TestLogout_AFileHoldingNoAccountsIsRemoved(t *testing.T) {
 // is lost by removing it, because credentials the CLI cannot read are
 // credentials it cannot use.
 func TestLogout_ACorruptSessionFileIsRemovedNotAnError(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	cases := []struct {
 		name string
 		body []byte
@@ -430,8 +408,6 @@ func TestLogout_ACorruptSessionFileIsRemovedNotAnError(t *testing.T) {
 // The device id names this machine, not an account. Logging out and back in has
 // to bind the next refresh token to the same machine, so logout never touches it.
 func TestLogout_LeavesTheDeviceIdAlone(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	cases := []struct {
 		name     string
 		accounts []string
@@ -468,8 +444,6 @@ func TestLogout_LeavesTheDeviceIdAlone(t *testing.T) {
 // reporting a clean logout while commands keep acting as that token, and it never
 // prints the token.
 func TestLogout_SaysWhenAPersonalAccessTokenStillApplies(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	const pat = "drift_pat_0123456789abcdef"
 
 	for _, tc := range []struct {
@@ -499,8 +473,6 @@ func TestLogout_SaysWhenAPersonalAccessTokenStillApplies(t *testing.T) {
 
 // And without one, it says nothing about tokens.
 func TestLogout_SaysNothingOfTokensWhenNoneIsSet(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	logoutSession(t, "alice")
 
 	out, err := runLogout(t)
@@ -517,8 +489,6 @@ func TestLogout_SaysNothingOfTokensWhenNoneIsSet(t *testing.T) {
 // There is no --all, and an argument is refused rather than ignored: ignoring
 // `drift account logout bob` would log out whichever account is current.
 func TestLogout_TakesNoFlagsAndNoArguments(t *testing.T) {
-	t.Skip("fails until the logout command exists")
-
 	requireLogout(t)
 
 	found, _, _ := GetAccountCmd().Find([]string{"logout"})
