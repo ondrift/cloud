@@ -147,7 +147,17 @@ func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reade
 	}
 	// A slice cooled for want of requests answers its first call with a 503 that
 	// says it is warming. That is a wait, not a failure: see warming.go.
-	send := func() (*http.Response, error) { return waitWhileWarming(ctx, sendOnce) }
+	//
+	// Every reply that reaches the caller, the retry after a refresh included, is
+	// compared with the route contract this binary speaks. The comparison reads a
+	// header and changes nothing about the response: see routecontract.go.
+	send := func() (*http.Response, error) {
+		resp, err := waitWhileWarming(ctx, sendOnce)
+		if err == nil {
+			noteRouteContract(resp)
+		}
+		return resp, err
+	}
 
 	// First contact with the platform in this invocation also refreshes this
 	// machine's copy of the Driftfile format. It rides along here rather than

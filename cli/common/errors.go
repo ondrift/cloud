@@ -99,6 +99,17 @@ type APIError struct {
 	// Retry-After on every throttle and on no quota, so its presence is the whole
 	// test and no sentence has to be read.
 	RetryAfter time.Duration
+
+	// PlatformAPIVersion is the route-contract major the platform stated on this
+	// reply, or 0 when it stated none or stated something that is not a plain
+	// integer.
+	//
+	// It is what tells a PATH THAT MOVED from a THING THAT IS MISSING. Both are a
+	// 404 and their remedies are opposite: a missing thing is the caller's to find
+	// or create, while a path the platform no longer serves is cured by upgrading
+	// this binary. Only a platform a major ahead of this binary can have dropped a
+	// path it knows, so only that platform's bare 404 is read as the second.
+	PlatformAPIVersion int
 }
 
 // ErrPlatformUnavailable and ErrSessionRejected split the two ways a token
@@ -185,6 +196,8 @@ func (e *APIError) code() string {
 		return "DRIFT-1001"
 	case e.Status == http.StatusForbidden:
 		return "DRIFT-1002"
+	case e.pathMayHaveMoved():
+		return "DRIFT-1015"
 	case e.Status == http.StatusNotFound:
 		return "DRIFT-1003"
 	case e.throttled():
@@ -244,6 +257,11 @@ func (e *APIError) message() string {
 			return lead + ": " + e.Detail + "."
 		}
 		return lead + ": you don't have permission to do that."
+
+	// "May", because a bare 404 relayed from a slice carries the same words as the
+	// api's own route miss: see isBareNotFound.
+	case e.pathMayHaveMoved():
+		return lead + ": the platform may no longer answer that request. " + NewerPlatformNotice(e.PlatformAPIVersion)
 
 	case e.Status == http.StatusNotFound:
 		if e.Detail != "" {
@@ -331,7 +349,17 @@ func CheckResponse(resp *http.Response, op string) ([]byte, error) {
 	}
 	e.Action, e.Limit, e.Current, e.HasLimit = quotaFromBody(body)
 	e.RetryAfter = retryAfter(resp.Header.Get("Retry-After"), time.Now())
+	e.PlatformAPIVersion = platformAPIVersion(resp.Header)
 	return nil, e
+}
+
+// pathMayHaveMoved reports whether this refusal is a request for a path the
+// platform no longer serves, rather than for a thing that does not exist: a bare
+// 404 from a platform whose route contract is ahead of this binary's.
+func (e *APIError) pathMayHaveMoved() bool {
+	return e.Status == http.StatusNotFound &&
+		platformAhead(e.PlatformAPIVersion) &&
+		isBareNotFound(e.Detail)
 }
 
 // throttled reports whether this refusal is a rate limit that clears by itself:
