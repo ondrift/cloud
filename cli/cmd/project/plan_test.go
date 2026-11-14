@@ -40,14 +40,34 @@ const fxevmLive = `{"name":"fxevm-testnode","tier":"custom","monthly_cost_cents"
 // planStub answers every read a plan makes. live is the GET /ops/slice?name= body,
 // or "" for a slice that does not exist; deployed is the GET /ops/atomic body. A path
 // in failing answers 500 instead of its body, for the read a plan cannot make.
+//
+// The slice it answers for holds no domain and no SQL database, so a plan of a
+// slice that is the file has nothing held beside it.
 func planStub(t *testing.T, live, deployed string, failing ...string) *recorder {
+	t.Helper()
+	return planStubWith(t, live, deployed, nil, failing...)
+}
+
+// planStubWith is planStub with answers of its own: a path in answers is answered
+// with its body in place of the stub's, and a path whose body is "" is not found.
+func planStubWith(t *testing.T, live, deployed string, answers map[string]string, failing ...string) *recorder {
 	t.Helper()
 	return stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if slices.Contains(failing, r.URL.Path) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		if body, ok := answers[r.URL.Path]; ok {
+			if body == "" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = io.WriteString(w, body)
+			return
+		}
 		switch r.URL.Path {
+		case "/ops/slice/domain", "/ops/backbone/sql/admin/list":
+			_, _ = io.WriteString(w, `[]`)
 		case "/ops/slice":
 			if live == "" {
 				w.WriteHeader(http.StatusNotFound)

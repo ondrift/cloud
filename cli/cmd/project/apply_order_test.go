@@ -71,8 +71,18 @@ backbone {
 // file's shape.
 func orderProject(t *testing.T) *recorder {
 	t.Helper()
+	return orderProjectAnswering(t, nil)
+}
+
+// orderProjectAnswering is orderProject whose slice answers a request through
+// answer first: a request answer returns true for is answered by it alone.
+func orderProjectAnswering(t *testing.T, answer func(w http.ResponseWriter, r *http.Request) bool) *recorder {
+	t.Helper()
 	live := ""
 	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if answer != nil && answer(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/ops/slice":
 			_, _ = w.Write([]byte(live))

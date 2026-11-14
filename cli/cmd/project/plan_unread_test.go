@@ -113,8 +113,11 @@ func TestPlanDiff_EveryFactThePlanCouldNotReadIsRecorded(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		failing []string
-		edit    func(*testing.T, string) string
-		want    []string
+		// notFound is each path the platform does not know, which its stub answers
+		// with the 404 every read of the edge, the alerts and the channels meets.
+		notFound []string
+		edit     func(*testing.T, string) string
+		want     []string
 		// reason is a fragment every recorded error carries.
 		reason string
 		// marked is the address of each line the case marks. A fact the plan could
@@ -161,8 +164,9 @@ func TestPlanDiff_EveryFactThePlanCouldNotReadIsRecorded(t *testing.T) {
 			marked: []string{"function POST /rpc"},
 		},
 		{
-			name: "the edge, the alerts and the client channels",
-			edit: addEverythingTheStubDoesNotAnswer,
+			name:     "the edge, the alerts and the client channels",
+			notFound: []string{"/ops/slice/domain"},
+			edit:     addEverythingTheStubDoesNotAnswer,
 			want: []string{
 				"alert bench-errors|alerts", "egress|egress", "link|link", "allow|allow", "host|host", "domain|domain", "realtime|client channels",
 			},
@@ -171,7 +175,11 @@ func TestPlanDiff_EveryFactThePlanCouldNotReadIsRecorded(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			live, deployed := matchingSlice(t)
-			planStub(t, live, deployed, c.failing...)
+			answers := map[string]string{}
+			for _, path := range c.notFound {
+				answers[path] = ""
+			}
+			planStubWith(t, live, deployed, answers, c.failing...)
 			t.Setenv("BENCH_HOOK", "https://hooks.example.com/x")
 			var edit func(string) string
 			if c.edit != nil {
