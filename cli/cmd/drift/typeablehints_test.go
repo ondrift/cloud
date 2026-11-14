@@ -33,6 +33,9 @@ var typeableHints = map[string][]string{
 	// Every reader answers a YAML Driftfile with this refusal, and it names
 	// what to run instead.
 	"the refusal of a YAML Driftfile": {yamlRefusal()},
+	// Printed on stderr by the request helper the first time the platform states a
+	// route contract ahead of this binary's.
+	"the older-than-the-platform line": {common.NewerPlatformNotice(common.ImplementedRouteContract + 1)},
 }
 
 // yamlRefusal is the message every reader gives a YAML Driftfile.

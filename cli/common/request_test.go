@@ -236,7 +236,6 @@ func requireUnchanged(t *testing.T, results []string, served, status int, body s
 // reply: a client holding the wrong route set sees 404s and refusals as often as
 // successes, and the header rides all of them.
 func TestAPlatformAheadOfTheCLIIsSaidOnceAndNothingIsChanged(t *testing.T) {
-	t.Skip("#1654 adds the comparison to the request helper and removes this skip")
 	for name, tc := range map[string]struct {
 		stated string
 		status int
