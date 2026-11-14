@@ -12,9 +12,9 @@ import (
 // A plan's diff records every fact it could not read, so what the plan prints
 // at its end is decided from that record and not from the wording of its lines.
 
-// diffIn gathers the plan of the fxevm project, edited by edit, from the
-// platform the test has stubbed, and returns its diff.
-func diffIn(t *testing.T, edit func(string) string) *planDiff {
+// planStateIn gathers the plan of the fxevm project, edited by edit, from the
+// platform the test has stubbed.
+func planStateIn(t *testing.T, edit func(string) string) *planState {
 	t.Helper()
 	inFixture(t, edit)
 	c, err := CompileDriftfile("Driftfile")
@@ -26,7 +26,13 @@ func diffIn(t *testing.T, edit func(string) string) *planDiff {
 	if err != nil {
 		t.Fatalf("gather the plan: %v", err)
 	}
-	return p.diff()
+	return p
+}
+
+// diffIn is the diff of planStateIn.
+func diffIn(t *testing.T, edit func(string) string) *planDiff {
+	t.Helper()
+	return planStateIn(t, edit).diff()
 }
 
 // factsOf names each recorded fact as "address|what", sorted.
@@ -111,6 +117,10 @@ func TestPlanDiff_EveryFactThePlanCouldNotReadIsRecorded(t *testing.T) {
 		want    []string
 		// reason is a fragment every recorded error carries.
 		reason string
+		// marked is the address of each line the case marks. A fact the plan could
+		// not read is no difference, so it marks none: only what the file itself
+		// changes does.
+		marked []string
 	}{
 		{name: "the live sites", failing: []string{"/ops/canvas"}, want: []string{"site /|sites"}, reason: "list canvas sites"},
 		// The file declares no secret, and the slice's list is how a secret the file
@@ -137,6 +147,7 @@ func TestPlanDiff_EveryFactThePlanCouldNotReadIsRecorded(t *testing.T) {
 			},
 			want:   slots,
 			reason: "list atomic functions",
+			marked: []string{"function GET /bench", "slots"},
 		},
 		{
 			// The line is a change, marked, and the code half of it is still unread.
@@ -147,6 +158,7 @@ func TestPlanDiff_EveryFactThePlanCouldNotReadIsRecorded(t *testing.T) {
 			},
 			want:   slots,
 			reason: "list atomic functions",
+			marked: []string{"function POST /rpc"},
 		},
 		{
 			name: "the edge, the alerts and the client channels",
@@ -171,6 +183,15 @@ func TestPlanDiff_EveryFactThePlanCouldNotReadIsRecorded(t *testing.T) {
 			slices.Sort(want)
 			if got := factsOf(d); !slices.Equal(got, want) {
 				t.Errorf("the plan recorded the unread facts %q, want %q", got, want)
+			}
+			var marked []string
+			for _, l := range d.lines {
+				if l.mark != " " {
+					marked = append(marked, l.address)
+				}
+			}
+			if !slices.Equal(marked, c.marked) {
+				t.Errorf("the plan marks the lines %q, want %q: a fact that could not be read turned into a difference", marked, c.marked)
 			}
 			for _, f := range d.unreadFacts {
 				if f.err == nil {
@@ -222,5 +243,67 @@ func TestPlanDiff_AnUnquotablePriceIsNotAnUnreadFact(t *testing.T) {
 	planStub(t, live, deployed, "/ops/slice/price")
 	if facts := factsOf(diffIn(t, nil)); len(facts) != 0 {
 		t.Errorf("a price that could not be quoted recorded %q", facts)
+	}
+}
+
+// withASecondGateUser declares a second user on the fxevm file's site gate. The
+// stub's gate holds one user, "drift".
+func withASecondGateUser(t *testing.T) func(string) string {
+	return func(s string) string {
+		return mustReplace(t, s, `user "drift" { password = env("EXPLORER_PASS") }`,
+			"user \"drift\" { password = env(\"EXPLORER_PASS\") }\n    user \"ops\" { password = env(\"EXPLORER_PASS\") }")
+	}
+}
+
+// A gate the plan could not read is not an empty gate: the users the file
+// declares are not shown as additions to a gate nobody saw. The plan says once
+// that the gate was not read.
+func TestPlan_AnUnreadGateAddsNoUsers(t *testing.T) {
+	t.Run("the plan prints no addition", func(t *testing.T) {
+		live, deployed := matchingSlice(t)
+		planStub(t, live, deployed, "/ops/slice/auth")
+		out, err := planIn(t, withASecondGateUser(t))
+		if err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		if !strings.Contains(out, "live gate unknown") {
+			t.Errorf("the plan does not say the gate could not be read:\n%s", out)
+		}
+		for _, user := range []string{"drift", "ops"} {
+			if strings.Contains(out, "+ site_auth "+user) {
+				t.Errorf("the plan adds the gate user %q to a gate it could not read:\n%s", user, out)
+			}
+		}
+	})
+
+	t.Run("the diff records the gate once", func(t *testing.T) {
+		live, deployed := matchingSlice(t)
+		planStub(t, live, deployed, "/ops/slice/auth")
+		d := diffIn(t, withASecondGateUser(t))
+		for _, l := range d.lines {
+			if l.mark == "+" && strings.HasPrefix(l.address, "site_auth") {
+				t.Errorf("the diff adds %q for a gate it could not read", l.address)
+			}
+		}
+		if got, want := factsOf(d), []string{"site_auth|gate"}; !slices.Equal(got, want) {
+			t.Errorf("the plan recorded the unread facts %q, want %q", got, want)
+		}
+	})
+}
+
+// The control: a gate the plan read that lacks a user the file declares is an
+// addition of that user, and of no one else.
+func TestPlan_AGateThatLacksADeclaredUserGetsIt(t *testing.T) {
+	live, deployed := matchingSlice(t)
+	planStub(t, live, deployed)
+	out, err := planIn(t, withASecondGateUser(t))
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if !strings.Contains(out, "+ site_auth ops") {
+		t.Errorf("the plan does not add the gate user the gate lacks:\n%s", out)
+	}
+	if strings.Contains(out, "+ site_auth drift") {
+		t.Errorf("the plan adds the gate user the gate has:\n%s", out)
 	}
 }
