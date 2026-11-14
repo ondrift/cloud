@@ -9,6 +9,13 @@ name = "conformance-rust"
 version = "0.0.0"
 edition = "2021"
 publish = false
+default-run = "conformance-rust"
+
+# The program the loop cases run. `cargo run` builds the driver above unless a
+# binary is named, which is why default-run is set.
+[[bin]]
+name = "conformance-rust-loop"
+path = "src/loop_program.rs"
 
 [dependencies]
 drift-sdk = { path = "../../rust" }
