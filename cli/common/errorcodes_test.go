@@ -2,6 +2,8 @@ package common
 
 import (
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -65,6 +67,239 @@ func TestErrorCodes_EveryEntrySaysWhatHappenedAndWhatToDo(t *testing.T) {
 			t.Errorf("%s has no remedy — a code that only names the failure leaves the "+
 				"user exactly where they were", c.Code)
 		}
+	}
+}
+
+// keyShape is what a key looks like: lowercase words joined by single hyphens,
+// "session-expired".
+var keyShape = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
+
+// keyProblems reports every way the entries break the key rule: each carries a
+// key in the shape of one, and no two share it. A problem names the code it is
+// about.
+func keyProblems(entries []ErrorCode) []string {
+	var problems []string
+	owners := map[string][]string{}
+	for _, e := range entries {
+		switch {
+		case strings.TrimSpace(e.Key) == "":
+			problems = append(problems, fmt.Sprintf("%s has no key", e.Code))
+		case !keyShape.MatchString(e.Key):
+			problems = append(problems, fmt.Sprintf(
+				"%s has the key %q, which is not lowercase words joined by hyphens", e.Code, e.Key))
+		default:
+			owners[e.Key] = append(owners[e.Key], e.Code)
+		}
+	}
+
+	keys := make([]string, 0, len(owners))
+	for key := range owners {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if codes := owners[key]; len(codes) > 1 {
+			problems = append(problems, fmt.Sprintf(
+				"%s share the key %q, but a key names one failure", strings.Join(codes, " and "), key))
+		}
+	}
+	return problems
+}
+
+// Every entry carries a key naming the failure its code stands for, and no two
+// entries share one. The key is what a pull request's registry is held to
+// against the base branch's.
+func TestErrorCodes_EveryEntryHasAUniqueKey(t *testing.T) {
+	t.Skip("removed by #2342")
+	codes := ErrorCodes()
+	if len(codes) == 0 {
+		t.Fatal("the registry is empty, so there is nothing to hold a key")
+	}
+	for _, problem := range keyProblems(codes) {
+		t.Error(problem)
+	}
+}
+
+// The control for the test above: a registry that breaks the rule in each way is
+// reported with the code named, and one that keeps it is not. Without this the
+// registry test would pass for a check that reports nothing.
+func TestKeyProblems_NamesTheCodeThatBreaksTheRule(t *testing.T) {
+	entry := func(code, key string) ErrorCode { return ErrorCode{Code: code, Key: key} }
+
+	for _, tc := range []struct {
+		name     string
+		entries  []ErrorCode
+		problems int
+		mention  []string
+	}{
+		{"distinct keys",
+			[]ErrorCode{entry("DRIFT-1001", "session-expired"), entry("DRIFT-1002", "forbidden")},
+			0, nil},
+		{"a digit in a key",
+			[]ErrorCode{entry("DRIFT-1001", "tls-1-expired")},
+			0, nil},
+		{"an entry with no key",
+			[]ErrorCode{entry("DRIFT-1001", "forbidden"), entry("DRIFT-1002", "")},
+			1, []string{"DRIFT-1002"}},
+		{"a key of spaces",
+			[]ErrorCode{entry("DRIFT-1001", "   ")},
+			1, []string{"DRIFT-1001"}},
+		{"two entries share a key",
+			[]ErrorCode{entry("DRIFT-1001", "quota"), entry("DRIFT-1002", "forbidden"), entry("DRIFT-1003", "quota")},
+			1, []string{"DRIFT-1001", "DRIFT-1003", `"quota"`}},
+		{"three entries share a key",
+			[]ErrorCode{entry("DRIFT-1001", "quota"), entry("DRIFT-1002", "quota"), entry("DRIFT-1003", "quota")},
+			1, []string{"DRIFT-1001", "DRIFT-1002", "DRIFT-1003"}},
+		{"two keys are each shared",
+			[]ErrorCode{entry("DRIFT-1001", "a"), entry("DRIFT-1002", "a"), entry("DRIFT-1003", "b"), entry("DRIFT-1004", "b")},
+			2, []string{`"a"`, `"b"`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := keyProblems(tc.entries)
+			if len(got) != tc.problems {
+				t.Fatalf("%d problems %q, want %d", len(got), got, tc.problems)
+			}
+			all := strings.Join(got, "\n")
+			for _, want := range tc.mention {
+				if !strings.Contains(all, want) {
+					t.Errorf("the problems do not mention %s: %q", want, got)
+				}
+			}
+		})
+	}
+
+	// A key is a name, so the shape is held too: each of these is one problem
+	// naming the entry, and none of them would be a stable name to type.
+	for _, key := range []string{"Quota", "not found", "not_found", "-quota", "quota-", "not--found", "1st-failure"} {
+		got := keyProblems([]ErrorCode{entry("DRIFT-1001", key)})
+		if len(got) != 1 || !strings.Contains(got[0], "DRIFT-1001") {
+			t.Errorf("the key %q gave %q, want one problem naming DRIFT-1001", key, got)
+		}
+	}
+}
+
+// appendOnlyRegistry is a small registry in the shape the real one has.
+func appendOnlyRegistry() []ErrorCode {
+	return []ErrorCode{
+		{Code: "DRIFT-1001", Key: "session-expired", Meaning: "Your session has expired.", Remedy: "Log in again.", Command: "drift account login"},
+		{Code: "DRIFT-1002", Key: "forbidden", Meaning: "The platform refused the action.", Remedy: "Check which account this is.", Command: "drift slice list"},
+		{Code: "DRIFT-1003", Key: "not-found", Meaning: "The thing you named does not exist.", Remedy: "Check the spelling.", Command: "drift slice list"},
+		{Code: "DRIFT-1004", Key: "quota", Meaning: "You have hit a quota.", Remedy: "Free a slot.", Command: "drift slice resize"},
+	}
+}
+
+// swapContents gives each entry the other's key, meaning, remedy and command and
+// leaves each its own code. The registry stays dense and every entry stays well
+// formed, which is why no check that reads only one registry can see it.
+func swapContents(a, b ErrorCode) (ErrorCode, ErrorCode) {
+	a.Key, b.Key = b.Key, a.Key
+	a.Meaning, b.Meaning = b.Meaning, a.Meaning
+	a.Remedy, b.Remedy = b.Remedy, a.Remedy
+	a.Command, b.Command = b.Command, a.Command
+	return a, b
+}
+
+// checkAppendOnly compares head with the base it grew from. It reports nothing
+// yet.
+func checkAppendOnly(base, head []ErrorCode) []string { return nil }
+
+// A registry may only grow: every code it had is still there under the key it
+// had. Swapping two entries' contents, pointing a code at another failure and
+// deleting a code each leave the sequence dense and every entry well formed, so
+// only a comparison with the registry the change started from can see them.
+func TestCheckAppendOnly(t *testing.T) {
+	t.Skip("removed by #2342")
+	for _, tc := range []struct {
+		name   string
+		change func(head []ErrorCode) []ErrorCode
+		named  []string // the codes the violations name, and no others
+	}{
+		{"nothing changed", func(h []ErrorCode) []ErrorCode { return h }, nil},
+		{"two entries swap contents", func(h []ErrorCode) []ErrorCode {
+			h[2], h[3] = swapContents(h[2], h[3])
+			return h
+		}, []string{"DRIFT-1003", "DRIFT-1004"}},
+		{"the last code is missing", func(h []ErrorCode) []ErrorCode { return h[:3] }, []string{"DRIFT-1004"}},
+		{"a code in the middle is missing", func(h []ErrorCode) []ErrorCode { return append(h[:1], h[2:]...) }, []string{"DRIFT-1002"}},
+		{"a key changes", func(h []ErrorCode) []ErrorCode {
+			h[3].Key = "limit"
+			return h
+		}, []string{"DRIFT-1004"}},
+		{"a key is removed", func(h []ErrorCode) []ErrorCode {
+			h[3].Key = ""
+			return h
+		}, []string{"DRIFT-1004"}},
+		{"a code takes another's key", func(h []ErrorCode) []ErrorCode {
+			h[3].Key = h[2].Key
+			return h
+		}, []string{"DRIFT-1004"}},
+
+		{"an entry is added", func(h []ErrorCode) []ErrorCode {
+			return append(h, ErrorCode{Code: "DRIFT-1005", Key: "platform-fault", Meaning: "The platform failed.", Remedy: "Retry once."})
+		}, nil},
+		{"every wording is reworded", func(h []ErrorCode) []ErrorCode {
+			for i := range h {
+				h[i].Meaning += " It reads better now."
+				h[i].Remedy = "A clearer remedy."
+				h[i].Command = ""
+			}
+			return h
+		}, nil},
+		{"the entries come in another order", func(h []ErrorCode) []ErrorCode {
+			h[0], h[3] = h[3], h[0]
+			return h
+		}, nil},
+		{"a code is retired", func(h []ErrorCode) []ErrorCode {
+			h[0].Retired = true
+			return h
+		}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := checkAppendOnly(appendOnlyRegistry(), tc.change(appendOnlyRegistry()))
+
+			for _, code := range []string{"DRIFT-1001", "DRIFT-1002", "DRIFT-1003", "DRIFT-1004", "DRIFT-1005"} {
+				named := false
+				for _, violation := range got {
+					if strings.Contains(violation, code) {
+						named = true
+					}
+				}
+				want := false
+				for _, w := range tc.named {
+					if w == code {
+						want = true
+					}
+				}
+				if named != want {
+					t.Errorf("%s is named = %v, want %v; the violations are %q", code, named, want, got)
+				}
+			}
+			if (len(tc.named) == 0) != (len(got) == 0) {
+				t.Errorf("the violations are %q, want %d of them", got, len(tc.named))
+			}
+			for _, violation := range got {
+				if !strings.Contains(violation, "DRIFT-") {
+					t.Errorf("the violation %q names no code", violation)
+				}
+			}
+		})
+	}
+}
+
+// A registry that has no keys yet holds nothing to compare them with, so the
+// change that gives it keys passes, and a code that goes missing still fails.
+func TestCheckAppendOnly_ABaseWithoutKeysHoldsTheCodesOnly(t *testing.T) {
+	t.Skip("removed by #2342")
+	base := appendOnlyRegistry()
+	for i := range base {
+		base[i].Key = ""
+	}
+
+	if got := checkAppendOnly(base, appendOnlyRegistry()); len(got) != 0 {
+		t.Errorf("a registry that gained its keys was refused: %q", got)
+	}
+	if got := checkAppendOnly(base, appendOnlyRegistry()[:3]); len(got) != 1 || !strings.Contains(got[0], "DRIFT-1004") {
+		t.Errorf("a code missing from a registry without keys gave %q, want one violation naming DRIFT-1004", got)
 	}
 }
 

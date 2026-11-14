@@ -43,6 +43,12 @@ var errorCodesJSON []byte
 type ErrorCode struct {
 	// Code is the stable identifier a user sees and pastes, "DRIFT-1006".
 	Code string `json:"code"`
+	// Key names the failure this code stands for, "session-expired": lowercase
+	// words joined by hyphens, unique in the registry, and never changed once the
+	// code is minted. The wording around a code can be improved and its number is
+	// only an address; the key is what the code IS, and what a pull request's
+	// registry is compared on against the base branch's.
+	Key string `json:"key"`
 	// Meaning is one line saying what happened, in the user's terms.
 	Meaning string `json:"meaning"`
 	// Remedy is the prose: what to do and why, for `doctor explain`.
