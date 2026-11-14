@@ -29,7 +29,10 @@ const (
 	// applying adds, changes or removes something, or refuses.
 	VerdictDiffers VerdictState = "differs"
 	// VerdictUnread: no line carries a mark, but a fact the plan compares could
-	// not be read, so it cannot say that the slice is the file.
+	// not be read, so it cannot say that the slice is the file. A fact is unread
+	// when the platform or the build was asked for it and gave no answer. A value
+	// that is write-only by design (a secret, an API key, a gate password) is never
+	// read back, so the plan not having it is not unread.
 	VerdictUnread VerdictState = "unread"
 	// VerdictMatch: no line carries a mark and every fact was read.
 	VerdictMatch VerdictState = "match"

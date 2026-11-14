@@ -186,7 +186,7 @@ func applyAlerts(c *Compiled, p *planState, out io.Writer) error {
 	}
 
 	if p.alertsErr != nil {
-		return nil // what the slice holds is unknown, so nothing is deleted on a guess
+		return nil // the slice's alerts are unread, so nothing is deleted on a guess
 	}
 	var gone []string
 	for n := range liveByName {

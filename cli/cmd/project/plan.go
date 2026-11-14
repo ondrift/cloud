@@ -15,6 +15,13 @@ package project
 // it does not touch the database, record usage, or bind a quote). The live
 // slice is the state, so there is nothing local to write either.
 // TestPlan_IssuesNoWriteButThePriceQuote holds every request to that.
+//
+// # A match is a claim about every fact
+//
+// A fact the plan could not read is unread, and a plan with one is never a match.
+// The verdict (verdict.go) is the one value that decides the plan's header, its
+// closing line and the status `--exit-code` exits with, and VerdictUnread says
+// what unread means.
 
 import (
 	"bytes"
@@ -54,9 +61,30 @@ platform), whether the slice restarts, and what data a removal could lose.
 
 Nothing is changed.
 
-A script reads the result from the exit status with --exit-code: 0 when the
-slice is the file, 2 when it would be created or differs, 3 when part of it
-could not be read, 1 when the plan fails. Without the flag a difference exits 0.`,
+A plan ends one of four ways. The slice line at its top says which, and a plan
+with nothing to apply says it again on its last line:
+
+  create   the slice does not exist, and applying creates it
+  differs  a line carries a mark, and applying adds, changes or removes
+           something, or refuses
+  unread   no line carries a mark, but a fact could not be read, so the plan
+           says "Nothing differs in what could be read." and not that the slice
+           is the file
+  match    no line carries a mark and every fact was read: "Nothing to change."
+
+A fact the plan could not read, such as the slice's sites, secrets, keys, alerts,
+edge settings or deployed functions, or the build of the project, is unread. The
+plan never takes it for a match: when nothing else differs, its last line says so
+and lists each unread fact with why. A difference found is a difference even when
+another fact is unread.
+
+A value that is write-only by design (a secret, an API key, a gate password)
+is not unread: the platform never gives it back, so the plan cannot compare the
+value, and its line says what apply does with it.
+
+A script reads the verdict from the exit status with --exit-code: 0 when it is a
+match, 2 when it is create or differs, 3 when it is unread, 1 when the plan
+fails. Without the flag a difference exits 0.`,
 		Example: "  drift plan\n  drift plan staging\n  drift plan --var RESET_KEY=...\n  drift plan --exit-code",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -86,7 +114,7 @@ could not be read, 1 when the plan fails. Without the flag a difference exits 0.
 		},
 	}
 	cmd.Flags().StringVar(&outFile, "out", "", "Write the plan to this file, for `drift apply <file>` to apply exactly it")
-	cmd.Flags().BoolVar(&exitCode, "exit-code", false, "Exit 0 when the slice is the file, 2 when it would be created or differs, 3 when part of it could not be read, 1 when the plan fails")
+	cmd.Flags().BoolVar(&exitCode, "exit-code", false, "Exit 0 when the plan is a match, 2 when it is create or differs, 3 when it is unread, 1 when it fails")
 	cmd.Flags().StringArrayVar(&vars, "var", nil, "Set a variable env() reads: KEY=value (repeatable). Yields to the terminal's environment; beats the .env file.")
 	cmd.Flags().StringArrayVar(&secrets, "secret", nil, "The same as --var.")
 	cmd.Flags().BoolVar(&noEnvFile, "no-env-file", false, "Do not read the .env / .env.<env> file beside the Driftfile")
@@ -169,8 +197,8 @@ type liveAPIKey struct {
 }
 
 // planState is everything a plan compares: the compiled file, and each live
-// fact with the error that read it, so a fact that could not be read is said
-// to be unknown rather than shown as absent.
+// fact with the error that read it. A fact whose error is set is unread: the diff
+// records it as such and does not show it as absent or as agreeing.
 type planState struct {
 	c    *Compiled
 	user string
@@ -231,7 +259,7 @@ func gatherPlan(c *Compiled, declinedFree bool) (*planState, error) {
 
 	// The build reads the source beside the file: which language each backend
 	// is, where each handler lives. A failure here is what an apply would hit,
-	// so it is reported; the digests it would have given are then unknown.
+	// so it is reported, and the code of each slot is then unread.
 	specs := AtomicSpecs(m)
 	els, berr := atomic_cmd.BuildBackends(specs)
 	if errors.Is(berr, atomic_cmd.ErrWorkerLanguage) || errors.Is(berr, atomic_cmd.ErrConcurrency) {
@@ -471,9 +499,9 @@ type planDiff struct {
 	// billingChanged is whether the file moves the slice between free and
 	// monthly.
 	billingChanged bool
-	// unreadFacts is every fact the plan could not read, in the order the diff
-	// met it. A write-only value (a secret, a key, a gate password) is never
-	// read back by design and is not in it.
+	// unreadFacts is every fact the diff met that is unread (see VerdictUnread),
+	// in the order it met them. The verdict is built from it and from the marked
+	// lines.
 	unreadFacts []unreadFact
 }
 
@@ -484,23 +512,23 @@ func (d *planDiff) add(mark, address, format string, args ...any) {
 	}
 }
 
-// unreadFact is something the plan could not read: the plan line it belongs to,
-// what kind of fact it is ("sites", "secrets", "code"), and why it could not be
-// read.
+// unreadFact is a fact that is unread: the plan line it belongs to, what kind of
+// fact it is ("sites", "secrets", "code"), and why it could not be read.
 type unreadFact struct {
 	address, what string
 	err           error
 }
 
-// unread adds the blank-marked line for a live fact the plan could not read and
-// records it. The line sets no mark: a fact the plan never saw is no difference.
+// unread adds the blank-marked line for a live fact that is unread and records
+// it. The line sets no mark: a fact the plan never saw is no difference, and is
+// no match either.
 func (d *planDiff) unread(address, what string, err error) {
 	d.add(" ", address, "live %s unknown (%v)", what, err)
 	d.noteUnread(address, what, err)
 }
 
-// noteUnread records a fact the plan could not read, for a line that says so in
-// its own words or for none. It is the one place a fact enters unreadFacts.
+// noteUnread records an unread fact, for a line that says so in its own words or
+// for none. It is the one place a fact enters unreadFacts.
 func (d *planDiff) noteUnread(address, what string, err error) {
 	d.unreadFacts = append(d.unreadFacts, unreadFact{address, what, err})
 }
@@ -521,6 +549,12 @@ func addressOf(c *Compiled, key string) string {
 	return "function " + strings.ToUpper(method) + " /" + route
 }
 
+// diff compares the compiled file with the live slice, one line for each thing
+// the plan compares. A line is marked + for what applying adds, ~ for what it
+// changes, - for what it removes and ! for what it refuses, and is blank when the
+// two agree or when the plan could not read the live fact. An unread fact gets a
+// blank line and is recorded on the diff, so it is neither shown as a difference
+// nor counted as agreeing; the verdict is built from the diff.
 func (p *planState) diff() *planDiff {
 	d := &planDiff{}
 	c := p.c
