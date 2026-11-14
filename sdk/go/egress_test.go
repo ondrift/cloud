@@ -254,8 +254,6 @@ func TestHTTPRequestReturnsADNSFailureUnchanged(t *testing.T) {
 // The message names the host and the Driftfile key that allows it, and says who
 // refused: the platform, not a network rule.
 func TestEgressDeniedErrorSaysThePlatformRefusedTheConnection(t *testing.T) {
-	t.Skip("#3248 rewords the message and removes this skip")
-
 	underlying := os.NewSyscallError("connect", syscall.EPERM)
 	msg := (&EgressDeniedError{Host: "api.stripe.com", Err: underlying}).Error()
 

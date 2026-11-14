@@ -2154,11 +2154,20 @@ var httpRequestClient = &http.Client{Timeout: 30 * time.Second}
 // bodyless methods like GET).
 //
 // Default timeout is 30 seconds. Use HTTPRequestWithTimeout to override.
+//
+// The runtime judges every connection a function opens. When it refuses the
+// destination the connect fails with EPERM ("operation not permitted") and the
+// error returned is an *EgressDeniedError, which names the host and wraps the
+// transport's own error. Every other failure (a host that is down, a DNS
+// failure, a TLS failure, a timeout) is returned as the HTTP client reported
+// it.
 func HTTPRequest(method, rawURL string, headers map[string]string, body []byte) (*HTTPResponse, error) {
 	return HTTPRequestWithTimeout(method, rawURL, headers, body, 30*time.Second)
 }
 
-// HTTPRequestWithTimeout is HTTPRequest with a caller-supplied timeout.
+// HTTPRequestWithTimeout is HTTPRequest with a caller-supplied timeout. It
+// returns the same errors: an *EgressDeniedError when the runtime refuses the
+// connection, and the HTTP client's own error for everything else.
 func HTTPRequestWithTimeout(method, rawURL string, headers map[string]string, body []byte, timeout time.Duration) (*HTTPResponse, error) {
 	var reader io.Reader
 	if body != nil {
@@ -2195,10 +2204,18 @@ func HTTPRequestWithTimeout(method, rawURL string, headers map[string]string, bo
 	return &HTTPResponse{Status: resp.StatusCode, Body: respBody}, nil
 }
 
-// EgressDeniedError is returned when the slice's egress NetworkPolicy
-// refuses an outbound connection. The Host field is the destination
-// the SDK extracted from the URL; the wrapped Err is the original
-// transport error so callers can still log or branch on it.
+// EgressDeniedError is returned by HTTPRequest and HTTPRequestWithTimeout when
+// the runtime refuses the connection to a destination. The runtime judges every
+// connect a function makes and answers a refusal with EPERM, which the HTTP
+// client reports as "connect: operation not permitted"; this is that refusal,
+// named.
+//
+// Host is the destination the SDK extracted from the URL, without its port.
+// Err is the transport error as the HTTP client reported it, so
+// errors.Is(err, syscall.EPERM) holds and the dial error can still be logged.
+//
+// A public host a function may reach is listed under edge.egress.hosts in the
+// Driftfile. Addresses inside the platform are refused whatever that list says.
 //
 // User code can detect the case with `errors.As`:
 //
@@ -2208,18 +2225,16 @@ func HTTPRequestWithTimeout(method, rawURL string, headers map[string]string, bo
 //	        map[string]string{"host": ee.Host}
 //	}
 //
-// Mapping is best-effort: a host that's *not* private-CIDR but
-// happens to be down (genuine DNS or transport failure) will also
-// map to `EgressDeniedError{}`. The structured-error path is meant
-// for the common "spell-check your allowlist" debugging story, not
-// a precise blame attribution.
+// Nothing else is an EgressDeniedError. A host that is down ("connection
+// refused"), a DNS failure, a TLS failure and a timeout come back as the HTTP
+// client reported them.
 type EgressDeniedError struct {
 	Host string
 	Err  error
 }
 
 func (e *EgressDeniedError) Error() string {
-	return "drift: egress denied for host " + e.Host + " — check your edge.egress.hosts allowlist (underlying: " + e.Err.Error() + ")"
+	return "drift: the platform refused the connection to " + e.Host + "; a public host is allowed by listing it under edge.egress.hosts (underlying: " + e.Err.Error() + ")"
 }
 
 func (e *EgressDeniedError) Unwrap() error { return e.Err }
