@@ -74,6 +74,12 @@ creates or resizes the slice and deploys what the file declares. It closes with
 the domains, SQL databases and sites the slice holds and the file does not name,
 and removes none of them.
 
+A seed is additive. A NoSQL collection the file seeds is never dropped: apply
+writes each seed document by its _id, so a document the app added stays and a
+seed document the app changed is written back. A cache entry the file declares
+is set again on every apply. The plan says which seed documents and cache values
+apply would write.
+
 The file does not say how the slice is paid for. A new slice whose shape fits
 the free grant is asked about ("You have 1 of 3 free slices — make this the
 2nd?"), and one that does not is priced and needs the figure agreed to. When

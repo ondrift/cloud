@@ -264,10 +264,10 @@ func TestApply_ASeededCollectionKeepsTheDocumentsTheAppWrote(t *testing.T) {
 	}
 }
 
-// The seed reader returns each record with the line it is on, counting the
-// blank lines, the _id it is replaced by, and the document as apply writes it:
-// the record and the collection it goes to.
-func TestReadNoSQLSeed_ReturnsEachRecordWithItsLineAndItsID(t *testing.T) {
+// The seed reader returns each record with the _id it is replaced by and the
+// document as apply writes it: the record and the collection it goes to. Blank
+// lines and the spaces around a record are not part of it.
+func TestReadNoSQLSeed_ReturnsEachRecordWithItsIDAndTheDocumentApplyWrites(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "menu.jsonl")
 	mustWrite(t, path, "{\"_id\":\"pizza\",\"price\":9}\r\n\r\n  {\"_id\":\"soup\",\"tags\":[\"hot\"]}  \n")
 
@@ -278,14 +278,11 @@ func TestReadNoSQLSeed_ReturnsEachRecordWithItsLineAndItsID(t *testing.T) {
 	if len(docs) != 2 {
 		t.Fatalf("the reader returned %d records, want 2: %v", len(docs), docs)
 	}
-	for i, want := range []struct {
-		line int
-		id   string
-	}{{1, "pizza"}, {3, "soup"}} {
-		if docs[i].Line != want.line || docs[i].ID != want.id {
-			t.Errorf("record %d is %q on line %d, want %q on line %d", i, docs[i].ID, docs[i].Line, want.id, want.line)
+	for i, want := range []string{"pizza", "soup"} {
+		if docs[i].ID != want {
+			t.Errorf("record %d is %q, want %q", i, docs[i].ID, want)
 		}
-		if docs[i].Doc["collection"] != "menu" || docs[i].Doc["_id"] != want.id {
+		if docs[i].Doc["collection"] != "menu" || docs[i].Doc["_id"] != want {
 			t.Errorf("record %d is written as %v, want its _id and the collection menu", i, docs[i].Doc)
 		}
 	}
@@ -327,7 +324,7 @@ func TestReadNoSQLSeed_ReportsEveryBadRecordAtItsFileAndLine(t *testing.T) {
 	if len(errs) != 8 {
 		t.Errorf("the reader reports %d problems, want the 8 above:\n%v", len(errs), errs)
 	}
-	if len(docs) != 2 || docs[0].Line != 1 || docs[1].Line != 9 {
+	if len(docs) != 2 || docs[0].ID != "ok" || docs[1].ID != strings.Repeat("z", 255) {
 		t.Errorf("the reader returned %v, want the records on lines 1 and 9", docs)
 	}
 }

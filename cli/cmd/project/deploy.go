@@ -799,11 +799,10 @@ func nosqlSeedJSONL(collection, path string) (int, error) {
 	return count, nil
 }
 
-// seedDoc is one record of a NoSQL seed file: where it stands in the file, the _id
-// the platform replaces a document by, and the document as apply writes it.
+// seedDoc is one record of a NoSQL seed file: the _id the platform replaces a
+// document by, and the document as apply writes it.
 type seedDoc struct {
-	Line int
-	ID   string
+	ID string
 	// Doc is what is sent to the slice: the record with the collection it is
 	// written to. The plan compares the slice's documents with this one, so what is
 	// compared is what is written.
@@ -820,7 +819,7 @@ const maxSeedIDBytes = 255
 // cannot be loaded is reported with the file and the line it is on, and the
 // records it could read come back beside the errors.
 func readNoSQLSeed(collection, path string) ([]seedDoc, ParseErrors) {
-	data, err := os.ReadFile(path) // #nosec G304 — manifest-declared path
+	data, err := os.ReadFile(path) // #nosec G304 -- manifest-declared path
 	if err != nil {
 		return nil, ParseErrors{fmt.Sprintf("nosql %q seed: read %s: %v", collection, path, err)}
 	}
@@ -844,7 +843,7 @@ func readNoSQLSeed(collection, path string) ([]seedDoc, ParseErrors) {
 			continue
 		}
 		doc["collection"] = collection
-		docs = append(docs, seedDoc{Line: i + 1, ID: id, Doc: doc})
+		docs = append(docs, seedDoc{ID: id, Doc: doc})
 	}
 	return docs, errs
 }

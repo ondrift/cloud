@@ -1,6 +1,6 @@
 package project
 
-// planseed.go — what `drift plan` says of the data a file seeds.
+// planseed.go: what `drift plan` says of the data a file seeds.
 //
 // # A NoSQL seed
 //

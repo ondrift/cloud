@@ -44,12 +44,12 @@ func menuLive(s *sliceStore, only ...string) {
 func TestCompareSeed_ComparesTheFieldsTheSeedNames(t *testing.T) {
 	seedOf := func(lines ...string) []seedDoc {
 		var docs []seedDoc
-		for i, l := range lines {
+		for _, l := range lines {
 			doc := map[string]any{}
 			if err := json.Unmarshal([]byte(l), &doc); err != nil {
 				t.Fatal(err)
 			}
-			docs = append(docs, seedDoc{Line: i + 1, ID: doc["_id"].(string), Doc: doc})
+			docs = append(docs, seedDoc{ID: doc["_id"].(string), Doc: doc})
 		}
 		return docs
 	}
@@ -433,7 +433,6 @@ backbone {
 
 // What the help says is what the plan prints.
 func TestPlan_HelpSaysWhatItPrintsForASeedAndACacheEntry(t *testing.T) {
-	t.Skip("#3039 removes this skip: the plan's help says nothing of a seed")
 	help := GetPlanCmd().Long
 	for _, want := range []string{
 		"seed: 2 missing, 1 differs: apply writes 3 of 12",
@@ -449,7 +448,6 @@ func TestPlan_HelpSaysWhatItPrintsForASeedAndACacheEntry(t *testing.T) {
 
 // What apply does with a seeded collection is in its help.
 func TestApply_HelpSaysASeedNeverDropsTheCollection(t *testing.T) {
-	t.Skip("#3039 removes this skip: apply's help says nothing of a seed")
 	help := GetApplyCmd().Long
 	for _, want := range []string{"never dropped", "by its _id"} {
 		if !strings.Contains(help, want) {
