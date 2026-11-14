@@ -22,9 +22,13 @@ package common
 // in a chat log a year old must still resolve to the same failure. To stop using
 // one, mark it `retired` and leave it where it is.
 //
-// That rule is mechanical rather than remembered: the sequence must be dense, so
-// deleting an entry leaves a gap and the test fails. Reuse is impossible without
-// first deleting, so the same check covers both.
+// That rule is mechanical rather than remembered, in two parts. The sequence
+// must be dense, so deleting an entry leaves a gap and the test fails. And every
+// entry carries a Key, the name of the failure its code stands for, which is
+// unique and never changes: the pull-request job hands the tests the registry as
+// it stands on the base branch, and a code that went missing or whose key changed
+// fails the build. Two entries that swap contents, or a code pointed at another
+// failure, leave the sequence dense and change a key.
 
 import (
 	_ "embed"

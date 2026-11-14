@@ -1,92 +1,107 @@
 {
-  "$comment": "APPEND ONLY. A code is minted once and never reused, never renumbered, never deleted — a code pasted from a chat log a year old must still resolve to the same failure. To stop using one, set retired:true and leave it in place; errorcodes_test.go fails on a gap in the sequence, which is what makes that rule mechanical rather than remembered.",
+  "$comment": "APPEND ONLY. A code is minted once and never reused, never renumbered, never deleted: a code pasted from a chat log a year old must still resolve to the same failure. To stop using one, set retired:true and leave it in place; errorcodes_test.go fails on a gap in the sequence. Every entry carries a key: a short kebab-case name for the failure its code stands for, such as session-expired, unique in this file and never changed once the code is minted. A pull request's registry is compared with the base branch's, and a code that went missing or whose key changed fails the build, which is what catches two entries swapping contents or a code being pointed at another failure. The meaning, remedy and command can be reworded freely; the key is what the code is.",
   "codes": [
     {
       "code": "DRIFT-1001",
+      "key": "session-expired",
       "meaning": "Your session has expired, so the platform refused the request.",
       "remedy": "Run `drift account login` and try again. Sessions are 12 hours; this is the ordinary way one ends.",
       "command": "drift account login"
     },
     {
       "code": "DRIFT-1002",
+      "key": "forbidden",
       "meaning": "The platform accepted your identity but refused the action.",
       "remedy": "The account is authenticated and lacks the permission for this operation. If it is meant to be your own slice, you may be on a different account than you think — `drift slice list` shows what this one actually has.",
       "command": "drift slice list"
     },
     {
       "code": "DRIFT-1003",
+      "key": "not-found",
       "meaning": "The thing you named does not exist on the platform.",
       "remedy": "Check the spelling, and that your active slice is the one you mean — `drift slice list` shows what the account actually has.",
       "command": "drift slice list"
     },
     {
       "code": "DRIFT-1004",
+      "key": "quota",
       "meaning": "You have hit a quota on your plan.",
       "remedy": "The message names which one. Free a slot by deleting something you no longer need, or raise the limit on the form `drift slice resize` draws.",
       "command": "drift slice resize"
     },
     {
       "code": "DRIFT-1005",
+      "key": "platform-fault",
       "meaning": "The platform failed while handling the request. This one is ours, not yours.",
       "remedy": "Nothing you changed caused it. Retry once; if it persists, the failure is on the platform side and status.ondrift.eu carries the per-component picture.",
       "command": ""
     },
     {
       "code": "DRIFT-1006",
+      "key": "api-unreachable",
       "meaning": "The CLI could not reach the Drift API at all.",
       "remedy": "No response came back, so this is the network between you and the platform, or the platform being down. Check your connection first, then status.ondrift.eu.",
       "command": ""
     },
     {
       "code": "DRIFT-1007",
+      "key": "request-timeout",
       "meaning": "The request to the platform timed out.",
       "remedy": "The platform accepted the connection and did not answer in time. Retry; a deploy that timed out may still have landed, so check with `drift plan` before applying again.",
       "command": "drift plan"
     },
     {
       "code": "DRIFT-1008",
+      "key": "no-schema",
       "meaning": "This machine has no copy of the Driftfile format, so a Driftfile cannot be validated.",
       "remedy": "The platform defines the format and the CLI caches it on first contact. Run any online command once — `drift account login` or `drift slice list` — and it is cached permanently at ~/.drift/driftfile.schema.json.",
       "command": "drift slice list"
     },
     {
       "code": "DRIFT-1009",
+      "key": "driftfile-invalid",
       "meaning": "The Driftfile is not valid.",
       "remedy": "The message names the field and what it expected. `drift file lint` reports every problem at once, offline, which is faster than fixing them one deploy at a time.",
       "command": "drift file lint"
     },
     {
       "code": "DRIFT-1010",
+      "key": "compiled-memory-floor",
       "meaning": "A compiled function booked less memory than its language runtime needs.",
       "remedy": "Go and Rust carry a private runtime inside every invocation, so they floor at 16MiB where the interpreted languages floor at 8MiB. Raise its memory in the Driftfile, or run `drift size` against a deployed slice to size it from what it actually holds.",
       "command": "drift size"
     },
     {
       "code": "DRIFT-1011",
+      "key": "not-logged-in",
       "meaning": "You are not logged in, so the CLI has no credential to send.",
       "remedy": "Run `drift account login`, or `drift account signup` if you do not have an account yet. This is different from an expired session (DRIFT-1001): there is no session on this machine at all.",
       "command": "drift account login"
     },
     {
       "code": "DRIFT-1012",
+      "key": "platform-unavailable",
       "meaning": "The platform was briefly unavailable — a restart, a rollout, or something reshaping the slice underneath the request.",
       "remedy": "Wait a few seconds and run it again. Unlike DRIFT-1005 this CAN be something you just did: a resize restarts the slice's pod, so a deploy issued seconds after one hits a runner that is no longer there. If two commands were in flight at once, that is the likely story. status.ondrift.eu will usually show every component green, because nothing is broken.",
       "command": ""
     },
     {
       "code": "DRIFT-1013",
+      "key": "conflict",
       "meaning": "The thing you asked for conflicts with something that already exists.",
       "remedy": "The message names the conflicting thing. A second free slice is the common one — the free tier allows a single hacker slice per account, and a second slice of that shape is allowed but paid. Creating something whose name is taken is the other.",
       "command": "drift slice list"
     },
     {
       "code": "DRIFT-1014",
+      "key": "throttled",
       "meaning": "The platform is limiting how often you can do this, and the limit clears by itself.",
       "remedy": "Wait for the time the message names, then run it again. Nothing needs freeing or buying: this is a rate limit, not a quota, and resizing a slice does not lift it. Logins and signups are limited per address, control-plane calls per account each minute, restarts per slice, and transfer offers per account each day. A retry before the time is up is refused again.",
       "command": ""
     },
     {
       "code": "DRIFT-1015",
+      "key": "cli-too-old",
       "meaning": "The platform speaks a newer API version than this drift, and it answered not found to a request this drift made.",
       "remedy": "The platform states the API version it speaks on every reply. When that is ahead of the one this drift was built for, a request for a path the platform no longer serves comes back as a plain not found. `drift upgrade` installs the release that speaks the platform's version. If the same request still says not found after upgrading, the thing you named does not exist: see DRIFT-1003.",
       "command": "drift upgrade"

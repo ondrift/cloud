@@ -1,7 +1,9 @@
 package common
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -110,7 +112,6 @@ func keyProblems(entries []ErrorCode) []string {
 // entries share one. The key is what a pull request's registry is held to
 // against the base branch's.
 func TestErrorCodes_EveryEntryHasAUniqueKey(t *testing.T) {
-	t.Skip("removed by #2342")
 	codes := ErrorCodes()
 	if len(codes) == 0 {
 		t.Fatal("the registry is empty, so there is nothing to hold a key")
@@ -199,16 +200,108 @@ func swapContents(a, b ErrorCode) (ErrorCode, ErrorCode) {
 	return a, b
 }
 
-// checkAppendOnly compares head with the base it grew from. It reports nothing
-// yet.
-func checkAppendOnly(base, head []ErrorCode) []string { return nil }
+// checkAppendOnly reports every way head breaks the append-only rule against the
+// base it grew from, each violation naming its code. Nothing reported means head
+// only added to base.
+//
+// Every code base has is still in head and carries the key base recorded for it.
+// A key is what a code stands for, so two entries that swap contents, or a code
+// pointed at another failure, change a key even though the sequence stays dense
+// and every entry stays well formed. Wording (meaning, remedy, command), the
+// retired mark, the order of the entries and entries after base's are free to
+// change. A base entry with no key records no identity yet and holds nothing to
+// compare, so a registry that gains its keys passes against one that has none.
+func checkAppendOnly(base, head []ErrorCode) []string {
+	now := make(map[string]ErrorCode, len(head))
+	for _, c := range head {
+		now[c.Code] = c
+	}
+
+	was := append([]ErrorCode(nil), base...)
+	sort.Slice(was, func(i, j int) bool { return was[i].Code < was[j].Code })
+
+	var violations []string
+	for _, b := range was {
+		h, ok := now[b.Code]
+		switch {
+		case !ok:
+			violations = append(violations, fmt.Sprintf(
+				"%s is missing: a code is never deleted, so set retired to true and leave it in place", b.Code))
+		case b.Key != "" && h.Key != b.Key:
+			has := "no key"
+			if h.Key != "" {
+				has = fmt.Sprintf("the key %q", h.Key)
+			}
+			violations = append(violations, fmt.Sprintf(
+				"%s has %s where it had the key %q: a code stands for one failure for good, so a new failure needs a new code",
+				b.Code, has, b.Key))
+		}
+	}
+	return violations
+}
+
+// baseRegistryEnv names the file that holds the registry as it stands on the
+// branch this change merges into. The pull-request job writes it. By hand:
+//
+//	git show origin/main:cli/common/errorcodes.json > /tmp/base.json
+//	DRIFT_ERRORCODES_BASE=/tmp/base.json go test ./common -run AppendOnlyAgainstBase -v
+const baseRegistryEnv = "DRIFT_ERRORCODES_BASE"
+
+// The registry only grew since the base branch's: no code is missing and no key
+// moved. With no base file there is nothing to compare with, and the test says so
+// by skipping. A base file that cannot be read, or holds no codes, fails: a
+// comparison that could not be made must not read as one that passed.
+func TestErrorCodes_AppendOnlyAgainstBase(t *testing.T) {
+	path := os.Getenv(baseRegistryEnv)
+	if path == "" {
+		t.Skipf("%s is not set, so there is no base registry to compare with", baseRegistryEnv)
+	}
+	raw, err := os.ReadFile(path) // #nosec G304 -- the path comes from the pull-request job
+	if err != nil {
+		t.Fatalf("reading the base registry named by %s: %v", baseRegistryEnv, err)
+	}
+	var doc struct {
+		Codes []ErrorCode `json:"codes"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("the base registry in %s does not parse: %v", path, err)
+	}
+	if len(doc.Codes) == 0 {
+		t.Fatalf("the base registry in %s holds no codes, so there is nothing to compare with", path)
+	}
+
+	head := ErrorCodes()
+	inBase := make(map[string]bool, len(doc.Codes))
+	baseKeyed := 0
+	for _, c := range doc.Codes {
+		inBase[c.Code] = true
+		if c.Key != "" {
+			baseKeyed++
+		}
+	}
+	headKeyed := 0
+	var added []string
+	for _, c := range head {
+		if c.Key != "" {
+			headKeyed++
+		}
+		if !inBase[c.Code] {
+			added = append(added, c.Code)
+		}
+	}
+	t.Logf("base registry: %d codes, %d with a key. This registry: %d codes, %d with a key, %d added %v",
+		len(doc.Codes), baseKeyed, len(head), headKeyed, len(added), added)
+
+	for _, violation := range checkAppendOnly(doc.Codes, head) {
+		t.Error(violation)
+	}
+}
 
 // A registry may only grow: every code it had is still there under the key it
 // had. Swapping two entries' contents, pointing a code at another failure and
 // deleting a code each leave the sequence dense and every entry well formed, so
 // only a comparison with the registry the change started from can see them.
 func TestCheckAppendOnly(t *testing.T) {
-	t.Skip("removed by #2342")
 	for _, tc := range []struct {
 		name   string
 		change func(head []ErrorCode) []ErrorCode
@@ -286,10 +379,34 @@ func TestCheckAppendOnly(t *testing.T) {
 	}
 }
 
+// Each violation says what is wrong with its code, so the person reading the job
+// log knows what to undo: a code that went missing is missing, and a key that
+// moved says the key it had. The table above cannot tell the two apart, since a
+// missing entry has no key either.
+func TestCheckAppendOnly_SaysWhatIsWrong(t *testing.T) {
+	got := checkAppendOnly(appendOnlyRegistry(), appendOnlyRegistry()[:3])
+	if len(got) != 1 || !strings.HasPrefix(got[0], "DRIFT-1004 is missing") {
+		t.Errorf("a code that went missing gave %q, want one violation starting %q", got, "DRIFT-1004 is missing")
+	}
+
+	moved := appendOnlyRegistry()
+	moved[3].Key = "limit"
+	got = checkAppendOnly(appendOnlyRegistry(), moved)
+	if want := `DRIFT-1004 has the key "limit" where it had the key "quota"`; len(got) != 1 || !strings.HasPrefix(got[0], want) {
+		t.Errorf("a key that changed gave %q, want one violation starting %q", got, want)
+	}
+
+	removed := appendOnlyRegistry()
+	removed[3].Key = ""
+	got = checkAppendOnly(appendOnlyRegistry(), removed)
+	if want := `DRIFT-1004 has no key where it had the key "quota"`; len(got) != 1 || !strings.HasPrefix(got[0], want) {
+		t.Errorf("a key that was removed gave %q, want one violation starting %q", got, want)
+	}
+}
+
 // A registry that has no keys yet holds nothing to compare them with, so the
 // change that gives it keys passes, and a code that goes missing still fails.
 func TestCheckAppendOnly_ABaseWithoutKeysHoldsTheCodesOnly(t *testing.T) {
-	t.Skip("removed by #2342")
 	base := appendOnlyRegistry()
 	for i := range base {
 		base[i].Key = ""
