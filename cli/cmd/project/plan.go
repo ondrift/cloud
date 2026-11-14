@@ -55,46 +55,15 @@ Nothing is changed.`,
 		Example: "  drift plan\n  drift plan staging\n  drift plan --var RESET_KEY=...",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := requireDriftfile()
-			if err != nil {
-				return err
+			o := PlanOptions{
+				Variables: append(append([]string{}, vars...), secrets...),
+				NoEnvFile: noEnvFile,
 			}
-			data, err := os.ReadFile(path) // #nosec G304 — the user's own manifest
-			if err != nil {
-				return fmt.Errorf("read %s: %w", path, err)
-			}
-			overrides := append(append([]string{}, vars...), secrets...)
-			env := ""
 			if len(args) == 1 {
-				env = args[0]
+				o.Environment = args[0]
 			}
 
-			sum, err := applyVariableSources(filepath.Dir(path), overrides, !noEnvFile, env)
-			if err != nil {
-				return err
-			}
-			sum.report()
-
-			common.RefreshDriftfileSchema()
-			if !SchemaAvailable() {
-				return ErrNoSchema
-			}
-			c, err := CompileDriftfileEnv(path, env)
-			if err != nil {
-				return err
-			}
-			if env != "" {
-				fmt.Printf("  %s environment %s → slice %s\n", common.Hint("·"), env, common.Highlight(c.Manifest.Name()))
-			}
-
-			// Every read below names this file's slice. The ones that resolve a
-			// slice from the session read the active one, so for this process
-			// the active slice is the file's. Nothing is written to the session.
-			if err := os.Setenv(common.SliceEnv, c.Manifest.Name()); err != nil {
-				return err
-			}
-
-			p, err := gatherPlan(c, false)
+			p, data, err := readPlan(o, os.Stdout, os.Stderr)
 			if err != nil {
 				return err
 			}
@@ -116,6 +85,73 @@ Nothing is changed.`,
 }
 
 // ─── what the plan reads ────────────────────────────────────────────────────
+
+// PlanOptions say which plan to read: the choices `drift plan` is given.
+type PlanOptions struct {
+	// Environment names the Driftfile environment to plan, or "" for the
+	// default slice.
+	Environment string
+	// Variables are KEY=value settings for the variables the file reads, as
+	// --var and --secret give them. They yield to the terminal's environment
+	// and beat the .env file.
+	Variables []string
+	// NoEnvFile leaves the .env file beside the Driftfile unread.
+	NoEnvFile bool
+}
+
+// readPlan is every plan's way in, for `drift plan` and for PlanVerdict: it reads
+// the Driftfile in the working directory, sets the variables it reads, refreshes
+// the schema, compiles the file and reads the live slice. It returns the plan's
+// state and the Driftfile's bytes, which a plan file records.
+//
+// The variables it set are reported to diag and the environment it plans to out.
+// Two notices come from further down and go to stderr whatever out and diag are:
+// the compiler's warnings about a queue no block declares, and the wait for a
+// slice that is warming up.
+//
+// It leaves the process's active slice set to the file's, which is how every read
+// names it; PlanVerdict puts the caller's slice back.
+func readPlan(o PlanOptions, out, diag io.Writer) (*planState, []byte, error) {
+	path, err := requireDriftfile()
+	if err != nil {
+		return nil, nil, err
+	}
+	data, err := os.ReadFile(path) // #nosec G304 — the user's own manifest
+	if err != nil {
+		return nil, nil, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	sum, err := applyVariableSources(filepath.Dir(path), o.Variables, !o.NoEnvFile, o.Environment)
+	if err != nil {
+		return nil, nil, err
+	}
+	sum.reportTo(diag)
+
+	common.RefreshDriftfileSchema()
+	if !SchemaAvailable() {
+		return nil, nil, ErrNoSchema
+	}
+	c, err := CompileDriftfileEnv(path, o.Environment)
+	if err != nil {
+		return nil, nil, err
+	}
+	if o.Environment != "" {
+		fmt.Fprintf(out, "  %s environment %s → slice %s\n", common.Hint("·"), o.Environment, common.Highlight(c.Manifest.Name()))
+	}
+
+	// Every read below names this file's slice. The ones that resolve a slice
+	// from the session read the active one, so for this process the active slice
+	// is the file's. Nothing is written to the session.
+	if err := os.Setenv(common.SliceEnv, c.Manifest.Name()); err != nil {
+		return nil, nil, err
+	}
+
+	p, err := gatherPlan(c, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	return p, data, nil
+}
 
 type liveAPIKey struct {
 	Method      string `json:"method"`

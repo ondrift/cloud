@@ -23,6 +23,7 @@ package project
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,7 +100,10 @@ func applyVariableSources(dir string, overrides []string, useEnvFile bool, env s
 }
 
 // report writes a concise summary to stderr so the layering is never silent.
-func (s varSummary) report() {
+func (s varSummary) report() { s.reportTo(os.Stderr) }
+
+// reportTo writes the summary to w.
+func (s varSummary) reportTo(w io.Writer) {
 	if len(s.fromEnvFile) > 0 {
 		byFile := map[string][]string{}
 		var order []string
@@ -110,14 +114,14 @@ func (s varSummary) report() {
 			byFile[c.file] = append(byFile[c.file], c.key)
 		}
 		for _, f := range order {
-			fmt.Fprintf(os.Stderr, "→ %s: loaded %d variable(s): %s\n", f, len(byFile[f]), strings.Join(byFile[f], ", "))
+			fmt.Fprintf(w, "→ %s: loaded %d variable(s): %s\n", f, len(byFile[f]), strings.Join(byFile[f], ", "))
 		}
 	}
 	if len(s.fromOverrides) > 0 {
-		fmt.Fprintf(os.Stderr, "→ overrides: set %d variable(s): %s\n", len(s.fromOverrides), strings.Join(s.fromOverrides, ", "))
+		fmt.Fprintf(w, "→ overrides: set %d variable(s): %s\n", len(s.fromOverrides), strings.Join(s.fromOverrides, ", "))
 	}
 	if len(s.shadowed) > 0 {
-		fmt.Fprintf(os.Stderr, "→ already set in the environment (kept; lower-tier value ignored): %s\n", strings.Join(s.shadowed, ", "))
+		fmt.Fprintf(w, "→ already set in the environment (kept; lower-tier value ignored): %s\n", strings.Join(s.shadowed, ", "))
 	}
 }
 
