@@ -12,6 +12,7 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -48,30 +49,28 @@ func getExplainCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			entry, ok := common.LookupErrorCode(args[0])
 			if !ok {
-				return fmt.Errorf(
-					"no failure is registered under %q.\n"+
-						"  Codes look like DRIFT-1006. `drift doctor codes` lists every one this binary knows.",
-					args[0])
+				return NotRegistered(args[0])
 			}
 
-			fmt.Printf("\n  %s\n\n", common.Highlight(entry.Code))
-			fmt.Printf("  %s\n\n", entry.Meaning)
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "\n  %s\n\n", common.Highlight(entry.Code))
+			fmt.Fprintf(out, "  %s\n\n", entry.Meaning)
 			for _, line := range wrap(entry.Remedy, 76) {
-				fmt.Printf("  %s\n", line)
+				fmt.Fprintf(out, "  %s\n", line)
 			}
 			// The fix, on its own line, in three words. Where there is none —
 			// a platform fault, an unreachable network — say so rather than
 			// inventing a command that would fail again.
-			fmt.Println()
+			fmt.Fprintln(out)
 			if entry.Command != "" {
-				fmt.Printf("  %s  %s\n", common.Hint("fix:"), common.Highlight(entry.Command))
+				fmt.Fprintf(out, "  %s  %s\n", common.Hint("fix:"), common.Highlight(entry.Command))
 			} else {
-				fmt.Printf("  %s\n", common.Hint("There is no command you can run for this one."))
+				fmt.Fprintf(out, "  %s\n", common.Hint("There is no command you can run for this one."))
 			}
 			if entry.Retired {
-				fmt.Printf("\n  %s\n", common.Hint("This code is retired — a current CLI no longer produces it."))
+				fmt.Fprintf(out, "\n  %s\n", common.Hint("This code is retired — a current CLI no longer produces it."))
 			}
-			fmt.Println()
+			fmt.Fprintln(out)
 			return nil
 		},
 	}
@@ -84,19 +83,35 @@ func getCodesCmd() *cobra.Command {
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
 			codes := common.ErrorCodes()
-			fmt.Printf("\n  %d failure codes\n\n", len(codes))
+			fmt.Fprintf(out, "\n  %d failure codes\n\n", len(codes))
 			for _, c := range codes {
 				suffix := ""
 				if c.Retired {
 					suffix = "  (retired)"
 				}
-				fmt.Printf("  %-12s  %s%s\n", c.Code, c.Meaning, suffix)
+				fmt.Fprintf(out, "  %-12s  %s%s\n", c.Code, c.Meaning, suffix)
 			}
-			fmt.Printf("\n  %s\n\n", common.Hint("drift doctor explain <code> for the remedy"))
+			fmt.Fprintf(out, "\n  %s\n\n", common.Hint("drift doctor explain <code> for the remedy"))
 			return nil
 		},
 	}
+}
+
+// NotRegistered is the error for text that names no registered failure.
+//
+// Text that is a well-formed code numbered above every registered one is what a
+// drift newer than this binary prints, so the error also says this binary may be
+// the older one and which command fixes that.
+func NotRegistered(arg string) error {
+	msg := fmt.Sprintf("no failure is registered under %q.\n"+
+		"  Codes look like DRIFT-1006. `drift doctor codes` lists every one this binary knows.", arg)
+	if code, highest, newer := common.NewerErrorCode(arg); newer {
+		msg += fmt.Sprintf("\n  This binary knows codes up to %s and may be older than %s. "+
+			"Run `drift upgrade` to install the latest.", highest, code)
+	}
+	return errors.New(msg)
 }
 
 // wrap breaks a remedy onto terminal-friendly lines at word boundaries.

@@ -94,12 +94,50 @@ func loadErrorCodes() {
 func LookupErrorCode(code string) (ErrorCode, bool) {
 	errorCodesOnce.Do(loadErrorCodes)
 
-	q := strings.ToUpper(strings.TrimSpace(code))
+	c, ok := errorCodesByID[normalizeErrorCode(code)]
+	return c, ok
+}
+
+// normalizeErrorCode puts what a person typed into the registry's spelling,
+// "DRIFT-1006", whether they typed "drift-1006", " 1006 " or the code itself. It
+// does not judge the result: "banana" becomes "DRIFT-BANANA".
+func normalizeErrorCode(typed string) string {
+	q := strings.ToUpper(strings.TrimSpace(typed))
 	if !strings.HasPrefix(q, "DRIFT-") {
 		q = "DRIFT-" + q
 	}
-	c, ok := errorCodesByID[q]
-	return c, ok
+	return q
+}
+
+// NewerErrorCode reports whether typed is shaped like a failure code and numbered
+// above every registered one. That is the code a drift newer than this binary
+// prints, and this binary has never heard of it. It returns the code in the
+// registry's spelling and the highest code this binary registers, so the caller
+// can say what this binary knows.
+//
+// Text that is not a code is never newer, and neither is a number at or below the
+// highest.
+func NewerErrorCode(typed string) (code, highest string, newer bool) {
+	errorCodesOnce.Do(loadErrorCodes)
+
+	code = normalizeErrorCode(typed)
+	digits := strings.TrimPrefix(code, "DRIFT-")
+	// Atoi reads a sign and a code has none, so only digits are let through to it.
+	if strings.Trim(digits, "0123456789") != "" {
+		return "", "", false
+	}
+	n, err := strconv.Atoi(digits)
+	if err != nil {
+		return "", "", false
+	}
+
+	top := -1
+	for _, c := range errorCodesAll {
+		if m := errorCodeNumber(c.Code); m > top {
+			top, highest = m, c.Code
+		}
+	}
+	return code, highest, n > top
 }
 
 // ErrorCodes returns every registered failure, in code order — retired ones
@@ -113,8 +151,8 @@ func ErrorCodes() []ErrorCode {
 }
 
 // errorCodeNumber pulls the numeric part out of a code, or -1 if it is not
-// shaped like one. Used by the registry's own tests to prove the sequence is
-// dense.
+// shaped like one. NewerErrorCode uses it to find the highest registered code,
+// and the registry's own tests use it to prove the sequence is dense.
 func errorCodeNumber(code string) int {
 	n, err := strconv.Atoi(strings.TrimPrefix(strings.ToUpper(code), "DRIFT-"))
 	if err != nil {

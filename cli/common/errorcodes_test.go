@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -93,6 +94,62 @@ func TestLookupErrorCode_AnUnknownCodeDoesNotResolve(t *testing.T) {
 		if _, ok := LookupErrorCode(unknown); ok {
 			t.Errorf("%q resolved, but nothing is registered under it", unknown)
 		}
+	}
+}
+
+// A code numbered above every registered one is what a newer drift prints. Where
+// the line falls is read from the registry, so adding a code moves it.
+func TestNewerErrorCode(t *testing.T) {
+	highest := 0
+	for _, c := range ErrorCodes() {
+		if n := errorCodeNumber(c.Code); n > highest {
+			highest = n
+		}
+	}
+	if highest == 0 {
+		t.Fatal("the registry is empty")
+	}
+	top := fmt.Sprintf("DRIFT-%d", highest)
+	above := fmt.Sprintf("DRIFT-%d", highest+1)
+
+	for _, tc := range []struct {
+		name, typed string
+		code        string // the registry's spelling of typed, for a newer code
+		newer       bool
+	}{
+		{"the code itself", above, above, true},
+		{"lower case", strings.ToLower(above), above, true},
+		{"a bare number", fmt.Sprintf("%d", highest+1), above, true},
+		{"padded", fmt.Sprintf("  %d ", highest+1), above, true},
+		{"far above", "DRIFT-99999999", "DRIFT-99999999", true},
+
+		{"the highest registered code", top, "", false},
+		{"the first registered code", "DRIFT-1001", "", false},
+		{"below the first code", "DRIFT-1000", "", false},
+		{"zero", "0", "", false},
+		{"words", "banana", "", false},
+		{"nothing", "", "", false},
+		{"the prefix alone", "DRIFT-", "", false},
+		{"letters after the prefix", "DRIFT-ABC", "", false},
+		{"a suffix after the number", fmt.Sprintf("%dx", highest+1), "", false},
+		{"a sign before the number", fmt.Sprintf("+%d", highest+1), "", false},
+		{"a number too large to be one", "99999999999999999999", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, gotHighest, newer := NewerErrorCode(tc.typed)
+			if newer != tc.newer {
+				t.Fatalf("NewerErrorCode(%q) = newer %v, want %v", tc.typed, newer, tc.newer)
+			}
+			if !tc.newer {
+				return
+			}
+			if code != tc.code {
+				t.Errorf("NewerErrorCode(%q) code = %q, want %q", tc.typed, code, tc.code)
+			}
+			if gotHighest != top {
+				t.Errorf("NewerErrorCode(%q) highest = %q, want %q", tc.typed, gotHighest, top)
+			}
+		})
 	}
 }
 

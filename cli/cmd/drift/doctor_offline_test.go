@@ -115,7 +115,6 @@ func TestTheNoNetworkTrapSeesARequestToAnyHost(t *testing.T) {
 // the remedy in full, and the command that fixes it or the statement that there
 // is none, on standard output, with nothing on standard error and no request.
 func TestDoctorExplainAnswersOfflineForEveryRegisteredCode(t *testing.T) {
-	t.Skip("removed by #2340")
 	codes := common.ErrorCodes()
 	if len(codes) == 0 {
 		t.Fatal("the registry is empty, so the loop below would prove nothing")
@@ -157,7 +156,6 @@ func TestDoctorExplainAnswersOfflineForEveryRegisteredCode(t *testing.T) {
 
 // `drift doctor codes` lists every registered code with its meaning, offline.
 func TestDoctorCodesListsEveryRegisteredCodeOffline(t *testing.T) {
-	t.Skip("removed by #2340")
 	codes := common.ErrorCodes()
 	if len(codes) == 0 {
 		t.Fatal("the registry is empty, so the loop below would prove nothing")
@@ -187,5 +185,118 @@ func TestDoctorCodesListsEveryRegisteredCodeOffline(t *testing.T) {
 
 	if n := requests.Load(); n != 0 {
 		t.Errorf("%d request(s) arrived while listing the codes, want none", n)
+	}
+}
+
+// highestCodeNumber is the number of the highest registered code.
+func highestCodeNumber(t *testing.T) int {
+	t.Helper()
+	highest := 0
+	for _, c := range common.ErrorCodes() {
+		var n int
+		if _, err := fmt.Sscanf(c.Code, "DRIFT-%d", &n); err != nil {
+			t.Fatalf("%q is not shaped like a code: %v", c.Code, err)
+		}
+		if n > highest {
+			highest = n
+		}
+	}
+	if highest == 0 {
+		t.Fatal("the registry is empty")
+	}
+	return highest
+}
+
+// One code typed three ways is one question, so it gets one answer, and the
+// answer is the registry's for that code rather than an empty one.
+func TestDoctorExplainTreatsEverySpellingOfACodeAlike(t *testing.T) {
+	noNetwork(t, t.Errorf)
+	want, ok := common.LookupErrorCode("DRIFT-1006")
+	if !ok {
+		t.Fatal("DRIFT-1006 is not registered")
+	}
+
+	canonical, stderr, status := runTree("doctor", "explain", "DRIFT-1006")
+	if status != 0 || stderr != "" {
+		t.Fatalf("explain DRIFT-1006 exited %d with stderr %q", status, stderr)
+	}
+	if !strings.Contains(canonical, want.Meaning) {
+		t.Fatalf("explain DRIFT-1006 does not print its meaning %q; it printed:\n%s", want.Meaning, canonical)
+	}
+
+	for _, spelling := range []string{"drift-1006", "Drift-1006", "1006", " 1006 "} {
+		got, stderr, status := runTree("doctor", "explain", spelling)
+		if status != 0 || stderr != "" {
+			t.Errorf("explain %q exited %d with stderr %q", spelling, status, stderr)
+			continue
+		}
+		if got != canonical {
+			t.Errorf("explain %q printed:\n%s\nwant what DRIFT-1006 prints:\n%s", spelling, got, canonical)
+		}
+	}
+}
+
+// A code numbered above every registered one is what a newer drift prints and
+// this binary has never heard of. The answer still says nothing is registered
+// under it, and adds that this binary may be the older one and what fixes that.
+func TestDoctorExplainSaysWhenACodeMayComeFromANewerDrift(t *testing.T) {
+	noNetwork(t, t.Errorf)
+	highest := highestCodeNumber(t)
+
+	for _, tc := range []struct{ typed, code string }{
+		{fmt.Sprintf("DRIFT-%d", highest+1), fmt.Sprintf("DRIFT-%d", highest+1)},
+		{fmt.Sprintf("drift-%d", highest+1), fmt.Sprintf("DRIFT-%d", highest+1)},
+		{fmt.Sprintf("%d", highest+1), fmt.Sprintf("DRIFT-%d", highest+1)},
+		{fmt.Sprintf(" %d ", highest+250), fmt.Sprintf("DRIFT-%d", highest+250)},
+	} {
+		t.Run(tc.typed, func(t *testing.T) {
+			stdout, stderr, status := runTree("doctor", "explain", tc.typed)
+			if status != 1 || stdout != "" {
+				t.Fatalf("explain %q exited %d with stdout %q, want a failure with nothing on stdout", tc.typed, status, stdout)
+			}
+			for _, want := range []string{
+				fmt.Sprintf("no failure is registered under %q.", tc.typed),
+				"`drift doctor codes` lists every one this binary knows.",
+				fmt.Sprintf("knows codes up to DRIFT-%d", highest),
+				fmt.Sprintf("may be older than %s", tc.code),
+				"`drift upgrade`",
+			} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("explain %q does not say %q; it said:\n%s", tc.typed, want, stderr)
+				}
+			}
+		})
+	}
+}
+
+// notRegisteredMessage is what explain says, on standard error, for text that
+// names no registered failure.
+const notRegisteredMessage = "no failure is registered under %q.\n" +
+	"  Codes look like DRIFT-1006. `drift doctor codes` lists every one this binary knows.\n"
+
+// Text that is not a code, and a number below every code this binary registers,
+// keep the message they always had. Nothing newer is claimed for them: a newer
+// drift cannot have minted a number below the first.
+func TestDoctorExplainKeepsItsMessageForTextThatIsNotACode(t *testing.T) {
+	noNetwork(t, t.Errorf)
+
+	for _, text := range []string{
+		"banana",
+		"",
+		"DRIFT-",
+		"DRIFT-ABC",
+		"1006x",
+		"+9999",
+		"99999999999999999999",
+		"DRIFT-1000",
+		"0",
+	} {
+		stdout, stderr, status := runTree("doctor", "explain", text)
+		if status != 1 || stdout != "" {
+			t.Errorf("explain %q exited %d with stdout %q, want a failure with nothing on stdout", text, status, stdout)
+		}
+		if want := fmt.Sprintf(notRegisteredMessage, text); stderr != want {
+			t.Errorf("explain %q said:\n%s\nwant:\n%s", text, stderr, want)
+		}
 	}
 }

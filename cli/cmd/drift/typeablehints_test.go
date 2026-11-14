@@ -6,6 +6,7 @@ import (
 
 	account "github.com/ondrift/cloud/cli/cmd/account"
 	atomic_cmd_new "github.com/ondrift/cloud/cli/cmd/atomic/cmd/new"
+	"github.com/ondrift/cloud/cli/cmd/doctor"
 	"github.com/ondrift/cloud/cli/cmd/project"
 	"github.com/ondrift/cloud/cli/common"
 
@@ -42,6 +43,9 @@ var typeableHints = map[string][]string{
 		Status:             404,
 		PlatformAPIVersion: common.ImplementedRouteContract + 1,
 	}).Error()},
+	// `drift doctor explain` for a code numbered above every registered one, which
+	// is what a newer drift prints. The number is one no registry reaches.
+	"the newer-code answer of drift doctor explain": {doctor.NotRegistered("DRIFT-99999999").Error()},
 }
 
 // yamlRefusal is the message every reader gives a YAML Driftfile.
