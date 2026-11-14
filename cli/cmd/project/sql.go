@@ -62,7 +62,7 @@ type migrationReport struct {
 	} `json:"migrations"`
 }
 
-func applySQL(m *Manifest, out io.Writer) ([]string, error) {
+func applySQL(m *Manifest, out io.Writer) error {
 	declared := map[string]Node{}
 	for _, e := range m.Slice().Entries("name", "backbone", "sql") {
 		name := strings.ToLower(strings.TrimSpace(e.Str("name")))
@@ -105,29 +105,7 @@ func applySQL(m *Manifest, out io.Writer) ([]string, error) {
 				common.Check(), name, entry.Str("seed"))
 		}
 	}
-	if len(failed) > 0 {
-		return nil, errors.Join(failed...)
-	}
-
-	// The live inventory is read only to report it, and only after the uploads,
-	// so a slice that cannot answer this still gets its schemas and seeds. A
-	// failure is STATED rather than swallowed: silence here would read as "every
-	// database is named", which is the one thing this must never say wrongly.
-	live, err := fetchLiveSQL()
-	if err != nil {
-		fmt.Fprintf(out, "  %s couldn't check for databases the Driftfile no longer names: %v\n",
-			common.Hint("·"), err)
-		return nil, nil
-	}
-	liveNames := make([]string, 0, len(live))
-	for _, d := range live {
-		liveNames = append(liveNames, strings.ToLower(strings.TrimSpace(d.Name)))
-	}
-	declaredNames := make(map[string]bool, len(declared))
-	for name := range declared {
-		declaredNames[name] = true
-	}
-	return unnamedIn(liveNames, declaredNames), nil
+	return errors.Join(failed...)
 }
 
 // liveSQLDatabase is one row of the slice's `/ops/backbone/sql/admin/list`. Only

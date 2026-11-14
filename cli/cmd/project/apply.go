@@ -337,6 +337,11 @@ func runApply(o applyOptions) error {
 		return err
 	}
 
+	// What the slice holds and the file does not name is the plan's list, read
+	// before anything was sent. It is still the slice's: apply adds what the file
+	// declares and removes none of this.
+	reportUnnamedResources(d.unnamed, o.out)
+
 	if err := runHooks("post_deploy", post, dir); err != nil {
 		fmt.Fprintf(o.out, "\n  %s the slice is applied and live, but a post_deploy hook failed\n", common.Cross())
 		return err

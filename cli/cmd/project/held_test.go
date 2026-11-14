@@ -453,7 +453,6 @@ const dash = "\u2014"
 // stub answers the first read of each list with what is held and every later one
 // with nothing, so a report that read again would be empty.
 func TestApply_ClosesWithTheListThePlanRead(t *testing.T) {
-	t.Skip("until #3032 prints the plan's list in apply's closing report")
 	var mu sync.Mutex
 	reads := map[string]int{}
 	answer := func(w http.ResponseWriter, r *http.Request) bool {

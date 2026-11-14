@@ -57,18 +57,17 @@ func declaredDomains(m *Manifest) []declaredDomain {
 }
 
 // applyDomains attaches every host the Driftfile declares, reading
-// the live set to skip the ones already there and to return the ones
-// this manifest does not name. The function is
+// the live set to skip the ones already there. The function is
 // best-effort: failures are surfaced but don't abort the deploy —
 // the rest of the slice (atomic, backbone, canvas) is more important
 // than the cosmetic step of attaching a hostname.
-func applyDomains(m *Manifest) ([]string, error) {
+func applyDomains(m *Manifest) error {
 	declared := declaredDomains(m)
 
 	live, err := fetchLiveDomains()
 	if err != nil {
 		fmt.Printf("  %s domain reconcile skipped: %v\n", common.Hint("·"), err)
-		return nil, nil
+		return nil
 	}
 
 	liveByHost := map[string]liveDomain{}
@@ -98,19 +97,7 @@ func applyDomains(m *Manifest) ([]string, error) {
 	if added == 0 && len(declared) > 0 {
 		fmt.Printf("  %s domains in sync (%d declared)\n", common.Hint("·"), len(declared))
 	}
-
-	// Both sides are lowercased, because that is how a host is declared here and
-	// how the slice stores one: a manifest naming SHOP.example.com declares the
-	// live shop.example.com, and reporting it as unnamed would be a lie.
-	liveHosts := make([]string, 0, len(live))
-	for _, d := range live {
-		liveHosts = append(liveHosts, strings.ToLower(strings.TrimSpace(d.Host)))
-	}
-	declaredHosts := make(map[string]bool, len(declared))
-	for _, d := range declared {
-		declaredHosts[d.Host] = true
-	}
-	return unnamedIn(liveHosts, declaredHosts), nil
+	return nil
 }
 
 func fetchLiveDomains() ([]liveDomain, error) {

@@ -173,36 +173,6 @@ type liveCanvasSite struct {
 	Route string `json:"route"`
 }
 
-// unnamedCanvasSites reports the slugs the slice serves that this manifest does
-// not declare.
-//
-// Canvas is checked here rather than inside applyCanvas for two reasons: the
-// triad runs its three phases behind one uniform signature, and applyCanvas
-// returns early when the manifest declares no sites — which is precisely the
-// case where every live site is unnamed. The declared side still resolves
-// through canvasSites, the same resolver the deploy uses, so the slug rule is
-// read from one place rather than restated.
-func unnamedCanvasSites(m *Manifest) ([]string, error) {
-	declared, err := canvasSites(m)
-	if err != nil {
-		return nil, err
-	}
-	declaredSlugs := make(map[string]bool, len(declared))
-	for _, s := range declared {
-		declaredSlugs[s.Slug] = true
-	}
-
-	live, err := fetchLiveCanvasSites()
-	if err != nil {
-		return nil, err
-	}
-	liveSlugs := make([]string, 0, len(live))
-	for _, s := range live {
-		liveSlugs = append(liveSlugs, s.Slug)
-	}
-	return unnamedIn(liveSlugs, declaredSlugs), nil
-}
-
 func fetchLiveCanvasSites() ([]liveCanvasSite, error) {
 	resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/canvas", nil)
 	if err != nil {
