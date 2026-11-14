@@ -70,7 +70,9 @@ func GetApplyCmd() *cobra.Command {
 
 Apply prints the same plan 'drift plan' prints, asks before the monthly price
 moves, before anything is removed, and before any data could be lost, then
-creates or resizes the slice and deploys what the file declares.
+creates or resizes the slice and deploys what the file declares. It closes with
+the domains, SQL databases and sites the slice holds and the file does not name,
+and removes none of them.
 
 The file does not say how the slice is paid for. A new slice whose shape fits
 the free grant is asked about ("You have 1 of 3 free slices — make this the

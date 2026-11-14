@@ -1,8 +1,12 @@
 // domains.go — Driftfile reconcile of the `domain` blocks in `edge`. Adds
 // any host that's declared in the file but missing on the slice, as a
-// wildcard when its block says `wildcard = true`. A host the file does not
-// name is left attached and reported instead (see unnamed.go): a project
-// declares the hosts it wants, and two projects can share a slice.
+// wildcard when its block says `wildcard = true`. A host the slice holds is left
+// as it is, whatever its status or its wildcard flag: the platform's add
+// is idempotent and has no update, so the plan says what is left for a person
+// (planState.diffDomains). A host the file does not name is left attached and is
+// in the plan's list of what the slice holds and the file does not name (see
+// unnamed.go): a project declares the hosts it wants, and two projects can share
+// a slice.
 // After add, the user still has to flip DNS (the instructions are printed) and run
 // `drift slice domain verify <host>` — that step requires the
 // CNAME / TXT to be live and is not something we can do
@@ -56,11 +60,10 @@ func declaredDomains(m *Manifest) []declaredDomain {
 	return out
 }
 
-// applyDomains attaches every host the Driftfile declares, reading
-// the live set to skip the ones already there. The function is
-// best-effort: failures are surfaced but don't abort the deploy —
-// the rest of the slice (atomic, backbone, canvas) is more important
-// than the cosmetic step of attaching a hostname.
+// applyDomains attaches every host the Driftfile declares, reading the live set
+// to skip the ones already there. It is best-effort: a failure is surfaced and
+// does not abort the deploy, because the rest of the slice (atomic, backbone,
+// canvas) is more important than the cosmetic step of attaching a hostname.
 func applyDomains(m *Manifest) error {
 	declared := declaredDomains(m)
 

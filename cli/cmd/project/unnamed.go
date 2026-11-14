@@ -1,10 +1,17 @@
 // unnamed.go — what the slice holds that this Driftfile does not name.
 //
 // The mirror of references.go. That file refuses a manifest naming a resource
-// the slice does not have; this one reports a resource the slice has and the
+// the slice does not have; this one lists a resource the slice has and the
 // manifest does not name. A renamed `sql` block or a dropped `domain` block leaves
 // the live resource in place — nothing on the apply path removes one — so
 // without this it is invisible from the terminal that stopped naming it.
+//
+// THE PLAN'S LIST IS THE ONLY LIST. planState.unnamed joins the reads the plan
+// made (the slice's domains, SQL databases and sites) to what the file declares,
+// once. `drift plan` prints the databases and domains of it under "Held, not in
+// the file", and `drift apply` closes with the same list through
+// reportUnnamedResources, so the person sees it before the slice changes and
+// after. Nothing else compares the file with what the slice holds.
 //
 // IT REPORTS. It does not refuse and it does not delete, for the same reason
 // ReportOrphanedFunctions does not: nothing records which project owns a
@@ -24,11 +31,9 @@ import (
 )
 
 // unnamedResources is what is live on the slice and unnamed by the manifest,
-// one list per class. Each reconciler fills its own field, because the rule
-// that joins a declaration to a live name differs per class: a host and a
-// database match lowercased, a site by its slug. Holding the join beside the
-// declaration is what keeps the spellings from being restated here, where only
-// one of them would be right.
+// one list per class, each sorted. The rule that joins a declaration to a live
+// name differs per class: a host and a database match lowercased, a site by its
+// slug. planState.unnamed owns the three joins.
 type unnamedResources struct {
 	Databases   []string
 	Domains     []string
@@ -49,8 +54,8 @@ type unnamedClass struct {
 	// rather than a name, and no command sends it. Saying so beats naming a
 	// command that does not exist.
 	remove func(string) string
-	// inPlanLines is whether the plan's own lines already say each of the class
-	// (a site the file does not name is a "-" line), so its section leaves it out.
+	// inPlanLines is whether the plan's own lines say each of the class (a site
+	// the file does not name is a "-" line), so its section leaves it out.
 	inPlanLines bool
 }
 
@@ -97,8 +102,8 @@ func (u unnamedResources) printHeld(out io.Writer) {
 //
 // A list the plan could not read is unread in the verdict and is no list: the
 // plan does not say that nothing is held on the strength of a read that failed.
-// A list a comparison of the plan's own lines already asked for is recorded
-// there, once.
+// A list that a comparison of the plan's own lines asked for is recorded by that
+// comparison, once.
 //
 // A database the plan itself removes is not held: the slice's shape has it, the
 // file's does not, and its own "-" line says so.
@@ -196,8 +201,8 @@ func fetchLiveCanvasSites() ([]liveCanvasSite, error) {
 }
 
 // unnamedIn reports the live names absent from declared, sorted and deduplicated
-// so the section reads the same on every apply. The caller normalises both sides
-// to the spelling its class stores.
+// so the list reads the same on every plan. The caller normalises both sides to
+// the spelling its class stores.
 func unnamedIn(live []string, declared map[string]bool) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -213,11 +218,12 @@ func unnamedIn(live []string, declared map[string]bool) []string {
 }
 
 // reportUnnamedResources prints one section naming every live resource the
-// manifest does not, with the command that removes each.
+// manifest does not, with the command that removes each: the closing report of
+// `drift apply`, from the plan's list.
 //
 // A class whose live set could not be read contributes nothing here. That is
-// not a silent all-clear: each reconciler states its own fetch failure on the
-// way past, so the run says which class it could not check.
+// not a silent all-clear: the plan records the list as unread, and the plan
+// `drift apply` prints first says so.
 func reportUnnamedResources(u unnamedResources, out io.Writer) {
 	if u.empty() {
 		return

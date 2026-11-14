@@ -20,7 +20,7 @@
 // because it is the slice's whole inventory. A database the document does not
 // mention is left alone — dropping one closes its connection and removes the
 // .db, -wal and -shm files, so it has to be a deliberate act and never the
-// consequence of an omission. It is reported instead: see unnamed.go.
+// consequence of an omission. The plan lists it instead: see unnamed.go.
 package project
 
 import (

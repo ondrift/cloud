@@ -3,10 +3,10 @@ package project
 // plan.go — `drift plan`: what applying this Driftfile would do to the slice.
 //
 // The plan is a real diff. It compiles the file, reads the live slice (its
-// shape, the code each slot runs, its sites, secrets, keys and edge), asks the
-// platform to price the compiled shape, and prints every difference with what
-// it costs, whether the slice restarts, and what it removes. A slice that does
-// not exist yet is "would create", priced.
+// shape, the code each slot runs, its sites, secrets, keys, edge, domains and SQL
+// databases), asks the platform to price the compiled shape, and prints every
+// difference with what it costs, whether the slice restarts, and what it removes.
+// A slice that does not exist yet is "would create", priced.
 //
 // # Read-only, and checked
 //
@@ -22,6 +22,16 @@ package project
 // The verdict (verdict.go) is the one value that decides the plan's header, its
 // closing line and the status `--exit-code` exits with, and VerdictUnread says
 // what unread means.
+//
+// # What is left to a person, and what is held
+//
+// Two things are in the plan that apply does not change, and neither is a
+// difference. A declared domain that is not live yet, or whose wildcard flag the
+// slice holds the other way, is a line with no mark, an entry in the verdict's
+// attention list and a "Needs you" line (planDiff.attend). What the slice holds
+// and the file does not name (unnamed.go) is a section the plan prints and a list
+// `drift apply` closes with: apply removes none of it, because a slice can serve
+// more than one project.
 
 import (
 	"bytes"
@@ -83,9 +93,22 @@ A value that is write-only by design (a secret, an API key, a gate password)
 is not unread: the platform never gives it back, so the plan cannot compare the
 value, and its line says what apply does with it.
 
+A domain the file declares says where it stands: live, verified and not live
+yet, not verified, or failed with the platform's reason. A domain that is not
+live, and a domain whose wildcard flag the slice holds the other way from the
+file (apply cannot change that: remove the domain, then apply), carry no mark and
+are no difference. They are on the "Needs you" line, with what to run.
+
+A domain or SQL database the slice holds and the file does not name is listed
+under "Held, not in the file", with the command that removes it. Apply removes
+none of them, because a slice can serve more than one project, and closes with
+the same list. A site the file does not name is a "-" line: no command removes
+a site yet.
+
 A script reads the verdict from the exit status with --exit-code: 0 when it is a
 match, 2 when it is create or differs, 3 when it is unread, 1 when the plan
-fails. Without the flag a difference exits 0.`,
+fails. Without the flag a difference exits 0. A domain that needs a person does
+not change the status: the slice is still the file.`,
 		Example: "  drift plan\n  drift plan staging\n  drift plan --var RESET_KEY=...\n  drift plan --exit-code",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -545,8 +568,8 @@ func (d *planDiff) noteUnread(address, what string, err error) {
 	d.unreadFacts = append(d.unreadFacts, unreadFact{address, what, err})
 }
 
-// hasUnread reports whether a fact of this kind is already recorded: a list that
-// is read once and answers more than one question is unread once.
+// hasUnread reports whether a fact of this kind is recorded: a list that is read
+// once and answers more than one question is unread once.
 func (d *planDiff) hasUnread(what string) bool {
 	return slices.ContainsFunc(d.unreadFacts, func(f unreadFact) bool { return f.what == what })
 }
