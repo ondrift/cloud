@@ -21,7 +21,6 @@ package project
 //     zero values; the platform resolves them.
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -185,43 +184,13 @@ func checkLocalPaths(m *Manifest) ParseErrors {
 			errs = append(errs, fmt.Sprintf("nosql %q: seed file not found at %s", c.Str("slot"), seedPath))
 			continue
 		}
-		errs = append(errs, validateJSONLSeed(c.Str("slot"), seedPath)...)
+		// Filesystem-only: the schema knows the seed is a path string, and nothing
+		// more can be known about it without opening the file.
+		_, seedErrs := readNoSQLSeed(c.Str("slot"), seedPath)
+		errs = append(errs, seedErrs...)
 	}
 
 	sort.Strings(errs) // a stable message order is testable
-	return errs
-}
-
-// validateJSONLSeed reads a seed file and reports the records that cannot be
-// loaded. Filesystem-only: the schema knows the seed is a path string, and
-// nothing more can be known about it without opening the file.
-func validateJSONLSeed(collection, path string) []string {
-	data, err := os.ReadFile(path) // #nosec G304 — CLI reads the user's manifest by design
-	if err != nil {
-		return []string{fmt.Sprintf("nosql %q seed: read %s: %v", collection, path, err)}
-	}
-
-	var errs []string
-	for i, ln := range strings.Split(string(data), "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
-		var doc map[string]any
-		if err := json.Unmarshal([]byte(ln), &doc); err != nil {
-			errs = append(errs, fmt.Sprintf("nosql %q seed: %s:%d: invalid JSON: %v", collection, path, i+1, err))
-			continue
-		}
-		id, ok := doc["_id"]
-		if !ok {
-			errs = append(errs, fmt.Sprintf("nosql %q seed: %s:%d: missing _id", collection, path, i+1))
-			continue
-		}
-		// Treat empty string and nil as "missing".
-		if s, isStr := id.(string); (isStr && s == "") || id == nil {
-			errs = append(errs, fmt.Sprintf("nosql %q seed: %s:%d: empty _id", collection, path, i+1))
-		}
-	}
 	return errs
 }
 

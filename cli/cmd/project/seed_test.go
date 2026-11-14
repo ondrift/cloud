@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -264,6 +265,82 @@ func TestApply_ASeededCollectionKeepsTheDocumentsTheAppWrote(t *testing.T) {
 	}
 }
 
+// The seed reader returns each record with the line it is on, counting the
+// blank lines, the _id it is replaced by, and the document as apply writes it:
+// the record and the collection it goes to.
+func TestReadNoSQLSeed_ReturnsEachRecordWithItsLineAndItsID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "menu.jsonl")
+	mustWrite(t, path, "{\"_id\":\"pizza\",\"price\":9}\r\n\r\n  {\"_id\":\"soup\",\"tags\":[\"hot\"]}  \n")
+
+	docs, errs := readNoSQLSeed("menu", path)
+	if len(errs) > 0 {
+		t.Fatalf("a seed of two records is refused: %v", errs)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("the reader returned %d records, want 2: %v", len(docs), docs)
+	}
+	for i, want := range []struct {
+		line int
+		id   string
+	}{{1, "pizza"}, {3, "soup"}} {
+		if docs[i].Line != want.line || docs[i].ID != want.id {
+			t.Errorf("record %d is %q on line %d, want %q on line %d", i, docs[i].ID, docs[i].Line, want.id, want.line)
+		}
+		if docs[i].Doc["collection"] != "menu" || docs[i].Doc["_id"] != want.id {
+			t.Errorf("record %d is written as %v, want its _id and the collection menu", i, docs[i].Doc)
+		}
+	}
+}
+
+// Every record that cannot be written is named at its file and line, and the
+// ones that can are still returned.
+func TestReadNoSQLSeed_ReportsEveryBadRecordAtItsFileAndLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "menu.jsonl")
+	mustWrite(t, path, strings.Join([]string{
+		`{"_id":"ok","n":1}`, // 1
+		`{"n":2}`,            // 2: no _id
+		`{"_id":null}`,       // 3: null
+		`{"_id":""}`,         // 4: empty
+		`{"_id":true}`,       // 5: a boolean
+		`{"_id":["a"]}`,      // 6: an array
+		`{"_id":{"a":1}}`,    // 7: an object
+		`{"_id":"` + strings.Repeat("z", 256) + `"}`, // 8: 256 bytes
+		`{"_id":"` + strings.Repeat("z", 255) + `"}`, // 9: 255 bytes, the longest replaced
+		`[1,2]`, // 10: not an object
+	}, "\n")+"\n")
+
+	docs, errs := readNoSQLSeed("menu", path)
+	for line, want := range map[int]string{
+		2:  "missing _id",
+		3:  "empty _id",
+		4:  "empty _id",
+		5:  "_id must be a string, not a boolean",
+		6:  "_id must be a string, not an array",
+		7:  "_id must be a string, not an object",
+		8:  "_id is 256 bytes",
+		10: "invalid JSON",
+	} {
+		at := fmt.Sprintf("%s:%d: %s", path, line, want)
+		if !slices.ContainsFunc(errs, func(e string) bool { return strings.Contains(e, at) }) {
+			t.Errorf("no refusal says %q:\n%v", at, errs)
+		}
+	}
+	if len(errs) != 8 {
+		t.Errorf("the reader reports %d problems, want the 8 above:\n%v", len(errs), errs)
+	}
+	if len(docs) != 2 || docs[0].Line != 1 || docs[1].Line != 9 {
+		t.Errorf("the reader returned %v, want the records on lines 1 and 9", docs)
+	}
+}
+
+// A file that cannot be opened is a refusal that names it.
+func TestReadNoSQLSeed_AFileThatCannotBeOpenedIsNamed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gone.jsonl")
+	if _, errs := readNoSQLSeed("menu", path); len(errs) != 1 || !strings.Contains(errs[0], path) {
+		t.Errorf("a seed file that is not there is reported as %v, want one refusal that names %s", errs, path)
+	}
+}
+
 // A seed line that does not parse stops the apply at the file and the line, with
 // nothing written: the collection the file names is not seeded in part.
 func TestApply_ASeedLineThatDoesNotParseFailsAtItsFileAndLine(t *testing.T) {
@@ -293,7 +370,6 @@ func TestApply_ASeedLineThatDoesNotParseFailsAtItsFileAndLine(t *testing.T) {
 // on every apply and drops nothing, so such a record would add a copy at each one.
 // It is refused where the file is read, at the file and the line.
 func TestParseDriftfile_ASeedIDThePlatformCannotReplaceOnIsRefused(t *testing.T) {
-	t.Skip("#3035 removes this skip: the seed reader accepts any _id that is not empty")
 	withRealSchema(t)
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), menuDriftfile)

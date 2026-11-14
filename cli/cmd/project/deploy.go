@@ -771,9 +771,11 @@ func purgeLegacySentinels(collection string) error {
 // the marker — and therefore the constraint — with it. A seeded collection
 // would lose its uniqueness on every single deploy, and only under seeding.
 func nosqlSeedJSONL(collection, path string, ttlSecs int64, unique []string) (int, error) {
-	data, err := os.ReadFile(path) // #nosec G304 — manifest-declared path, validated at parse
-	if err != nil {
-		return 0, fmt.Errorf("read seed: %w", err)
+	// The whole file is read before the collection is touched, so a line that does
+	// not parse stops the apply with nothing written.
+	docs, errs := readNoSQLSeed(collection, path)
+	if len(errs) > 0 {
+		return 0, errs
 	}
 	// Drop, then ensure, then seed — guarantees the JSONL fully describes
 	// the collection's state, with no carry-over from prior deploys.
@@ -793,17 +795,8 @@ func nosqlSeedJSONL(collection, path string, ttlSecs int64, unique []string) (in
 		return 0, err
 	}
 	count := 0
-	for _, ln := range strings.Split(string(data), "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
-		var doc map[string]any
-		if err := json.Unmarshal([]byte(ln), &doc); err != nil {
-			return count, fmt.Errorf("parse seed line %d: %w", count+1, err)
-		}
-		doc["collection"] = collection
-		body, _ := json.Marshal(doc)
+	for _, d := range docs {
+		body, _ := json.Marshal(d.Doc)
 		resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/backbone/write", bytes.NewBuffer(body))
 		if err != nil {
 			return count, common.TransportError("seed nosql doc", err)
@@ -816,6 +809,94 @@ func nosqlSeedJSONL(collection, path string, ttlSecs int64, unique []string) (in
 		count++
 	}
 	return count, nil
+}
+
+// seedDoc is one record of a NoSQL seed file: where it stands in the file, the _id
+// the platform replaces a document by, and the document as apply writes it.
+type seedDoc struct {
+	Line int
+	ID   string
+	// Doc is what is sent to the slice: the record with the collection it is
+	// written to. The plan compares the slice's documents with this one, so what is
+	// compared is what is written.
+	Doc map[string]any
+}
+
+// maxSeedIDBytes is the longest _id the platform replaces a document by. A write
+// whose _id is longer, or is not a string, is added to the collection as a new
+// document, so a seed carrying one would add a copy at every apply.
+const maxSeedIDBytes = 255
+
+// readNoSQLSeed reads the JSONL seed file of a collection: the one reader of it,
+// for the parse of the Driftfile, for apply and for the plan. Every record that
+// cannot be loaded is reported with the file and the line it is on, and the
+// records it could read come back beside the errors.
+func readNoSQLSeed(collection, path string) ([]seedDoc, ParseErrors) {
+	data, err := os.ReadFile(path) // #nosec G304 — manifest-declared path
+	if err != nil {
+		return nil, ParseErrors{fmt.Sprintf("nosql %q seed: read %s: %v", collection, path, err)}
+	}
+
+	var docs []seedDoc
+	var errs ParseErrors
+	for i, ln := range strings.Split(string(data), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		at := fmt.Sprintf("nosql %q seed: %s:%d:", collection, path, i+1)
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(ln), &doc); err != nil {
+			errs = append(errs, fmt.Sprintf("%s invalid JSON: %v", at, err))
+			continue
+		}
+		id, problem := seedID(doc)
+		if problem != "" {
+			errs = append(errs, at+" "+problem)
+			continue
+		}
+		doc["collection"] = collection
+		docs = append(docs, seedDoc{Line: i + 1, ID: id, Doc: doc})
+	}
+	return docs, errs
+}
+
+// seedID is the _id a record is replaced by, or what is wrong with it.
+func seedID(doc map[string]any) (id, problem string) {
+	raw, ok := doc["_id"]
+	switch v := raw.(type) {
+	case nil:
+		if !ok {
+			return "", "missing _id"
+		}
+		return "", "empty _id"
+	case string:
+		switch {
+		case v == "":
+			return "", "empty _id"
+		case len(v) > maxSeedIDBytes:
+			return "", fmt.Sprintf("_id is %d bytes: the platform replaces a document by its _id only up to %d bytes, "+
+				"and adds a copy at every apply beyond that", len(v), maxSeedIDBytes)
+		}
+		return v, ""
+	}
+	return "", fmt.Sprintf("_id must be a string, not %s: the platform replaces a document by a string _id, "+
+		"and adds a copy at every apply for any other", jsonKind(raw))
+}
+
+// jsonKind names what a decoded JSON value is, as a person says it.
+func jsonKind(v any) string {
+	switch v.(type) {
+	case bool:
+		return "a boolean"
+	case float64:
+		return "a number"
+	case []any:
+		return "an array"
+	case map[string]any:
+		return "an object"
+	}
+	return "that"
 }
 
 func queueInit(name string) error {
