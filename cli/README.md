@@ -103,8 +103,8 @@ A site is declared in the Driftfile (`canvas { site "/" { dir = "./site" } }`) a
 
 | Command | Description |
 |---------|-------------|
-| `drift plan [env]` | Compare the Driftfile with the live slice: every difference, the monthly price before and after (quoted by the platform), whether the slice restarts, and what a removal could lose. Changes nothing. `--out plan.json` records it. |
-| `drift apply [env \| plan.json]` | Make the slice what the Driftfile says: create or resize it, asking before the price moves, before anything is removed and before any data could be lost, then deploy. Functions and workers whose source is unchanged are skipped; `--force` redeploys everything. |
+| `drift plan [env]` | Compare the Driftfile with the live slice: every difference, the monthly price before and after (quoted by the platform), whether the slice restarts, and what a removal could lose. It says whether each declared domain is verified and live, and lists the domains and SQL databases the slice holds that the file does not name. Changes nothing. `--out plan.json` records it. |
+| `drift apply [env \| plan.json]` | Make the slice what the Driftfile says: create or resize it, asking before the price moves, before anything is removed and before any data could be lost, then deploy. Functions and workers whose source is unchanged are skipped; `--force` redeploys everything. It closes with what the slice holds and the file does not name, and removes none of it. |
 | `drift size` | Write what each function and worker has measured into the Driftfile's `memory` lines, shown as a diff. |
 | `drift file new` | Write a starter Driftfile. |
 | `drift file lint` | Validate the Driftfile exactly as `drift plan` would, offline and without its secrets. |

@@ -1,10 +1,17 @@
 // unnamed.go — what the slice holds that this Driftfile does not name.
 //
 // The mirror of references.go. That file refuses a manifest naming a resource
-// the slice does not have; this one reports a resource the slice has and the
+// the slice does not have; this one lists a resource the slice has and the
 // manifest does not name. A renamed `sql` block or a dropped `domain` block leaves
 // the live resource in place — nothing on the apply path removes one — so
 // without this it is invisible from the terminal that stopped naming it.
+//
+// THE PLAN'S LIST IS THE ONLY LIST. planState.unnamed joins the reads the plan
+// made (the slice's domains, SQL databases and sites) to what the file declares,
+// once. `drift plan` prints the databases and domains of it under "Held, not in
+// the file", and `drift apply` closes with the same list through
+// reportUnnamedResources, so the person sees it before the slice changes and
+// after. Nothing else compares the file with what the slice holds.
 //
 // IT REPORTS. It does not refuse and it does not delete, for the same reason
 // ReportOrphanedFunctions does not: nothing records which project owns a
@@ -18,16 +25,15 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/ondrift/cloud/cli/common"
 )
 
 // unnamedResources is what is live on the slice and unnamed by the manifest,
-// one list per class. Each reconciler fills its own field, because the rule
-// that joins a declaration to a live name differs per class: a host and a
-// database match lowercased, a site by its slug. Holding the join beside the
-// declaration is what keeps the spellings from being restated here, where only
-// one of them would be right.
+// one list per class, each sorted. The rule that joins a declaration to a live
+// name differs per class: a host and a database match lowercased, a site by its
+// slug. planState.unnamed owns the three joins.
 type unnamedResources struct {
 	Databases   []string
 	Domains     []string
@@ -38,40 +44,138 @@ func (u unnamedResources) empty() bool {
 	return len(u.Databases) == 0 && len(u.Domains) == 0 && len(u.CanvasSites) == 0
 }
 
+// unnamedClass is one class of what the slice holds, with the command that
+// removes one of it.
+type unnamedClass struct {
+	label string
+	names []string
+	// remove is the command that removes one name, or nil for a class no `drift`
+	// verb removes one of. Canvas is the only one: the slice takes a keep list
+	// rather than a name, and no command sends it. Saying so beats naming a
+	// command that does not exist.
+	remove func(string) string
+	// inPlanLines is whether the plan's own lines say each of the class (a site
+	// the file does not name is a "-" line), so its section leaves it out.
+	inPlanLines bool
+}
+
+// classes is the three classes in the order they are reported.
+func (u unnamedResources) classes() []unnamedClass {
+	return []unnamedClass{
+		{"sql database", u.Databases, func(n string) string { return "drift backbone sql drop " + n }, false},
+		{"domain", u.Domains, func(n string) string { return "drift slice domain remove " + n }, false},
+		{"canvas site", u.CanvasSites, nil, true},
+	}
+}
+
+// printHeld prints the plan's section for the databases and domains the slice
+// holds and the file does not name, each with the command that removes it. It
+// prints nothing when there are none.
+func (u unnamedResources) printHeld(out io.Writer) {
+	type row struct{ what, remove string }
+	var rows []row
+	width := 0
+	for _, c := range u.classes() {
+		if c.inPlanLines {
+			continue
+		}
+		for _, name := range c.names {
+			r := row{c.label + " " + name, c.remove(name)}
+			rows = append(rows, r)
+			width = max(width, len(r.what))
+		}
+	}
+	if len(rows) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "  Held, not in the file: apply removes none of these, because a slice can serve more than one project\n")
+	for _, r := range rows {
+		fmt.Fprintf(out, "    %-*s  remove it with: %s\n", width, r.what, r.remove)
+	}
+	fmt.Fprintln(out)
+}
+
+// unnamed is what the slice holds that the file does not name, joined from the
+// reads the plan made: every domain, every SQL database and every site the slice
+// has, whether or not the file declares one. It is the one place the join is made.
+// A slice that does not exist yet holds nothing.
+//
+// A list the plan could not read is unread in the verdict and is no list: the
+// plan does not say that nothing is held on the strength of a read that failed.
+// A list that a comparison of the plan's own lines asked for is recorded by that
+// comparison, once.
+//
+// A database the plan itself removes is not held: the slice's shape has it, the
+// file's does not, and its own "-" line says so.
+func (p *planState) unnamed(d *planDiff) unnamedResources {
+	var u unnamedResources
+	if p.live == nil {
+		return u
+	}
+	m := p.c.Manifest
+
+	if p.sqlErr != nil {
+		d.noteUnread("sql databases", "sql databases", p.sqlErr)
+	} else {
+		accounted := map[string]bool{}
+		for _, name := range entryNames(m, "name", "backbone", "sql") {
+			accounted[strings.ToLower(name)] = true
+		}
+		for name := range p.live.Config.Backbone.SQL.Databases {
+			if _, inFile := p.c.Shape.Backbone.SQL.Databases[name]; !inFile {
+				accounted[strings.ToLower(strings.TrimSpace(name))] = true
+			}
+		}
+		names := make([]string, 0, len(p.sql))
+		for _, db := range p.sql {
+			names = append(names, strings.ToLower(strings.TrimSpace(db.Name)))
+		}
+		u.Databases = unnamedIn(names, accounted)
+	}
+
+	if p.domainsErr != nil {
+		if !d.hasUnread("domain") {
+			d.noteUnread("domain", "domain", p.domainsErr)
+		}
+	} else {
+		declared := map[string]bool{}
+		for _, w := range declaredDomains(m) {
+			declared[w.Host] = true
+		}
+		hosts := make([]string, 0, len(p.domains))
+		for _, l := range p.domains {
+			hosts = append(hosts, strings.ToLower(strings.TrimSpace(l.Host)))
+		}
+		u.Domains = unnamedIn(hosts, declared)
+	}
+
+	// A file whose sites cannot be resolved has no list to join with, and says so
+	// in the note diffSites gives it; apply refuses such a file before it reads
+	// the slice.
+	declaredSites, serr := canvasSites(m)
+	switch {
+	case p.sitesErr != nil:
+		if !d.hasUnread("sites") {
+			d.noteUnread("sites", "sites", p.sitesErr)
+		}
+	case serr == nil:
+		declared := make(map[string]bool, len(declaredSites))
+		for _, s := range declaredSites {
+			declared[s.Slug] = true
+		}
+		slugs := make([]string, 0, len(p.sites))
+		for _, s := range p.sites {
+			slugs = append(slugs, s.Slug)
+		}
+		u.CanvasSites = unnamedIn(slugs, declared)
+	}
+	return u
+}
+
 // liveCanvasSite is one entry of the slice's canvas registry.
 type liveCanvasSite struct {
 	Slug  string `json:"slug"`
 	Route string `json:"route"`
-}
-
-// unnamedCanvasSites reports the slugs the slice serves that this manifest does
-// not declare.
-//
-// Canvas is checked here rather than inside applyCanvas for two reasons: the
-// triad runs its three phases behind one uniform signature, and applyCanvas
-// returns early when the manifest declares no sites — which is precisely the
-// case where every live site is unnamed. The declared side still resolves
-// through canvasSites, the same resolver the deploy uses, so the slug rule is
-// read from one place rather than restated.
-func unnamedCanvasSites(m *Manifest) ([]string, error) {
-	declared, err := canvasSites(m)
-	if err != nil {
-		return nil, err
-	}
-	declaredSlugs := make(map[string]bool, len(declared))
-	for _, s := range declared {
-		declaredSlugs[s.Slug] = true
-	}
-
-	live, err := fetchLiveCanvasSites()
-	if err != nil {
-		return nil, err
-	}
-	liveSlugs := make([]string, 0, len(live))
-	for _, s := range live {
-		liveSlugs = append(liveSlugs, s.Slug)
-	}
-	return unnamedIn(liveSlugs, declaredSlugs), nil
 }
 
 func fetchLiveCanvasSites() ([]liveCanvasSite, error) {
@@ -97,8 +201,8 @@ func fetchLiveCanvasSites() ([]liveCanvasSite, error) {
 }
 
 // unnamedIn reports the live names absent from declared, sorted and deduplicated
-// so the section reads the same on every apply. The caller normalises both sides
-// to the spelling its class stores.
+// so the list reads the same on every plan. The caller normalises both sides to
+// the spelling its class stores.
 func unnamedIn(live []string, declared map[string]bool) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -114,31 +218,19 @@ func unnamedIn(live []string, declared map[string]bool) []string {
 }
 
 // reportUnnamedResources prints one section naming every live resource the
-// manifest does not, with the command that removes each.
+// manifest does not, with the command that removes each: the closing report of
+// `drift apply`, from the plan's list.
 //
 // A class whose live set could not be read contributes nothing here. That is
-// not a silent all-clear: each reconciler states its own fetch failure on the
-// way past, so the run says which class it could not check.
+// not a silent all-clear: the plan records the list as unread, and the plan
+// `drift apply` prints first says so.
 func reportUnnamedResources(u unnamedResources, out io.Writer) {
 	if u.empty() {
 		return
 	}
 
-	// A nil `remove` is a class no `drift` verb removes one of. Canvas is the
-	// only one: the slice takes a keep list rather than a name, and no command
-	// sends it. Saying so beats naming a command that does not exist.
-	classes := []struct {
-		label  string
-		names  []string
-		remove func(string) string
-	}{
-		{"sql database", u.Databases, func(n string) string { return "drift backbone sql drop " + n }},
-		{"domain", u.Domains, func(n string) string { return "drift slice domain remove " + n }},
-		{"canvas site", u.CanvasSites, nil},
-	}
-
 	fmt.Fprintf(out, "\n  %s Live on this slice, and not named in this Driftfile:\n", common.Hint("·"))
-	for _, c := range classes {
+	for _, c := range u.classes() {
 		for _, name := range c.names {
 			fmt.Fprintf(out, "      %s %s\n", c.label, name)
 			if c.remove == nil {

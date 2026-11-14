@@ -3,10 +3,10 @@ package project
 // plan.go — `drift plan`: what applying this Driftfile would do to the slice.
 //
 // The plan is a real diff. It compiles the file, reads the live slice (its
-// shape, the code each slot runs, its sites, secrets, keys and edge), asks the
-// platform to price the compiled shape, and prints every difference with what
-// it costs, whether the slice restarts, and what it removes. A slice that does
-// not exist yet is "would create", priced.
+// shape, the code each slot runs, its sites, secrets, keys, edge, domains and SQL
+// databases), asks the platform to price the compiled shape, and prints every
+// difference with what it costs, whether the slice restarts, and what it removes.
+// A slice that does not exist yet is "would create", priced.
 //
 // # Read-only, and checked
 //
@@ -22,6 +22,16 @@ package project
 // The verdict (verdict.go) is the one value that decides the plan's header, its
 // closing line and the status `--exit-code` exits with, and VerdictUnread says
 // what unread means.
+//
+// # What is left to a person, and what is held
+//
+// Two things are in the plan that apply does not change, and neither is a
+// difference. A declared domain that is not live yet, or whose wildcard flag the
+// slice holds the other way, is a line with no mark, an entry in the verdict's
+// attention list and a "Needs you" line (planDiff.attend). What the slice holds
+// and the file does not name (unnamed.go) is a section the plan prints and a list
+// `drift apply` closes with: apply removes none of it, because a slice can serve
+// more than one project.
 
 import (
 	"bytes"
@@ -33,6 +43,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -82,9 +93,22 @@ A value that is write-only by design (a secret, an API key, a gate password)
 is not unread: the platform never gives it back, so the plan cannot compare the
 value, and its line says what apply does with it.
 
+A domain the file declares says where it stands: live, verified and not live
+yet, not verified, or failed with the platform's reason. A domain that is not
+live, and a domain whose wildcard flag the slice holds the other way from the
+file (apply cannot change that: remove the domain, then apply), carry no mark and
+are no difference. They are on the "Needs you" line, with what to run.
+
+A domain or SQL database the slice holds and the file does not name is listed
+under "Held, not in the file", with the command that removes it. Apply removes
+none of them, because a slice can serve more than one project, and closes with
+the same list. A site the file does not name is a "-" line: no command removes
+a site yet.
+
 A script reads the verdict from the exit status with --exit-code: 0 when it is a
 match, 2 when it is create or differs, 3 when it is unread, 1 when the plan
-fails. Without the flag a difference exits 0.`,
+fails. Without the flag a difference exits 0. A domain that needs a person does
+not change the status: the slice is still the file.`,
 		Example: "  drift plan\n  drift plan staging\n  drift plan --var RESET_KEY=...\n  drift plan --exit-code",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -228,6 +252,8 @@ type planState struct {
 	egressErr   error
 	domains     []liveDomain
 	domainsErr  error
+	sql         []liveSQLDatabase
+	sqlErr      error
 	alerts      []liveAlert
 	alertsErr   error
 	channels    []string // the channels the slice's clients may publish to
@@ -358,9 +384,11 @@ func gatherPlan(c *Compiled, declinedFree bool) (*planState, error) {
 	if m.Slice().Has("edge", "egress") {
 		p.egress, p.egressErr = fetchLiveEgress()
 	}
-	if m.Slice().Has("edge", "domains") {
-		p.domains, p.domainsErr = fetchLiveDomains()
-	}
+	// The slice's domains and databases are read whether or not the file declares
+	// any: what the slice holds and the file does not name is a list only the slice
+	// can give.
+	p.domains, p.domainsErr = fetchLiveDomains()
+	p.sql, p.sqlErr = fetchLiveSQL()
 	p.channels, p.channelsErr = fetchClientChannels(m)
 
 	newPrice()
@@ -503,6 +531,13 @@ type planDiff struct {
 	// in the order it met them. The verdict is built from it and from the marked
 	// lines.
 	unreadFacts []unreadFact
+	// attention is what a person has to do before the slice is the file, though
+	// the plan has no difference to show for it: one entry, "address  what to
+	// do", for each line recorded by attend, in the order the diff met them.
+	attention []string
+	// unnamed is what the slice holds and the file does not name (see
+	// planState.unnamed). Nothing in it is a difference, a removal or a mark.
+	unnamed unnamedResources
 }
 
 func (d *planDiff) add(mark, address, format string, args ...any) {
@@ -531,6 +566,22 @@ func (d *planDiff) unread(address, what string, err error) {
 // for none. It is the one place a fact enters unreadFacts.
 func (d *planDiff) noteUnread(address, what string, err error) {
 	d.unreadFacts = append(d.unreadFacts, unreadFact{address, what, err})
+}
+
+// hasUnread reports whether a fact of this kind is recorded: a list that is read
+// once and answers more than one question is unread once.
+func (d *planDiff) hasUnread(what string) bool {
+	return slices.ContainsFunc(d.unreadFacts, func(f unreadFact) bool { return f.what == what })
+}
+
+// attend adds the blank-marked line for something only a person can do, and
+// records it as the verdict's attention. The line sets no mark: applying has
+// nothing to change there. It is the one place an entry enters attention, and the
+// entry is the line as the plan prints it.
+func (d *planDiff) attend(address, format string, args ...any) {
+	detail := fmt.Sprintf(format, args...)
+	d.add(" ", address, "%s", detail)
+	d.attention = append(d.attention, address+"  "+detail)
 }
 
 // addressOf renders a booking key the way the file addresses it, for a slot
@@ -706,6 +757,7 @@ func (p *planState) diff() *planDiff {
 			d.add("~", "label "+ch.Key, "%s", describeLabelChange(ch))
 		}
 	}
+	d.unnamed = p.unnamed(d)
 	return d
 }
 
@@ -984,26 +1036,77 @@ func (p *planState) diffEdge(d *planDiff, creating bool) {
 			listDiff("host", hostLines(hs), hostLines(p.hosts), p.hostsErr)
 		}
 	}
-	if sl.Has("edge", "domains") {
-		var want, have []string
-		for _, e := range sl.Entries("host", "edge", "domains") {
-			want = append(want, strings.ToLower(strings.TrimSpace(e.Str("host"))))
-		}
-		for _, h := range p.domains {
-			have = append(have, strings.ToLower(strings.TrimSpace(h.Host)))
-		}
-		// A domain the file does not name stays attached: apply adds what is
-		// declared and reports the rest.
-		var known []string
-		for _, h := range have {
-			for _, w := range want {
-				if h == w {
-					known = append(known, h)
-				}
-			}
-		}
-		listDiff("domain", want, known, p.domainsErr)
+	p.diffDomains(d, creating)
+}
+
+// diffDomains says, for each host the file declares, where it stands on the
+// slice. A host the slice lacks is added. A host it holds is not changed by
+// apply, whatever it says: apply attaches what is missing and the platform's add
+// has no update. So the line carries no mark, and what is left for a person is
+// recorded as attention: a host that is not live yet, and a host whose wildcard
+// flag the slice holds the other way from the file, which only removing the host
+// and applying again changes.
+func (p *planState) diffDomains(d *planDiff, creating bool) {
+	declared := declaredDomains(p.c.Manifest)
+	if len(declared) == 0 {
+		return
 	}
+	if !creating && p.domainsErr != nil {
+		d.unread("domain", "domain", p.domainsErr)
+		return
+	}
+	held := map[string]liveDomain{}
+	for _, l := range p.domains {
+		held[strings.ToLower(strings.TrimSpace(l.Host))] = l
+	}
+	for _, w := range declared {
+		address := "domain " + w.Host
+		l, attached := held[w.Host]
+		if creating || !attached {
+			d.add("+", address, "added")
+			continue
+		}
+		state, needsYou := domainState(l, w.Host)
+		if needsYou {
+			d.attend(address, "%s", state)
+		} else {
+			d.add(" ", address, "%s", state)
+		}
+		if l.Wildcard != w.Wildcard {
+			d.attend(address, "wildcard is %s in the file and %s on the slice: apply leaves it; drift slice domain remove %s, then apply",
+				onOff(w.Wildcard), onOff(l.Wildcard), w.Host)
+		}
+	}
+}
+
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
+}
+
+// domainState is what the plan says of a domain the slice holds, and whether a
+// person has to act on it. Only a live domain serves traffic: every other state
+// is one the person moves with `drift slice domain verify`, and a state this CLI
+// does not know is not known to be live.
+func domainState(l liveDomain, host string) (string, bool) {
+	verify := "drift slice domain verify " + host
+	switch l.Status {
+	case "live":
+		return "live", false
+	case "verified":
+		return "verified, not live yet: run " + verify, true
+	case "pending":
+		return "not verified: set the DNS record the add printed, then run " + verify, true
+	case "failed":
+		reason := l.StatusDetail
+		if reason == "" {
+			reason = "the platform gave no reason"
+		}
+		return "failed: " + reason + "; once the record is right, run " + verify, true
+	}
+	return fmt.Sprintf("status %q is not one this CLI knows: drift slice domain list shows what the platform says", l.Status), true
 }
 
 // ─── limits, as the plan prints them ────────────────────────────────────────
@@ -1067,6 +1170,7 @@ func ShapeLimits(c *Compiled) []LimitLine {
 func (p *planState) render(out io.Writer) Verdict {
 	d := p.renderBody(out)
 	v := p.verdict(d)
+	d.unnamed.printHeld(out)
 	switch v.State {
 	case VerdictMatch:
 		fmt.Fprintf(out, "  Nothing to change.\n\n")
@@ -1161,6 +1265,9 @@ func (p *planState) renderBody(out io.Writer) *planDiff {
 	}
 	if len(d.dataLoss) > 0 {
 		fmt.Fprintf(out, "  Data      could be lost: %s\n", strings.Join(d.dataLoss, "\n                           "))
+	}
+	if len(d.attention) > 0 {
+		fmt.Fprintf(out, "  Needs you %s\n", strings.Join(d.attention, "\n            "))
 	}
 	fmt.Fprintln(out)
 	return d

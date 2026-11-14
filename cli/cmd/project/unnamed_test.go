@@ -2,16 +2,17 @@ package project
 
 import (
 	"bytes"
-	"io"
 	"net/http"
-	"os"
-	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
-// sqlListBody is the live inventory the slice reports for the SQL class. The
-// manifest in each test names `orders` only, so the other two are unnamed.
+// What the slice holds and the file does not name is one list, the plan's, and
+// `drift apply` closes by printing it. These tests pin how each class is joined
+// to what the file declares, and the text of the report.
+
+// sqlListBody is a live inventory the SQL admin list can answer with.
 const sqlListBody = `[{"name":"orders","size_bytes":1},{"name":"ledger","size_bytes":2},{"name":"audit","size_bytes":3}]`
 
 // liveEverything answers each class's list endpoint with a set larger than any
@@ -34,104 +35,73 @@ func liveEverything(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// schemaProject writes the one schema file applySQL uploads, so the declared
-// database is exercised rather than skipped.
-func schemaProject(t *testing.T) string {
+// unnamedFor is the plan's list for the fxevm file, edited by edit, on the slice
+// that is the file and holds these domains, databases and sites (each a JSON
+// body of the platform's list).
+func unnamedFor(t *testing.T, edit func(string) string, domains, databases, sites string) unnamedResources {
 	t.Helper()
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "orders.sql"),
-		[]byte("CREATE TABLE IF NOT EXISTS o (id TEXT);"), 0o600); err != nil {
-		t.Fatalf("writing the schema file: %v", err)
-	}
-	return root
+	live, deployed := matchingSlice(t)
+	planStubWith(t, live, deployed, map[string]string{
+		"/ops/slice/domain":            domains,
+		"/ops/backbone/sql/admin/list": databases,
+		"/ops/canvas":                  sites,
+	})
+	return diffIn(t, edit).unnamed
 }
 
-// A database live on the slice that the Driftfile does not name is invisible:
-// nothing on the apply path removes it and nothing reports it, so a renamed or
-// dropped `sql:` entry leaves its data on disk with no mention anywhere.
-func TestApplySQL_ReportsADatabaseTheManifestDoesNotName(t *testing.T) {
-	rec := stubAPI(t, liveEverything)
-
-	m := manifestRooted(Node{"name": "demo", "backbone": map[string]any{
-		"sql": []any{map[string]any{"name": "orders", "schema": "orders.sql"}},
-	}}, schemaProject(t))
-
-	unnamed, err := applySQL(m, io.Discard)
-	if err != nil {
-		t.Fatalf("applySQL: %v", err)
-	}
-
-	if got := strings.Join(unnamed, ","); got != "audit,ledger" {
-		t.Errorf("the databases the manifest does not name must be reported in a stable order, got %q", got)
-	}
-	if n := rec.count("POST /ops/backbone/sql/admin/drop"); n != 0 {
-		t.Errorf("reporting must not delete: got %d drop request(s)", n)
-	}
-}
-
-// A host is matched lowercased, because that is how applyDomains declares one
-// and how the slice stores it.
-func TestApplyDomains_ReportsAHostTheManifestDoesNotName(t *testing.T) {
-	rec := stubAPI(t, liveEverything)
-
-	m := manifestRooted(Node{"name": "demo", "edge": map[string]any{"domains": []any{
-		map[string]any{"host": "SHOP.example.com"},
-	}}}, t.TempDir())
-
-	unnamed, err := applyDomains(m)
-	if err != nil {
-		t.Fatalf("applyDomains: %v", err)
-	}
-
-	if got := strings.Join(unnamed, ","); got != "admin.example.com" {
-		t.Errorf("the host the manifest does not declare must be reported, and a declared host must match case-insensitively, got %q", got)
-	}
-	if n := rec.count("DELETE /ops/slice/domain"); n != 0 {
-		t.Errorf("reporting must not delete: got %d delete request(s)", n)
-	}
-}
-
-// The control: a manifest naming everything live reports nothing from either
-// class. Without it every test above passes for a reconcile that returns its
-// whole live set.
-func TestApply_ReportsNothingWhenTheManifestNamesEverythingLive(t *testing.T) {
-	stubAPI(t, liveEverything)
-
-	root := schemaProject(t)
-	slice := Node{
-		"name": "demo",
-		"edge": map[string]any{"domains": []any{
-			map[string]any{"host": "shop.example.com"},
-			map[string]any{"host": "admin.example.com"},
-		}},
-		"backbone": map[string]any{"sql": []any{
-			map[string]any{"name": "orders", "schema": "orders.sql"},
-			map[string]any{"name": "ledger"},
-			map[string]any{"name": "audit"},
-		}},
-	}
-	m := manifestRooted(slice, root)
-
-	dbs, err := applySQL(m, io.Discard)
-	if err != nil {
-		t.Fatalf("applySQL: %v", err)
-	}
-	domains, err := applyDomains(m)
-	if err != nil {
-		t.Fatalf("applyDomains: %v", err)
-	}
+// Each class is joined to the file the way the slice stores a name: a host and a
+// database lowercased, a site by its slug. A name the file declares in another
+// case is the name the slice holds, and calling it unnamed would be a lie. Each
+// list is sorted, so the section reads the same on every plan.
+func TestUnnamed_EachClassIsJoinedTheWayTheSliceStoresIt(t *testing.T) {
+	u := unnamedFor(t, withDomains(t, `  domain "Live.Example.com" {}`),
+		`[{"host":"live.example.com","status":"live"},{"host":"old.example.com","status":"live"},{"host":"admin.example.com","status":"live"}]`,
+		`[{"name":"chain","size_bytes":1},{"name":"Ledger","size_bytes":2},{"name":"audit","size_bytes":3}]`,
+		`{"deployed":true,"sites":[{"slug":"default","route":"/"},{"slug":"docs","route":"/docs"},{"slug":"blog","route":"/blog"}]}`)
 
 	for _, c := range []struct {
-		class string
-		got   []string
-	}{{"sql database", dbs}, {"domain", domains}} {
-		if len(c.got) != 0 {
-			t.Errorf("every live %s is named by this manifest, so none must be reported, got %q", c.class, c.got)
+		class     string
+		got, want []string
+	}{
+		{"sql database", u.Databases, []string{"audit", "ledger"}},
+		{"domain", u.Domains, []string{"admin.example.com", "old.example.com"}},
+		{"canvas site", u.CanvasSites, []string{"blog", "docs"}},
+	} {
+		if !slices.Equal(c.got, c.want) {
+			t.Errorf("the %ss the slice holds and the file does not name are %q, want %q", c.class, c.got, c.want)
 		}
 	}
 }
 
-// The report names each class, the resource, and the command that removes it —
+// The control: a file that names everything the slice holds leaves nothing
+// unnamed. Without it every test above passes for a join that returns the whole
+// live set.
+func TestUnnamed_NothingIsUnnamedWhenTheFileNamesEverythingTheSliceHolds(t *testing.T) {
+	u := unnamedFor(t, withDomains(t, `  domain "live.example.com" {}`),
+		`[{"host":"live.example.com","status":"live"}]`,
+		`[{"name":"chain","size_bytes":1}]`,
+		`{"deployed":true,"sites":[{"slug":"default","route":"/"}]}`)
+
+	if !u.empty() {
+		t.Errorf("the file names everything the slice holds and the plan says %+v is unnamed", u)
+	}
+}
+
+// The registry arrives wrapped in {"deployed":..., "sites":[...]}. Decoding it as
+// a bare array yields an empty list and no error, which reads as "this slice
+// serves nothing". A file that declares no site leaves every live site unnamed.
+func TestUnnamed_AFileThatDeclaresNoSiteLeavesEverySiteUnnamed(t *testing.T) {
+	u := unnamedFor(t, func(s string) string {
+		return mustReplace(t, s, "canvas {\n  site \"/\" {\n    dir = \"canvas\"\n  }\n}\n", "")
+	}, noList, `[{"name":"chain","size_bytes":1}]`,
+		`{"deployed":true,"sites":[{"slug":"orphan","route":"/old"}]}`)
+
+	if !slices.Equal(u.CanvasSites, []string{"orphan"}) {
+		t.Errorf("a file that declares no site leaves every live site unnamed, got %q", u.CanvasSites)
+	}
+}
+
+// The report names each class, the resource, and the command that removes it,
 // the three things that turn "something is live" into an action.
 func TestReportUnnamedResources_NamesEachClassAndHowToRemoveIt(t *testing.T) {
 	var out bytes.Buffer
@@ -165,68 +135,8 @@ func TestReportUnnamedResources_NothingUnnamedPrintsNothing(t *testing.T) {
 	}
 }
 
-// A site live on the slice that the manifest does not declare keeps being
-// served at its route. Nothing on the apply path prunes it, and until the
-// registry could be read there was no way to learn it was there.
-func TestUnnamedCanvasSites_NamesTheSlugTheManifestDropped(t *testing.T) {
-	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/ops/canvas" && r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(`{"deployed":true,"sites":[{"slug":"blog","route":"/blog"},{"slug":"docs","route":"/"}]}`))
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{}`))
-	})
-
-	root := t.TempDir()
-	siteDir := filepath.Join(root, "docs")
-	if err := os.MkdirAll(siteDir, 0o750); err != nil {
-		t.Fatalf("making the site dir: %v", err)
-	}
-	// The slug comes from the mount path, not the directory: an entry at "/"
-	// slugifies to "default" whatever it is called on disk.
-	m := manifestRooted(Node{"name": "demo", "canvas": map[string]any{
-		"sites": []any{map[string]any{"dir": "./docs", "path": "/docs"}},
-	}}, root)
-
-	unnamed, err := unnamedCanvasSites(m)
-	if err != nil {
-		t.Fatalf("unnamedCanvasSites: %v", err)
-	}
-	if got := strings.Join(unnamed, ","); got != "blog" {
-		t.Errorf("the undeclared slug must be reported and the declared one must not, got %q", got)
-	}
-	if n := rec.count("POST /ops/canvas/prune"); n != 0 {
-		t.Errorf("reporting must not prune: got %d prune request(s)", n)
-	}
-}
-
-// The registry arrives wrapped in {"deployed":…, "sites":[…]}. Decoding it as a
-// bare array yields an empty list and NO error, which reads as "this slice
-// serves nothing" — the exact shape that kept the list looking absent.
-func TestUnnamedCanvasSites_ReadsTheWrappedRegistryRatherThanABareArray(t *testing.T) {
-	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/ops/canvas" && r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(`{"deployed":true,"sites":[{"slug":"orphan","route":"/old"}]}`))
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{}`))
-	})
-
-	m := manifestRooted(Node{"name": "demo"}, t.TempDir())
-
-	unnamed, err := unnamedCanvasSites(m)
-	if err != nil {
-		t.Fatalf("unnamedCanvasSites: %v", err)
-	}
-	if len(unnamed) != 1 || unnamed[0] != "orphan" {
-		t.Errorf("a manifest declaring no sites leaves every live site unnamed, got %q", unnamed)
-	}
-}
-
 // The canvas class names no removal command, because no drift verb removes a
-// site — the slice takes a keep list and nothing sends it. Printing an invented
+// site: the slice takes a keep list and nothing sends it. Printing an invented
 // command would be worse than printing none.
 func TestReportUnnamedResources_SaysNoCommandRemovesACanvasSite(t *testing.T) {
 	var out bytes.Buffer

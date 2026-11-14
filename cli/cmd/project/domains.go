@@ -1,8 +1,12 @@
 // domains.go — Driftfile reconcile of the `domain` blocks in `edge`. Adds
 // any host that's declared in the file but missing on the slice, as a
-// wildcard when its block says `wildcard = true`. A host the file does not
-// name is left attached and reported instead (see unnamed.go): a project
-// declares the hosts it wants, and two projects can share a slice.
+// wildcard when its block says `wildcard = true`. A host the slice holds is left
+// as it is, whatever its status or its wildcard flag: the platform's add
+// is idempotent and has no update, so the plan says what is left for a person
+// (planState.diffDomains). A host the file does not name is left attached and is
+// in the plan's list of what the slice holds and the file does not name (see
+// unnamed.go): a project declares the hosts it wants, and two projects can share
+// a slice.
 // After add, the user still has to flip DNS (the instructions are printed) and run
 // `drift slice domain verify <host>` — that step requires the
 // CNAME / TXT to be live and is not something we can do
@@ -18,33 +22,55 @@ import (
 	"github.com/ondrift/cloud/cli/common"
 )
 
+// liveDomain is one row of the platform's GET /ops/slice/domain.
 type liveDomain struct {
-	Host   string `json:"host"`
+	Host string `json:"host"`
+	// Status is where the domain stands: pending, failed, verified or live.
 	Status string `json:"status"`
+	// StatusDetail is the platform's reason for the status, as for a domain whose
+	// DNS record it did not find.
+	StatusDetail string `json:"status_detail"`
+	// Wildcard is whether every subdomain of Host routes to the slice. The
+	// platform leaves it out when it is off.
+	Wildcard bool `json:"wildcard"`
 }
 
-// applyDomains attaches every host the Driftfile declares, reading
-// the live set to skip the ones already there and to return the ones
-// this manifest does not name. The function is
-// best-effort: failures are surfaced but don't abort the deploy —
-// the rest of the slice (atomic, backbone, canvas) is more important
-// than the cosmetic step of attaching a hostname.
-func applyDomains(m *Manifest) ([]string, error) {
-	// declared maps each host the file names to whether it is a wildcard.
-	declared := map[string]bool{}
+// declaredDomain is one host the Driftfile declares, and whether its block asks
+// for a wildcard.
+type declaredDomain struct {
+	Host     string
+	Wildcard bool
+}
+
+// declaredDomains is the hosts the Driftfile declares, in the file's order and
+// lowercased, because that is how the slice stores a host. A host the file
+// declares twice is one.
+func declaredDomains(m *Manifest) []declaredDomain {
+	var out []declaredDomain
+	seen := map[string]bool{}
 	for _, d := range m.Slice().Entries("host", "edge", "domains") {
 		host := strings.ToLower(strings.TrimSpace(d.Str("host")))
-		if host == "" {
+		if host == "" || seen[host] {
 			continue
 		}
+		seen[host] = true
 		wildcard, _ := d["wildcard"].(bool)
-		declared[host] = wildcard
+		out = append(out, declaredDomain{Host: host, Wildcard: wildcard})
 	}
+	return out
+}
+
+// applyDomains attaches every host the Driftfile declares, reading the live set
+// to skip the ones already there. It is best-effort: a failure is surfaced and
+// does not abort the deploy, because the rest of the slice (atomic, backbone,
+// canvas) is more important than the cosmetic step of attaching a hostname.
+func applyDomains(m *Manifest) error {
+	declared := declaredDomains(m)
 
 	live, err := fetchLiveDomains()
 	if err != nil {
 		fmt.Printf("  %s domain reconcile skipped: %v\n", common.Hint("·"), err)
-		return nil, nil
+		return nil
 	}
 
 	liveByHost := map[string]liveDomain{}
@@ -54,18 +80,18 @@ func applyDomains(m *Manifest) ([]string, error) {
 
 	added := 0
 
-	for host, wildcard := range declared {
-		if _, ok := liveByHost[host]; ok {
+	for _, d := range declared {
+		if _, ok := liveByHost[d.Host]; ok {
 			continue
 		}
-		instructions, err := addDomain(host, wildcard)
+		instructions, err := addDomain(d.Host, d.Wildcard)
 		if err != nil {
-			fmt.Printf("  %s add domain %s: %v\n", common.Hint("·"), host, err)
+			fmt.Printf("  %s add domain %s: %v\n", common.Hint("·"), d.Host, err)
 			continue
 		}
 		added++
 		fmt.Printf("  %s domain added: %s (verify with `drift slice domain verify %s` once DNS is live)\n",
-			common.Check(), host, host)
+			common.Check(), d.Host, d.Host)
 		for _, line := range instructions {
 			fmt.Printf("      %s\n", line)
 		}
@@ -74,19 +100,7 @@ func applyDomains(m *Manifest) ([]string, error) {
 	if added == 0 && len(declared) > 0 {
 		fmt.Printf("  %s domains in sync (%d declared)\n", common.Hint("·"), len(declared))
 	}
-
-	// Both sides are lowercased, because that is how a host is declared here and
-	// how the slice stores one: a manifest naming SHOP.example.com declares the
-	// live shop.example.com, and reporting it as unnamed would be a lie.
-	liveHosts := make([]string, 0, len(live))
-	for _, d := range live {
-		liveHosts = append(liveHosts, strings.ToLower(strings.TrimSpace(d.Host)))
-	}
-	declaredHosts := make(map[string]bool, len(declared))
-	for host := range declared {
-		declaredHosts[host] = true
-	}
-	return unnamedIn(liveHosts, declaredHosts), nil
+	return nil
 }
 
 func fetchLiveDomains() ([]liveDomain, error) {

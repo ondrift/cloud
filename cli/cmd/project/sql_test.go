@@ -123,7 +123,7 @@ func TestApplySQL_SendsEveryMigrationFileWithTheSchema(t *testing.T) {
 	root := migrationProject(t)
 
 	var out bytes.Buffer
-	if _, err := applySQL(sqlManifest(root, map[string]any{
+	if err := applySQL(sqlManifest(root, map[string]any{
 		"name": "orders", "schema": "orders.sql", "migrations": "./migrations",
 	}), &out); err != nil {
 		t.Fatalf("applySQL: %v", err)
@@ -157,7 +157,7 @@ func TestApplySQL_MigrationsWithoutASchemaSendAnEmptySchema(t *testing.T) {
 	calls := stubSQL(t, http.StatusOK, reportBody)
 	root := migrationProject(t)
 
-	if _, err := applySQL(sqlManifest(root, map[string]any{
+	if err := applySQL(sqlManifest(root, map[string]any{
 		"name": "orders", "migrations": "migrations",
 	}), io.Discard); err != nil {
 		t.Fatalf("applySQL: %v", err)
@@ -178,7 +178,7 @@ func TestApplySQL_AnEmptyMigrationsDirectorySendsAnEmptyList(t *testing.T) {
 	root := t.TempDir()
 	mustMkdir(t, filepath.Join(root, "migrations"))
 
-	if _, err := applySQL(sqlManifest(root, map[string]any{
+	if err := applySQL(sqlManifest(root, map[string]any{
 		"name": "orders", "migrations": "migrations",
 	}), io.Discard); err != nil {
 		t.Fatalf("applySQL: %v", err)
@@ -195,7 +195,7 @@ func TestApplySQL_ReportsWhatWasAppliedAndHowManyWereAlready(t *testing.T) {
 	root := migrationProject(t)
 
 	var out bytes.Buffer
-	if _, err := applySQL(sqlManifest(root, map[string]any{
+	if err := applySQL(sqlManifest(root, map[string]any{
 		"name": "orders", "migrations": "migrations",
 	}), &out); err != nil {
 		t.Fatalf("applySQL: %v", err)
@@ -230,7 +230,7 @@ func TestApplySQL_AMigrationRefusalFailsTheDeploy(t *testing.T) {
 			calls := stubSQL(t, tc.status, tc.reply)
 			root := migrationProject(t)
 
-			_, err := applySQL(sqlManifest(root, map[string]any{
+			err := applySQL(sqlManifest(root, map[string]any{
 				"name": "orders", "migrations": "migrations", "seed": "seed.sql",
 			}), io.Discard)
 			if err == nil {
@@ -257,7 +257,7 @@ func TestApplySQL_ASliceThatPredatesMigrationsFailsTheDeploy(t *testing.T) {
 	stubSQL(t, http.StatusNoContent, "")
 	root := migrationProject(t)
 
-	_, err := applySQL(sqlManifest(root, map[string]any{
+	err := applySQL(sqlManifest(root, map[string]any{
 		"name": "orders", "migrations": "migrations",
 	}), io.Discard)
 	if err == nil {
@@ -274,7 +274,7 @@ func TestApplySQL_TheSeedRunsAfterTheMigrations(t *testing.T) {
 	calls := stubSQL(t, http.StatusOK, reportBody)
 	root := migrationProject(t)
 
-	if _, err := applySQL(sqlManifest(root, map[string]any{
+	if err := applySQL(sqlManifest(root, map[string]any{
 		"name": "orders", "migrations": "migrations", "seed": "seed.sql",
 	}), io.Discard); err != nil {
 		t.Fatalf("applySQL: %v", err)
@@ -293,7 +293,7 @@ func TestApplySQL_ABodyNearThePlatformCapIsRefusedBeforeItIsSent(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "migrations", "0003_bulk.sql"),
 		"-- "+strings.Repeat("x", maxSQLLoadBody)+"\n")
 
-	_, err := applySQL(sqlManifest(root, map[string]any{
+	err := applySQL(sqlManifest(root, map[string]any{
 		"name": "orders", "migrations": "migrations",
 	}), io.Discard)
 	if err == nil {
@@ -312,7 +312,7 @@ func TestApplySQL_ABodyNearThePlatformCapIsRefusedBeforeItIsSent(t *testing.T) {
 func TestApplySQL_AMissingMigrationsDirectoryFailsTheDeploy(t *testing.T) {
 	calls := stubSQL(t, http.StatusOK, reportBody)
 
-	_, err := applySQL(sqlManifest(t.TempDir(), map[string]any{
+	err := applySQL(sqlManifest(t.TempDir(), map[string]any{
 		"name": "orders", "migrations": "migrations",
 	}), io.Discard)
 	if err == nil {
@@ -330,7 +330,7 @@ func TestApplySQL_ASchemaWithoutMigrationsIsUnchanged(t *testing.T) {
 	calls := stubSQL(t, http.StatusNoContent, "")
 	root := migrationProject(t)
 
-	if _, err := applySQL(sqlManifest(root, map[string]any{
+	if err := applySQL(sqlManifest(root, map[string]any{
 		"name": "orders", "schema": "orders.sql",
 	}), io.Discard); err != nil {
 		t.Fatalf("applySQL: %v", err)
@@ -342,7 +342,7 @@ func TestApplySQL_ASchemaWithoutMigrationsIsUnchanged(t *testing.T) {
 
 	stubSQL(t, http.StatusBadRequest, `{"error":"near \"CREAT\": syntax error"}`)
 	var out bytes.Buffer
-	if _, err := applySQL(sqlManifest(root, map[string]any{
+	if err := applySQL(sqlManifest(root, map[string]any{
 		"name": "orders", "schema": "orders.sql",
 	}), &out); err != nil {
 		t.Errorf("a failing schema with no migrations fails the deploy, which it never did: %v", err)

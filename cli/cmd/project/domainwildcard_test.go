@@ -31,7 +31,7 @@ func TestApplyDomains_AWildcardDomainIsAddedAsOne(t *testing.T) {
 		_, _ = w.Write([]byte(`[]`))
 	})
 
-	if _, err := applyDomains(c.Manifest); err != nil {
+	if err := applyDomains(c.Manifest); err != nil {
 		t.Fatalf("applyDomains: %v", err)
 	}
 	if len(added) != 2 {

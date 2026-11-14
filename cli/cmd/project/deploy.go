@@ -109,8 +109,8 @@ func deployManifest(m *Manifest, out io.Writer) error {
 }
 
 // deployChecked deploys a checked manifest into its slice: the reference
-// reconcile, Backbone, Atomic and Canvas, edge and labels, then the reports of
-// what the slice holds and the file does not name.
+// reconcile, Backbone, Atomic and Canvas, edge and labels, then the report of the
+// slots the slice declares and the file does not name.
 func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.Writer) error {
 	// Does the slice actually hold what the manifest names? A write to an
 	// undeclared collection or bucket is refused by the slice with a 400, at
@@ -158,27 +158,15 @@ func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.
 
 	// Backbone first and alone, then Atomic and Canvas together. See
 	// applySliceInOrder for why the order is what it is.
-	unnamedDatabases, err := applySliceInOrder(m)
-	if err != nil {
+	if err := applySliceInOrder(m); err != nil {
 		return err
 	}
-	// The mirror of the reference check, for the classes whose live set only
-	// arrives with the reconcile. Each reconciler does its own join, because
-	// the rule that matches a declaration to a live name differs per class.
-	unnamedDomains, err := applyDomains(m)
-	if err != nil {
+	if err := applyDomains(m); err != nil {
 		return err
 	}
 	// Alerts are not reconciled here: `drift apply` plans them, asks about the
 	// ones the file no longer names, and sets them once the functions they watch
 	// are deployed (see applyAlerts).
-	// Canvas is asked separately: applyCanvas returns early when the manifest
-	// declares no sites, the case where every live site is unnamed.
-	unnamedSites, cerr := unnamedCanvasSites(m)
-	if cerr != nil {
-		fmt.Fprintf(out, "  %s couldn't check for canvas sites the Driftfile no longer names: %v\n",
-			common.Hint("·"), cerr)
-	}
 	if err := applyEgress(m); err != nil {
 		return err
 	}
@@ -202,11 +190,6 @@ func deployChecked(m *Manifest, liveSlice *LiveSlice, reconcileYes bool, out io.
 	}
 
 	fmt.Fprintf(out, "  %s\n", common.Hint(fmt.Sprintf("Done in %.1fs!", time.Since(start).Seconds())))
-	reportUnnamedResources(unnamedResources{
-		Databases:   unnamedDatabases,
-		Domains:     unnamedDomains,
-		CanvasSites: unnamedSites,
-	}, out)
 
 	// What the slice declares, and is billed for, that this file does not
 	// name: a report, never a question (idle.go). The slice is read AGAIN: the
@@ -387,7 +370,7 @@ func applyAtomicBackends(backends []atomic_cmd.Backend, out io.Writer) error {
 }
 
 // applySliceInOrder applies what the Driftfile declares into the slice in two
-// steps, and returns the databases the slice holds that the file does not name.
+// steps.
 //
 //  1. Backbone, alone: secrets, cache seeds, NoSQL collections and their seeds,
 //     queues, and every SQL database's schema, migrations and seed.
@@ -417,14 +400,14 @@ func applyAtomicBackends(backends []atomic_cmd.Backend, out io.Writer) error {
 // buffers its own section and prints it whole when it is done, in a stable
 // order. Of Atomic and Canvas both are attempted, so every failure is visible,
 // and the first in that order is returned with its real error.
-func applySliceInOrder(m *Manifest) ([]string, error) {
+func applySliceInOrder(m *Manifest) error {
 	var backbone bytes.Buffer
 	sp := common.StartSpinner("  ", "Applying Backbone…")
-	unnamedDatabases, err := applyBackboneSection(m, &backbone)
+	err := applyBackboneSection(m, &backbone)
 	sp.Stop()
 	fmt.Print(backbone.String())
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	type phase struct {
@@ -456,15 +439,15 @@ func applySliceInOrder(m *Manifest) ([]string, error) {
 			firstErr = p.err
 		}
 	}
-	return unnamedDatabases, firstErr
+	return firstErr
 }
 
 // ─── Backbone ───────────────────────────────────────────────────────
 
 // applyBackboneSection writes the Backbone section: its heading when the file
 // declares anything Backbone holds, then every resource, then the SQL
-// databases, and returns the live databases the file does not name.
-func applyBackboneSection(m *Manifest, out io.Writer) ([]string, error) {
+// databases.
+func applyBackboneSection(m *Manifest, out io.Writer) error {
 	b := m.Slice().Sub("backbone")
 	declared := len(b.List("nosql"))+len(b.List("queues"))+len(b.Sub("cache"))+
 		len(b.Sub("secrets"))+len(b.List("sql"))+len(b.Sub("realtime")) > 0
@@ -472,16 +455,15 @@ func applyBackboneSection(m *Manifest, out io.Writer) ([]string, error) {
 		fmt.Fprintf(out, "  %s\n", common.BackboneHeader())
 	}
 	if err := applyBackbone(m, out); err != nil {
-		return nil, err
+		return err
 	}
-	unnamed, err := applySQL(m, out)
-	if err != nil {
-		return nil, err
+	if err := applySQL(m, out); err != nil {
+		return err
 	}
 	if declared {
 		fmt.Fprintln(out)
 	}
-	return unnamed, nil
+	return nil
 }
 
 // applyBackbone applies every Backbone resource but the SQL databases, which

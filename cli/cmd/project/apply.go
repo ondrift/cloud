@@ -70,7 +70,9 @@ func GetApplyCmd() *cobra.Command {
 
 Apply prints the same plan 'drift plan' prints, asks before the monthly price
 moves, before anything is removed, and before any data could be lost, then
-creates or resizes the slice and deploys what the file declares.
+creates or resizes the slice and deploys what the file declares. It closes with
+the domains, SQL databases and sites the slice holds and the file does not name,
+and removes none of them.
 
 The file does not say how the slice is paid for. A new slice whose shape fits
 the free grant is asked about ("You have 1 of 3 free slices — make this the
@@ -336,6 +338,11 @@ func runApply(o applyOptions) error {
 	if err := applyAlerts(c, p, o.out); err != nil {
 		return err
 	}
+
+	// What the slice holds and the file does not name is the plan's list, read
+	// before anything was sent. It is still the slice's: apply adds what the file
+	// declares and removes none of this.
+	reportUnnamedResources(d.unnamed, o.out)
 
 	if err := runHooks("post_deploy", post, dir); err != nil {
 		fmt.Fprintf(o.out, "\n  %s the slice is applied and live, but a post_deploy hook failed\n", common.Cross())
