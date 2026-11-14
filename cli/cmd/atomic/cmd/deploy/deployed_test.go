@@ -8,11 +8,11 @@ import (
 	"github.com/ondrift/cloud/cli/common"
 )
 
-// listReturning points the CLI at a stub serving one /ops/atomic/list body.
+// listReturning points the CLI at a stub serving one GET /ops/atomic body.
 func listReturning(t *testing.T, body string) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/ops/atomic/list" {
+		if r.Method != http.MethodGet || r.URL.Path != "/ops/atomic" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}

@@ -68,8 +68,6 @@ func legacyRoutesIn(line string) []legacyRoute {
 }
 
 func TestNoCLISourceNamesALegacyRouteSpelling(t *testing.T) {
-	t.Skip("callers still send the legacy spellings; #1651 removes this skip once #1650 and #1651 have moved them all")
-
 	root := repoRoot(t)
 
 	var offenders []string

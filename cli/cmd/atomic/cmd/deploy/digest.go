@@ -306,7 +306,7 @@ func DeployDigest(build string, spec FunctionSpec) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// deployedAtomic is the subset of an /ops/atomic/list record needed to match a
+// deployedAtomic is the subset of a GET /ops/atomic record needed to match a
 // local function against its last-deployed digest.
 type deployedAtomic struct {
 	FunctionName string `json:"function_name"`
@@ -344,7 +344,7 @@ type DeployedFunction struct {
 
 // DeployedFunctions returns every function deployed on the active slice.
 //
-// It is the one decode of `/ops/atomic/list`, and `DeployedDigests` derives from
+// It is the one decode of `GET /ops/atomic`, and `DeployedDigests` derives from
 // it — two consumers, one fetch, one notion of what "deployed" means. Unlike the
 // digest map it keeps records carrying no digest, because a function deployed by
 // an older CLI is still occupying a slot and still serving.
@@ -352,7 +352,7 @@ func DeployedFunctions() ([]DeployedFunction, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), deployedDigestsTimeout)
 	defer cancel()
 
-	resp, err := common.DoRequestWithContext(ctx, http.MethodGet, common.APIBaseURL+"/ops/atomic/list", nil)
+	resp, err := common.DoRequestWithContext(ctx, http.MethodGet, common.APIBaseURL+"/ops/atomic", nil)
 	if err != nil {
 		return nil, common.TransportError("list atomic functions", err)
 	}

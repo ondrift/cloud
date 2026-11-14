@@ -38,7 +38,7 @@ const fxevmLive = `{"name":"fxevm-testnode","tier":"custom","monthly_cost_cents"
  "labels":null}}`
 
 // planStub answers every read a plan makes. live is the GET /ops/slice?name= body,
-// or "" for a slice that does not exist; deployed is /ops/atomic/list. A path
+// or "" for a slice that does not exist; deployed is the GET /ops/atomic body. A path
 // in failing answers 500 instead of its body, for the read a plan cannot make.
 func planStub(t *testing.T, live, deployed string, failing ...string) *recorder {
 	t.Helper()
@@ -54,7 +54,7 @@ func planStub(t *testing.T, live, deployed string, failing ...string) *recorder 
 				return
 			}
 			_, _ = io.WriteString(w, live)
-		case "/ops/atomic/list":
+		case "/ops/atomic":
 			_, _ = io.WriteString(w, deployed)
 		case "/ops/canvas":
 			_, _ = io.WriteString(w, `{"deployed":true,"sites":[{"slug":"default","route":"/"}]}`)

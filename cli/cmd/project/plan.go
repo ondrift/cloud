@@ -744,7 +744,7 @@ func shortDigest(d string) string {
 	return d
 }
 
-// deployedKeyOf is the key /ops/atomic/list reports a slot under, which is
+// deployedKeyOf is the key GET /ops/atomic reports a slot under, which is
 // the booking key for everything but a queue Function.
 func deployedKeyOf(bookingKey string) string {
 	method, name, _ := strings.Cut(bookingKey, ":")

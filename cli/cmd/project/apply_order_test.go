@@ -78,7 +78,7 @@ func orderProject(t *testing.T) *recorder {
 			_, _ = w.Write([]byte(live))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
-		case "/ops/backbone/sql/admin/list", "/ops/atomic/list", "/ops/slice/domain", "/ops/atomic/alert":
+		case "/ops/backbone/sql/admin/list", "/ops/atomic", "/ops/slice/domain", "/ops/atomic/alert":
 			if r.Method == http.MethodGet {
 				_, _ = w.Write([]byte(`[]`))
 				return

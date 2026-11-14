@@ -70,8 +70,12 @@ func TestApply_PrintsTheHeaderThePlanPrintsForAnUnreadSlice(t *testing.T) {
 			_, _ = w.Write([]byte(live))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
-		case "/ops/atomic/list":
-			w.WriteHeader(http.StatusInternalServerError)
+		case "/ops/atomic":
+			if r.Method == http.MethodGet {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{}`))
 		case "/ops/canvas":
 			_, _ = w.Write([]byte(`{"sites":[]}`))
 		default:

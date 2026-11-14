@@ -61,7 +61,7 @@ func (a *applyPlatform) handler(t *testing.T) http.HandlerFunc {
 			_, _ = io.WriteString(w, live)
 		case "/ops/slice/status":
 			_, _ = io.WriteString(w, `{"ready":true,"components":[]}`)
-		case "/ops/atomic/list":
+		case "/ops/atomic":
 			_, _ = io.WriteString(w, `[]`)
 		case "/ops/canvas":
 			_, _ = io.WriteString(w, `{"deployed":true,"sites":[{"slug":"default","route":"/"}]}`)

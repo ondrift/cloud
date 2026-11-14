@@ -300,7 +300,13 @@ func idleSliceStub(tier string, slots []string) http.HandlerFunc {
 			_, _ = w.Write([]byte(slice))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
-		case "/ops/atomic/list", "/ops/backbone/secret/list", "/ops/backbone/sql/admin/list",
+		case "/ops/atomic":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_, _ = w.Write([]byte(`{}`))
+		case "/ops/backbone/secret/list", "/ops/backbone/sql/admin/list",
 			"/ops/slice/domain", "/ops/atomic/alert":
 			_, _ = w.Write([]byte(`[]`))
 		default:

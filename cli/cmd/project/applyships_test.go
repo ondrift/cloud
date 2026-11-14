@@ -24,7 +24,7 @@ import (
 //     files in it.
 
 // fakeSlice records what an apply sent: each function's last-deployed digest,
-// which it reports back from /ops/atomic/list the way the operator does, and the
+// which it reports back from GET /ops/atomic the way the operator does, and the
 // files of each uploaded site.
 type fakeSlice struct {
 	mu       sync.Mutex
@@ -39,7 +39,7 @@ func (f *fakeSlice) handler(t *testing.T) http.HandlerFunc {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/ops/atomic/list":
+		case r.Method == http.MethodGet && r.URL.Path == "/ops/atomic":
 			records := []map[string]any{}
 			for key, digest := range f.digests {
 				method, name := splitKey(key)

@@ -29,7 +29,7 @@ type fnRow struct {
 }
 
 func fetchFunctions() ([]fnRow, error) {
-	resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/atomic/list", nil)
+	resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/atomic", nil)
 	if err != nil {
 		return nil, common.TransportError("list functions", err)
 	}
@@ -40,7 +40,7 @@ func fetchFunctions() ([]fnRow, error) {
 	}
 	var all []fnRow
 	if err := json.Unmarshal(body, &all); err != nil {
-		return nil, fmt.Errorf("unexpected /ops/atomic/list response: %w", err)
+		return nil, fmt.Errorf("unexpected GET /ops/atomic response: %w", err)
 	}
 	deployed := make([]fnRow, 0, len(all))
 	for _, f := range all {
@@ -53,7 +53,7 @@ func fetchFunctions() ([]fnRow, error) {
 
 func deleteFunction(name string) error {
 	resp, err := common.DoRequest(http.MethodDelete,
-		common.APIBaseURL+"/ops/atomic/delete?name="+url.QueryEscape(name), nil)
+		common.APIBaseURL+"/ops/atomic?name="+url.QueryEscape(name), nil)
 	if err != nil {
 		return common.TransportError("delete function", err)
 	}

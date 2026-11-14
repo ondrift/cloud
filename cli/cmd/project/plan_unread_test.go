@@ -128,7 +128,7 @@ func TestPlanDiff_EveryFactThePlanCouldNotReadIsRecorded(t *testing.T) {
 		{name: "the live secrets", failing: []string{"/ops/backbone/secret/list"}, want: []string{"secrets|secrets"}, reason: "list secrets"},
 		{name: "the live keys", failing: []string{"/ops/atomic/auth"}, want: []string{"function POST /admin/reset key|key"}, reason: "list API keys"},
 		{name: "the site gate", failing: []string{"/ops/slice/auth"}, want: []string{"site_auth|gate"}, reason: "read the site gate"},
-		{name: "the deployed functions", failing: []string{"/ops/atomic/list"}, want: slots, reason: "list atomic functions"},
+		{name: "the deployed functions", failing: []string{"/ops/atomic"}, want: slots, reason: "list atomic functions"},
 		{
 			name: "the build",
 			edit: func(t *testing.T, s string) string {
@@ -139,7 +139,7 @@ func TestPlanDiff_EveryFactThePlanCouldNotReadIsRecorded(t *testing.T) {
 		{
 			// The line is a removal, marked, and the fact is recorded all the same.
 			name:    "the deployed functions, for a slot the file no longer declares",
-			failing: []string{"/ops/atomic/list"},
+			failing: []string{"/ops/atomic"},
 			edit: func(t *testing.T, s string) string {
 				const bench = "  backend \"bench\" {\n    dir = \"atomic/bench\"\n\n    function \"GET /bench\" {\n" +
 					"      handler  = \"GetBench\"\n      response = \"json\"\n      memory   = \"32MiB\"\n    }\n  }\n"
@@ -152,7 +152,7 @@ func TestPlanDiff_EveryFactThePlanCouldNotReadIsRecorded(t *testing.T) {
 		{
 			// The line is a change, marked, and the code half of it is still unread.
 			name:    "the deployed functions, for a slot whose booking changes",
-			failing: []string{"/ops/atomic/list"},
+			failing: []string{"/ops/atomic"},
 			edit: func(t *testing.T, s string) string {
 				return mustReplace(t, s, "concurrent = true\n      memory     = \"64MiB\"", "concurrent = true\n      memory     = \"128MiB\"")
 			},
