@@ -95,7 +95,6 @@ const (
 // reason. Each that is not live is what a person has to act on, so it is in the
 // verdict's attention list and under "Needs you"; the slice is still the file.
 func TestPlan_EachDeclaredDomainSaysWhereItStands(t *testing.T) {
-	t.Skip("until #3029 prints each declared domain's state")
 	stubSliceHolding(t, domainsOfEveryState, noList)
 	out, err := planIn(t, withDomains(t, declaresEveryState...))
 	if err != nil {
@@ -163,7 +162,6 @@ func TestPlan_EachDeclaredDomainSaysWhereItStands(t *testing.T) {
 // mark and needs no one; a live domain whose wildcard flag agrees has nothing to
 // say but that it is live.
 func TestPlan_ADomainTheSliceLacksIsAddedAndALiveOneNeedsNoOne(t *testing.T) {
-	t.Skip("until #3029 prints each declared domain's state")
 	stubSliceHolding(t, `[{"host":"live.example.com","status":"live","wildcard":true}]`, noList)
 	out, err := planIn(t, withDomains(t,
 		`  domain "live.example.com" {`+"\n    wildcard = true\n  }",
@@ -193,7 +191,6 @@ func TestPlan_ADomainTheSliceLacksIsAddedAndALiveOneNeedsNoOne(t *testing.T) {
 // A status the CLI does not know is not known to be live, so it needs a person
 // too, and the plan names the status it was given.
 func TestPlan_ADomainInAnUnknownStatusIsNotKnownToBeLive(t *testing.T) {
-	t.Skip("until #3029 prints each declared domain's state")
 	stubSliceHolding(t, `[{"host":"odd.example.com","status":"suspended"}]`, noList)
 	out, err := planIn(t, withDomains(t, `  domain "odd.example.com" {}`))
 	if err != nil {

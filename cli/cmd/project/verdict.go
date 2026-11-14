@@ -62,8 +62,10 @@ type Verdict struct {
 	// and why.
 	Unread []string
 	// Attention is what a person has to do before the slice is the file, though
-	// the plan has no difference to show for it. A plan that reports no such fact
-	// leaves it empty.
+	// the plan has no difference to show for it: a domain that is not live yet.
+	// One entry for each, "address  what to do", as the plan prints it. It does
+	// not move the state: a slice with nothing to apply is a match whatever is
+	// left to a person. A plan that reports no such fact leaves it empty.
 	Attention []string
 }
 
@@ -129,7 +131,7 @@ func PlanVerdict(o PlanOptions, out io.Writer) (Verdict, error) {
 
 // verdict is the conclusion of the plan whose diff is d.
 func (p *planState) verdict(d *planDiff) Verdict {
-	v := Verdict{State: VerdictMatch, Unread: d.unreadLines()}
+	v := Verdict{State: VerdictMatch, Unread: d.unreadLines(), Attention: slices.Clone(d.attention)}
 	for _, l := range d.lines {
 		if l.mark != " " {
 			v.Changes = append(v.Changes, l.mark+" "+l.address+"  "+l.detail)

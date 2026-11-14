@@ -18,9 +18,42 @@ import (
 	"github.com/ondrift/cloud/cli/common"
 )
 
+// liveDomain is one row of the platform's GET /ops/slice/domain.
 type liveDomain struct {
-	Host   string `json:"host"`
+	Host string `json:"host"`
+	// Status is where the domain stands: pending, failed, verified or live.
 	Status string `json:"status"`
+	// StatusDetail is the platform's reason for the status, as for a domain whose
+	// DNS record it did not find.
+	StatusDetail string `json:"status_detail"`
+	// Wildcard is whether every subdomain of Host routes to the slice. The
+	// platform leaves it out when it is off.
+	Wildcard bool `json:"wildcard"`
+}
+
+// declaredDomain is one host the Driftfile declares, and whether its block asks
+// for a wildcard.
+type declaredDomain struct {
+	Host     string
+	Wildcard bool
+}
+
+// declaredDomains is the hosts the Driftfile declares, in the file's order and
+// lowercased, because that is how the slice stores a host. A host the file
+// declares twice is one.
+func declaredDomains(m *Manifest) []declaredDomain {
+	var out []declaredDomain
+	seen := map[string]bool{}
+	for _, d := range m.Slice().Entries("host", "edge", "domains") {
+		host := strings.ToLower(strings.TrimSpace(d.Str("host")))
+		if host == "" || seen[host] {
+			continue
+		}
+		seen[host] = true
+		wildcard, _ := d["wildcard"].(bool)
+		out = append(out, declaredDomain{Host: host, Wildcard: wildcard})
+	}
+	return out
 }
 
 // applyDomains attaches every host the Driftfile declares, reading
@@ -30,16 +63,7 @@ type liveDomain struct {
 // the rest of the slice (atomic, backbone, canvas) is more important
 // than the cosmetic step of attaching a hostname.
 func applyDomains(m *Manifest) ([]string, error) {
-	// declared maps each host the file names to whether it is a wildcard.
-	declared := map[string]bool{}
-	for _, d := range m.Slice().Entries("host", "edge", "domains") {
-		host := strings.ToLower(strings.TrimSpace(d.Str("host")))
-		if host == "" {
-			continue
-		}
-		wildcard, _ := d["wildcard"].(bool)
-		declared[host] = wildcard
-	}
+	declared := declaredDomains(m)
 
 	live, err := fetchLiveDomains()
 	if err != nil {
@@ -54,18 +78,18 @@ func applyDomains(m *Manifest) ([]string, error) {
 
 	added := 0
 
-	for host, wildcard := range declared {
-		if _, ok := liveByHost[host]; ok {
+	for _, d := range declared {
+		if _, ok := liveByHost[d.Host]; ok {
 			continue
 		}
-		instructions, err := addDomain(host, wildcard)
+		instructions, err := addDomain(d.Host, d.Wildcard)
 		if err != nil {
-			fmt.Printf("  %s add domain %s: %v\n", common.Hint("·"), host, err)
+			fmt.Printf("  %s add domain %s: %v\n", common.Hint("·"), d.Host, err)
 			continue
 		}
 		added++
 		fmt.Printf("  %s domain added: %s (verify with `drift slice domain verify %s` once DNS is live)\n",
-			common.Check(), host, host)
+			common.Check(), d.Host, d.Host)
 		for _, line := range instructions {
 			fmt.Printf("      %s\n", line)
 		}
@@ -83,8 +107,8 @@ func applyDomains(m *Manifest) ([]string, error) {
 		liveHosts = append(liveHosts, strings.ToLower(strings.TrimSpace(d.Host)))
 	}
 	declaredHosts := make(map[string]bool, len(declared))
-	for host := range declared {
-		declaredHosts[host] = true
+	for _, d := range declared {
+		declaredHosts[d.Host] = true
 	}
 	return unnamedIn(liveHosts, declaredHosts), nil
 }
