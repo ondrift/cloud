@@ -2,9 +2,12 @@
 //
 // Handing a running slice to another Drift account. Two-sided: the owner offers
 // a slice to a named account, and nothing changes until that account accepts.
-// The slice keeps running throughout — its data, its custom domains and its
-// address stay exactly where they are, and so does what it costs and how long it
-// is paid for; only the account that controls it changes.
+// The slice keeps running throughout: its data and its custom domains stay
+// exactly where they are, and so does what it costs and how long it is paid for.
+// Two things change: the account that controls it, and its address, which is
+// named after that account. The old address redirects to the new one for 30 days
+// and then stops answering; the offer and the accept both say so, with both
+// addresses.
 //
 // Offering and accepting each ask for the account password, once: the platform
 // will not let a session alone give a slice away or take one in.
@@ -28,18 +31,25 @@ import (
 )
 
 // transferOffer is one offer, as the platform shows it to either party.
+//
+// Host is the address the slice answers at once the offer is accepted, and
+// PreviousHost the one it answers at until then, which redirects to Host for
+// RedirectDays after an accept. A platform that does not name PreviousHost does
+// not move the address, and the screens then claim no change.
 type transferOffer struct {
-	ID        string     `json:"id"`
-	Slice     string     `json:"slice"`
-	From      string     `json:"from"`
-	To        string     `json:"to"`
-	Status    string     `json:"status"`
-	Direction string     `json:"direction"`
-	Host      string     `json:"host"`
-	CreatedAt time.Time  `json:"created_at"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	DecidedAt *time.Time `json:"decided_at,omitempty"`
-	Terms     struct {
+	ID           string     `json:"id"`
+	Slice        string     `json:"slice"`
+	From         string     `json:"from"`
+	To           string     `json:"to"`
+	Status       string     `json:"status"`
+	Direction    string     `json:"direction"`
+	Host         string     `json:"host"`
+	PreviousHost string     `json:"previous_host"`
+	RedirectDays int        `json:"redirect_days"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ExpiresAt    time.Time  `json:"expires_at"`
+	DecidedAt    *time.Time `json:"decided_at,omitempty"`
+	Terms        struct {
 		Tier                string          `json:"tier"`
 		MonthlyCostCents    int             `json:"monthly_cost_cents"`
 		BillingPeriodMonths int             `json:"billing_period_months"`
@@ -55,14 +65,35 @@ var transferIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 const transferStepUpWhy = "Handing a slice over moves everything in it (every secret, row, file and " +
 	"snapshot) and what it costs. Confirm your password to continue."
 
+// transferRedirectDays is how long the address a slice leaves keeps redirecting to
+// the one it takes, as the platform documents it. The offer's own redirect_days is
+// the figure the platform applies and is used wherever an offer is at hand; this
+// one is for the giver's confirmation, which is printed before the platform is
+// asked about anything.
+const transferRedirectDays = 30
+
+// redirectWindow is a number of days in words: the platform's figure when it sent
+// one, and transferRedirectDays when it did not.
+func redirectWindow(days int) string {
+	if days <= 0 {
+		days = transferRedirectDays
+	}
+	if days == 1 {
+		return "1 day"
+	}
+	return fmt.Sprintf("%d days", days)
+}
+
 func getTransferCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "transfer",
 		Short: "Hand a running slice to another Drift account, or take one in",
 		Long: "Hand a running slice to another Drift account. You offer it to an account by\n" +
 			"name; nothing changes until that account accepts. The slice keeps running the\n" +
-			"whole time: its data, custom domains and address stay where they are, and its\n" +
-			"bill and prepaid period move with it. Offers expire after seven days.",
+			"whole time: its data and custom domains stay where they are, and its bill and\n" +
+			"prepaid period move with it. Its address changes to one named after the new\n" +
+			"account; the old address redirects to the new one for " + redirectWindow(transferRedirectDays) + " and then\n" +
+			"stops answering. Offers expire after seven days.",
 		Example: "  drift slice transfer offer my-shop --to bakkerij\n" +
 			"  drift slice transfer list\n" +
 			"  drift slice transfer accept my-shop\n" +
@@ -94,7 +125,7 @@ func getTransferOfferCmd() *cobra.Command {
 				return fmt.Errorf("name the account to offer %s to, with --to", name)
 			}
 
-			printOfferWarning(name, to)
+			printOfferWarning(name, to, common.GetUsername())
 			first := strings.ToLower(strings.TrimSpace(common.PromptForInput("Offer it? [y/N]")))
 			if first != "y" && first != "yes" {
 				fmt.Println("Nothing was offered.")
@@ -126,9 +157,14 @@ func getTransferOfferCmd() *cobra.Command {
 	return cmd
 }
 
-// printOfferWarning says exactly what leaves with the slice. Giving a slice away
-// cannot be taken back by the giver: only the recipient can hand it back.
-func printOfferWarning(name, to string) {
+// printOfferWarning says exactly what leaves with the slice and what changes
+// about it. Giving a slice away cannot be taken back by the giver: only the
+// recipient can hand it back.
+//
+// from is the giver's account name. It is read from the session because the
+// platform is not asked until the giver confirms, so both addresses are spelled
+// from the slice's name and the two account names.
+func printOfferWarning(name, to, from string) {
 	fmt.Printf(`
 ────────────────────────────────────────────────────────────
   You are about to offer slice '%s' to the account '%s'.
@@ -139,14 +175,35 @@ If they accept, the slice becomes theirs, with everything in it:
   • every function, site, collection, bucket, queue and database
   • every secret, including ones you also use elsewhere
   • every snapshot taken of it
-  • its custom domains, its address, and its bill and prepaid period
+  • its custom domains, and its bill and prepaid period
+
+Its address changes, because an address is named after the account that
+controls the slice:
+
+%s
+The old address redirects to the new one for %s and then stops
+answering. A caller that does not follow redirects, such as most webhook
+senders, is not served by it even before then, so change anything outside
+Drift that names the old address: a webhook or callback URL, an OAuth redirect
+URI, a link, a DNS record. Custom domains do not change.
 
 You lose access to it at that moment, and only they can give it back.
 
 Before offering, remove its links to other slices and its alerts.
 The platform refuses the offer while either exists.
 
-`, name, to)
+`, name, to, offerAddresses(name, to, from), redirectWindow(transferRedirectDays))
+}
+
+// offerAddresses is the address the slice answers at and the one it takes if the
+// offer is accepted. Without the giver's account name only the second can be
+// spelled, and it is the one that matters.
+func offerAddresses(name, to, from string) string {
+	after := fmt.Sprintf("  after accept  %s\n", common.SliceURL(to, name))
+	if from == "" {
+		return after
+	}
+	return fmt.Sprintf("  now           %s\n", common.SliceURL(from, name)) + after
 }
 
 // ─── list ───────────────────────────────────────────────────────────────────
@@ -295,8 +352,13 @@ func getTransferAcceptCmd() *cobra.Command {
 			}
 			_ = json.Unmarshal(respBody, &out)
 			fmt.Printf("%s Slice %s is yours.\n", common.Check(), o.Slice)
-			fmt.Printf("  It answers at https://%s. That address keeps the name of the account\n", o.Host)
-			fmt.Println("  that created it; put your own name on it with a `domain` block in your Driftfile's edge block.")
+			if o.PreviousHost != "" {
+				fmt.Printf("  It now answers at https://%s.\n", o.Host)
+				fmt.Printf("  The old address, https://%s, redirects there for %s\n", o.PreviousHost, redirectWindow(o.RedirectDays))
+				fmt.Println("  and then stops answering.")
+			} else {
+				fmt.Printf("  It answers at https://%s.\n", o.Host)
+			}
 			fmt.Printf("  Act on it with DRIFT_SLICE=%s, or from a project whose Driftfile names it.\n", o.Slice)
 			if out.Note != "" {
 				fmt.Println()
@@ -308,7 +370,8 @@ func getTransferAcceptCmd() *cobra.Command {
 }
 
 // printOfferTerms shows the recipient what they are accepting: the slice, who
-// it is from, what it is, what it costs and how long it is paid for.
+// it is from, what it is, what it costs, how long it is paid for, and the
+// address it takes and the one it leaves.
 func printOfferTerms(o *transferOffer) {
 	fmt.Printf("\n%s offers you slice '%s'.\n\n", o.From, o.Slice)
 	fmt.Printf("  tier          %s\n", TierLabel(o.Terms.Tier))
@@ -323,8 +386,15 @@ func printOfferTerms(o *transferOffer) {
 		fmt.Printf("  shape         %s\n", shape)
 	}
 	fmt.Printf("  address       https://%s\n", o.Host)
+	if o.PreviousHost != "" {
+		fmt.Printf("  old address   https://%s\n", o.PreviousHost)
+	}
 	fmt.Printf("  offer expires %s\n\n", o.ExpiresAt.Local().Format("2 Jan 2006 15:04"))
 	fmt.Println("Accepting moves the slice, everything in it and its bill to your account.")
+	if o.PreviousHost != "" {
+		fmt.Printf("Its address becomes the one above, named after your account. The old address\n"+
+			"redirects to it for %s and then stops answering.\n", redirectWindow(o.RedirectDays))
+	}
 	fmt.Println("The previous owner knows its secrets, its function API keys and its site")
 	fmt.Println("password; rotate the ones you rely on once it is yours.")
 	fmt.Println()

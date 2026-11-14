@@ -332,22 +332,13 @@ func (m *model) activeOrDash() string {
 // sliceURL is the active slice's public URL (see sliceURLFor).
 func (m *model) sliceURL() string { return m.sliceURLFor(m.active) }
 
-// sliceURLFor builds a slice's public URL (https://user-slice.ondrift.eu); the
-// "default" slice lives at the bare https://user.ondrift.eu. Mirrors the deploy
-// command's buildSiteURL. Empty when there's no user/slice.
+// sliceURLFor is a slice's public URL, https://user-slice.ondrift.eu, as
+// common.SliceURL spells it. Empty when there's no user/slice.
 func (m *model) sliceURLFor(slice string) string {
 	if m.user == "" || slice == "" {
 		return ""
 	}
-	scheme := "http://"
-	if strings.HasPrefix(common.APIBaseURL, "https://") {
-		scheme = "https://"
-	}
-	host := strings.TrimPrefix(common.APIBaseURL, scheme)
-	host = strings.TrimPrefix(host, "api.")
-	// Every slice — including "default" — is reached at <user>-<slice>.<root>;
-	// there is no bare <user>.<root> shortcut.
-	return scheme + m.user + "-" + slice + "." + host
+	return common.SliceURL(m.user, slice)
 }
 
 func snapLabel(s snapshotRow) string {
