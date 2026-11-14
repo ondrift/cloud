@@ -215,6 +215,35 @@ func unrunnableCommands(root *cobra.Command, spans []inlineSpan) []string {
 	return problems
 }
 
+// allowanceFile is the list of commands that are allowed to be longer than three
+// words, read from the package directory the test runs in.
+const allowanceFile = "testdata/overlong-commands.txt"
+
+// allowanceEntry is one line of the allowance list.
+type allowanceEntry struct {
+	Line    int    // the line in the file, counted from 1
+	Command string // exactly as a message writes it
+	Reason  string // why it cannot be three words or fewer; empty when the line gives none
+}
+
+// loadAllowance reads the allowance list: one `<command as written>  # <reason>`
+// per line, blank lines and lines that start with # ignored.
+func loadAllowance(text string) []allowanceEntry {
+	return nil
+}
+
+// overlongCommands returns one problem for each span whose command is longer than
+// three words and is not on the allowance list as written.
+func overlongCommands(spans []inlineSpan, allowed []allowanceEntry) []string {
+	return nil
+}
+
+// checkAllowance returns one problem for each line of the allowance list that has
+// no business being there.
+func checkAllowance(entries []allowanceEntry, spans []inlineSpan) []string {
+	return nil
+}
+
 // inlineFixture is a Go source file holding body, so that a case is only the few
 // lines it is about.
 func inlineFixture(body string) string {
@@ -635,5 +664,199 @@ func TestEveryCommandAMessageNamesCanRun(t *testing.T) {
 	if problems := unrunnableCommands(newRootCmd("test"), scanTheTree(t)); len(problems) > 0 {
 		t.Errorf("these messages tell the user to type a command that cannot run. Correct each to the "+
 			"command that exists:\n  %s", strings.Join(problems, "\n  "))
+	}
+}
+
+// The allowance list holds each command a message tells the user to type that is
+// longer than three words, exactly as the message writes it, with the reason it
+// cannot be shorter. Most are a noun, a sub-noun and a verb, which is four words
+// as the grammar is built.
+func TestLoadAllowance_ReadsACommandAndItsReason(t *testing.T) {
+	t.Skip("removed by #2559")
+	text := "# the header\n" +
+		"\n" +
+		"drift account token create  # noun, sub-noun and verb: four words as the grammar is built\n" +
+		"   drift slice resize %s --dump   #   a flag the remedy needs  \n" +
+		"drift account mfa enrol\n" +
+		"drift account mfa disable  #\n" +
+		"drift backbone secret set KEY=VALUE  # an example value, written out # and more\n"
+	want := []allowanceEntry{
+		{3, "drift account token create", "noun, sub-noun and verb: four words as the grammar is built"},
+		{4, "drift slice resize %s --dump", "a flag the remedy needs"},
+		{5, "drift account mfa enrol", ""},
+		{6, "drift account mfa disable", ""},
+		{7, "drift backbone secret set KEY=VALUE", "an example value, written out # and more"},
+	}
+	if got := loadAllowance(text); !slices.Equal(got, want) {
+		t.Errorf("read %+v, want %+v: blank lines and # lines are ignored, the line number counts them, "+
+			"and the reason is whatever follows the first #", got, want)
+	}
+}
+
+// The list can only shrink: a line that has stopped being true has to be deleted,
+// so a command that was shortened, or a message that was reworded, takes its line
+// with it.
+func TestCheckAllowance_FailsALineThatHasNoReasonToBeThere(t *testing.T) {
+	t.Skip("removed by #2559")
+	const reason = "  # noun, sub-noun and verb: four words as the grammar is built\n"
+	for _, c := range []struct {
+		name      string
+		allowance string
+		source    string
+		line      string   // the line the problems have to name
+		want      []string // what each problem has to say, one problem each
+	}{
+		{
+			"a line with no reason",
+			"drift account token create\n",
+			"var m = \"Run `drift account token create` to make one.\"",
+			"line 1", []string{"no reason"},
+		},
+		{
+			"a line with an empty reason",
+			"drift account token create  #  \n",
+			"var m = \"Run `drift account token create` to make one.\"",
+			"line 1", []string{"no reason"},
+		},
+		{
+			"a line whose command no literal holds",
+			"drift account token revoke %s" + reason,
+			"var m = \"Run `drift account token create` to make one.\"",
+			"line 1", []string{"no string literal"},
+		},
+		{
+			"a line whose command is only the start of what a literal holds",
+			"drift account token create" + reason,
+			"var m = \"Run `drift account token create <name>` to make one.\"",
+			"line 1", []string{"no string literal"},
+		},
+		{
+			"a line whose command now fits three words",
+			"drift account login" + reason,
+			"var m = \"Run `drift account login` first.\"",
+			"line 1", []string{"words now"},
+		},
+		{
+			"a line whose command fits three words once its placeholder is left out",
+			"drift slice resize %s" + reason,
+			"var m = \"Run `drift slice resize %s` to add capacity.\"",
+			"line 1", []string{"words now"},
+		},
+		{
+			"every way a line is wrong is reported",
+			"drift account login\n",
+			"var m = \"nothing quoted here\"",
+			"line 1", []string{"no reason", "no string literal", "words now"},
+		},
+		{
+			"the problem names the line, which counts the ones that are ignored",
+			"# the header\n\ndrift account token create" + reason + "drift account token list\n",
+			"var m = \"Run `drift account token create` or `drift account token list`.\"",
+			"line 4", []string{"no reason"},
+		},
+		{
+			"a line that is right",
+			"drift account token create" + reason,
+			"var m = \"Run `drift account token create` to make one.\"",
+			"", nil,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			spans, err := inlineInvocations(inlineFixture(c.source))
+			if err != nil {
+				t.Fatalf("the fixture does not parse: %v", err)
+			}
+			problems := checkAllowance(loadAllowance(c.allowance), spans)
+			if len(problems) != len(c.want) {
+				t.Fatalf("got %d problems, want %d: %q", len(problems), len(c.want), problems)
+			}
+			for i, say := range c.want {
+				for _, must := range []string{c.line, say} {
+					if !strings.Contains(problems[i], must) {
+						t.Errorf("the problem does not say %q:\n%s", must, problems[i])
+					}
+				}
+			}
+		})
+	}
+}
+
+// A command over three words fails the scan unless it is on the list, and the
+// list excuses the command as it is written and no other.
+func TestOverlongCommands_AFourWordCommandNeedsAnAllowanceLine(t *testing.T) {
+	t.Skip("removed by #2559")
+	spans, err := inlineInvocations(inlineFixture(
+		"var a = \"Run `drift account token create` to make one.\"\n" +
+			"var b = \"Run `drift slice resize %s` to add capacity.\""))
+	if err != nil {
+		t.Fatalf("the fixture does not parse: %v", err)
+	}
+
+	// Both commands exist, so what fails below is the length and not the resolver.
+	if problems := unrunnableCommands(newRootCmd("test"), spans); len(problems) != 0 {
+		t.Fatalf("the fixture's commands are meant to be real, and these were reported: %q", problems)
+	}
+
+	// Four words and no allowance fails, naming the place, the command, how many
+	// words it is and the text it is in. `drift slice resize %s` is three words
+	// once its placeholder is left out, so it is the only one that is not reported.
+	problems := overlongCommands(spans, nil)
+	if len(problems) != 1 {
+		t.Fatalf("got %d problems, want 1: %q", len(problems), problems)
+	}
+	for _, must := range []string{"line 3", "drift account token create", "4 words", "Run `drift account token create` to make one."} {
+		if !strings.Contains(problems[0], must) {
+			t.Errorf("the problem does not say %q:\n%s", must, problems[0])
+		}
+	}
+
+	// The same source with an allowance line passes, and the line is a right one.
+	entries := loadAllowance("drift account token create  # noun, sub-noun and verb: four words as the grammar is built\n")
+	if problems := overlongCommands(spans, entries); len(problems) != 0 {
+		t.Errorf("a command on the list was reported: %q", problems)
+	}
+	if problems := checkAllowance(entries, spans); len(problems) != 0 {
+		t.Errorf("the allowance line was judged wrong: %q", problems)
+	}
+
+	// The line excuses that command as written. A neighbour is still four words.
+	other, err := inlineInvocations(inlineFixture("var m = \"Run `drift account token list` to see them.\""))
+	if err != nil {
+		t.Fatalf("the fixture does not parse: %v", err)
+	}
+	if problems := overlongCommands(other, entries); len(problems) != 1 {
+		t.Errorf("`drift account token list` is not on the list and is four words, got %d problems: %q",
+			len(problems), problems)
+	}
+}
+
+// readAllowance reads the allowance list the tree is judged by.
+func readAllowance(t *testing.T) []allowanceEntry {
+	t.Helper()
+	text, err := os.ReadFile(allowanceFile)
+	if err != nil {
+		t.Fatalf("reading the allowance list: %v", err)
+	}
+	return loadAllowance(string(text))
+}
+
+// A command more than three words away is the failure the rule exists to catch,
+// and a message that tells the user to type one is held to it as the registry's
+// remedies are. The ones that cannot be shorter are listed with the reason.
+func TestNoMessageNamesACommandOverThreeWordsUnlessListed(t *testing.T) {
+	t.Skip("removed by #2559")
+	if problems := overlongCommands(scanTheTree(t), readAllowance(t)); len(problems) > 0 {
+		t.Errorf("these messages tell the user to type a command longer than three words:\n  %s",
+			strings.Join(problems, "\n  "))
+	}
+}
+
+// Every line of the list has to be true now: it has a reason, a message still
+// writes the command exactly so, and the command is still more than three words.
+// A line that is not is deleted, which is the only way the list changes.
+func TestTheAllowanceListOnlyShrinks(t *testing.T) {
+	t.Skip("removed by #2559")
+	if problems := checkAllowance(readAllowance(t), scanTheTree(t)); len(problems) > 0 {
+		t.Errorf("these lines of %s are wrong:\n  %s", allowanceFile, strings.Join(problems, "\n  "))
 	}
 }
