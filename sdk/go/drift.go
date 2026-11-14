@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -2175,16 +2177,11 @@ func HTTPRequestWithTimeout(method, rawURL string, headers map[string]string, bo
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		// If the slice is in `egress.mode: allowlist` and the host
-		// isn't on the list, the kernel-level NetworkPolicy refuses
-		// the connection. The user sees a `dial tcp: connect:
-		// connection refused` from the http stack — which is also
-		// what they'd see for a host that's allowlisted but
-		// genuinely down. Map the policy-refusal case to a
-		// structured `EgressDeniedError` so the user can branch on
-		// "this is my allowlist's fault" vs "this remote is just
-		// broken." Best-effort: the underlying err is preserved
-		// via Unwrap().
+		// A connect the runtime refuses fails with EPERM. Return that as
+		// an *EgressDeniedError so a function can tell "the platform
+		// refused this destination" from "this remote is broken"; the
+		// transport error stays reachable through Unwrap. Every other
+		// failure is returned as the HTTP client reported it.
 		if eerr := wrapEgressDenied(rawURL, err); eerr != nil {
 			return nil, eerr
 		}
@@ -2227,22 +2224,21 @@ func (e *EgressDeniedError) Error() string {
 
 func (e *EgressDeniedError) Unwrap() error { return e.Err }
 
-// wrapEgressDenied returns a non-nil *EgressDeniedError when the
-// underlying transport error matches the shape the kernel produces
-// for a NetworkPolicy refusal: "connection refused" on a TCP dial.
-// Returns nil for everything else (DNS failures, TLS errors,
-// timeouts) so the original error continues unchanged.
+// wrapEgressDenied returns a non-nil *EgressDeniedError when err is the
+// runtime refusing a connect, and nil for every other failure (a host
+// that is down, a DNS failure, a TLS failure, a timeout), so the
+// original error continues unchanged.
+//
+// The runtime answers a connect it refuses with EPERM: its supervisor
+// completes the syscall with -EPERM (cloud/platform,
+// src/slice/src/atomic/egressguard.rs). The standard library reports
+// that as an *os.SyscallError inside a *net.OpError inside the
+// *url.Error the HTTP client returns, and errors.Is finds the errno
+// through all three. The words of the error are not consulted: a host
+// that is down answers ECONNREFUSED, "connection refused", and the
+// runtime never does.
 func wrapEgressDenied(rawURL string, err error) *EgressDeniedError {
-	if err == nil {
-		return nil
-	}
-	msg := err.Error()
-	// Linux kernel ipset deny manifests as "connection refused"
-	// on the dial. We deliberately don't try to be clever about
-	// the IP family / cause-chain — a substring match is the
-	// honest minimum that will keep working as Go's net error
-	// shapes evolve.
-	if !strings.Contains(msg, "connection refused") {
+	if !errors.Is(err, syscall.EPERM) {
 		return nil
 	}
 	host := rawURL

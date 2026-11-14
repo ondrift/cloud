@@ -63,8 +63,6 @@ func requireNotEgressDenied(t *testing.T, err error) {
 // A connect the runtime refuses comes back as an *EgressDeniedError that names
 // the destination, and the errno is still reachable through Unwrap.
 func TestHTTPRequestReturnsEgressDeniedWhenTheRuntimeRefusesTheConnect(t *testing.T) {
-	t.Skip("#3247 returns a refused connect as an EgressDeniedError and removes this skip")
-
 	useTransport(t, &http.Transport{DialContext: dialRefusedByTheRuntime()})
 
 	resp, err := HTTPRequest("GET", "https://api.stripe.com:8443/v1/charges", nil, nil)
@@ -96,8 +94,6 @@ func TestHTTPRequestReturnsEgressDeniedWhenTheRuntimeRefusesTheConnect(t *testin
 // The same classification, one call down, for every spelling of a refusal the
 // transport can hand back.
 func TestWrapEgressDeniedRecognisesEPERM(t *testing.T) {
-	t.Skip("#3247 matches the errno and removes this skip")
-
 	eperm := os.NewSyscallError("connect", syscall.EPERM)
 	fromClient := func(inner error) error {
 		return &url.Error{Op: "Get", URL: "https://api.stripe.com/v1", Err: &net.OpError{Op: "dial", Net: "tcp", Err: inner}}
@@ -137,8 +133,6 @@ func TestWrapEgressDeniedRecognisesEPERM(t *testing.T) {
 // ECONNREFUSED, and the runtime never does: it says EPERM. Neither the errno
 // nor its words are a refusal by the platform.
 func TestWrapEgressDeniedIgnoresAConnectionRefused(t *testing.T) {
-	t.Skip("#3247 stops matching the text 'connection refused' and removes this skip")
-
 	refused := os.NewSyscallError("connect", syscall.ECONNREFUSED)
 	cases := map[string]error{
 		"the chain the HTTP client returns": &url.Error{Op: "Get", URL: "https://api.stripe.com/v1", Err: &net.OpError{Op: "dial", Net: "tcp", Err: refused}},
@@ -186,8 +180,6 @@ func TestWrapEgressDeniedIgnoresEveryOtherFailure(t *testing.T) {
 // A request to a host that is down comes back as the transport reported it,
 // from a real closed port.
 func TestHTTPRequestReturnsAConnectionRefusedByAHostThatIsDownUnchanged(t *testing.T) {
-	t.Skip("#3247 stops matching the text 'connection refused' and removes this skip")
-
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
