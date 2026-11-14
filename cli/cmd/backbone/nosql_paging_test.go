@@ -171,3 +171,83 @@ func TestListWithoutAllIssuesOneRequest(t *testing.T) {
 		t.Errorf("--after must reach the platform, got %q", reqs[1])
 	}
 }
+
+// collectionOf serves a collection of n documents, keys k00000 on, the way the
+// platform pages one: at most `limit` documents after the cursor, in key order. It
+// returns the limit of every request it was sent.
+func collectionOf(t *testing.T, n int) *[]int {
+	t.Helper()
+	var mu sync.Mutex
+	limits := &[]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ops/backbone/nosql/list" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var limit int
+		_, _ = fmt.Sscan(r.URL.Query().Get("limit"), &limit)
+		start := 0
+		if after := r.URL.Query().Get("after"); after != "" {
+			_, _ = fmt.Sscanf(after, "k%d", &start)
+			start++
+		}
+		mu.Lock()
+		*limits = append(*limits, limit)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(pageOf(start, max(0, min(limit, n-start))))
+	}))
+	t.Cleanup(srv.Close)
+	seedSession(t, srv)
+	return limits
+}
+
+// A bounded read stops at the bound and says whether the collection goes on. The
+// one document it asks for to know is not returned, and a collection of exactly
+// the bound is not taken for a larger one.
+func TestReadNoSQLCollectionStopsAtTheBoundAndSaysWhetherThereIsMore(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		size     int
+		bound    int
+		wantDocs int
+		wantMore bool
+		limits   []int
+	}{
+		{"a larger collection", 2500, 2000, 2000, true, []int{1000, 1000, 1}},
+		{"exactly the bound", 2000, 2000, 2000, false, []int{1000, 1000, 1}},
+		{"short of the second page", 1500, 2000, 1500, false, []int{1000, 1000}},
+		{"a bound that is not a page", 1700, 1500, 1500, true, []int{1000, 500, 1}},
+		{"an empty collection", 0, 2000, 0, false, []int{1000}},
+		{"no bound reads it all", 2500, 0, 2500, false, []int{1000, 1000, 1000}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			limits := collectionOf(t, c.size)
+			docs, more, err := ReadNoSQLCollection("ops", c.bound)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if len(docs) != c.wantDocs || more != c.wantMore {
+				t.Errorf("read %d documents and more=%v, want %d and %v", len(docs), more, c.wantDocs, c.wantMore)
+			}
+			if fmt.Sprint(*limits) != fmt.Sprint(c.limits) {
+				t.Errorf("the pages asked for were %v, want %v", *limits, c.limits)
+			}
+		})
+	}
+}
+
+// A read that fails is an error and no documents: a half-read collection is not
+// something to compare with.
+func TestReadNoSQLCollectionReturnsNothingFromAFailedRead(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	seedSession(t, srv)
+
+	docs, more, err := ReadNoSQLCollection("ops", 2000)
+	if err == nil || docs != nil || more {
+		t.Errorf("a failed read returned %d documents, more=%v and the error %v", len(docs), more, err)
+	}
+}

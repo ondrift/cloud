@@ -258,6 +258,8 @@ type planState struct {
 	alertsErr   error
 	channels    []string // the channels the slice's clients may publish to
 	channelsErr error
+	// collections is the documents of each collection the file seeds, by name.
+	collections map[string]liveCollection
 
 	priceNew, priceOld       int
 	priceNewErr, priceOldErr error
@@ -390,6 +392,7 @@ func gatherPlan(c *Compiled, declinedFree bool) (*planState, error) {
 	p.domains, p.domainsErr = fetchLiveDomains()
 	p.sql, p.sqlErr = fetchLiveSQL()
 	p.channels, p.channelsErr = fetchClientChannels(m)
+	p.collections = fetchSeededCollections(m)
 
 	newPrice()
 	if !liveIsFree(live) {
@@ -707,6 +710,9 @@ func (p *planState) diff() *planDiff {
 				}
 			default:
 				d.add(" ", addr, "unchanged")
+			}
+			if inFile && set.noun == "nosql" {
+				p.diffNoSQLSeed(d, name, creating)
 			}
 		}
 	}

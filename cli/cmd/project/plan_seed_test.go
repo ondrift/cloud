@@ -38,11 +38,83 @@ func menuLive(s *sliceStore, only ...string) {
 	}
 }
 
+// compareSeed asks one thing of each seed document: does the collection hold a
+// document with that _id whose fields, the ones the seed names, have the seed's
+// values. What else the document holds is not asked.
+func TestCompareSeed_ComparesTheFieldsTheSeedNames(t *testing.T) {
+	seedOf := func(lines ...string) []seedDoc {
+		var docs []seedDoc
+		for i, l := range lines {
+			doc := map[string]any{}
+			if err := json.Unmarshal([]byte(l), &doc); err != nil {
+				t.Fatal(err)
+			}
+			docs = append(docs, seedDoc{Line: i + 1, ID: doc["_id"].(string), Doc: doc})
+		}
+		return docs
+	}
+	liveOf := func(docs ...string) []json.RawMessage {
+		var raw []json.RawMessage
+		for _, d := range docs {
+			raw = append(raw, json.RawMessage(d))
+		}
+		return raw
+	}
+
+	for _, c := range []struct {
+		name    string
+		seed    []seedDoc
+		live    []json.RawMessage
+		total   int
+		missing []string
+		differs []string
+	}{
+		{"what the platform and the app added is no difference",
+			seedOf(`{"_id":"a","n":1}`),
+			liveOf(`{"_id":"a","n":1,"_key":"7_9","collection":"menu","note":"x"}`), 1, nil, nil},
+		{"a number is not its string",
+			seedOf(`{"_id":"a","n":9}`), liveOf(`{"_id":"a","n":"9"}`), 1, nil, []string{"a"}},
+		{"a field the slice lacks",
+			seedOf(`{"_id":"a","n":9,"m":1}`), liveOf(`{"_id":"a","n":9}`), 1, nil, []string{"a"}},
+		{"a nested value that differs",
+			seedOf(`{"_id":"a","tags":["x","y"],"o":{"k":1}}`),
+			liveOf(`{"_id":"a","tags":["x","y"],"o":{"k":2}}`), 1, nil, []string{"a"}},
+		{"a nested value that agrees",
+			seedOf(`{"_id":"a","tags":["x","y"],"o":{"k":1}}`),
+			liveOf(`{"_id":"a","o":{"k":1},"tags":["x","y"]}`), 1, nil, nil},
+		{"the same number written another way",
+			seedOf(`{"_id":"a","n":1e3}`), liveOf(`{"_id":"a","n":1000.0}`), 1, nil, nil},
+		{"a field the seed names as _key is the platform's",
+			seedOf(`{"_id":"a","_key":"mine"}`), liveOf(`{"_id":"a","_key":"7_9"}`), 1, nil, nil},
+		{"a repeated _id is the last of them",
+			seedOf(`{"_id":"a","n":1}`, `{"_id":"b"}`, `{"_id":"a","n":2}`),
+			liveOf(`{"_id":"a","n":2}`), 2, []string{"b"}, nil},
+		{"an _id the collection holds twice differs, because apply leaves one",
+			seedOf(`{"_id":"a","n":1}`), liveOf(`{"_id":"a","n":1}`, `{"_id":"a","n":1}`), 1, nil, []string{"a"}},
+		{"a document with no string _id is nobody's",
+			seedOf(`{"_id":"a"}`), liveOf(`{"_id":7}`, `{"n":1}`, `[1]`), 1, []string{"a"}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			total, missing, differs := compareSeed(c.seed, c.live)
+			if total != c.total || !slices.Equal(missing, c.missing) || !slices.Equal(differs, c.differs) {
+				t.Errorf("compareSeed is %d documents, missing %v, differs %v, want %d, %v, %v",
+					total, missing, differs, c.total, c.missing, c.differs)
+			}
+		})
+	}
+}
+
+// A seed of one document says so in the singular.
+func TestSeedLine_SaysOneDocumentInTheSingular(t *testing.T) {
+	if mark, detail := seedLine(1, nil, nil); mark != " " || detail != "seed: 1 document, all present" {
+		t.Errorf("the line is %q with the mark %q", detail, mark)
+	}
+}
+
 // A collection whose seed documents are all there says so, and what the app
 // added to it, or the platform added to a document, is no difference. The
 // slice is then the file.
 func TestPlan_ASeededCollectionWithEverySeedDocumentSaysAllPresent(t *testing.T) {
-	t.Skip("#3037 removes this skip: the plan reads no seed")
 	store, _ := seedProject(t, menuDriftfile, map[string]string{"seeds/menu.jsonl": menuSeed})
 	menuLive(store)
 	// What the app wrote: a document of its own, and a field on a seeded one.
@@ -68,7 +140,6 @@ func TestPlan_ASeededCollectionWithEverySeedDocumentSaysAllPresent(t *testing.T)
 // ones and the ones whose seeded fields hold other values, in the order the
 // file has them.
 func TestPlan_SaysWhichSeedDocumentsApplyWouldWrite(t *testing.T) {
-	t.Skip("#3037 removes this skip: the plan reads no seed")
 	store, _ := seedProject(t, menuDriftfile, map[string]string{"seeds/menu.jsonl": menuSeed})
 	menuLive(store, "pizza", "pasta", "cake")
 	// pasta's price is not the seed's.
@@ -97,7 +168,6 @@ func TestPlan_SaysWhichSeedDocumentsApplyWouldWrite(t *testing.T) {
 // A collection the app has not written to yet is all missing, and the line is an
 // addition. A line names five _ids and counts the rest.
 func TestPlan_NamesAtMostFiveSeedIDs(t *testing.T) {
-	t.Skip("#3037 removes this skip: the plan reads no seed")
 	var seed strings.Builder
 	for i := 1; i <= 8; i++ {
 		fmt.Fprintf(&seed, "{\"_id\":\"d%d\",\"n\":%d}\n", i, i)
@@ -115,7 +185,6 @@ func TestPlan_NamesAtMostFiveSeedIDs(t *testing.T) {
 // A slice that does not exist yet holds nothing to read: the plan says apply
 // writes the whole seed, and asks the slice for no document.
 func TestPlan_ASliceThatDoesNotExistYetWritesTheWholeSeed(t *testing.T) {
-	t.Skip("#3037 removes this skip: the plan reads no seed")
 	store, rec := seedProject(t, menuDriftfile, map[string]string{"seeds/menu.jsonl": menuSeed})
 	store.live = ""
 
@@ -132,7 +201,6 @@ func TestPlan_ASliceThatDoesNotExistYetWritesTheWholeSeed(t *testing.T) {
 // A collection is read two pages deep and no further. One that is larger says
 // that it was not compared, and a plan that did not compare it is not a match.
 func TestPlan_ACollectionLargerThanTwoPagesIsNotComparedAndIsUnread(t *testing.T) {
-	t.Skip("#3037 removes this skip: the plan reads no seed")
 	store, _ := seedProject(t, menuDriftfile, map[string]string{"seeds/menu.jsonl": menuSeed})
 	menuLive(store)
 	for i := 0; i < 2500; i++ {
@@ -169,7 +237,6 @@ func TestPlan_ACollectionLargerThanTwoPagesIsNotComparedAndIsUnread(t *testing.T
 // 2000 documents are two full pages and no more: the collection is compared, and
 // a plan that reads two full pages does not take them for a larger collection.
 func TestPlan_ACollectionOfExactlyTwoPagesIsCompared(t *testing.T) {
-	t.Skip("#3037 removes this skip: the plan reads no seed")
 	store, _ := seedProject(t, menuDriftfile, map[string]string{"seeds/menu.jsonl": menuSeed})
 	menuLive(store)
 	for i := 0; i < 1995; i++ {
@@ -190,7 +257,6 @@ func TestPlan_ACollectionOfExactlyTwoPagesIsCompared(t *testing.T) {
 
 // A collection the slice would not list is unread, and is not called present.
 func TestPlan_ACollectionTheSliceWillNotListIsUnread(t *testing.T) {
-	t.Skip("#3037 removes this skip: the plan reads no seed")
 	store, _ := seedProject(t, menuDriftfile, map[string]string{"seeds/menu.jsonl": menuSeed})
 	menuLive(store)
 	store.failing["GET /ops/backbone/nosql/list"] = true
