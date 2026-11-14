@@ -9,8 +9,12 @@ package project
 // and nothing else restates the conclusion.
 
 import (
+	"io"
+	"os"
 	"slices"
 	"strings"
+
+	"github.com/ondrift/cloud/cli/common"
 )
 
 // VerdictState is what a plan concludes about a slice and its file.
@@ -56,6 +60,41 @@ type Verdict struct {
 	// the plan has no difference to show for it. A plan that reports no such fact
 	// leaves it empty.
 	Attention []string
+}
+
+// PlanVerdict is what `drift plan` concludes about the Driftfile in the working
+// directory and the slice it names, as the value a command in another package
+// reads, without the plan being printed.
+//
+// It reads what `drift plan` reads, by the same path: it sets the variables the
+// file reads in the process environment, refreshes the Driftfile schema, compiles
+// the file and reads the live slice. What it says on the way (the variables it
+// set, the environment it plans) goes to out, so a caller that hands it io.Discard
+// prints nothing of its own. The compiler's warnings about a queue no block
+// declares and the wait for a slice that is warming up go to stderr whatever out
+// is.
+//
+// It needs a session and the network. A caller without them gets the error and a
+// zero Verdict: a verdict is a conclusion about a slice that was read, and a
+// zero Verdict is none of its four states.
+//
+// The slice the reads name is the Driftfile's, whichever slice the caller has
+// active, and the caller's active slice is its own again when PlanVerdict returns.
+func PlanVerdict(o PlanOptions, out io.Writer) (Verdict, error) {
+	active, set := os.LookupEnv(common.SliceEnv)
+	defer func() {
+		if set {
+			_ = os.Setenv(common.SliceEnv, active)
+		} else {
+			_ = os.Unsetenv(common.SliceEnv)
+		}
+	}()
+
+	p, _, err := readPlan(o, out, out)
+	if err != nil {
+		return Verdict{}, err
+	}
+	return p.verdict(p.diff()), nil
 }
 
 // verdict is the conclusion of the plan whose diff is d.

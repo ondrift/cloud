@@ -2,12 +2,16 @@ package project
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ondrift/cloud/cli/common"
 )
 
 // A plan concludes one value: the slice would be created, differs, could not be
@@ -135,5 +139,164 @@ func TestVerdict_UnreadLinesNameEachFactOnceAndItsReasonOnOneLine(t *testing.T) 
 	}
 	if got := d.unreadLines(); !slices.Equal(got, want) {
 		t.Errorf("the unread lines are\n%q\nwant\n%q", got, want)
+	}
+}
+
+// A command in another package asks for the verdict by calling PlanVerdict. For
+// each of the four states it returns the value `drift plan` concludes from the
+// same slice, and that value is the state whose header the plan prints.
+func TestPlanVerdict_ReturnsWhatThePlanConcludesForEachState(t *testing.T) {
+	for _, c := range verdictCases() {
+		t.Run(c.name, func(t *testing.T) {
+			c.stub(t)
+			p := planStateIn(t, nil)
+			want := p.verdict(p.diff())
+
+			got, err := PlanVerdict(PlanOptions{NoEnvFile: true}, io.Discard)
+			if err != nil {
+				t.Fatalf("PlanVerdict: %v", err)
+			}
+			if got.State != c.verdict {
+				t.Errorf("PlanVerdict says a slice that is %q is %q", c.name, got.State)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("PlanVerdict returns %+v, and the plan concludes %+v from the same slice", got, want)
+			}
+
+			out, err := planOutput(t, "--no-env-file")
+			if err != nil {
+				t.Fatalf("plan: %v", err)
+			}
+			if header := headerOf(t, out); header != got.State.header() {
+				t.Errorf("PlanVerdict says the slice is %q, whose header is %q, and `drift plan` prints the header %q",
+					got.State, got.State.header(), header)
+			}
+		})
+	}
+}
+
+// PlanVerdict prints to the writer it is given and to nothing else: the
+// variables it sets and the environment it plans are said there, so a caller
+// that hands it io.Discard prints nothing.
+func TestPlanVerdict_PrintsOnlyToTheWriterItIsGiven(t *testing.T) {
+	planStub(t, "", `[]`)
+	inFixture(t, withEnvironments(""))
+	t.Setenv("EXTRA", "from the terminal")
+
+	var (
+		out strings.Builder
+		v   Verdict
+		err error
+	)
+	stdout := captureStdout(t, func() {
+		v, err = PlanVerdict(PlanOptions{
+			Environment: "staging",
+			Variables:   []string{"EXTRA=from the flag"},
+			NoEnvFile:   true,
+		}, &out)
+	})
+	if err != nil {
+		t.Fatalf("PlanVerdict: %v", err)
+	}
+	if stdout != "" {
+		t.Errorf("PlanVerdict printed %q on the process's stdout, and not to its writer", stdout)
+	}
+	for _, want := range []string{"environment staging → slice", "fxevm-testnode-staging", "already set in the environment", "EXTRA"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the writer PlanVerdict was given does not say %q:\n%s", want, out.String())
+		}
+	}
+	if v.State != VerdictCreate {
+		t.Errorf("staging has no slice yet, and PlanVerdict says %q, not %q", v.State, VerdictCreate)
+	}
+}
+
+// PlanVerdict reads the slice the Driftfile names, whichever slice the caller has
+// active, and leaves the caller's active slice as it found it: a command that
+// asks for the verdict and goes on to act on its own slice acts on that one.
+func TestPlanVerdict_ReadsTheFilesSliceAndLeavesTheActiveSliceAlone(t *testing.T) {
+	for _, c := range []struct {
+		name, active string
+		set          bool
+	}{
+		{name: "another slice is active", active: "the-callers-slice", set: true},
+		{name: "none is active"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var asked []string
+			stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/ops/slice/get" {
+					asked = append(asked, r.Header.Get("X-Slice"))
+				}
+				w.WriteHeader(http.StatusNotFound)
+			})
+			inFixture(t, nil)
+			if c.set {
+				t.Setenv(common.SliceEnv, c.active)
+			} else if err := os.Unsetenv(common.SliceEnv); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := PlanVerdict(PlanOptions{NoEnvFile: true}, io.Discard); err != nil {
+				t.Fatalf("PlanVerdict: %v", err)
+			}
+			if !slices.Equal(asked, []string{"fxevm-testnode"}) {
+				t.Errorf("the plan read the slices %q, want the Driftfile's slice fxevm-testnode once", asked)
+			}
+			got, set := os.LookupEnv(common.SliceEnv)
+			if set != c.set || got != c.active {
+				t.Errorf("%s was %q (set: %v) before PlanVerdict and is %q (set: %v) after it",
+					common.SliceEnv, c.active, c.set, got, set)
+			}
+		})
+	}
+}
+
+// The verdict is a conclusion about a slice that was read. A caller with no
+// session, or one that cannot reach the platform, gets the error that says so
+// and no verdict: not a match, and not a zero value that reads as one.
+func TestPlanVerdict_WithoutASessionOrTheNetworkIsTheErrorAndNoVerdict(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		// lose takes away what the plan needs, and want is what the error says.
+		lose func(t *testing.T)
+		want string
+	}{
+		{
+			name: "no session",
+			lose: func(t *testing.T) {
+				if err := common.ClearSession(); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv(common.TokenEnv, "")
+			},
+			want: "not logged in",
+		},
+		{
+			name: "no network",
+			lose: func(t *testing.T) {
+				previous := common.APIBaseURL
+				common.APIBaseURL = "http://127.0.0.1:1"
+				t.Cleanup(func() { common.APIBaseURL = previous })
+			},
+			want: "fetch slice",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rec := planStub(t, fxevmLive, `[]`)
+			c.lose(t)
+			inFixture(t, nil)
+
+			v, err := PlanVerdict(PlanOptions{NoEnvFile: true}, io.Discard)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("with %s PlanVerdict does not fail with an error that says %q: %v", c.name, c.want, err)
+			}
+			if !reflect.DeepEqual(v, Verdict{}) {
+				t.Errorf("with %s PlanVerdict returns the verdict %+v beside its error", c.name, v)
+			}
+			if n := rec.count("GET /ops/slice/get"); n != 0 {
+				t.Errorf("with %s the platform stub still answered %d reads of the slice", c.name, n)
+			}
+		})
 	}
 }
