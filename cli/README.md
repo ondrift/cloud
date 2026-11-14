@@ -49,6 +49,7 @@ block it can hold.
 |---------|-------------|
 | `drift account create` | Sign up — username, email, password, email OTP verification. |
 | `drift account login` | Authenticate; stores a session token in `~/.drift/session.json`. |
+| `drift account logout` | End the current account's session on this machine: removes its tokens from `~/.drift/session.json` and leaves your other accounts and the device id alone. |
 | `drift upgrade [version]` | Update the CLI via `go install` — latest by default, or pin a version (e.g. `drift upgrade v1.8.1`) to roll back. The dashboard nudges you when a newer release exists. |
 
 ### Slices

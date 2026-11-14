@@ -5,7 +5,7 @@ import (
 )
 
 // GetAccountCmd returns the "drift account" command group.
-// Subcommands: create, login, whoami, mfa, token, member, export,
+// Subcommands: create, login, logout, whoami, mfa, token, member, export,
 // reset-password, audit, delete.
 func GetAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -13,6 +13,7 @@ func GetAccountCmd() *cobra.Command {
 		Short: "Manage your Drift account",
 		Example: `  drift account create
   drift account login
+  drift account logout
   drift account whoami
   drift account list
   drift account use alice
@@ -28,6 +29,7 @@ func GetAccountCmd() *cobra.Command {
 	cmd.AddCommand(
 		GetCreateCmd(),
 		GetLoginCmd(),
+		GetLogoutCmd(),
 		GetWhoamiCmd(),
 		GetAccountListCmd(),
 		GetAccountUseCmd(),

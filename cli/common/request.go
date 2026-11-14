@@ -17,8 +17,8 @@ var httpClient = &http.Client{Timeout: 30 * time.Second}
 // NotLoggedInHints is what DRIFT-1011 tells a caller with no session to type.
 //
 // `drift account create`, NOT `signup`. The account group registers create,
-// login, whoami, list, use, mfa, token, member, export, reset-password, audit
-// and delete — there has never been a `signup`. So the one user who most needs
+// login, logout, whoami, list, use, mfa, token, member, export,
+// reset-password, audit and delete — there has never been a `signup`. So the one user who most needs
 // working advice, on the first failure a new install hits, was sent to
 // `unknown command "signup" for "drift account"`.
 //
