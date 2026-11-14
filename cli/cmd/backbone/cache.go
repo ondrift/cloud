@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/ondrift/cloud/cli/common"
 
@@ -68,29 +69,41 @@ func cacheGetCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key := args[0]
 
-			resp, err := common.DoRequest(
-				http.MethodGet,
-				common.APIBaseURL+"/ops/backbone/cache/get?key="+key,
-				nil,
-			)
-			if err != nil {
-				e := common.TransportError("get cache key", err)
-				return e
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode == http.StatusNotFound {
-				e := fmt.Errorf("Key %q not found.", key)
-				return e
-			}
-			b, err := common.CheckResponse(resp, "get cache key")
+			value, found, err := ReadCacheValue(key)
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(b))
+			if !found {
+				e := fmt.Errorf("Key %q not found.", key)
+				return e
+			}
+			fmt.Println(value)
 			return nil
 		},
 	}
+}
+
+// ReadCacheValue reads a cache entry: its value, and whether the slice holds it. A
+// key the slice does not hold is not an error. It is a read: nothing is written.
+func ReadCacheValue(key string) (value string, found bool, err error) {
+	resp, err := common.DoRequest(
+		http.MethodGet,
+		common.APIBaseURL+"/ops/backbone/cache/get?key="+url.QueryEscape(key),
+		nil,
+	)
+	if err != nil {
+		return "", false, common.TransportError("get cache key", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return "", false, nil
+	}
+	b, err := common.CheckResponse(resp, "get cache key")
+	if err != nil {
+		return "", false, err
+	}
+	return string(b), true, nil
 }
 
 func cacheDelCmd() *cobra.Command {

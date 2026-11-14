@@ -132,6 +132,53 @@ func fetchNoSQLPage(collection, field, value, after string, limit int) ([]json.R
 	return docs, nil
 }
 
+// readNoSQLPages reads a collection a page at a time, in key order, resuming
+// after a document key when given one, until it runs out of documents or has read
+// maxDocs of them (0 reads them all). more says the collection holds documents
+// beyond maxDocs: it is found by asking for one more document, which is not
+// returned, so a collection of exactly maxDocs is not taken for a larger one.
+func readNoSQLPages(collection, field, value, after string, maxDocs int) (docs []json.RawMessage, more bool, err error) {
+	cursor := after
+	for {
+		page := nosqlPageMax
+		if maxDocs > 0 {
+			page = min(page, maxDocs-len(docs))
+		}
+		got, err := fetchNoSQLPage(collection, field, value, cursor, page)
+		if err != nil {
+			return nil, false, err
+		}
+		docs = append(docs, got...)
+		if len(got) < page {
+			return docs, false, nil
+		}
+		next := storageKeyOf(got[len(got)-1])
+		if next == "" {
+			return nil, false, fmt.Errorf("couldn't page %q: a document came back with no _key", collection)
+		}
+		// A full page that does not move the cursor would loop forever. Say so
+		// rather than printing a short list as if it were the whole collection.
+		if next == cursor {
+			return nil, false, fmt.Errorf("couldn't page %q: the collection did not advance past _key %s", collection, cursor)
+		}
+		cursor = next
+		if maxDocs > 0 && len(docs) >= maxDocs {
+			beyond, err := fetchNoSQLPage(collection, field, value, cursor, 1)
+			if err != nil {
+				return nil, false, err
+			}
+			return docs, len(beyond) > 0, nil
+		}
+	}
+}
+
+// ReadNoSQLCollection reads up to maxDocs documents of a collection, in key order,
+// as many pages of at most 1000 as that takes, and says whether the collection
+// holds more. It is a read: nothing is written.
+func ReadNoSQLCollection(collection string, maxDocs int) (docs []json.RawMessage, more bool, err error) {
+	return readNoSQLPages(collection, "", "", "", maxDocs)
+}
+
 // storageKeyOf reads the `_key` a page's last document carries — the position the
 // next page resumes from.
 func storageKeyOf(doc json.RawMessage) string {
@@ -162,33 +209,17 @@ rather than merely the oldest.`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			page := limit
-			if all {
-				page = nosqlPageMax
-			}
-
 			var docs []json.RawMessage
-			cursor := after
-			for {
-				got, err := fetchNoSQLPage(collection, field, value, cursor, page)
-				if err != nil {
+			if all {
+				var err error
+				if docs, _, err = readNoSQLPages(collection, field, value, after, 0); err != nil {
 					return err
 				}
-				docs = append(docs, got...)
-				if !all || len(got) < page {
-					break
+			} else {
+				var err error
+				if docs, err = fetchNoSQLPage(collection, field, value, after, page); err != nil {
+					return err
 				}
-				next := storageKeyOf(got[len(got)-1])
-				if next == "" {
-					e := fmt.Errorf("couldn't page %q: a document came back with no _key", collection)
-					return e
-				}
-				// A full page that does not move the cursor would loop forever. Say so
-				// rather than printing a short list as if it were the whole collection.
-				if next == cursor {
-					e := fmt.Errorf("couldn't page %q: the collection did not advance past _key %s", collection, cursor)
-					return e
-				}
-				cursor = next
 			}
 
 			if len(docs) == 0 {

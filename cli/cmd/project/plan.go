@@ -4,7 +4,8 @@ package project
 //
 // The plan is a real diff. It compiles the file, reads the live slice (its
 // shape, the code each slot runs, its sites, secrets, keys, edge, domains and SQL
-// databases), asks the platform to price the compiled shape, and prints every
+// databases, the documents of each collection the file seeds and each cache entry
+// it declares), asks the platform to price the compiled shape, and prints every
 // difference with what it costs, whether the slice restarts, and what it removes.
 // A slice that does not exist yet is "would create", priced.
 //
@@ -84,10 +85,10 @@ with nothing to apply says it again on its last line:
   match    no line carries a mark and every fact was read: "Nothing to change."
 
 A fact the plan could not read, such as the slice's sites, secrets, keys, alerts,
-edge settings or deployed functions, or the build of the project, is unread. The
-plan never takes it for a match: when nothing else differs, its last line says so
-and lists each unread fact with why. A difference found is a difference even when
-another fact is unread.
+edge settings, deployed functions, seed documents or cache entries, or the build
+of the project, is unread. The plan never takes it for a match: when nothing else
+differs, its last line says so and lists each unread fact with why. A difference
+found is a difference even when another fact is unread.
 
 A value that is write-only by design (a secret, an API key, a gate password)
 is not unread: the platform never gives it back, so the plan cannot compare the
@@ -98,6 +99,21 @@ yet, not verified, or failed with the platform's reason. A domain that is not
 live, and a domain whose wildcard flag the slice holds the other way from the
 file (apply cannot change that: remove the domain, then apply), carry no mark and
 are no difference. They are on the "Needs you" line, with what to run.
+
+A collection the file seeds says which of its seed documents apply would write:
+"seed: 12 documents, all present", or
+"seed: 2 missing, 1 differs: apply writes 3 of 12" with the first five _ids. A
+document differs when a field the seed names holds another value in the slice;
+the _key the platform adds and a field the app wrote are no difference. Apply
+writes each seed document by its _id and drops nothing, so the documents the app
+added stay. The plan reads at most 2000 documents of a collection: a larger one
+says "seed not compared" and is unread, because a plan that read part of it
+cannot say that the rest agrees.
+
+A cache entry the file declares is "present", "differs: apply sets it again" or
+"missing", and its value is never printed. A SQL seed's line says that the seed
+runs only while the database holds no data, which the plan cannot read, and is
+no difference.
 
 A domain or SQL database the slice holds and the file does not name is listed
 under "Held, not in the file", with the command that removes it. Apply removes
@@ -258,6 +274,10 @@ type planState struct {
 	alertsErr   error
 	channels    []string // the channels the slice's clients may publish to
 	channelsErr error
+	// collections is the documents of each collection the file seeds, by name.
+	collections map[string]liveCollection
+	// cache is each cache entry the file declares, as the slice holds it.
+	cache map[string]liveCacheEntry
 
 	priceNew, priceOld       int
 	priceNewErr, priceOldErr error
@@ -390,6 +410,8 @@ func gatherPlan(c *Compiled, declinedFree bool) (*planState, error) {
 	p.domains, p.domainsErr = fetchLiveDomains()
 	p.sql, p.sqlErr = fetchLiveSQL()
 	p.channels, p.channelsErr = fetchClientChannels(m)
+	p.collections = fetchSeededCollections(m)
+	p.cache = fetchDeclaredCache(m)
 
 	newPrice()
 	if !liveIsFree(live) {
@@ -708,8 +730,15 @@ func (p *planState) diff() *planDiff {
 			default:
 				d.add(" ", addr, "unchanged")
 			}
+			switch {
+			case inFile && set.noun == "nosql":
+				p.diffNoSQLSeed(d, name, creating)
+			case inFile && set.noun == "sql":
+				p.diffSQLSeed(d, name)
+			}
 		}
 	}
+	p.diffCache(d, creating)
 
 	p.diffSites(d, creating)
 	p.diffSecrets(d, creating)

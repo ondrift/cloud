@@ -473,17 +473,9 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 
 	for key, e := range b.EntryMap("file", "cache") {
 		label := fmt.Sprintf("Cache: %s", key)
-		var value string
-		var hint string
-		if e.Str("file") != "" {
-			raw, err := os.ReadFile(m.ResolvePath(e.Str("file"))) // #nosec G304
-			if err != nil {
-				return fmt.Errorf("cache %q: read file %s: %w", key, e.Str("file"), err)
-			}
-			value = string(raw)
-			hint = fmt.Sprintf("(seeded from %s)", filepath.Base(e.Str("file")))
-		} else {
-			value = e.Str("value")
+		value, hint, err := declaredCacheValue(m, key, e)
+		if err != nil {
+			return err
 		}
 		if err := cacheSet(key, value, e.Int("ttl")); err != nil {
 			return fmt.Errorf("cache set %q failed: %w", key, err)
@@ -512,7 +504,7 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 		}
 		seeded := 0
 		if c.Str("seed") != "" {
-			n, err := nosqlSeedJSONL(collection, m.ResolvePath(c.Str("seed")), ttlSecs, unique)
+			n, err := nosqlSeedJSONL(collection, m.ResolvePath(c.Str("seed")))
 			if err != nil {
 				return fmt.Errorf("nosql seed %q failed: %w", collection, err)
 			}
@@ -671,6 +663,21 @@ func deployCanvas(dir, slug, route string) error {
 	return err
 }
 
+// declaredCacheValue is the value a cache entry declares: the contents of its
+// file when it names one, and its value otherwise. hint is what apply prints
+// beside an entry that comes from a file. Apply sets it and the plan compares
+// with it, so both read it here.
+func declaredCacheValue(m *Manifest, key string, e Node) (value, hint string, err error) {
+	if e.Str("file") == "" {
+		return e.Str("value"), "", nil
+	}
+	raw, err := os.ReadFile(m.ResolvePath(e.Str("file"))) // #nosec G304
+	if err != nil {
+		return "", "", fmt.Errorf("cache %q: read file %s: %w", key, e.Str("file"), err)
+	}
+	return string(raw), fmt.Sprintf("(seeded from %s)", filepath.Base(e.Str("file"))), nil
+}
+
 func cacheSet(key, value string, ttl int) error {
 	payload, _ := json.Marshal(map[string]any{"key": key, "value": value, "ttl": ttl})
 	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/backbone/cache/set", bytes.NewBuffer(payload))
@@ -757,53 +764,27 @@ func purgeLegacySentinels(collection string) error {
 	return nil
 }
 
-// nosqlSeedJSONL drops the named collection and re-seeds it from the
-// JSONL file. Drop-then-seed is the right semantic for seed data
-// because the JSONL IS the canonical state of that collection — there's
-// no notion of "merge with prior". Going forward the platform's write
-// path upserts by `_id`, so even within a single seed run repeated
-// `_id`s get the right end-state. Apps that want runtime-mutable data
-// should use a separate (non-seeded) collection.
+// nosqlSeedJSONL writes the documents of a collection's JSONL seed, each by its
+// `_id`, and returns how many it wrote. It touches nothing else in the
+// collection: a document the app added stays, and a seeded document the app
+// changed is written back as the seed has it. The platform's write replaces the
+// document that holds the same `_id`, so a seed written again leaves one copy
+// of each, and a document a seed once held and no longer holds stays too.
 //
-// `unique` has to be threaded through here as well as into the caller's own
-// nosqlInit, and forgetting it is a silent bug rather than a compile error in a
-// world where it defaulted: this path DROPS the collection first, which takes
-// the marker — and therefore the constraint — with it. A seeded collection
-// would lose its uniqueness on every single deploy, and only under seeding.
-func nosqlSeedJSONL(collection, path string, ttlSecs int64, unique []string) (int, error) {
-	data, err := os.ReadFile(path) // #nosec G304 — manifest-declared path, validated at parse
-	if err != nil {
-		return 0, fmt.Errorf("read seed: %w", err)
-	}
-	// Drop, then ensure, then seed — guarantees the JSONL fully describes
-	// the collection's state, with no carry-over from prior deploys.
-	dropURL := fmt.Sprintf("%s/ops/backbone/nosql/drop?collection=%s",
-		common.APIBaseURL, url.QueryEscape(collection))
-	dResp, err := common.DoJSONRequest(http.MethodPost, dropURL, nil)
-	if err != nil {
-		return 0, common.TransportError("drop seeded collection", err)
-	}
-	if dResp.StatusCode != http.StatusNoContent && dResp.StatusCode != http.StatusNotFound {
-		body, _ := io.ReadAll(dResp.Body)
-		dResp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
-		return 0, fmt.Errorf("drop seeded collection: HTTP %d: %s", dResp.StatusCode, string(body))
-	}
-	dResp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
-	if err := nosqlInit(collection, ttlSecs, unique); err != nil {
-		return 0, err
+// The collection is the caller's to ensure, with its ttl and unique list, which
+// ensure takes as authoritative: nothing here declares them again, because
+// nothing here removes the marker that holds them.
+//
+// The whole file is read before the first write, so a line that does not parse
+// stops the apply with nothing written, at its file and line.
+func nosqlSeedJSONL(collection, path string) (int, error) {
+	docs, errs := readNoSQLSeed(collection, path)
+	if len(errs) > 0 {
+		return 0, errs
 	}
 	count := 0
-	for _, ln := range strings.Split(string(data), "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
-		var doc map[string]any
-		if err := json.Unmarshal([]byte(ln), &doc); err != nil {
-			return count, fmt.Errorf("parse seed line %d: %w", count+1, err)
-		}
-		doc["collection"] = collection
-		body, _ := json.Marshal(doc)
+	for _, d := range docs {
+		body, _ := json.Marshal(d.Doc)
 		resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/backbone/write", bytes.NewBuffer(body))
 		if err != nil {
 			return count, common.TransportError("seed nosql doc", err)
@@ -816,6 +797,93 @@ func nosqlSeedJSONL(collection, path string, ttlSecs int64, unique []string) (in
 		count++
 	}
 	return count, nil
+}
+
+// seedDoc is one record of a NoSQL seed file: the _id the platform replaces a
+// document by, and the document as apply writes it.
+type seedDoc struct {
+	ID string
+	// Doc is what is sent to the slice: the record with the collection it is
+	// written to. The plan compares the slice's documents with this one, so what is
+	// compared is what is written.
+	Doc map[string]any
+}
+
+// maxSeedIDBytes is the longest _id the platform replaces a document by. A write
+// whose _id is longer, or is not a string, is added to the collection as a new
+// document, so a seed carrying one would add a copy at every apply.
+const maxSeedIDBytes = 255
+
+// readNoSQLSeed reads the JSONL seed file of a collection: the one reader of it,
+// for the parse of the Driftfile, for apply and for the plan. Every record that
+// cannot be loaded is reported with the file and the line it is on, and the
+// records it could read come back beside the errors.
+func readNoSQLSeed(collection, path string) ([]seedDoc, ParseErrors) {
+	data, err := os.ReadFile(path) // #nosec G304 -- manifest-declared path
+	if err != nil {
+		return nil, ParseErrors{fmt.Sprintf("nosql %q seed: read %s: %v", collection, path, err)}
+	}
+
+	var docs []seedDoc
+	var errs ParseErrors
+	for i, ln := range strings.Split(string(data), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		at := fmt.Sprintf("nosql %q seed: %s:%d:", collection, path, i+1)
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(ln), &doc); err != nil {
+			errs = append(errs, fmt.Sprintf("%s invalid JSON: %v", at, err))
+			continue
+		}
+		id, problem := seedID(doc)
+		if problem != "" {
+			errs = append(errs, at+" "+problem)
+			continue
+		}
+		doc["collection"] = collection
+		docs = append(docs, seedDoc{ID: id, Doc: doc})
+	}
+	return docs, errs
+}
+
+// seedID is the _id a record is replaced by, or what is wrong with it.
+func seedID(doc map[string]any) (id, problem string) {
+	raw, ok := doc["_id"]
+	switch v := raw.(type) {
+	case nil:
+		if !ok {
+			return "", "missing _id"
+		}
+		return "", "empty _id"
+	case string:
+		switch {
+		case v == "":
+			return "", "empty _id"
+		case len(v) > maxSeedIDBytes:
+			return "", fmt.Sprintf("_id is %d bytes: the platform replaces a document by its _id only up to %d bytes, "+
+				"and adds a copy at every apply beyond that", len(v), maxSeedIDBytes)
+		}
+		return v, ""
+	}
+	return "", fmt.Sprintf("_id must be a string, not %s: the platform replaces a document by a string _id, "+
+		"and adds a copy at every apply for any other", jsonKind(raw))
+}
+
+// jsonKind names what a decoded JSON value is, as a person says it.
+func jsonKind(v any) string {
+	switch v.(type) {
+	case bool:
+		return "a boolean"
+	case float64:
+		return "a number"
+	case []any:
+		return "an array"
+	case map[string]any:
+		return "an object"
+	}
+	return "that"
 }
 
 func queueInit(name string) error {
