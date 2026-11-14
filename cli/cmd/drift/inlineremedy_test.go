@@ -40,6 +40,33 @@ import (
 //     is listed with its reason in testdata/overlong-commands.txt. The list can
 //     only shrink: a line with no reason, a line no literal holds any more and a
 //     line whose command now fits in three words each fail.
+//
+// WHAT THIS CANNOT SEE, AND WHY. It sees a command that is written in a string
+// literal with a quote around it. Everything else is outside it:
+//
+//   - The flags `drift apply` asks for when nobody can be asked: --approve-price,
+//     --approve-remove, --use-free-slice and --allow-data-loss. A plan prints
+//     them after `drift apply`, and apply names the ones still missing, assembled
+//     at run time from the plan (approvalFlags in plan.go, settle in apply.go),
+//     so no literal holds `drift apply --approve-price 768`. They are the answers
+//     a plan asks for, not a remedy for a failure, and the three-word rule is
+//     about a remedy.
+//   - A command with no quote around it: on a line of its own, after a colon or in
+//     a column, as in "Re-deploy the latest artifact:  drift atomic redeploy %s".
+//     Nothing marks where it starts or ends.
+//   - A command built from parts at run time, or cut across two literals. Each
+//     literal is read alone, so "Run `drift " + verb + "`" is two halves.
+//   - A quote that is paired wrongly. quotedInvocations pairs each delimiter with
+//     the next one, and only an apostrophe between two letters is set aside, so a
+//     plural possessive ("users' data") still shifts the quotes after it in the
+//     same literal.
+//   - Text that is not a Go string literal: the files embedded with go:embed (the
+//     error registry, whose command field threeword_test.go holds but whose
+//     prose is not checked for the commands it names, and the README and wrapper
+//     templates), and anything the platform answers with.
+//   - The help of a command. Use, Short, Long and Example show a command the way
+//     it is typed, with its flags and its values, and are not read here;
+//     TestExamplesOnlyShowFlagsThatExist reads the flags an example shows.
 
 // inlineSpan is one quoted command found in a string literal.
 type inlineSpan struct {
@@ -63,9 +90,15 @@ func (s inlineSpan) where() string {
 var helpFields = map[string]bool{"Use": true, "Short": true, "Long": true, "Example": true}
 
 // inlineInvocations returns the quoted commands in the string literals of one Go
-// source file, in source order. Every literal is read except the one a help field
-// of a cobra command is given, in the literal that builds the command or by an
+// source file, in source order. Every literal is read except what is given to a
+// help field of a cobra command, in the literal that builds the command or by an
 // assignment after it. A comment is not a literal and is never read.
+//
+// THE RULE it serves: the three-word rule applies to a command a message tells
+// the user to type, and a command is counted as the registry counts it, every
+// token with `drift` itself the first. A `drift ...` quoted in a literal is read
+// as one the message tells the user to type, so whatever this returns is held to
+// the rule, and to naming a command that exists.
 //
 // The source is parsed, not searched, so what is read is the literal's value (an
 // escape is its character, a raw string is its text) with the line it starts on,
@@ -122,11 +155,11 @@ const contractionMask = '\uE000'
 // literal, by the extractor typeablehints_test.go holds.
 //
 // That extractor pairs each delimiter with the next one, so an apostrophe that is
-// not a quote shifts every pair after it and hides the command that follows:
-// "you're at your plan limit. Run 'drift slice resize'" has three apostrophes and
-// no span at the odd positions. An apostrophe between two letters is part of a
-// word (don't, Driftfile's), so it is set aside before the pairing and put back
-// in what comes out.
+// not a quote shifts every pair after it. In "you're at your plan limit. Run
+// 'drift slice resize'" the apostrophe of "you're" pairs with the opening quote of
+// the command, and the command is read as the text between two pairs and not as a
+// span. An apostrophe between two letters is part of a word (don't, Driftfile's),
+// so it is set aside before the pairing and put back in what comes out.
 func quotedCommands(value string) []string {
 	runes := []rune(value)
 	for i := 1; i+1 < len(runes); i++ {
@@ -899,7 +932,7 @@ func TestNoMessageNamesACommandOverThreeWordsUnlessListed(t *testing.T) {
 
 // Every line of the list has to be true now: it has a reason, a message still
 // writes the command exactly so, and the command is still more than three words.
-// A line that is not is deleted, which is the only way the list changes.
+// A line that stops being true fails, and is deleted.
 func TestTheAllowanceListOnlyShrinks(t *testing.T) {
 	if problems := checkAllowance(readAllowance(t), scanTheTree(t)); len(problems) > 0 {
 		t.Errorf("these lines of %s are wrong:\n  %s", allowanceFile, strings.Join(problems, "\n  "))
