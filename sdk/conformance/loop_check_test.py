@@ -32,9 +32,10 @@ CONTROLLER = os.path.join(HERE, "loop_check.py")
 FAKE = os.path.join(HERE, "loop_fake.py")
 EXPECTED = os.path.join(HERE, "expected.json")
 
-# Short, so a program that never answers costs the test a second and a half and
-# not the controller's default. A fake answers in milliseconds.
-REPLY_TIMEOUT = "1.5"
+# Short, so a program that never answers costs the test three seconds and not
+# the controller's default. A fake answers in milliseconds; the margin is for a
+# runner that is busy.
+REPLY_TIMEOUT = "3"
 
 ONE_SHOT_SPAWN = "loop_one_shot_spawn"
 EOF_ENDS_THE_PROCESS = "loop_eof_ends_the_process"
@@ -45,14 +46,6 @@ PREVIOUS_FOLLOWS = "loop_previous_secret_follows_the_same_rule"
 PRINTED_LINE = "loop_a_printed_line_reaches_stderr_only"
 RSS_BYTES = "loop_reply_carries_rss_bytes"
 FAILING_HANDLER = "loop_a_failing_handler_ends_the_process"
-
-
-# GUARD: the controller does not exist yet, so these tests are skipped until it
-# does. The commit that adds loop_check.py (task #3550) deletes this and the
-# decorators below.
-needs_controller = unittest.skipUnless(
-    os.path.exists(CONTROLLER), "loop_check.py is added by task #3550, which removes this guard"
-)
 
 
 def load_expected():
@@ -95,7 +88,6 @@ def failed_cases(output):
     return re.findall(r"^\s+\u2717 (\S+)", output, re.MULTILINE)
 
 
-@needs_controller
 class TheControllerPassesALoop(unittest.TestCase):
     def test_a_correct_loop_passes_every_case(self):
         status, output = run_controller("fake")
@@ -106,7 +98,6 @@ class TheControllerPassesALoop(unittest.TestCase):
         self.assertRegex(output, r"%d/%d cases pass" % (cases, cases), output)
 
 
-@needs_controller
 class TheControllerFailsABrokenLoop(unittest.TestCase):
     def assert_fails_exactly(self, defect, cases):
         status, output = run_controller("fake", defect=defect)
@@ -122,7 +113,7 @@ class TheControllerFailsABrokenLoop(unittest.TestCase):
     def test_k_envelopes_answered_by_one_reply_fail(self):
         everything_else = [c for c in loop_cases() if c != ONE_SHOT_SPAWN]
         output = self.assert_fails_exactly("one-reply", everything_else)
-        self.assertIn("envelope 2: no reply within", output)
+        self.assertIn("envelope 2: no reply line within", output)
 
     def test_a_final_envelope_without_a_newline_must_be_answered(self):
         self.assert_fails_exactly("needs-newline", [ONE_SHOT_SPAWN])
@@ -163,7 +154,6 @@ class TheControllerFailsABrokenLoop(unittest.TestCase):
         self.assert_fails_exactly("panic-answers", [FAILING_HANDLER])
 
 
-@needs_controller
 class ThePendingListCannotRot(unittest.TestCase):
     def test_a_pending_language_that_passes_fails_the_run_and_says_to_remove_it(self):
         status, output = run_controller("fake", pending=["fake"])
@@ -182,7 +172,6 @@ class ThePendingListCannotRot(unittest.TestCase):
         self.assertNotIn("PENDING", output)
 
 
-@needs_controller
 class TheListsAreHonest(unittest.TestCase):
     def test_a_language_that_does_not_serve_the_loop_is_not_run(self):
         status, output = run_controller("fake", not_applicable=["fake"], program=False)
