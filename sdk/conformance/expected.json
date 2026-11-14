@@ -203,7 +203,11 @@
       "list, so the list cannot rot. Every other language must pass."
     ],
 
-    "pending": {},
+    "pending": {
+      "rust": "drift_sdk::run reads one envelope, answers it and returns: it does not loop yet.",
+      "ruby": "Drift.run reads one envelope, answers it and returns: it does not loop yet.",
+      "php": "\\Drift\\run reads one envelope, answers it and returns: it does not loop yet."
+    },
 
     "not_applicable": {
       "python": "A deployed Python call reaches the slice's language server, which imports the function and calls its handler; the SDK's run entry is not on that path, so there is no loop of the SDK's own to hold to these cases.",

@@ -331,6 +331,9 @@ jobs:
   # it got. --strict makes a missing toolchain a FAILURE rather than a skip: a
   # skipped language is a language nobody tested, and "ok" from a suite that ran
   # nothing is the exact defect this harness exists to find.
+  #
+  # The same run holds every SDK that serves many calls from one process to the
+  # loop a slice's warm worker speaks (the "$loop" cases in expected.json).
   conformance:
     name: SDK conformance — six languages, one set of assertions
     needs: changes
@@ -388,6 +391,23 @@ jobs:
             echo "  like a test failure. It is a runner-image problem. Fix it here."
             exit 1
           fi
+      # THE LOOP CONTROLLER, HELD TO ITS OWN WORD. The step after this one runs
+      # loop_check.py against each language's program; a controller that cannot
+      # fail would make every language look like it loops. This runs it against a
+      # fake program that is a correct loop and against one that breaks each rule
+      # in turn, and asserts it fails each on the case that states the rule.
+      - name: loop controller passes a loop and fails every way a loop can break
+        working-directory: sdk
+        run: python3 conformance/loop_check_test.py
+
+      # run.sh runs the loop cases (expected.json, "$loop") after each language's
+      # driver: a program serving one handler through the SDK's own run entry, fed
+      # envelopes over a pipe as a slice's warm worker feeds it. The section says
+      # which languages are pending; a pending language that PASSES fails this
+      # step with "<language> is on the pending list", and the entry comes off the
+      # list in expected.json. A failing loop for a language that is not pending
+      # is a loop that broke: the case, what it wanted, what it got and why it
+      # matters are printed under it.
       - name: conformance
         working-directory: sdk
         run: |

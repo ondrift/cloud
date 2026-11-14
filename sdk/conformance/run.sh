@@ -35,11 +35,22 @@
 #
 # CI installs all six, so a skip there is a workflow bug rather than a local
 # convenience. --strict turns any skip into a failure, and CI passes it.
+#
+# ── THE LOOP CASES, FOR EVERY SDK THAT SERVES MANY CALLS ────────────────────
+#
+# After a language's driver, loop_check.py runs a small program that serves one
+# handler through the SDK's own run entry, as a slice's warm worker talks to it.
+# expected.json, under "$loop", owns the cases and which languages are not
+# applicable, pending (a failing case is reported, a PASSING language fails the
+# run until it is taken off the list) or held to every case. Not run with
+# --slice, which is about the queue cases and nothing else.
 # =============================================================================
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SDK="$(cd "$HERE/.." && pwd)"
+LOOP_DIR="$(mktemp -d)"
+trap 'rm -rf "$LOOP_DIR"' EXIT
 
 strict=0
 slice=""
@@ -92,11 +103,53 @@ drive() {
 	esac
 }
 
+# loop_program <language>: build what the loop cases run, and set LOOP_PROGRAM
+# to the command that starts it. Empty for a language that is not applicable:
+# loop_check.py says so itself. Fails when the program does not build.
+loop_program() {
+	LOOP_PROGRAM=()
+	case "$1" in
+	go)
+		(cd "$SDK" && go build -o "$LOOP_DIR/go-loop" ./conformance/go/loop) || return 1
+		LOOP_PROGRAM=("$LOOP_DIR/go-loop")
+		;;
+	ruby) LOOP_PROGRAM=(ruby "$HERE/loop_ruby.rb") ;;
+	php) LOOP_PROGRAM=(php "$HERE/loop_php.php") ;;
+	rust)
+		# The binary itself, found from cargo's own report, so the process the
+		# cases start is the program and not a `cargo run` in front of it.
+		local exe
+		exe="$(cd "$HERE/rust" && cargo build --quiet --bin conformance-rust-loop --message-format=json |
+			python3 -c '
+import json, sys
+for line in sys.stdin:
+    try:
+        message = json.loads(line)
+    except ValueError:
+        continue
+    if message.get("reason") == "compiler-artifact" and message.get("executable") and message["target"]["name"] == "conformance-rust-loop":
+        print(message["executable"])
+')" || return 1
+		[ -n "$exe" ] || return 1
+		LOOP_PROGRAM=("$exe")
+		;;
+	esac
+}
+
+# loop_cases <language>: the loop cases against that language's program.
+loop_cases() {
+	if ! loop_program "$1"; then
+		echo "  $1 loop: the program the loop cases run did not build"
+		return 1
+	fi
+	python3 "$HERE/loop_check.py" "$1" -- ${LOOP_PROGRAM[@]+"${LOOP_PROGRAM[@]}"}
+}
+
 echo
 if [ -n "$slice" ]; then
 	echo "── SDK conformance: the queue cases, against the slice at $slice ──"
 else
-	echo "── SDK conformance: the same cases, six languages ──"
+	echo "── SDK conformance: the same cases, six languages, and the loop cases ──"
 fi
 echo
 
@@ -108,7 +161,12 @@ for lang in "${langs[@]}"; do
 		skipped_names="$skipped_names $lang"
 		continue
 	fi
-	if drive "$lang" 2>/dev/null | python3 "$HERE/check.py" "$lang" "${only[@]}"; then
+	ok=1
+	drive "$lang" 2>/dev/null | python3 "$HERE/check.py" "$lang" "${only[@]}" || ok=0
+	if [ -z "$slice" ]; then
+		loop_cases "$lang" || ok=0
+	fi
+	if [ "$ok" -eq 1 ]; then
 		pass=$((pass + 1))
 	else
 		fail=$((fail + 1))
