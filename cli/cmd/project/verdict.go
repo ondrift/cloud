@@ -62,10 +62,11 @@ type Verdict struct {
 	// and why.
 	Unread []string
 	// Attention is what a person has to do before the slice is the file, though
-	// the plan has no difference to show for it: a domain that is not live yet.
-	// One entry for each, "address  what to do", as the plan prints it. It does
-	// not move the state: a slice with nothing to apply is a match whatever is
-	// left to a person. A plan that reports no such fact leaves it empty.
+	// the plan has no difference to show for it: a domain that is not live yet,
+	// and a domain whose wildcard flag the slice holds the other way from the
+	// file. One entry for each, "address  what to do", as the plan prints it. It
+	// does not move the state: a slice with nothing to apply is a match whatever
+	// is left to a person. A plan that reports no such fact leaves it empty.
 	Attention []string
 }
 

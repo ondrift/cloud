@@ -213,7 +213,6 @@ func TestPlan_ADomainInAnUnknownStatusIsNotKnownToBeLive(t *testing.T) {
 // cannot change: the platform's add is idempotent and has no update. It is no
 // difference to show, so it is a thing a person has to do.
 func TestPlan_ADomainWhoseWildcardDiffersNamesHowToChangeIt(t *testing.T) {
-	t.Skip("until #3030 compares the wildcard flag")
 	stubSliceHolding(t, `[
  {"host":"shop.example.com","status":"live"},
  {"host":"plain.example.com","status":"live","wildcard":true},

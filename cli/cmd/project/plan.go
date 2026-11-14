@@ -1004,8 +1004,10 @@ func (p *planState) diffEdge(d *planDiff, creating bool) {
 // diffDomains says, for each host the file declares, where it stands on the
 // slice. A host the slice lacks is added. A host it holds is not changed by
 // apply, whatever it says: apply attaches what is missing and the platform's add
-// has no update. So the line carries no mark, and a host that is not live yet is
-// recorded as attention.
+// has no update. So the line carries no mark, and what is left for a person is
+// recorded as attention: a host that is not live yet, and a host whose wildcard
+// flag the slice holds the other way from the file, which only removing the host
+// and applying again changes.
 func (p *planState) diffDomains(d *planDiff, creating bool) {
 	declared := declaredDomains(p.c.Manifest)
 	if len(declared) == 0 {
@@ -1032,7 +1034,18 @@ func (p *planState) diffDomains(d *planDiff, creating bool) {
 		} else {
 			d.add(" ", address, "%s", state)
 		}
+		if l.Wildcard != w.Wildcard {
+			d.attend(address, "wildcard is %s in the file and %s on the slice: apply leaves it; drift slice domain remove %s, then apply",
+				onOff(w.Wildcard), onOff(l.Wildcard), w.Host)
+		}
 	}
+}
+
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
 }
 
 // domainState is what the plan says of a domain the slice holds, and whether a
