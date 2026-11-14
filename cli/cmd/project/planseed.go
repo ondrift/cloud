@@ -2,6 +2,8 @@ package project
 
 // planseed.go — what `drift plan` says of the data a file seeds.
 //
+// # A NoSQL seed
+//
 // Size is the one thing the plan compares for a collection, and the seed is the
 // other: apply writes every seed document by its _id, so the plan says which of
 // them are missing from the slice or hold other values there, which is the
@@ -12,11 +14,23 @@ package project
 // at most seedCompareMax documents of a collection. A collection that holds more
 // is not compared and is unread: a plan that read part of it cannot say that the
 // rest agrees.
+//
+// # A cache entry
+//
+// Apply sets every declared entry, so the plan says whether the slice holds the
+// value apply would set: present, differs or missing. The value is read through
+// backbone.ReadCacheValue, a GET, compared and never printed.
+//
+// # A SQL seed
+//
+// The slice runs it only while the database holds no data, and nothing reads
+// that. The plan says so and compares nothing.
 
 import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/ondrift/cloud/cli/cmd/backbone"
@@ -97,6 +111,85 @@ func (p *planState) diffNoSQLSeed(d *planDiff, name string, creating bool) {
 	total, missing, differs := compareSeed(docs, live.docs)
 	mark, detail := seedLine(total, missing, differs)
 	d.add(mark, addr, "%s", detail)
+}
+
+// sqlSeedLine is what the plan says of a SQL database's seed. The slice decides
+// whether it runs, by whether the database holds data, and no route says that.
+const sqlSeedLine = "seed: runs only while the database holds no data; the plan cannot read whether it does"
+
+// diffSQLSeed adds the line that says what a SQL database's seed does, beside the
+// database's size line. It is no difference and no unread fact: apply sends the
+// seed on every apply and the slice runs it or not.
+func (p *planState) diffSQLSeed(d *planDiff, name string) {
+	for _, e := range p.c.Manifest.Slice().Entries("name", "backbone", "sql") {
+		if strings.EqualFold(strings.TrimSpace(e.Str("name")), name) && e.Str("seed") != "" {
+			d.add(" ", "sql "+name, "%s", sqlSeedLine)
+			return
+		}
+	}
+}
+
+// liveCacheEntry is what the plan read of a declared cache entry.
+type liveCacheEntry struct {
+	value string
+	found bool
+	err   error
+}
+
+// fetchDeclaredCache reads each cache entry the file declares.
+func fetchDeclaredCache(m *Manifest) map[string]liveCacheEntry {
+	out := map[string]liveCacheEntry{}
+	for key := range m.Slice().EntryMap("file", "backbone", "cache") {
+		value, found, err := backbone.ReadCacheValue(key)
+		out[key] = liveCacheEntry{value: value, found: found, err: err}
+	}
+	return out
+}
+
+// diffCache adds one line for each cache entry the file declares: present, differs
+// or missing. Apply sets every declared entry on every apply, so the line says
+// whether the slice holds what apply would set. The value is never printed.
+func (p *planState) diffCache(d *planDiff, creating bool) {
+	entries := p.c.Manifest.Slice().EntryMap("file", "backbone", "cache")
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		addr := "cache " + key
+		want, _, err := declaredCacheValue(p.c.Manifest, key, entries[key])
+		if err != nil {
+			d.notes = append(d.notes, err.Error())
+			continue
+		}
+		live := p.cache[key]
+		switch {
+		case creating || (live.err == nil && !live.found):
+			d.add("+", addr, "missing")
+		case live.err != nil:
+			d.unread(addr, "cache entry", live.err)
+		case live.value != asStored(want):
+			d.add("~", addr, "differs: apply sets it again")
+		default:
+			d.add(" ", addr, "present")
+		}
+	}
+}
+
+// asStored is a cache value as the slice holds it once apply has set it: sent as
+// a JSON string, which replaces a byte that is not UTF-8 with U+FFFD.
+func asStored(value string) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var stored string
+	if json.Unmarshal(raw, &stored) != nil {
+		return value
+	}
+	return stored
 }
 
 // compareSeed says, for each distinct _id the seed writes, whether the collection

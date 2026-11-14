@@ -473,17 +473,9 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 
 	for key, e := range b.EntryMap("file", "cache") {
 		label := fmt.Sprintf("Cache: %s", key)
-		var value string
-		var hint string
-		if e.Str("file") != "" {
-			raw, err := os.ReadFile(m.ResolvePath(e.Str("file"))) // #nosec G304
-			if err != nil {
-				return fmt.Errorf("cache %q: read file %s: %w", key, e.Str("file"), err)
-			}
-			value = string(raw)
-			hint = fmt.Sprintf("(seeded from %s)", filepath.Base(e.Str("file")))
-		} else {
-			value = e.Str("value")
+		value, hint, err := declaredCacheValue(m, key, e)
+		if err != nil {
+			return err
 		}
 		if err := cacheSet(key, value, e.Int("ttl")); err != nil {
 			return fmt.Errorf("cache set %q failed: %w", key, err)
@@ -669,6 +661,21 @@ func deployCanvas(dir, slug, route string) error {
 	defer resp.Body.Close()
 	_, err = common.CheckResponse(resp, "deploy canvas site")
 	return err
+}
+
+// declaredCacheValue is the value a cache entry declares: the contents of its
+// file when it names one, and its value otherwise. hint is what apply prints
+// beside an entry that comes from a file. Apply sets it and the plan compares
+// with it, so both read it here.
+func declaredCacheValue(m *Manifest, key string, e Node) (value, hint string, err error) {
+	if e.Str("file") == "" {
+		return e.Str("value"), "", nil
+	}
+	raw, err := os.ReadFile(m.ResolvePath(e.Str("file"))) // #nosec G304
+	if err != nil {
+		return "", "", fmt.Errorf("cache %q: read file %s: %w", key, e.Str("file"), err)
+	}
+	return string(raw), fmt.Sprintf("(seeded from %s)", filepath.Base(e.Str("file"))), nil
 }
 
 func cacheSet(key, value string, ttl int) error {

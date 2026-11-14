@@ -260,6 +260,8 @@ type planState struct {
 	channelsErr error
 	// collections is the documents of each collection the file seeds, by name.
 	collections map[string]liveCollection
+	// cache is each cache entry the file declares, as the slice holds it.
+	cache map[string]liveCacheEntry
 
 	priceNew, priceOld       int
 	priceNewErr, priceOldErr error
@@ -393,6 +395,7 @@ func gatherPlan(c *Compiled, declinedFree bool) (*planState, error) {
 	p.sql, p.sqlErr = fetchLiveSQL()
 	p.channels, p.channelsErr = fetchClientChannels(m)
 	p.collections = fetchSeededCollections(m)
+	p.cache = fetchDeclaredCache(m)
 
 	newPrice()
 	if !liveIsFree(live) {
@@ -711,11 +714,15 @@ func (p *planState) diff() *planDiff {
 			default:
 				d.add(" ", addr, "unchanged")
 			}
-			if inFile && set.noun == "nosql" {
+			switch {
+			case inFile && set.noun == "nosql":
 				p.diffNoSQLSeed(d, name, creating)
+			case inFile && set.noun == "sql":
+				p.diffSQLSeed(d, name)
 			}
 		}
 	}
+	p.diffCache(d, creating)
 
 	p.diffSites(d, creating)
 	p.diffSecrets(d, creating)

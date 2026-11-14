@@ -276,7 +276,6 @@ func TestPlan_ACollectionTheSliceWillNotListIsUnread(t *testing.T) {
 // A plan reads and asks for a price, and nothing else, with a seed and a cache
 // entry in the file; and it did read them.
 func TestPlan_WithASeedAndACacheEntryIssuesNoWriteButThePriceQuote(t *testing.T) {
-	t.Skip("#3038 removes this skip: the plan reads no seed and no cache entry")
 	store, rec := seedProject(t, `slice "demo" {}
 
 backbone {
@@ -318,7 +317,6 @@ backbone {
 // A declared cache entry is present, differs or is missing, and its value, the
 // declared one and the live one, is never printed.
 func TestPlan_ACacheEntryIsPresentDiffersOrMissing(t *testing.T) {
-	t.Skip("#3038 removes this skip: the plan reads no cache entry")
 	store, _ := seedProject(t, cacheDriftfile, map[string]string{"data/motd.txt": "motd-from-the-file\n"})
 	store.cache["greeting"] = "hello-declared"
 	store.cache["motd"] = "motd-live-old"
@@ -344,10 +342,49 @@ func TestPlan_ACacheEntryIsPresentDiffersOrMissing(t *testing.T) {
 	}
 }
 
+// What is compared is what is written: a slice that apply has just filled, from a
+// file that seeds a collection and declares cache entries, one of them a file that
+// is not UTF-8, is the file, and the plan says so.
+func TestPlan_ASliceApplyHasJustFilledIsTheFile(t *testing.T) {
+	store, _ := seedProject(t, `slice "demo" {}
+
+backbone {
+  nosql "menu" {
+    size = "10MiB"
+    seed = "seeds/menu.jsonl"
+  }
+  cache "greeting" { value = "hello" }
+  cache "blob" { file = "data/blob.bin" }
+}
+`, map[string]string{"seeds/menu.jsonl": menuSeed, "data/blob.bin": "\xff\xfe binary \x00 tail\n"})
+
+	if _, err := applyOutput(t); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if store.count("menu") != 5 || len(store.cache) != 2 {
+		t.Fatalf("the apply left %d documents and %d cache entries, want 5 and 2", store.count("menu"), len(store.cache))
+	}
+
+	out, err := planOutput(t, "--no-env-file", "--exit-code")
+	if err != nil {
+		t.Errorf("a plan of a slice apply just filled exits %d (%v):\n%s", exitStatusOf(err), err, out)
+	}
+	if !strings.Contains(out, closingMatch) {
+		t.Errorf("the plan of a slice apply just filled does not end on %q:\n%s", closingMatch, out)
+	}
+	if got := seedLineOf(t, out, "nosql menu"); got.detail != "seed: 5 documents, all present" {
+		t.Errorf("the seed line is %q, want all present", got.detail)
+	}
+	for _, key := range []string{"greeting", "blob"} {
+		if lines := planLinesFor(out, "cache "+key); len(lines) != 1 || lines[0].detail != "present" {
+			t.Errorf("the plan says %v for cache %s, want present:\n%s", lines, key, out)
+		}
+	}
+}
+
 // A cache entry the slice would not answer for is unread, and is not called
 // present.
 func TestPlan_ACacheEntryTheSliceWillNotAnswerForIsUnread(t *testing.T) {
-	t.Skip("#3038 removes this skip: the plan reads no cache entry")
 	store, _ := seedProject(t, cacheDriftfile, map[string]string{"data/motd.txt": "motd\n"})
 	store.cache["greeting"] = "hello-declared"
 	store.cache["motd"] = "motd\n"
@@ -361,7 +398,7 @@ func TestPlan_ACacheEntryTheSliceWillNotAnswerForIsUnread(t *testing.T) {
 	if strings.Contains(out, "present") || strings.Contains(out, closingMatch) {
 		t.Errorf("a cache entry the plan could not read is called present or a match:\n%s", out)
 	}
-	if !strings.Contains(out, "cache greeting: cache entry could not be read") {
+	if !strings.Contains(out, "cache greeting, cache motd, cache token: cache entry could not be read") {
 		t.Errorf("the plan does not say it could not read the cache entry:\n%s", out)
 	}
 }
@@ -370,7 +407,6 @@ func TestPlan_ACacheEntryTheSliceWillNotAnswerForIsUnread(t *testing.T) {
 // the plan cannot read whether it does, and says what the seed does instead of
 // calling it present. It is no difference and no unread fact.
 func TestPlan_ASQLSeedSaysItRunsOnlyWhileTheDatabaseHoldsNoData(t *testing.T) {
-	t.Skip("#3038 removes this skip: the plan says nothing of a SQL seed")
 	seedProject(t, `slice "demo" {}
 
 backbone {
