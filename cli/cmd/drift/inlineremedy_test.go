@@ -1,11 +1,19 @@
 package main
 
 import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/ondrift/cloud/cli/common"
 
@@ -41,27 +49,170 @@ type inlineSpan struct {
 	Literal string // the literal's whole value: the sentence the command sits in
 }
 
-// inlineInvocations returns the quoted commands in the string literals of one Go
-// source file, in source order.
-func inlineInvocations(src string) ([]inlineSpan, error) {
-	return nil, nil
+// where names the literal's place the way a compiler names a position.
+func (s inlineSpan) where() string {
+	if s.File == "" {
+		return "line " + strconv.Itoa(s.Line)
+	}
+	return s.File + ":" + strconv.Itoa(s.Line)
 }
 
-// wordCount is how many words a command is.
+// helpFields are the fields of a cobra command that hold its help. Help shows a
+// command the way it is typed, with its flags and its values, so it is not a
+// message and is not read.
+var helpFields = map[string]bool{"Use": true, "Short": true, "Long": true, "Example": true}
+
+// inlineInvocations returns the quoted commands in the string literals of one Go
+// source file, in source order. Every literal is read except the one a help field
+// of a cobra command is given, in the literal that builds the command or by an
+// assignment after it. A comment is not a literal and is never read.
+//
+// The source is parsed, not searched, so what is read is the literal's value (an
+// escape is its character, a raw string is its text) with the line it starts on,
+// and source that does not parse is an error and not an empty answer.
+func inlineInvocations(src string) ([]inlineSpan, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "", src, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+
+	var spans []inlineSpan
+	help := map[ast.Node]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		if n == nil || help[n] {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.KeyValueExpr: // Short: "...", in the literal that builds the command
+			if id, ok := x.Key.(*ast.Ident); ok && helpFields[id.Name] {
+				help[x.Value] = true
+			}
+		case *ast.AssignStmt: // cmd.Short = "...", once the command is built
+			if len(x.Lhs) == len(x.Rhs) {
+				for i, lhs := range x.Lhs {
+					if sel, ok := lhs.(*ast.SelectorExpr); ok && helpFields[sel.Sel.Name] {
+						help[x.Rhs[i]] = true
+					}
+				}
+			}
+		case *ast.BasicLit:
+			if x.Kind != token.STRING {
+				break
+			}
+			value, _ := strconv.Unquote(x.Value) // the parser accepted the literal, so it unquotes
+			for _, command := range quotedCommands(value) {
+				spans = append(spans, inlineSpan{
+					Line:    fset.Position(x.Pos()).Line,
+					Command: command,
+					Literal: value,
+				})
+			}
+		}
+		return true
+	})
+	return spans, nil
+}
+
+// contractionMask stands in for an apostrophe inside a word while the quotes of a
+// literal are paired. It is a private-use character, which no message holds.
+const contractionMask = '\uE000'
+
+// quotedCommands returns the quoted `drift ...` commands in the value of one
+// literal, by the extractor typeablehints_test.go holds.
+//
+// That extractor pairs each delimiter with the next one, so an apostrophe that is
+// not a quote shifts every pair after it and hides the command that follows:
+// "you're at your plan limit. Run 'drift slice resize'" has three apostrophes and
+// no span at the odd positions. An apostrophe between two letters is part of a
+// word (don't, Driftfile's), so it is set aside before the pairing and put back
+// in what comes out.
+func quotedCommands(value string) []string {
+	runes := []rune(value)
+	for i := 1; i+1 < len(runes); i++ {
+		if runes[i] == '\'' && unicode.IsLetter(runes[i-1]) && unicode.IsLetter(runes[i+1]) {
+			runes[i] = contractionMask
+		}
+	}
+	var commands []string
+	for _, command := range quotedInvocations(string(runes)) {
+		commands = append(commands, strings.ReplaceAll(command, string(contractionMask), "'"))
+	}
+	return commands
+}
+
+// placeholder is a word that stands for what the user supplies: a printf verb
+// (%s, %d, %q), <name> or [name].
+var placeholder = regexp.MustCompile(`^(%[-+#0-9.*]*[a-zA-Z]|<[^<>]+>|\[[^\[\]]+\])$`)
+
+// wordCount is how many words a command is: every token, as the registry counts
+// them, except a placeholder. `drift slice resize %s` is three words and `drift
+// slice resize %s --dump` is four. Only a word that is wholly a placeholder is
+// left out: --email=%s is one word, a flag with its value, and KEY=VALUE is one,
+// an example written out.
 func wordCount(invocation string) int {
-	return 0
+	n := 0
+	for _, word := range strings.Fields(invocation) {
+		if !placeholder.MatchString(word) {
+			n++
+		}
+	}
+	return n
 }
 
 // inlineSpansOfTree returns the quoted commands in every non-test Go file under
-// cmd/ and common/ of the module rooted at root.
+// cmd/ and common/ of the module rooted at root, in path order. A directory named
+// testdata holds fixtures the go tool does not build, so it is not read.
 func inlineSpansOfTree(root string) ([]inlineSpan, error) {
-	return nil, nil
+	var spans []inlineSpan
+	for _, dir := range []string{"cmd", "common"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if d.Name() == "testdata" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			src, err := os.ReadFile(path) // #nosec G304 -- this repo's own source
+			if err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(root, path)
+			rel = filepath.ToSlash(rel)
+			found, err := inlineInvocations(string(src))
+			if err != nil {
+				return fmt.Errorf("%s: %w", rel, err)
+			}
+			for _, s := range found {
+				s.File = rel
+				spans = append(spans, s)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return spans, nil
 }
 
 // unrunnableCommands returns one problem for each span whose command cannot run,
 // naming the place and the literal it is in.
 func unrunnableCommands(root *cobra.Command, spans []inlineSpan) []string {
-	return nil
+	var problems []string
+	for _, s := range spans {
+		if why := unrunnable(root, s.Command); why != "" {
+			problems = append(problems, fmt.Sprintf("%s tells the user to run %q, which %s:\n    %q",
+				s.where(), s.Command, why, s.Literal))
+		}
+	}
+	return problems
 }
 
 // inlineFixture is a Go source file holding body, so that a case is only the few
@@ -80,7 +231,6 @@ func inlineCommands(spans []inlineSpan) []string {
 }
 
 func TestInlineInvocations_FindsAQuotedCommandInAnyStringLiteral(t *testing.T) {
-	t.Skip("removed by #2557")
 	for _, c := range []struct {
 		name string
 		body string
@@ -154,7 +304,6 @@ func TestInlineInvocations_FindsAQuotedCommandInAnyStringLiteral(t *testing.T) {
 // pair after it and hides the command. A message is written in plain English, and
 // plain English has contractions.
 func TestInlineInvocations_AnApostropheInsideAWordIsNotAQuote(t *testing.T) {
-	t.Skip("removed by #2557")
 	for _, c := range []struct {
 		name string
 		body string
@@ -208,7 +357,6 @@ func TestInlineInvocations_AnApostropheInsideAWordIsNotAQuote(t *testing.T) {
 // that IS read, so a source that failed to parse, or a scan that read nothing,
 // cannot pass for the right reason.
 func TestInlineInvocations_DoesNotReadTheHelpOfACommand(t *testing.T) {
-	t.Skip("removed by #2557")
 	const beside = "\nvar m = \"Run `drift apply` next.\""
 
 	for _, field := range []string{"Use", "Short", "Long", "Example"} {
@@ -269,7 +417,6 @@ func TestInlineInvocations_DoesNotReadTheHelpOfACommand(t *testing.T) {
 
 // A comment is not printed, so a command named in one is not a message.
 func TestInlineInvocations_DoesNotReadAComment(t *testing.T) {
-	t.Skip("removed by #2557")
 	for _, c := range []struct {
 		name string
 		body string
@@ -294,7 +441,6 @@ func TestInlineInvocations_DoesNotReadAComment(t *testing.T) {
 // Source the parser rejects is an error, not an empty answer: an empty answer is
 // what every "is not read" case above would pass on.
 func TestInlineInvocations_RefusesSourceItCannotParse(t *testing.T) {
-	t.Skip("removed by #2557")
 	for name, src := range map[string]string{
 		"an unterminated literal": "package fixture\n\nvar m = \"Run `drift plan`.\n",
 		"no package clause":       "var m = \"Run `drift plan`.\"\n",
@@ -306,7 +452,6 @@ func TestInlineInvocations_RefusesSourceItCannotParse(t *testing.T) {
 }
 
 func TestInlineInvocations_NamesTheLineAndTheWholeLiteral(t *testing.T) {
-	t.Skip("removed by #2557")
 	src := inlineFixture("var a = \"nothing here\"\n\nvar b = \"Run `drift plan`, then `drift apply`.\"")
 	spans, err := inlineInvocations(src)
 	if err != nil {
@@ -328,7 +473,6 @@ func TestInlineInvocations_NamesTheLineAndTheWholeLiteral(t *testing.T) {
 // A message naming a command that does not exist is reported with where it is
 // and what it says, so the person fixing it does not have to search.
 func TestUnrunnableCommands_NameTheFileAndTheTextOfAMessageThatNamesNothingReal(t *testing.T) {
-	t.Skip("removed by #2557")
 	root := newRootCmd("test")
 
 	for _, c := range []struct {
@@ -377,7 +521,6 @@ func TestUnrunnableCommands_NameTheFileAndTheTextOfAMessageThatNamesNothingReal(
 // `drift slice resize %s` is the three words `drift slice resize` and the flag
 // after it is a fourth.
 func TestWordCount_DoesNotCountAPlaceholder(t *testing.T) {
-	t.Skip("removed by #2557")
 	for _, c := range []struct {
 		command string
 		want    int
@@ -409,7 +552,6 @@ func TestWordCount_DoesNotCountAPlaceholder(t *testing.T) {
 // The rule is the registry's, so the two counts cannot be allowed to differ on
 // the registry's own commands.
 func TestWordCount_AgreesWithTheRegistry(t *testing.T) {
-	t.Skip("removed by #2557")
 	var checked int
 	for _, c := range common.ErrorCodes() {
 		if c.Command == "" {
@@ -427,7 +569,6 @@ func TestWordCount_AgreesWithTheRegistry(t *testing.T) {
 }
 
 func TestInlineSpansOfTree_ReadsCmdAndCommonButNoTestFileOrFixture(t *testing.T) {
-	t.Skip("removed by #2557")
 	root := t.TempDir()
 	write := func(name, src string) {
 		t.Helper()
@@ -454,7 +595,7 @@ func TestInlineSpansOfTree_ReadsCmdAndCommonButNoTestFileOrFixture(t *testing.T)
 	}
 	var got []string
 	for _, s := range spans {
-		got = append(got, s.File+":"+itoa(s.Line)+" "+s.Command)
+		got = append(got, s.File+":"+strconv.Itoa(s.Line)+" "+s.Command)
 	}
 	want := []string{"cmd/a/a.go:3 drift plan", "cmd/a/deeper/b.go:3 drift apply", "common/c.go:3 drift size"}
 	if !slices.Equal(got, want) {
@@ -465,5 +606,34 @@ func TestInlineSpansOfTree_ReadsCmdAndCommonButNoTestFileOrFixture(t *testing.T)
 	write("cmd/a/broken.go", "package a\n\nvar m = \"unterminated\n")
 	if _, err := inlineSpansOfTree(root); err == nil || !strings.Contains(err.Error(), "cmd/a/broken.go") {
 		t.Errorf("a file that does not parse was not reported by name: %v", err)
+	}
+}
+
+// scanTheTree reads this module's own source for the tests that judge it. It
+// fails when the walk reached too little to mean anything: a walk that read
+// nothing would pass every command.
+func scanTheTree(t *testing.T) []inlineSpan {
+	t.Helper()
+	spans, err := inlineSpansOfTree(repoRoot(t))
+	if err != nil {
+		t.Fatalf("reading the source: %v", err)
+	}
+	for _, dir := range []string{"cmd/", "common/"} {
+		if !slices.ContainsFunc(spans, func(s inlineSpan) bool { return strings.HasPrefix(s.File, dir) }) {
+			t.Fatalf("no command is quoted in any literal under %s, so the walk reached nothing there "+
+				"and this test checked nothing", dir)
+		}
+	}
+	return spans
+}
+
+// A message that tells the user to type a command that cannot run sends a stuck
+// person somewhere that fails again, and is invisible until they try. There is no
+// allowance for this: the message is corrected to the command that exists.
+func TestEveryCommandAMessageNamesCanRun(t *testing.T) {
+	t.Skip("removed by #2559")
+	if problems := unrunnableCommands(newRootCmd("test"), scanTheTree(t)); len(problems) > 0 {
+		t.Errorf("these messages tell the user to type a command that cannot run. Correct each to the "+
+			"command that exists:\n  %s", strings.Join(problems, "\n  "))
 	}
 }
