@@ -1,0 +1,44 @@
+# Commands a message tells the user to type that are longer than three words.
+#
+# cmd/drift/inlineremedy_test.go reads the string literals of cmd/ and common/,
+# lifts out each command quoted in one with ` or ', and holds it to three words,
+# counted as the registry counts them: every token, "drift" included, except a
+# placeholder (%s, %d, %q, <name>, [name]). A command longer than that has to be
+# on this list, or the message has to change.
+#
+# One command per line, exactly as the message writes it, then two spaces, a #
+# and the reason it cannot be three words or fewer. Most are a noun, a sub-noun
+# and a verb, which is four words as the grammar is built.
+#
+# The list can only shrink. A line with no reason, a line no string literal holds
+# any more and a line whose command now fits in three words each fail the test,
+# and the line is deleted. A command over three words that is not here fails the
+# test; adding it takes a reason, and shows in the diff.
+
+drift account member invite <email>  # noun, sub-noun and verb: four words as the grammar is built
+drift account member remove --email %s  # noun, sub-noun and verb, and the flag the remedy needs: --email names an invite by its address
+drift account member remove --email erica@example.com  # noun, sub-noun and verb, the flag the remedy needs and an example address written out
+drift account member remove erica  # noun, sub-noun and verb, and an example username written out
+drift account mfa disable  # noun, sub-noun and verb: four words as the grammar is built
+drift account mfa enrol  # noun, sub-noun and verb: four words as the grammar is built
+drift account token create  # noun, sub-noun and verb: four words as the grammar is built
+drift account token create <name> --scope slice:read  # noun, sub-noun and verb, and the flag the remedy needs: --scope names what the token may do
+drift account token list  # noun, sub-noun and verb: four words as the grammar is built
+drift account token revoke %s  # noun, sub-noun and verb: four words as the grammar is built
+drift atomic workers restart %s  # noun, sub-noun and verb: four words as the grammar is built
+drift backbone blob put <bucket> <key> <file>  # noun, sub-noun and verb: four words as the grammar is built
+drift backbone nosql list --collection <name>  # noun, sub-noun and verb, and the flag the remedy needs: --collection names the collection to browse
+drift backbone nosql write <coll> <json>  # noun, sub-noun and verb: four words as the grammar is built
+drift backbone queue push <q> <json>  # noun, sub-noun and verb: four words as the grammar is built
+drift backbone secret set KEY=VALUE  # noun, sub-noun and verb, and an example value written out
+drift migrate azure transform  # noun, sub-noun and verb: four words as the grammar is built
+drift slice auth disable  # noun, sub-noun and verb: four words as the grammar is built
+drift slice domain list  # noun, sub-noun and verb: four words as the grammar is built
+drift slice domain verify %s  # noun, sub-noun and verb: four words as the grammar is built
+drift slice resize %s --dump  # a flag the remedy needs: --dump writes the slice's shape as JSON
+drift slice resize %s --dump > shape.json  # a flag and a shell redirect the remedy needs: the shape is kept in a file
+drift slice snapshot create  # noun, sub-noun and verb: four words as the grammar is built
+drift slice snapshot list  # noun, sub-noun and verb: four words as the grammar is built
+drift slice transfer accept %s  # noun, sub-noun and verb: four words as the grammar is built
+drift slice transfer cancel %s  # noun, sub-noun and verb: four words as the grammar is built
+drift slice transfer list  # noun, sub-noun and verb: four words as the grammar is built

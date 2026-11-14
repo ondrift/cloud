@@ -227,21 +227,72 @@ type allowanceEntry struct {
 }
 
 // loadAllowance reads the allowance list: one `<command as written>  # <reason>`
-// per line, blank lines and lines that start with # ignored.
+// per line, the reason being whatever follows the first #. A blank line and a line
+// that starts with # are ignored, and the line numbers still count them.
 func loadAllowance(text string) []allowanceEntry {
-	return nil
+	var entries []allowanceEntry
+	for i, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		command, reason, _ := strings.Cut(line, "#")
+		entries = append(entries, allowanceEntry{
+			Line:    i + 1,
+			Command: strings.TrimSpace(command),
+			Reason:  strings.TrimSpace(reason),
+		})
+	}
+	return entries
 }
+
+// maxWords is the longest a command a message tells the user to type may be,
+// unless it is on the allowance list: the registry's rule, counted the way the
+// registry counts it.
+const maxWords = 3
 
 // overlongCommands returns one problem for each span whose command is longer than
-// three words and is not on the allowance list as written.
+// three words and is not on the allowance list exactly as the literal writes it.
 func overlongCommands(spans []inlineSpan, allowed []allowanceEntry) []string {
-	return nil
+	listed := map[string]bool{}
+	for _, e := range allowed {
+		listed[e.Command] = true
+	}
+	var problems []string
+	for _, s := range spans {
+		if n := wordCount(s.Command); n > maxWords && !listed[s.Command] {
+			problems = append(problems, fmt.Sprintf("%s tells the user to run %q, which is %d words, and a command "+
+				"a message tells the user to type is at most %d. Shorten it, or list it in %s with the reason "+
+				"it cannot be shorter:\n    %q", s.where(), s.Command, n, maxWords, allowanceFile, s.Literal))
+		}
+	}
+	return problems
 }
 
-// checkAllowance returns one problem for each line of the allowance list that has
-// no business being there.
+// checkAllowance returns one problem for each line of the allowance list that is
+// not true: it gives no reason, no string literal holds its command exactly as
+// written, or its command is now within three words. Each is reported on its own.
 func checkAllowance(entries []allowanceEntry, spans []inlineSpan) []string {
-	return nil
+	written := map[string]bool{}
+	for _, s := range spans {
+		written[s.Command] = true
+	}
+	var problems []string
+	for _, e := range entries {
+		if e.Reason == "" {
+			problems = append(problems, fmt.Sprintf("line %d, %q, has no reason after the #. Say why it "+
+				"cannot be %d words or fewer, or delete the line", e.Line, e.Command, maxWords))
+		}
+		if !written[e.Command] {
+			problems = append(problems, fmt.Sprintf("line %d, %q, is in no string literal any more. "+
+				"Delete the line", e.Line, e.Command))
+		}
+		if n := wordCount(e.Command); n <= maxWords {
+			problems = append(problems, fmt.Sprintf("line %d, %q, is %d words now, within the limit of %d. "+
+				"Delete the line", e.Line, e.Command, n, maxWords))
+		}
+	}
+	return problems
 }
 
 // inlineFixture is a Go source file holding body, so that a case is only the few
@@ -660,7 +711,6 @@ func scanTheTree(t *testing.T) []inlineSpan {
 // person somewhere that fails again, and is invisible until they try. There is no
 // allowance for this: the message is corrected to the command that exists.
 func TestEveryCommandAMessageNamesCanRun(t *testing.T) {
-	t.Skip("removed by #2559")
 	if problems := unrunnableCommands(newRootCmd("test"), scanTheTree(t)); len(problems) > 0 {
 		t.Errorf("these messages tell the user to type a command that cannot run. Correct each to the "+
 			"command that exists:\n  %s", strings.Join(problems, "\n  "))
@@ -672,7 +722,6 @@ func TestEveryCommandAMessageNamesCanRun(t *testing.T) {
 // cannot be shorter. Most are a noun, a sub-noun and a verb, which is four words
 // as the grammar is built.
 func TestLoadAllowance_ReadsACommandAndItsReason(t *testing.T) {
-	t.Skip("removed by #2559")
 	text := "# the header\n" +
 		"\n" +
 		"drift account token create  # noun, sub-noun and verb: four words as the grammar is built\n" +
@@ -697,7 +746,6 @@ func TestLoadAllowance_ReadsACommandAndItsReason(t *testing.T) {
 // so a command that was shortened, or a message that was reworded, takes its line
 // with it.
 func TestCheckAllowance_FailsALineThatHasNoReasonToBeThere(t *testing.T) {
-	t.Skip("removed by #2559")
 	const reason = "  # noun, sub-noun and verb: four words as the grammar is built\n"
 	for _, c := range []struct {
 		name      string
@@ -784,7 +832,6 @@ func TestCheckAllowance_FailsALineThatHasNoReasonToBeThere(t *testing.T) {
 // A command over three words fails the scan unless it is on the list, and the
 // list excuses the command as it is written and no other.
 func TestOverlongCommands_AFourWordCommandNeedsAnAllowanceLine(t *testing.T) {
-	t.Skip("removed by #2559")
 	spans, err := inlineInvocations(inlineFixture(
 		"var a = \"Run `drift account token create` to make one.\"\n" +
 			"var b = \"Run `drift slice resize %s` to add capacity.\""))
@@ -844,7 +891,6 @@ func readAllowance(t *testing.T) []allowanceEntry {
 // and a message that tells the user to type one is held to it as the registry's
 // remedies are. The ones that cannot be shorter are listed with the reason.
 func TestNoMessageNamesACommandOverThreeWordsUnlessListed(t *testing.T) {
-	t.Skip("removed by #2559")
 	if problems := overlongCommands(scanTheTree(t), readAllowance(t)); len(problems) > 0 {
 		t.Errorf("these messages tell the user to type a command longer than three words:\n  %s",
 			strings.Join(problems, "\n  "))
@@ -855,7 +901,6 @@ func TestNoMessageNamesACommandOverThreeWordsUnlessListed(t *testing.T) {
 // writes the command exactly so, and the command is still more than three words.
 // A line that is not is deleted, which is the only way the list changes.
 func TestTheAllowanceListOnlyShrinks(t *testing.T) {
-	t.Skip("removed by #2559")
 	if problems := checkAllowance(readAllowance(t), scanTheTree(t)); len(problems) > 0 {
 		t.Errorf("these lines of %s are wrong:\n  %s", allowanceFile, strings.Join(problems, "\n  "))
 	}
