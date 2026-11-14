@@ -268,7 +268,6 @@ func TestPlan_ADomainWhoseWildcardDiffersNamesHowToChangeIt(t *testing.T) {
 // "Held, not in the file" with the command that removes it. Nothing marks it, the
 // plan does not say it removes it, and a host matches whatever its case.
 func TestPlan_ListsWhatTheSliceHoldsAndTheFileDoesNotName(t *testing.T) {
-	t.Skip("until #3031 builds the list of what the slice holds")
 	stubSliceHolding(t,
 		`[{"host":"live.example.com","status":"live"},{"host":"old.example.com","status":"live"}]`,
 		`[{"name":"chain","size_bytes":1},{"name":"ledger","size_bytes":2}]`)
@@ -317,7 +316,6 @@ func TestPlan_ListsWhatTheSliceHoldsAndTheFileDoesNotName(t *testing.T) {
 // A database the plan itself removes (the shape has it and the file does not) is
 // said by its own line, so it is not also held and offered a second removal.
 func TestPlan_ADatabaseThePlanRemovesIsNotAlsoHeld(t *testing.T) {
-	t.Skip("until #3031 builds the list of what the slice holds")
 	planStubWith(t, fxevmLive, `[]`, map[string]string{
 		"/ops/backbone/sql/admin/list": `[{"name":"chain"},{"name":"database-1"},{"name":"ledger"}]`,
 	})
@@ -361,7 +359,6 @@ func TestPlan_ASiteTheFileDoesNotNameKeepsItsLine(t *testing.T) {
 // declares any, because what the file does not name is exactly what the file
 // cannot tell it to read, and it still writes nothing.
 func TestPlan_ReadsTheDomainAndDatabaseListsWhateverTheFileDeclares(t *testing.T) {
-	t.Skip("until #3031 builds the list of what the slice holds")
 	rec := stubSliceHolding(t, noList, noList)
 	if _, err := planIn(t, nil); err != nil {
 		t.Fatalf("plan: %v", err)
@@ -395,7 +392,6 @@ func TestPlan_ASliceToCreateHasNoListsToRead(t *testing.T) {
 // A list the plan could not read is unread, never an empty list: the plan does
 // not say nothing is held, and does not say it has nothing to change.
 func TestPlan_AListItCouldNotReadIsUnreadAndNotEmpty(t *testing.T) {
-	t.Skip("until #3031 builds the list of what the slice holds")
 	for _, c := range []struct {
 		name, failing, fact, reason string
 		edit                        func(*testing.T, string) string
@@ -411,23 +407,29 @@ func TestPlan_AListItCouldNotReadIsUnreadAndNotEmpty(t *testing.T) {
 			},
 		},
 	} {
-		t.Run(c.name, func(t *testing.T) {
+		edit := func(t *testing.T) func(string) string {
+			if c.edit == nil {
+				return nil
+			}
+			return func(s string) string { return c.edit(t, s) }
+		}
+
+		t.Run(c.name+" is recorded once, with why", func(t *testing.T) {
 			live, deployed := matchingSlice(t)
 			planStub(t, live, deployed, c.failing)
-			var edit func(string) string
-			if c.edit != nil {
-				edit = func(s string) string { return c.edit(t, s) }
-			}
-			d := diffIn(t, edit)
+			d := diffIn(t, edit(t))
 			if got, want := factsOf(d), []string{c.fact + "|" + c.fact}; len(got) != 1 || got[0] != want[0] {
 				t.Fatalf("the plan recorded the unread facts %q, want %q", got, want)
 			}
 			if err := d.unreadFacts[0].err; err == nil || !strings.Contains(err.Error(), c.reason) {
 				t.Errorf("the fact says it was unread because %v, want %q", err, c.reason)
 			}
+		})
 
+		t.Run(c.name+" is not a plan with nothing to change", func(t *testing.T) {
+			live, deployed := matchingSlice(t)
 			planStub(t, live, deployed, c.failing)
-			out, err := planIn(t, edit)
+			out, err := planIn(t, edit(t))
 			if err != nil {
 				t.Fatalf("plan: %v", err)
 			}

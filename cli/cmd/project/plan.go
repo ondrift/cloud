@@ -33,6 +33,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -228,6 +229,8 @@ type planState struct {
 	egressErr   error
 	domains     []liveDomain
 	domainsErr  error
+	sql         []liveSQLDatabase
+	sqlErr      error
 	alerts      []liveAlert
 	alertsErr   error
 	channels    []string // the channels the slice's clients may publish to
@@ -358,9 +361,11 @@ func gatherPlan(c *Compiled, declinedFree bool) (*planState, error) {
 	if m.Slice().Has("edge", "egress") {
 		p.egress, p.egressErr = fetchLiveEgress()
 	}
-	if m.Slice().Has("edge", "domains") {
-		p.domains, p.domainsErr = fetchLiveDomains()
-	}
+	// The slice's domains and databases are read whether or not the file declares
+	// any: what the slice holds and the file does not name is a list only the slice
+	// can give.
+	p.domains, p.domainsErr = fetchLiveDomains()
+	p.sql, p.sqlErr = fetchLiveSQL()
 	p.channels, p.channelsErr = fetchClientChannels(m)
 
 	newPrice()
@@ -507,6 +512,9 @@ type planDiff struct {
 	// the plan has no difference to show for it: one entry, "address  what to
 	// do", for each line recorded by attend, in the order the diff met them.
 	attention []string
+	// unnamed is what the slice holds and the file does not name (see
+	// planState.unnamed). Nothing in it is a difference, a removal or a mark.
+	unnamed unnamedResources
 }
 
 func (d *planDiff) add(mark, address, format string, args ...any) {
@@ -535,6 +543,12 @@ func (d *planDiff) unread(address, what string, err error) {
 // for none. It is the one place a fact enters unreadFacts.
 func (d *planDiff) noteUnread(address, what string, err error) {
 	d.unreadFacts = append(d.unreadFacts, unreadFact{address, what, err})
+}
+
+// hasUnread reports whether a fact of this kind is already recorded: a list that
+// is read once and answers more than one question is unread once.
+func (d *planDiff) hasUnread(what string) bool {
+	return slices.ContainsFunc(d.unreadFacts, func(f unreadFact) bool { return f.what == what })
 }
 
 // attend adds the blank-marked line for something only a person can do, and
@@ -720,6 +734,7 @@ func (p *planState) diff() *planDiff {
 			d.add("~", "label "+ch.Key, "%s", describeLabelChange(ch))
 		}
 	}
+	d.unnamed = p.unnamed(d)
 	return d
 }
 
@@ -1132,6 +1147,7 @@ func ShapeLimits(c *Compiled) []LimitLine {
 func (p *planState) render(out io.Writer) Verdict {
 	d := p.renderBody(out)
 	v := p.verdict(d)
+	d.unnamed.printHeld(out)
 	switch v.State {
 	case VerdictMatch:
 		fmt.Fprintf(out, "  Nothing to change.\n\n")
