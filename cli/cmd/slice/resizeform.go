@@ -29,7 +29,7 @@ import (
 // One refusal can ask both. Both are answered by acting on the form again, which is why the submit
 // happens inside the form's own loop (shapeForm.onSubmit) rather than after it.
 
-// sliceRecord is the part of GET /ops/slice/get this form reads.
+// sliceRecord is the part of GET /ops/slice?name= this form reads.
 type sliceRecord struct {
 	Name             string         `json:"name"`
 	Tier             string         `json:"tier"`
@@ -40,7 +40,7 @@ type sliceRecord struct {
 // fetchSliceRecord reads one slice, config included.
 func fetchSliceRecord(name string) (*sliceRecord, error) {
 	resp, err := common.DoRequest(http.MethodGet,
-		common.APIBaseURL+"/ops/slice/get?name="+name, nil)
+		common.APIBaseURL+"/ops/slice?name="+name, nil)
 	if err != nil {
 		return nil, common.TransportError("read slice", err)
 	}

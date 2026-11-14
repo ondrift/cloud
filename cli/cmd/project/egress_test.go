@@ -130,7 +130,7 @@ func allowlistedSliceStub(t *testing.T) (*recorder, *[]string) {
 	var refreshes []string
 	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/ops/slice/get":
+		case "/ops/slice":
 			_, _ = w.Write([]byte(`{"name":"demo","tier":"custom","config":{}}`))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
@@ -179,7 +179,7 @@ func TestApply_AbsentEgressCallsNoEgressRoute(t *testing.T) {
 	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if rec.count("GET /ops/slice/get") == 0 {
+	if rec.count("GET /ops/slice") == 0 {
 		t.Fatal("the apply never reached the slice, so this proves nothing")
 	}
 	if len(*refreshes) != 0 {

@@ -74,11 +74,11 @@ func orderProject(t *testing.T) *recorder {
 	live := ""
 	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/ops/slice/get":
+		case "/ops/slice":
 			_, _ = w.Write([]byte(live))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
-		case "/ops/backbone/sql/admin/list", "/ops/atomic/list", "/ops/slice/domain", "/ops/atomic/alert":
+		case "/ops/backbone/sql/admin/list", "/ops/atomic", "/ops/slice/domain", "/ops/atomic/alert":
 			if r.Method == http.MethodGet {
 				_, _ = w.Write([]byte(`[]`))
 				return
@@ -155,7 +155,7 @@ func TestApply_ABackboneFailureDeploysNoAtomic(t *testing.T) {
 	live := ""
 	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/ops/slice/get":
+		case "/ops/slice":
 			_, _ = w.Write([]byte(live))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))

@@ -41,7 +41,7 @@ func newEdgeStub(t *testing.T) (*edgeStub, *recorder) {
 	s := &edgeStub{posted: map[string][]string{}, live: map[string]string{}, refuse: map[string]edgeReply{}}
 	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/ops/slice/get":
+		case r.URL.Path == "/ops/slice":
 			_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{}}`))
 		case r.URL.Path == "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
@@ -152,7 +152,7 @@ func newResizeStub(t *testing.T) *resizeStub {
 	s := &resizeStub{}
 	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/ops/slice/get":
+		case r.URL.Path == "/ops/slice":
 			_, _ = w.Write([]byte(`{"name":"demo","tier":"hacker","config":{}}`))
 		case r.URL.Path == "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
@@ -277,7 +277,7 @@ func TestApply_AbsentEdgeKeysCallNoEdgeRoute(t *testing.T) {
 	if err := applyAgreeingAtZero(t); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if rec.count("GET /ops/slice/get") == 0 {
+	if rec.count("GET /ops/slice") == 0 {
 		t.Fatal("the apply never reached the slice, so this proves nothing")
 	}
 	for _, hit := range rec.hits {

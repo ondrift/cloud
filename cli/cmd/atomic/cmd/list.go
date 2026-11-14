@@ -42,7 +42,7 @@ func (r atomicRecord) route() string {
 func fetchSlots() ([]atomicRecord, error) {
 	resp, err := common.DoRequest(
 		http.MethodGet,
-		common.APIBaseURL+"/ops/atomic/list",
+		common.APIBaseURL+"/ops/atomic",
 		nil,
 	)
 	if err != nil {

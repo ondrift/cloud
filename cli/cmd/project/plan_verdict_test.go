@@ -17,7 +17,7 @@ import (
 // everything.
 
 // matchingSlice is the live slice that is exactly the fxevm file, and what that
-// slice reports deployed: the body of /ops/slice/get and of /ops/atomic/list.
+// slice reports deployed: the body of GET /ops/slice?name= and of GET /ops/atomic.
 func matchingSlice(t *testing.T) (live, deployed string) {
 	t.Helper()
 	withRealSchema(t)
@@ -113,7 +113,7 @@ func unreadCases() []unreadCase {
 		// that no secret would be deleted.
 		{name: "the live secrets", failing: "/ops/backbone/secret/list", fact: "secrets", reason: "list secrets"},
 		{name: "the live keys", failing: "/ops/atomic/auth", fact: "key", reason: "list API keys"},
-		{name: "the deployed functions", failing: "/ops/atomic/list", fact: "code", reason: "list atomic functions"},
+		{name: "the deployed functions", failing: "/ops/atomic", fact: "code", reason: "list atomic functions"},
 		{
 			name: "the build",
 			edit: func(t *testing.T, s string) string {
@@ -282,7 +282,7 @@ func TestPlan_ExitCodeReportsTheVerdictAsAnExitStatus(t *testing.T) {
 // a failure into a verdict. The slice's own read is what fails here, so the plan
 // has nothing to conclude.
 func TestPlan_ExitCodeLeavesAFailureAsExitStatusOne(t *testing.T) {
-	planStub(t, fxevmLive, `[]`, "/ops/slice/get")
+	planStub(t, fxevmLive, `[]`, "/ops/slice")
 	for _, c := range []struct {
 		name string
 		args []string

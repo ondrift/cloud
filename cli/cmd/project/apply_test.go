@@ -33,7 +33,7 @@ func (a *applyPlatform) handler(t *testing.T) http.HandlerFunc {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			a.bodies[key] = append(a.bodies[key], body)
 			switch r.URL.Path {
-			case "/ops/slice/create":
+			case "/ops/slice":
 				a.created = true
 				_, _ = io.WriteString(w, `{}`)
 			case "/ops/slice/resize":
@@ -49,7 +49,7 @@ func (a *applyPlatform) handler(t *testing.T) http.HandlerFunc {
 			return
 		}
 		switch r.URL.Path {
-		case "/ops/slice/get":
+		case "/ops/slice":
 			if a.live == "" && !a.created {
 				w.WriteHeader(http.StatusNotFound)
 				return
@@ -61,7 +61,7 @@ func (a *applyPlatform) handler(t *testing.T) http.HandlerFunc {
 			_, _ = io.WriteString(w, live)
 		case "/ops/slice/status":
 			_, _ = io.WriteString(w, `{"ready":true,"components":[]}`)
-		case "/ops/atomic/list":
+		case "/ops/atomic":
 			_, _ = io.WriteString(w, `[]`)
 		case "/ops/canvas":
 			_, _ = io.WriteString(w, `{"deployed":true,"sites":[{"slug":"default","route":"/"}]}`)
@@ -172,7 +172,7 @@ func TestApply_ASliceThatIsTheFileIsDeployedWithoutAResize(t *testing.T) {
 	if _, err := runApplyTest(t, noAnswers(), ""); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if n := p.count("POST /ops/slice/resize") + p.count("POST /ops/slice/create"); n != 0 {
+	if n := p.count("POST /ops/slice/resize") + p.count("POST /ops/slice"); n != 0 {
 		t.Errorf("a slice already the file's shape was created or resized (%d)", n)
 	}
 	if *deployed != 1 {
@@ -261,7 +261,7 @@ func TestApply_ASliceThatDoesNotExistIsCreatedWithTheFilesShape(t *testing.T) {
 	if _, err := runApplyTest(t, a, ""); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	bodies := p.bodies["POST /ops/slice/create"]
+	bodies := p.bodies["POST /ops/slice"]
 	if len(bodies) != 1 {
 		t.Fatalf("created %d times, want 1 (writes: %v)", len(bodies), p.writes)
 	}

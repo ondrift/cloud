@@ -40,14 +40,17 @@ func fakePlatform(t *testing.T, seenSliceHeaders *[]string) *httptest.Server {
 		}
 	}
 
-	mux.HandleFunc("/ops/slice/list", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"name": "alpha", "tier": "hacker", "monthly_cost_cents": 0},
-			{"name": "beta", "tier": "custom", "monthly_cost_cents": 241},
-		})
-	})
-	mux.HandleFunc("/ops/slice/get", func(w http.ResponseWriter, r *http.Request) {
+	// One path answers both reads, as the platform's does: the caller's slices
+	// without `name`, and the one record with it.
+	mux.HandleFunc("/ops/slice", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
+		if name == "" {
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"name": "alpha", "tier": "hacker", "monthly_cost_cents": 0},
+				{"name": "beta", "tier": "custom", "monthly_cost_cents": 241},
+			})
+			return
+		}
 		cfg := map[string]any{"backbone": map[string]any{}}
 		// Only `alpha` declares anything, so the test also proves a slice with
 		// nothing is written without inventing empty files for it.

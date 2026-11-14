@@ -143,7 +143,7 @@ func TestRouteContractHelperProcess(t *testing.T) {
 		t.Fatalf("seed session: %v", err)
 	}
 	for i := 1; i <= 3; i++ {
-		resp, err := DoRequest(http.MethodGet, api+"/ops/slice/list", nil)
+		resp, err := DoRequest(http.MethodGet, api+"/ops/slice", nil)
 		if err != nil {
 			t.Fatalf("request %d: %v", i, err)
 		}
@@ -165,7 +165,7 @@ func askThreeTimes(t *testing.T, stated string, status int, body string) (result
 		seen int
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/ops/slice/list" {
+		if r.URL.Path != "/ops/slice" {
 			// The schema refresh the first request of every process makes.
 			http.NotFound(w, r)
 			return

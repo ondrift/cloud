@@ -63,7 +63,7 @@ func getDeleteCmd() *cobra.Command {
 
 			resp, err := common.DoRequest(
 				http.MethodDelete,
-				common.APIBaseURL+"/ops/slice/delete?name="+url.QueryEscape(name),
+				common.APIBaseURL+"/ops/slice?name="+url.QueryEscape(name),
 				nil,
 			)
 			if err != nil {
@@ -89,7 +89,7 @@ func getDeleteCmd() *cobra.Command {
 func sliceExists(name string) bool {
 	resp, err := common.DoRequest(
 		http.MethodGet,
-		common.APIBaseURL+"/ops/slice/list",
+		common.APIBaseURL+"/ops/slice",
 		nil,
 	)
 	if err != nil {

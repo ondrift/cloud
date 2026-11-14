@@ -176,11 +176,17 @@ func realtimeSlice(t *testing.T, body string, s *channelsSlice) {
 	live := ""
 	s.rec = stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/ops/slice/get":
+		case "/ops/slice":
 			_, _ = w.Write([]byte(live))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
-		case "/ops/atomic/list", "/ops/backbone/secret/list":
+		case "/ops/atomic":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_, _ = w.Write([]byte(`{}`))
+		case "/ops/backbone/secret/list":
 			_, _ = w.Write([]byte(`[]`))
 		case "/ops/canvas":
 			_, _ = w.Write([]byte(`{"sites":[]}`))

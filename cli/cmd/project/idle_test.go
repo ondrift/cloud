@@ -58,8 +58,8 @@ func TestApply_SaysWhenTheSliceDeclaresASlotTheDriftfileDoesNotName(t *testing.T
 
 	// It reports. The apply sizes the slice once, before it deploys anything;
 	// nothing the report does afterwards may reach a route that changes a slice.
-	if n := rec.count("POST /ops/slice/create"); n != 0 {
-		t.Errorf("the apply issued %d × POST /ops/slice/create for a slice that exists", n)
+	if n := rec.count("POST /ops/slice"); n != 0 {
+		t.Errorf("the apply issued %d × POST /ops/slice for a slice that exists", n)
 	}
 	resized := rec.position("POST /ops/slice/resize")
 	deployed := rec.position("POST /ops/atomic")
@@ -68,7 +68,7 @@ func TestApply_SaysWhenTheSliceDeclaresASlotTheDriftfileDoesNotName(t *testing.T
 			resized, deployed, n)
 	}
 	// The last thing the apply does is read the slice for the report.
-	if n := len(rec.hits); n == 0 || rec.hits[n-1] != "GET /ops/slice/get" {
+	if n := len(rec.hits); n == 0 || rec.hits[n-1] != "GET /ops/slice" {
 		t.Errorf("the apply must end on the read the report is made from, got %v", rec.hits)
 	}
 }
@@ -268,7 +268,7 @@ func TestPlan_ReportsTheUnnamedSlotAndChangesNothing(t *testing.T) {
 		}
 	}
 	for _, forbidden := range []string{
-		"POST /ops/slice/resize", "POST /ops/slice/create", "POST /ops/atomic", "POST /ops/canvas",
+		"POST /ops/slice/resize", "POST /ops/slice", "POST /ops/atomic", "POST /ops/canvas",
 	} {
 		if n := rec.count(forbidden); n != 0 {
 			t.Errorf("a plan issued %d × %q", n, forbidden)
@@ -296,11 +296,17 @@ func idleSliceStub(tier string, slots []string) http.HandlerFunc {
 	slice := `{"name":"demo","tier":"` + tier + `","config":{"atomic":{"functions":[` + strings.Join(fns, ",") + `]}}}`
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/ops/slice/get":
+		case "/ops/slice":
 			_, _ = w.Write([]byte(slice))
 		case "/ops/slice/status":
 			_, _ = w.Write([]byte(`{"ready":true}`))
-		case "/ops/atomic/list", "/ops/backbone/secret/list", "/ops/backbone/sql/admin/list",
+		case "/ops/atomic":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_, _ = w.Write([]byte(`{}`))
+		case "/ops/backbone/secret/list", "/ops/backbone/sql/admin/list",
 			"/ops/slice/domain", "/ops/atomic/alert":
 			_, _ = w.Write([]byte(`[]`))
 		default:

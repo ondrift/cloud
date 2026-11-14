@@ -37,8 +37,8 @@ const fxevmLive = `{"name":"fxevm-testnode","tier":"custom","monthly_cost_cents"
  "deed":{"pocket":{"MaxSizeInBytesEach":16384},"vault":{"MaxEntriesPerUID":100,"MaxSizeInBytesEach":4096}},
  "labels":null}}`
 
-// planStub answers every read a plan makes. live is the /ops/slice/get body,
-// or "" for a slice that does not exist; deployed is /ops/atomic/list. A path
+// planStub answers every read a plan makes. live is the GET /ops/slice?name= body,
+// or "" for a slice that does not exist; deployed is the GET /ops/atomic body. A path
 // in failing answers 500 instead of its body, for the read a plan cannot make.
 func planStub(t *testing.T, live, deployed string, failing ...string) *recorder {
 	t.Helper()
@@ -48,13 +48,13 @@ func planStub(t *testing.T, live, deployed string, failing ...string) *recorder 
 			return
 		}
 		switch r.URL.Path {
-		case "/ops/slice/get":
+		case "/ops/slice":
 			if live == "" {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
 			_, _ = io.WriteString(w, live)
-		case "/ops/atomic/list":
+		case "/ops/atomic":
 			_, _ = io.WriteString(w, deployed)
 		case "/ops/canvas":
 			_, _ = io.WriteString(w, `{"deployed":true,"sites":[{"slug":"default","route":"/"}]}`)
@@ -131,7 +131,7 @@ func TestPlan_IssuesNoWriteButThePriceQuote(t *testing.T) {
 	}
 	// It did its work: it read the slice and asked for the quote. Without this
 	// a plan that returned before reading anything would pass.
-	if rec.count("GET /ops/slice/get") == 0 || rec.count("POST /ops/slice/price") == 0 {
+	if rec.count("GET /ops/slice") == 0 || rec.count("POST /ops/slice/price") == 0 {
 		t.Fatalf("the plan never read the slice or never asked for a price: %v", rec.hits)
 	}
 	for _, hit := range rec.hits {
@@ -279,7 +279,7 @@ func TestPlan_ASliceThatIsTheFileHasNothingToChange(t *testing.T) {
 // A YAML Driftfile is refused, and the slice is not read.
 func TestPlan_AYAMLDriftfileIsRefused(t *testing.T) {
 	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/ops/slice/get" {
+		if r.URL.Path == "/ops/slice" {
 			_, _ = io.WriteString(w, `{"name":"demo","tier":"hacker","config":{}}`)
 			return
 		}
@@ -291,7 +291,7 @@ func TestPlan_AYAMLDriftfileIsRefused(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "the Driftfile is HCL now") {
 		t.Fatalf("a YAML Driftfile was not refused as YAML: %v", err)
 	}
-	if n := rec.count("GET /ops/slice/get"); n != 0 {
+	if n := rec.count("GET /ops/slice"); n != 0 {
 		t.Errorf("a refused file still read the slice (%d reads)", n)
 	}
 }
