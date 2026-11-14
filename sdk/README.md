@@ -6,6 +6,7 @@ The SDK is what user-written code imports to talk to [Drift](https://ondrift.eu)
 
 - [Install](#install)
 - [Writing a function](#writing-a-function)
+- [How a deployed function is served](#how-a-deployed-function-is-served)
 - [API Reference](#api-reference)
   - [Go](#go)
   - [Python](#python)
@@ -81,6 +82,23 @@ edge:
 ```
 
 A call to a slice that is not linked fails before any network I/O with `drift: slice "billing" is not linked: declare it under edge.links in the Driftfile`. The call carries this slice's identity in `X-Drift-Slice` only when the runtime supplies one, and a caller's own `X-Drift-Slice` never overrides it. `callerSlice(req)` reads that header, which any caller can write, so it is a label for logging and routing and authorises nothing.
+
+---
+
+## How a deployed function is served
+
+A deployed function is a process the slice starts and talks to over stdin and stdout, and the slice sets `DRIFT_RUNTIME` in its environment: a process that finds it set serves calls and does not start the local development server. In Go, Rust, Ruby and PHP the generated wrapper hands the handler to the SDK's run entry (`genmain.Serve`, `drift_sdk::run`, `Drift.run`, `\Drift\run`), and this section is that entry's contract. Python and Node are served by the slice's language server, which imports the function and calls its handler, so the SDK's run entry is not on their path and this section does not apply to them.
+
+- **The envelope.** One JSON object on one line. `path`, `headers`, `query` and `body` are the request, and `params` and `route_pattern` are there when the route has them. Three members carry the call's own state, and each is left out when the slice has nothing to put in it: `tmpdir`, `secrets` (name to current value) and `secrets_previous` (name to the value a rotation replaced, while its grace window is open).
+- **The one line out.** Exactly one line per envelope: `status`, `message` and `payload`, plus `headers` when the handler set response headers and, on Linux, `rss_bytes`, a positive count of the process's peak resident bytes. The line ends with a newline.
+- **One process, many calls.** A warm worker reads an envelope, answers it and waits for the next one. The slice sends the next envelope only after it has read the reply, and it retires a worker after a bounded number of calls or when it has been idle too long; that bound is the slice's. A call is whatever the process holds when the handler runs, so before each handler runs:
+  - `TMPDIR` and `HOME` are the envelope's `tmpdir`, an absolute path the slice made for this call and removes after it;
+  - `DRIFT_SECRET_<NAME>` (the secret's name in upper case) holds each carried secret's current value, and `DRIFT_SECRET_<NAME>_PREVIOUS` each carried previous value;
+  - a variable the process set for an earlier call is removed when the envelope no longer carries its secret, or its previous value.
+- **Where handler output goes.** Whatever a handler prints to stdout reaches stderr, which is the function's log. Standard output carries reply lines and nothing else: the slice retires a worker over any other line.
+- **How it ends.** Closing stdin ends the process with status 0. A trigger's or a cron's spawn runs the same program and sends one envelope with no trailing newline, then closes stdin: it gets one reply and exit status 0. A handler that raises or panics ends the process with a non-zero status and writes nothing more, so the slice sees the pipe close, reports how the process ended from its exit status and stderr, and gives the next call a fresh worker.
+
+The slice's side is `src/slice/src/atomic/warmpool.rs` and `protocol.rs` in `cloud/platform`. The test of this section is `sdk/conformance/expected.json`, under `"$loop"`: a controller (`sdk/conformance/loop_check.py`) starts a small program per language through its run entry and holds it to these cases, and `sdk/conformance/run.sh` runs them with the other conformance cases. A language whose loop is not built yet is on that section's `pending` list. A pending language that fails is reported and does not fail the run; one that passes fails it until the entry is removed, so the list only ever names languages that still do not loop.
 
 ---
 
