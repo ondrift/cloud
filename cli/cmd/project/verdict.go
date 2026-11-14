@@ -5,10 +5,12 @@ package project
 // A plan compares the file with the slice, and the comparison ends one of four
 // ways. "Match" is a claim about every fact the plan compares, so it is made
 // only for a slice the plan read in full: a fact it could not read is not a fact
-// that agrees. The header and the closing line of `drift plan` are decided here,
-// and nothing else restates the conclusion.
+// that agrees. The header and the closing line of `drift plan`, and the status
+// `drift plan --exit-code` exits with, are decided here, and nothing else restates
+// the conclusion.
 
 import (
+	"errors"
 	"io"
 	"os"
 	"slices"
@@ -60,6 +62,31 @@ type Verdict struct {
 	// the plan has no difference to show for it. A plan that reports no such fact
 	// leaves it empty.
 	Attention []string
+}
+
+// The statuses `drift plan --exit-code` exits with besides 0 for a match. A plan
+// that fails exits 1 like every command that fails, and that status is not here.
+const (
+	exitStatusDiffers = 2
+	exitStatusUnread  = 3
+)
+
+// exitError is what `drift plan --exit-code` returns for this verdict: nil for a
+// match, and for the others an error that carries the status a script reads and
+// says why in words. A verdict that is none of the four states is a failure and
+// never a match.
+func (v Verdict) exitError() error {
+	switch v.State {
+	case VerdictMatch:
+		return nil
+	case VerdictCreate:
+		return &common.ExitStatusError{Status: exitStatusDiffers, Reason: "the slice does not exist yet, and applying the Driftfile creates it"}
+	case VerdictDiffers:
+		return &common.ExitStatusError{Status: exitStatusDiffers, Reason: "the slice differs from the Driftfile"}
+	case VerdictUnread:
+		return &common.ExitStatusError{Status: exitStatusUnread, Reason: "part of the slice could not be read, so it is not known to match the Driftfile"}
+	}
+	return errors.New("the plan reached no verdict")
 }
 
 // PlanVerdict is what `drift plan` concludes about the Driftfile in the working

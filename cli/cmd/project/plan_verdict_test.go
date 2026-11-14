@@ -2,12 +2,12 @@ package project
 
 import (
 	"encoding/json"
-	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
+	"github.com/ondrift/cloud/cli/common"
 )
 
 // What a plan concludes is one of four things: the slice would be created, the
@@ -143,9 +143,6 @@ const (
 	closingApply  = "Apply with:"
 )
 
-// Why a test below is skipped, and which task makes it pass.
-const skipUntilTheFlagExists = "fails until #3026: drift plan has no --exit-code flag"
-
 // A plan that could not read a fact does not say the slice has nothing to
 // change. It says nothing differs in what it could read, names each fact it
 // could not and why, and its header says the slice was not fully read.
@@ -264,24 +261,13 @@ func TestPlan_EachVerdictHasItsOwnHeaderAndClosingLine(t *testing.T) {
 }
 
 // exitStatusOf is the status the process exits with for the error a command
-// returned: the one the error carries as ExitCode() int, as os/exec's does; 1
-// for any other error; 0 for none.
-func exitStatusOf(err error) int {
-	if err == nil {
-		return 0
-	}
-	var coded interface{ ExitCode() int }
-	if errors.As(err, &coded) {
-		return coded.ExitCode()
-	}
-	return 1
-}
+// returned, the function main exits with.
+func exitStatusOf(err error) int { return common.ExitStatus(err) }
 
 // With --exit-code a script reads the verdict from the status: 0 when the slice
 // is the file, 2 when it would be created or differs, 3 when part of it could
 // not be read, 1 when the plan fails.
 func TestPlan_ExitCodeReportsTheVerdictAsAnExitStatus(t *testing.T) {
-	t.Skip(skipUntilTheFlagExists)
 	for _, c := range verdictCases() {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := c.run(t, "--exit-code")
@@ -300,15 +286,11 @@ func TestPlan_ExitCodeLeavesAFailureAsExitStatusOne(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		args []string
-		skip string
 	}{
 		{name: "without the flag"},
-		{name: "with the flag", args: []string{"--exit-code"}, skip: skipUntilTheFlagExists},
+		{name: "with the flag", args: []string{"--exit-code"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if c.skip != "" {
-				t.Skip(c.skip)
-			}
 			_, err := planIn(t, nil, c.args...)
 			if err == nil || !strings.Contains(err.Error(), "fetch slice") {
 				t.Fatalf("a plan that cannot read the slice does not fail with the read's own error: %v", err)
@@ -337,7 +319,6 @@ func TestPlan_WithoutExitCodeADifferenceExitsZero(t *testing.T) {
 // The flag is in the plan's help, which is where a script's author looks for
 // what each status means.
 func TestPlan_ExitCodeIsInThePlanHelp(t *testing.T) {
-	t.Skip(skipUntilTheFlagExists)
 	flag := GetPlanCmd().Flags().Lookup("exit-code")
 	if flag == nil {
 		t.Fatal("drift plan has no --exit-code")

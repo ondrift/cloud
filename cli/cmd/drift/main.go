@@ -3,6 +3,7 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"io"
 	"os"
 	"runtime/debug"
 
@@ -60,12 +61,19 @@ func resolveVersion() string {
 func main() {
 	// Resolved once, so `--version`, the dashboard header and `drift upgrade`
 	// cannot disagree about which binary this is.
-	rootCmd := newRootCmd(resolveVersion())
+	os.Exit(run(newRootCmd(resolveVersion()), os.Stderr))
+}
 
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+// run executes the command tree and returns the status the process exits with: 0
+// for success, the status an error carries when it is a common.ExitStatusError
+// (`drift plan --exit-code` reports what it found that way), and 1 for any other
+// error. What an error says is said once, to stderr.
+func run(root *cobra.Command, stderr io.Writer) int {
+	err := root.Execute()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
 	}
+	return common.ExitStatus(err)
 }
 
 // newRootCmd assembles the whole command tree.

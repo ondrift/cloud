@@ -43,6 +43,7 @@ func GetPlanCmd() *cobra.Command {
 		secrets   []string
 		noEnvFile bool
 		outFile   string
+		exitCode  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "plan [environment]",
@@ -51,8 +52,12 @@ func GetPlanCmd() *cobra.Command {
 added, changed and removed, the monthly price before and after (quoted by the
 platform), whether the slice restarts, and what data a removal could lose.
 
-Nothing is changed.`,
-		Example: "  drift plan\n  drift plan staging\n  drift plan --var RESET_KEY=...",
+Nothing is changed.
+
+A script reads the result from the exit status with --exit-code: 0 when the
+slice is the file, 2 when it would be created or differs, 3 when part of it
+could not be read, 1 when the plan fails. Without the flag a difference exits 0.`,
+		Example: "  drift plan\n  drift plan staging\n  drift plan --var RESET_KEY=...\n  drift plan --exit-code",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o := PlanOptions{
@@ -67,17 +72,21 @@ Nothing is changed.`,
 			if err != nil {
 				return err
 			}
-			p.render(os.Stdout)
+			v := p.render(os.Stdout)
 			if outFile != "" {
 				if err := writePlanFile(outFile, data, p, p.diff()); err != nil {
 					return fmt.Errorf("write the plan file: %w", err)
 				}
 				fmt.Printf("  Plan written to %s: `drift apply %s` applies exactly this, or refuses if anything moved.\n\n", outFile, outFile)
 			}
+			if exitCode {
+				return v.exitError()
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&outFile, "out", "", "Write the plan to this file, for `drift apply <file>` to apply exactly it")
+	cmd.Flags().BoolVar(&exitCode, "exit-code", false, "Exit 0 when the slice is the file, 2 when it would be created or differs, 3 when part of it could not be read, 1 when the plan fails")
 	cmd.Flags().StringArrayVar(&vars, "var", nil, "Set a variable env() reads: KEY=value (repeatable). Yields to the terminal's environment; beats the .env file.")
 	cmd.Flags().StringArrayVar(&secrets, "secret", nil, "The same as --var.")
 	cmd.Flags().BoolVar(&noEnvFile, "no-env-file", false, "Do not read the .env / .env.<env> file beside the Driftfile")
@@ -1017,22 +1026,24 @@ func ShapeLimits(c *Compiled) []LimitLine {
 
 // ─── printing ───────────────────────────────────────────────────────────────
 
-// render prints the plan, then how to apply it. A plan with nothing to apply
-// ends on what the verdict says: that the slice is the file, or that nothing
-// differs in what could be read, with each fact that could not be.
-func (p *planState) render(out io.Writer) {
+// render prints the plan, then how to apply it, and returns the verdict it
+// printed. A plan with nothing to apply ends on what the verdict says: that the
+// slice is the file, or that nothing differs in what could be read, with each fact
+// that could not be.
+func (p *planState) render(out io.Writer) Verdict {
 	d := p.renderBody(out)
-	switch v := p.verdict(d); v.State {
+	v := p.verdict(d)
+	switch v.State {
 	case VerdictMatch:
 		fmt.Fprintf(out, "  Nothing to change.\n\n")
-		return
+		return v
 	case VerdictUnread:
 		fmt.Fprintf(out, "  Nothing differs in what could be read.\n")
 		for _, line := range v.Unread {
 			fmt.Fprintf(out, "    %s\n", line)
 		}
 		fmt.Fprintln(out)
-		return
+		return v
 	}
 	hint := "drift apply"
 	flags := p.approvalFlags(d)
@@ -1041,6 +1052,7 @@ func (p *planState) render(out io.Writer) {
 		fmt.Fprintf(out, "         or:   %s %s\n", hint, strings.Join(flags, " "))
 	}
 	fmt.Fprintln(out)
+	return v
 }
 
 // approvalFlags are the flags that answer every question this plan raises,
