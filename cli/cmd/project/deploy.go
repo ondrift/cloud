@@ -874,14 +874,5 @@ func buildSiteURL() string {
 	if username == "" || slice == "" {
 		return ""
 	}
-	apiURL := common.APIBaseURL
-	scheme := "http://"
-	if strings.HasPrefix(apiURL, "https://") {
-		scheme = "https://"
-	}
-	host := strings.TrimPrefix(apiURL, scheme)
-	host = strings.TrimPrefix(host, "api.")
-	// Every slice — including the one named "default" — is reached at
-	// <username>-<slice>.<root>. There is no bare <username>.<root> shortcut.
-	return scheme + username + "-" + slice + "." + host
+	return common.SliceURL(username, slice)
 }

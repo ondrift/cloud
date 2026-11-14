@@ -31,10 +31,6 @@ import (
 	"github.com/ondrift/cloud/cli/common"
 )
 
-// Why a test below is skipped, and which task makes it pass.
-const skipUntilTheTextsAreRewritten = "fails until #2078: the transfer texts say the address stays, " +
-	"and name neither the new address nor the 30 day redirect"
-
 // The prompts the verbs print, which split what a person reads before they
 // answer from what they read after. The split is how an assertion about the
 // message that follows an accept is kept from being satisfied by the terms that
@@ -44,15 +40,25 @@ const (
 	acceptPrompt = "Accept it? [y/N]: "
 )
 
+// addressMove is the part of an offer view that says the address moves: the
+// address the slice leaves and how many days it redirects.
+const addressMove = `"previous_host":"alice-shop.ondrift.eu","redirect_days":30,`
+
 // offerView is one offer as the platform writes it (routes/slice_transfer.go,
 // transferView): alice offers slice `shop` to bob, so the address it takes is
 // bob's and the address it leaves is alice's.
 func offerView(direction string) string {
+	return offerViewWith(direction, addressMove)
+}
+
+// offerViewWith is offerView with move in place of the part that says the address
+// moves, so a platform that does not say it can be written too.
+func offerViewWith(direction, move string) string {
 	return fmt.Sprintf(`{"id":"0123456789abcdef0123456789abcdef","slice":"shop","from":"alice","to":"bob",`+
-		`"status":"pending","direction":%q,"host":"bob-shop.ondrift.eu","previous_host":"alice-shop.ondrift.eu",`+
-		`"redirect_days":30,"created_at":"2026-11-14T10:00:00Z","expires_at":"2026-11-21T10:00:00Z",`+
+		`"status":"pending","direction":%q,"host":"bob-shop.ondrift.eu",%s`+
+		`"created_at":"2026-11-14T10:00:00Z","expires_at":"2026-11-21T10:00:00Z",`+
 		`"terms":{"tier":"custom","monthly_cost_cents":900,"billing_period_months":12,`+
-		`"paid_until":"2027-01-01T00:00:00Z","config":{"atomic":{"functions":[{},{}]}}}}`, direction)
+		`"paid_until":"2027-01-01T00:00:00Z","config":{"atomic":{"functions":[{},{}]}}}}`, direction, move)
 }
 
 // platformAcceptNote is the note the platform sends with an accepted transfer
@@ -67,12 +73,28 @@ const platformAcceptNote = "The previous owner set this slice's secrets, its fun
 	"a DNS record. The slice restarts once, within a few minutes, to learn its new address."
 
 // fakeTransferAPI answers the three transfer routes the verbs call and records
-// the requests it was sent. note is the note its accept reply carries.
+// the requests it was sent. note is the note its accept reply carries. unmoved
+// makes it a platform whose offers name no address the slice leaves, and days a
+// platform whose redirect lasts that many days instead of 30.
 type fakeTransferAPI struct {
-	note string
+	note    string
+	unmoved bool
+	days    int
 
 	mu   sync.Mutex
 	sent []string
+}
+
+// view is one offer as this platform writes it.
+func (a *fakeTransferAPI) view(direction string) string {
+	switch {
+	case a.unmoved:
+		return offerViewWith(direction, "")
+	case a.days != 0:
+		return offerViewWith(direction,
+			fmt.Sprintf(`"previous_host":"alice-shop.ondrift.eu","redirect_days":%d,`, a.days))
+	}
+	return offerView(direction)
 }
 
 func (a *fakeTransferAPI) record(r *http.Request, body []byte) {
@@ -108,15 +130,15 @@ func (a *fakeTransferAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/ops/slice/transfer":
 		a.record(r, body)
 		w.WriteHeader(http.StatusCreated)
-		_, _ = io.WriteString(w, offerView("outgoing"))
+		_, _ = io.WriteString(w, a.view("outgoing"))
 	case r.Method == http.MethodGet && r.URL.Path == "/ops/slice/transfer":
 		a.record(r, body)
-		_, _ = io.WriteString(w, `{"offers":[`+offerView("incoming")+`]}`)
+		_, _ = io.WriteString(w, `{"offers":[`+a.view("incoming")+`]}`)
 	case r.Method == http.MethodPost && r.URL.Path == "/ops/slice/transfer/accept":
 		a.record(r, body)
 		note, _ := json.Marshal(a.note)
 		_, _ = fmt.Fprintf(w, `{"offer":%s,"host":"bob-shop.ondrift.eu","previous_host":"alice-shop.ondrift.eu",`+
-			`"redirect_until":"2026-12-14T10:00:00Z","custom_domains":[],"note":%s}`, offerView("incoming"), note)
+			`"redirect_until":"2026-12-14T10:00:00Z","custom_domains":[],"note":%s}`, a.view("incoming"), note)
 	default:
 		http.NotFound(w, r)
 	}
@@ -251,7 +273,6 @@ func mustNotSayTheAddressStays(t *testing.T, screen, text string) {
 // platform is not asked until they confirm, so the words come from the slice's
 // name and the two account names; the domain they end in is not asserted.
 func TestTransferOffer_TheConfirmationShowsTheAddressBeforeAndAfter(t *testing.T) {
-	t.Skip(skipUntilTheTextsAreRewritten)
 	out := runTransferVerb(t, &fakeTransferAPI{}, "alice", "", "offer", "shop", "--to", "bob")
 	confirmation, _ := splitAtPrompt(t, out, offerPrompt)
 	mustSay(t, "the offer's confirmation", confirmation, "alice-shop", "bob-shop", "30 days", "redirect", "stops")
@@ -260,7 +281,6 @@ func TestTransferOffer_TheConfirmationShowsTheAddressBeforeAndAfter(t *testing.T
 // The transfer's help says the address follows the new owner and that the old
 // one redirects for 30 days.
 func TestTransferHelp_SaysTheOldAddressRedirectsFor30Days(t *testing.T) {
-	t.Skip(skipUntilTheTextsAreRewritten)
 	mustSay(t, "`drift slice transfer --help`", transferHelp(t), "30 days", "redirect")
 }
 
@@ -268,7 +288,6 @@ func TestTransferHelp_SaysTheOldAddressRedirectsFor30Days(t *testing.T) {
 // and how long the old one redirects. The platform's own note is left empty here
 // so that these words are the CLI's own.
 func TestTransferAccept_TheMessageNamesTheNewAddressAndTheRedirect(t *testing.T) {
-	t.Skip(skipUntilTheTextsAreRewritten)
 	out := runTransferVerb(t, &fakeTransferAPI{}, "bob", "y\n", "accept", "shop")
 	_, message := splitAtPrompt(t, out, acceptPrompt)
 	mustSay(t, "the accept message", message, "bob-shop.ondrift.eu", "30 days", "redirect")
@@ -277,7 +296,6 @@ func TestTransferAccept_TheMessageNamesTheNewAddressAndTheRedirect(t *testing.T)
 // No screen of the transfer verbs says the address stays or keeps the previous
 // owner's name, whichever side is reading and whatever the platform adds.
 func TestTransfer_NoScreenSaysTheAddressStays(t *testing.T) {
-	t.Skip(skipUntilTheTextsAreRewritten)
 	giver := runTransferVerb(t, &fakeTransferAPI{}, "alice", "y\nshop\n", "offer", "shop", "--to", "bob")
 	recipient := runTransferVerb(t, &fakeTransferAPI{note: platformAcceptNote}, "bob", "y\n", "accept", "shop")
 	list := runTransferVerb(t, &fakeTransferAPI{}, "bob", "", "list")
@@ -289,6 +307,56 @@ func TestTransfer_NoScreenSaysTheAddressStays(t *testing.T) {
 		{"`drift slice transfer list`", list},
 	} {
 		mustNotSayTheAddressStays(t, screen.name, screen.text)
+	}
+}
+
+// The recipient reads, before they answer, the address the slice takes and the
+// one it leaves, and how long the old one redirects.
+func TestTransferAccept_TheTermsShowTheAddressBeforeAndAfter(t *testing.T) {
+	out := runTransferVerb(t, &fakeTransferAPI{}, "bob", "y\n", "accept", "shop")
+	terms, _ := splitAtPrompt(t, out, acceptPrompt)
+	mustSay(t, "the accept terms", terms,
+		"address https://bob-shop.ondrift.eu", "old address https://alice-shop.ondrift.eu",
+		"30 days", "redirect", "stops")
+}
+
+// The days a person is told come from the platform's offer when it names them, so
+// a window the platform changes is the window the recipient reads.
+func TestTransferAccept_TheRedirectWindowIsThePlatformsOwnFigure(t *testing.T) {
+	out := runTransferVerb(t, &fakeTransferAPI{days: 14}, "bob", "y\n", "accept", "shop")
+	terms, message := splitAtPrompt(t, out, acceptPrompt)
+	mustSay(t, "the accept terms", terms, "14 days")
+	mustSay(t, "the accept message", message, "14 days")
+	if read := oneLine(out); strings.Contains(read, "30 days") {
+		t.Errorf("an offer that says 14 days is shown as 30:\n%s", out)
+	}
+}
+
+// A platform that names no address the slice leaves does not move it, and the
+// CLI claims no change on its behalf: one address, and no redirect to speak of.
+func TestTransferAccept_AnOfferThatNamesNoOldAddressClaimsNoChange(t *testing.T) {
+	out := runTransferVerb(t, &fakeTransferAPI{unmoved: true}, "bob", "y\n", "accept", "shop")
+	terms, message := splitAtPrompt(t, out, acceptPrompt)
+	mustSay(t, "the accept terms", terms, "address https://bob-shop.ondrift.eu")
+	mustSay(t, "the accept message", message, "answers at https://bob-shop.ondrift.eu")
+	for _, screen := range []struct{ name, text string }{{"the accept terms", terms}, {"the accept message", message}} {
+		read := oneLine(screen.text)
+		for _, claim := range []string{"redirect", "old address", "alice-shop"} {
+			if strings.Contains(read, claim) {
+				t.Errorf("%s says %q for an offer that names no old address:\n%s", screen.name, claim, screen.text)
+			}
+		}
+	}
+}
+
+// A giver whose account name cannot be read from the session still learns that the
+// address changes and what it becomes. Its current address is not guessed.
+func TestTransferOffer_AGiverWithNoAccountNameIsStillTold(t *testing.T) {
+	out := runTransferVerb(t, &fakeTransferAPI{}, "", "", "offer", "shop", "--to", "bob")
+	confirmation, _ := splitAtPrompt(t, out, offerPrompt)
+	mustSay(t, "the offer's confirmation", confirmation, "address changes", "bob-shop", "30 days", "redirect", "stops")
+	if strings.Contains(oneLine(confirmation), "//-shop") {
+		t.Errorf("the confirmation names an address built from no account:\n%s", confirmation)
 	}
 }
 

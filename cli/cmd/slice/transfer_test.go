@@ -13,7 +13,8 @@ import (
 // bill. This body is that shape, field for field.
 func TestTransferOffer_DecodesThePlatformsView(t *testing.T) {
 	const body = `{"offers":[{"id":"0123456789abcdef0123456789abcdef","slice":"shop","from":"alice","to":"bob",` +
-		`"status":"pending","direction":"incoming","host":"alice-shop.ondrift.eu",` +
+		`"status":"pending","direction":"incoming","host":"bob-shop.ondrift.eu",` +
+		`"previous_host":"alice-shop.ondrift.eu","redirect_days":30,` +
 		`"created_at":"2026-10-03T10:00:00Z","expires_at":"2026-10-10T10:00:00Z",` +
 		`"terms":{"tier":"custom","monthly_cost_cents":900,"billing_period_months":12,` +
 		`"paid_until":"2027-01-01T00:00:00Z","config":{"atomic":{"functions":[{},{}]}}}}]}`
@@ -25,11 +26,25 @@ func TestTransferOffer_DecodesThePlatformsView(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	o := got.Offers[0]
-	if o.Slice != "shop" || o.From != "alice" || o.Host != "alice-shop.ondrift.eu" || o.Direction != "incoming" {
+	if o.Slice != "shop" || o.From != "alice" || o.Host != "bob-shop.ondrift.eu" || o.Direction != "incoming" {
 		t.Errorf("offer = %+v", o)
+	}
+	if o.PreviousHost != "alice-shop.ondrift.eu" || o.RedirectDays != 30 {
+		t.Errorf("address move = %q for %d days — the screens name the old address and its redirect from these",
+			o.PreviousHost, o.RedirectDays)
 	}
 	if o.Terms.MonthlyCostCents != 900 || o.Terms.BillingPeriodMonths != 12 || o.Terms.PaidUntil == nil {
 		t.Errorf("terms = %+v — the price and the prepaid period are what an accept acknowledges", o.Terms)
+	}
+}
+
+// A redirect window is said in days: the platform's figure when it sent one, the
+// documented one when it did not.
+func TestRedirectWindow_IsThePlatformsFigureOrTheDocumentedOne(t *testing.T) {
+	for days, want := range map[int]string{30: "30 days", 14: "14 days", 1: "1 day", 0: "30 days", -1: "30 days"} {
+		if got := redirectWindow(days); got != want {
+			t.Errorf("redirectWindow(%d) = %q, want %q", days, got, want)
+		}
 	}
 }
 
