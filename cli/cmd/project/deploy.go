@@ -512,7 +512,7 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 		}
 		seeded := 0
 		if c.Str("seed") != "" {
-			n, err := nosqlSeedJSONL(collection, m.ResolvePath(c.Str("seed")), ttlSecs, unique)
+			n, err := nosqlSeedJSONL(collection, m.ResolvePath(c.Str("seed")))
 			if err != nil {
 				return fmt.Errorf("nosql seed %q failed: %w", collection, err)
 			}
@@ -757,42 +757,23 @@ func purgeLegacySentinels(collection string) error {
 	return nil
 }
 
-// nosqlSeedJSONL drops the named collection and re-seeds it from the
-// JSONL file. Drop-then-seed is the right semantic for seed data
-// because the JSONL IS the canonical state of that collection — there's
-// no notion of "merge with prior". Going forward the platform's write
-// path upserts by `_id`, so even within a single seed run repeated
-// `_id`s get the right end-state. Apps that want runtime-mutable data
-// should use a separate (non-seeded) collection.
+// nosqlSeedJSONL writes the documents of a collection's JSONL seed, each by its
+// `_id`, and returns how many it wrote. It touches nothing else in the
+// collection: a document the app added stays, and a seeded document the app
+// changed is written back as the seed has it. The platform's write replaces the
+// document that holds the same `_id`, so a seed written again leaves one copy
+// of each, and a document a seed once held and no longer holds stays too.
 //
-// `unique` has to be threaded through here as well as into the caller's own
-// nosqlInit, and forgetting it is a silent bug rather than a compile error in a
-// world where it defaulted: this path DROPS the collection first, which takes
-// the marker — and therefore the constraint — with it. A seeded collection
-// would lose its uniqueness on every single deploy, and only under seeding.
-func nosqlSeedJSONL(collection, path string, ttlSecs int64, unique []string) (int, error) {
-	// The whole file is read before the collection is touched, so a line that does
-	// not parse stops the apply with nothing written.
+// The collection is the caller's to ensure, with its ttl and unique list, which
+// ensure takes as authoritative: nothing here declares them again, because
+// nothing here removes the marker that holds them.
+//
+// The whole file is read before the first write, so a line that does not parse
+// stops the apply with nothing written, at its file and line.
+func nosqlSeedJSONL(collection, path string) (int, error) {
 	docs, errs := readNoSQLSeed(collection, path)
 	if len(errs) > 0 {
 		return 0, errs
-	}
-	// Drop, then ensure, then seed — guarantees the JSONL fully describes
-	// the collection's state, with no carry-over from prior deploys.
-	dropURL := fmt.Sprintf("%s/ops/backbone/nosql/drop?collection=%s",
-		common.APIBaseURL, url.QueryEscape(collection))
-	dResp, err := common.DoJSONRequest(http.MethodPost, dropURL, nil)
-	if err != nil {
-		return 0, common.TransportError("drop seeded collection", err)
-	}
-	if dResp.StatusCode != http.StatusNoContent && dResp.StatusCode != http.StatusNotFound {
-		body, _ := io.ReadAll(dResp.Body)
-		dResp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
-		return 0, fmt.Errorf("drop seeded collection: HTTP %d: %s", dResp.StatusCode, string(body))
-	}
-	dResp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
-	if err := nosqlInit(collection, ttlSecs, unique); err != nil {
-		return 0, err
 	}
 	count := 0
 	for _, d := range docs {

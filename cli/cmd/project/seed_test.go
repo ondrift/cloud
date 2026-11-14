@@ -221,7 +221,6 @@ func applyOutput(t *testing.T) (string, error) {
 // collection survives the next apply, and a seeded document the app changed is
 // written back by its _id, once.
 func TestApply_ASeededCollectionKeepsTheDocumentsTheAppWrote(t *testing.T) {
-	t.Skip("#3036 removes this skip: apply still drops a seeded collection before it seeds it")
 	store, rec := seedProject(t, menuDriftfile, map[string]string{"seeds/menu.jsonl": menuSeed})
 
 	out, err := applyOutput(t)
@@ -338,6 +337,50 @@ func TestReadNoSQLSeed_AFileThatCannotBeOpenedIsNamed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "gone.jsonl")
 	if _, errs := readNoSQLSeed("menu", path); len(errs) != 1 || !strings.Contains(errs[0], path) {
 		t.Errorf("a seed file that is not there is reported as %v, want one refusal that names %s", errs, path)
+	}
+}
+
+// What seeding sends: one write for each record and nothing else. The collection
+// is the caller's to ensure with its ttl and unique list, and the seed drops
+// nothing.
+func TestNoSQLSeedJSONL_SendsOneWriteForEachRecordAndNothingElse(t *testing.T) {
+	store := newSliceStore()
+	rec := stubAPI(t, store.serve)
+	path := filepath.Join(t.TempDir(), "menu.jsonl")
+	mustWrite(t, path, menuSeed)
+
+	n, err := nosqlSeedJSONL("menu", path)
+	if err != nil || n != 5 {
+		t.Fatalf("seeding wrote %d records (%v), want 5", n, err)
+	}
+	if len(rec.hits) != 5 {
+		t.Errorf("seeding sent %d requests, want the 5 writes: %v", len(rec.hits), rec.hits)
+	}
+	for _, hit := range rec.hits {
+		if hit != "POST /ops/backbone/write" {
+			t.Errorf("seeding sent %q: it writes each record and sends nothing else", hit)
+		}
+	}
+	if got := store.count("menu"); got != 5 {
+		t.Errorf("the collection holds %d documents, want the 5 of the seed", got)
+	}
+}
+
+// A file that changed after the Driftfile was read, and has a line that does not
+// load, is refused by the reader apply uses, at its file and line, before any
+// record is written.
+func TestNoSQLSeedJSONL_ARecordThatDoesNotLoadStopsItBeforeTheFirstWrite(t *testing.T) {
+	store := newSliceStore()
+	rec := stubAPI(t, store.serve)
+	path := filepath.Join(t.TempDir(), "menu.jsonl")
+	mustWrite(t, path, `{"_id":"pizza","price":9}`+"\n"+`{"price":11}`+"\n")
+
+	n, err := nosqlSeedJSONL("menu", path)
+	if err == nil || !strings.Contains(err.Error(), path+":2: missing _id") {
+		t.Errorf("seeding a file with a record that has no _id returned %v, want a refusal at %s:2", err, path)
+	}
+	if n != 0 || len(rec.hits) != 0 {
+		t.Errorf("seeding wrote %d records and sent %v before it refused the file", n, rec.hits)
 	}
 }
 
