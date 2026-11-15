@@ -389,7 +389,6 @@ func TestSnapshotDownload_AFailureOnTheFirstRequestKeepsThePlatformsReason(t *te
 // A refusal of the proof of identity the download carried is the platform's
 // answer to that proof. It is not a session that ran out.
 func TestSnapshotDownload_ARefusedProofIsNotASessionExpiry(t *testing.T) {
-	t.Skip("removed by #2742")
 	apiErrStatusFeed(t)
 	apiErrTypePassword(t, "the-account-password")
 	apiErrDownloadPlatform(t, true, func(string) apiErrAnswer {
@@ -486,7 +485,6 @@ var apiErrResizeRefusals = []struct {
 }
 
 func TestPostResize_AnswersOtherThanTheQuestionAreFailuresThroughTheRenderer(t *testing.T) {
-	t.Skip("removed by #2742")
 	for _, tc := range apiErrResizeRefusals {
 		t.Run(tc.name, func(t *testing.T) {
 			reads := apiErrStatusFeed(t)
@@ -526,7 +524,6 @@ func TestPostResize_TheQuestionStillComesBackAsARefusal(t *testing.T) {
 }
 
 func TestResizeConfig_AFailureIsReturnedThroughTheRenderer(t *testing.T) {
-	t.Skip("removed by #2742")
 	for _, tc := range apiErrResizeRefusals {
 		if tc.status != http.StatusPaymentRequired && tc.status != http.StatusInternalServerError {
 			continue
@@ -575,7 +572,6 @@ func apiErrMint(t *testing.T, typed string) (string, error) {
 // an expired session, and sending the person to log in sends them to the command
 // that could not have helped.
 func TestMintStepUpGrant_AWrongPasswordIsThePlatformsReasonAndNotASessionExpiry(t *testing.T) {
-	t.Skip("removed by #2742")
 	apiErrStatusFeed(t)
 	apiErrStepUpPlatform(t, http.StatusUnauthorized, `{"error":"password is incorrect"}`)
 
@@ -591,7 +587,6 @@ func TestMintStepUpGrant_AWrongPasswordIsThePlatformsReasonAndNotASessionExpiry(
 // A refusal that is not a 401 keeps the platform's reason and the code its status
 // has.
 func TestMintStepUpGrant_AForbiddenAnswerKeepsThePlatformsReason(t *testing.T) {
-	t.Skip("removed by #2742")
 	reads := apiErrStatusFeed(t)
 	apiErrStepUpPlatform(t, http.StatusForbidden, `{"error":"this token may not confirm a password"}`)
 
@@ -603,7 +598,6 @@ func TestMintStepUpGrant_AForbiddenAnswerKeepsThePlatformsReason(t *testing.T) {
 
 // A platform fault is the platform's, and the failure says so.
 func TestMintStepUpGrant_APlatformFaultIsReportedAsOne(t *testing.T) {
-	t.Skip("removed by #2742")
 	reads := apiErrStatusFeed(t)
 	apiErrStepUpPlatform(t, http.StatusInternalServerError, `{"error":"could not issue a grant"}`)
 

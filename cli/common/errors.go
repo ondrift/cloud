@@ -100,6 +100,14 @@ type APIError struct {
 	// test and no sentence has to be read.
 	RetryAfter time.Duration
 
+	// CredentialRefused says a 401 on this request is the platform turning down a
+	// credential the person just presented, a password typed or a proof of
+	// identity handed over, and not a session that ran out. Its message is the
+	// platform's own reason and it has no code: the code for a 401 sends the person
+	// to log in, which is no remedy for a credential that was refused. A refused
+	// login is one by its op and sets nothing.
+	CredentialRefused bool
+
 	// PlatformAPIVersion is the route-contract major the platform stated on this
 	// reply, or 0 when it stated none or stated something that is not a plain
 	// integer.
@@ -187,10 +195,10 @@ func (e *APIError) Error() string {
 func (e *APIError) code() string {
 	switch {
 	case e.Status == http.StatusUnauthorized:
-		// A refused LOGIN is not an expired session — the message already says
-		// the password was wrong, and pointing at `account login` would send the
-		// user to the command they just ran.
-		if e.Op == "log in" {
+		// A refused credential is not an expired session — the message already says
+		// what was refused, and pointing at `account login` would send the user to
+		// the command they just ran, or to one that cannot help.
+		if e.refusesCredential() {
 			return ""
 		}
 		return "DRIFT-1001"
@@ -244,11 +252,14 @@ func (e *APIError) message() string {
 
 	switch {
 	case e.Status == http.StatusUnauthorized:
-		if e.Op == "log in" {
+		if e.refusesCredential() {
 			if e.Detail != "" {
 				return lead + ": " + e.Detail + "."
 			}
-			return lead + ": invalid username or password."
+			if e.Op == "log in" {
+				return lead + ": invalid username or password."
+			}
+			return lead + ": it was not accepted."
 		}
 		return lead + ": your session expired. Run 'drift account login' to re-authenticate."
 
@@ -363,6 +374,13 @@ func NewAPIError(op string, status int, header http.Header, body []byte) *APIErr
 	e.RetryAfter = retryAfter(header.Get("Retry-After"), time.Now())
 	e.PlatformAPIVersion = platformAPIVersion(header)
 	return e
+}
+
+// refusesCredential reports whether a 401 is the platform turning down a
+// credential and not a session that ran out: a refused login by its op, and any
+// other request by CredentialRefused.
+func (e *APIError) refusesCredential() bool {
+	return e.CredentialRefused || e.Op == "log in"
 }
 
 // pathMayHaveMoved reports whether this refusal is a request for a path the

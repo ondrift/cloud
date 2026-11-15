@@ -101,10 +101,14 @@ func mintStepUpGrant(purpose, why string) (string, error) {
 
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		// The platform's own wording, which distinguishes a wrong password from
-		// an account it could not read. Restating it here would be a second
-		// author of a refusal this side cannot see the reason for.
-		return "", fmt.Errorf("could not verify your password: %s", strings.TrimSpace(string(raw)))
+		// The platform's own reason is the detail, which distinguishes a wrong
+		// password from an account it could not read. Restating it here would be a
+		// second author of a refusal this side cannot see the reason for. A 401
+		// here is that refusal and no session ending, so it must not send the
+		// person to log in.
+		refused := common.NewAPIError("verify your password", resp.StatusCode, resp.Header, raw)
+		refused.CredentialRefused = resp.StatusCode == http.StatusUnauthorized
+		return "", refused
 	}
 	var out struct {
 		Grant string `json:"grant"`

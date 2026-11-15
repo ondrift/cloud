@@ -331,7 +331,11 @@ func getSnapshotDownloadCmd() *cobra.Command {
 				// Every other failure is the renderer's: its code line, the note
 				// that a 5xx is the platform's, and the wait a throttle names.
 				// The body was read above, so the failure is built from it.
-				return common.NewAPIError("download snapshot", resp.StatusCode, resp.Header, body)
+				failure := common.NewAPIError("download snapshot", resp.StatusCode, resp.Header, body)
+				// A proof of identity refused a second time is the platform's
+				// answer to the proof this request carried, and no session ended.
+				failure.CredentialRefused = needsStepUp(resp.StatusCode, body) != ""
+				return failure
 			}
 
 			// Determine output filename.
