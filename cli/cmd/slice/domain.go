@@ -140,9 +140,8 @@ func getDomainRemoveCmd() *cobra.Command {
 				return common.TransportError("remove domain", err)
 			}
 			defer resp.Body.Close()
-			if resp.StatusCode/100 != 2 {
-				_, _ = common.CheckResponse(resp, "remove domain")
-				return nil
+			if _, err := common.CheckResponse(resp, "remove domain"); err != nil {
+				return err
 			}
 			fmt.Printf("Domain %s removed.\n", host)
 			return nil

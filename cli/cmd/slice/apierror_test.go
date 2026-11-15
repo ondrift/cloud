@@ -207,7 +207,6 @@ func apiErrFailure(t *testing.T, got error, reads *atomic.Int32, status int, lea
 // ─── drift slice domain remove ──────────────────────────────────────────────
 
 func TestDomainRemove_AFailureIsReturnedThroughTheRenderer(t *testing.T) {
-	t.Skip("removed by #2741")
 	for _, tc := range []struct {
 		name   string
 		status int
@@ -261,7 +260,6 @@ func TestDomainRemove_ASuccessStillSaysRemoved(t *testing.T) {
 // ─── drift slice snapshot delete ────────────────────────────────────────────
 
 func TestSnapshotDelete_AFailureIsReturnedThroughTheRenderer(t *testing.T) {
-	t.Skip("removed by #2741")
 	for _, tc := range []struct {
 		name   string
 		status int
@@ -339,7 +337,6 @@ func apiErrDownloadPlatform(t *testing.T, gated bool, answer func(grant string) 
 // The download is asked for a proof of identity first and fails once it has one:
 // the failure the person reads is the renderer's.
 func TestSnapshotDownload_AFailureAfterTheProofIsReturnedThroughTheRenderer(t *testing.T) {
-	t.Skip("removed by #2741")
 	reads := apiErrStatusFeed(t)
 	apiErrTypePassword(t, "the-account-password")
 	platform := apiErrDownloadPlatform(t, true, func(grant string) apiErrAnswer {
@@ -364,7 +361,6 @@ func TestSnapshotDownload_AFailureAfterTheProofIsReturnedThroughTheRenderer(t *t
 // does not gate the download, or a failure ahead of the gate. The platform's own
 // reason is in the failure, which is the body of THAT answer.
 func TestSnapshotDownload_AFailureOnTheFirstRequestKeepsThePlatformsReason(t *testing.T) {
-	t.Skip("removed by #2741")
 	for _, tc := range []struct {
 		name   string
 		status int
@@ -442,7 +438,6 @@ func TestSnapshotDownload_APassphraseRefusalKeepsItsOwnSentence(t *testing.T) {
 // The control: an archive the platform serves without asking for a proof arrives
 // whole, however large it is.
 func TestSnapshotDownload_AnArchiveServedWithoutAProofArrivesWhole(t *testing.T) {
-	t.Skip("removed by #2741")
 	archive := bytes.Repeat([]byte("0123456789abcdef"), 2500)
 	apiErrDownloadPlatform(t, false, func(string) apiErrAnswer {
 		return apiErrAnswer{status: http.StatusOK, body: string(archive)}

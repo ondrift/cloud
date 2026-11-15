@@ -12,6 +12,7 @@ package slice
 // password. This is the client half: notice the refusal, ask, retry once.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,11 +40,17 @@ type stepUpRefusal struct {
 	Purpose string `json:"step_up_required"`
 }
 
-// peek reads a refusal's body so it can be inspected, leaving the response
-// readable by nobody else — a refusal is small and the caller is about to
-// replace this response anyway.
+// peek reads the start of a response's body so it can be inspected, and puts
+// what it read back: the response reads from its first byte afterwards, whether
+// it turns out to be a refusal to report or an archive to save. A refusal is
+// small, so the start is all of it.
 func peek(resp *http.Response) []byte {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	rest := resp.Body
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(body), rest), rest}
 	if err != nil {
 		return nil
 	}
