@@ -15,7 +15,6 @@ import (
 // The address is printed and never fetched, so it works with no session and no
 // network: the test runs with a trap that fails on any request.
 func TestDoctorExplainEndsWithTheAddressOfTheCodesPage(t *testing.T) {
-	t.Skip("fails until explain prints the address (task #2564)")
 	codes := common.ErrorCodes()
 	if len(codes) == 0 {
 		t.Fatal("the registry is empty, so the loop below would prove nothing")
@@ -48,7 +47,6 @@ func TestDoctorExplainEndsWithTheAddressOfTheCodesPage(t *testing.T) {
 // The address comes after the fix line, whether there is a command or not, and after
 // the note on a retired code.
 func TestDoctorExplainPutsTheAddressAfterTheFixAndTheRetiredNote(t *testing.T) {
-	t.Skip("fails until explain prints the address (task #2564)")
 	noNetwork(t, t.Errorf)
 	for _, c := range common.ErrorCodes() {
 		stdout, _, _ := runTree("doctor", "explain", c.Code)
