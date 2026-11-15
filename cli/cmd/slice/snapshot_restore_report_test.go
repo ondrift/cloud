@@ -125,8 +125,6 @@ func reportSame(t *testing.T, got, want string) {
 // A restore that needs follow-up work says so after the counts, and is still a
 // success: the notes are not errors.
 func TestRestoreReport_PrintsTheNotesThePlatformReturns(t *testing.T) {
-	t.Skip("removed by #2944")
-
 	// The platform sends "errors" as null when nothing failed, and an empty list
 	// is the same answer.
 	for _, noErrors := range []string{`null`, `[]`} {
@@ -144,8 +142,6 @@ func TestRestoreReport_PrintsTheNotesThePlatformReturns(t *testing.T) {
 // One note per interpreted backend, so a slice with two has two. They share one
 // heading, in the order the platform sent them.
 func TestRestoreReport_SeveralNotesShareOneHeading(t *testing.T) {
-	t.Skip("removed by #2944")
-
 	got, err := reportOf(t, reportAnswer(reportNotes(t, reportNoteDefault, reportNoteNamed), `null`))
 	if err != nil {
 		t.Fatalf("a restore with notes and no errors is a success, got: %v", err)
@@ -160,8 +156,6 @@ func TestRestoreReport_SeveralNotesShareOneHeading(t *testing.T) {
 // A restore that failed in part and also has follow-up work prints both, the
 // notes first because they follow the counts, and still fails the command.
 func TestRestoreReport_ErrorsAndNotesPrintBothAndTheRestoreIsStillIncomplete(t *testing.T) {
-	t.Skip("removed by #2944")
-
 	failures := reportJSON(t, []string{reportFailureOne, reportFailureTwo})
 	got, err := reportOf(t, reportAnswer(reportNotes(t, reportNoteDefault), failures))
 	if err == nil || err.Error() != "restore incomplete: 2 component(s) failed" {
@@ -185,8 +179,6 @@ func TestRestoreReport_ErrorsAndNotesPrintBothAndTheRestoreIsStillIncomplete(t *
 // This is the control for the three above: it holds on every answer that has
 // nothing to follow up, however the platform spells the absence.
 func TestRestoreReport_WithNoNotesPrintsWhatItAlwaysPrinted(t *testing.T) {
-	t.Skip("removed by #2944")
-
 	whole := reportHeadlineWhole + reportCountLines
 	failures := reportJSON(t, []string{reportFailureOne, reportFailureTwo})
 	failed := reportHeadlineErrors + reportCountLines +
@@ -258,8 +250,6 @@ func reportRun(t *testing.T, answer string) (string, error) {
 // the command's use of it: a restore that came back with notes exits 0, and one
 // that came back with errors exits non-zero whatever else it printed.
 func TestSnapshotRestoreCmd_PrintsTheNotesAndReturnsTheReportsVerdict(t *testing.T) {
-	t.Skip("removed by #2944")
-
 	t.Run("notes and no errors", func(t *testing.T) {
 		out, err := reportRun(t, reportAnswer(reportNotes(t, reportNoteDefault), `null`))
 		if err != nil {
