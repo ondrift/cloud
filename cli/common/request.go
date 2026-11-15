@@ -57,7 +57,7 @@ func newAuthenticatedRequestCtx(ctx context.Context, method, url string, body io
 			// The first failure a new install hits, and it used to surface as the
 			// raw filesystem error — an absolute path to a session file the user has
 			// never heard of, for the condition "you have not logged in yet".
-			return nil, errors.New(withCode(strings.Join(NotLoggedInHints, "\n"), "DRIFT-1011"))
+			return nil, Failf("DRIFT-1011", "%s", strings.Join(NotLoggedInHints, "\n"))
 		}
 		token = sessionToken
 	}

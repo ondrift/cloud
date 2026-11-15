@@ -38,7 +38,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -104,10 +103,9 @@ func exchangePAT(ctx context.Context, raw string) (string, error) {
 			// diagnose: something else entirely is in the variable.
 			hint = "\n  " + TokenEnv + " does not look like a Drift token — they start with " + patPrefix
 		}
-		return "", errors.New(withCode(
+		return "", Failf("DRIFT-1011", "%s",
 			"the token in "+TokenEnv+" was refused — it may have been revoked, or have expired."+
-				"\n  List what this account holds with `drift account token list`."+hint,
-			"DRIFT-1011"))
+				"\n  List what this account holds with `drift account token list`."+hint)
 	case resp.StatusCode >= 500:
 		return "", fmt.Errorf("%w (exchange returned %d)", ErrPlatformUnavailable, resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:

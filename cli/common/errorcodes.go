@@ -175,10 +175,92 @@ func errorCodeNumber(code string) int {
 // own name and nobody has to discover a verb to use it.
 //
 // The trailing line names the command rather than only the code: a code with no
-// instructions is a lookup the user has to guess the shape of.
+// instructions is a lookup the user has to guess the shape of. A message that
+// already carries that line is returned as it is, so a code is never printed
+// twice.
 func withCode(message, code string) string {
 	if code == "" {
 		return message
 	}
-	return fmt.Sprintf("%s\n  %s · drift doctor explain %s", message, code, code)
+	line := fmt.Sprintf("  %s · drift doctor explain %s", code, code)
+	if strings.Contains(message, "\n"+line) {
+		return message
+	}
+	return message + "\n" + line
+}
+
+// Failure is an error that carries the code of a registered failure. Any package
+// raises one with Failf, or gives an error it already has a code with Coded, and
+// reads the code back with CodeOf.
+//
+// # One code line
+//
+// A failure renders as its message and then one line naming its code and the
+// verb that explains it:
+//
+//	no copy of the Driftfile format yet.
+//	  DRIFT-1008 · drift doctor explain DRIFT-1008
+//
+// It prints that line once however it travels. A failure wrapped by fmt.Errorf
+// with %w keeps the one line it renders, so a wrap site adds its context and
+// nothing else, and Coded returns an error that already carries a code as it is:
+// the failure that was named first keeps its name, and the text a person pastes
+// agrees with what CodeOf reads.
+type Failure struct {
+	code string
+	err  error
+}
+
+// Failf raises a failure under a registered code, with its message formatted as
+// fmt.Errorf formats it, %w included. An empty code raises an error with no code.
+func Failf(code, format string, args ...any) error {
+	return Coded(code, fmt.Errorf(format, args...))
+}
+
+// Coded gives err the code, keeping err reachable through errors.Is and
+// errors.As. An error that already carries a code is returned as it is, and so is
+// one given an empty code. A nil error stays nil.
+func Coded(code string, err error) error {
+	if err == nil || code == "" || CodeOf(err) != "" {
+		return err
+	}
+	return &Failure{code: code, err: err}
+}
+
+// Error renders the message, then the code's line.
+func (f *Failure) Error() string { return withCode(f.err.Error(), f.code) }
+
+// Unwrap exposes the error the failure was raised from.
+func (f *Failure) Unwrap() error { return f.err }
+
+// FailureCode is the code the failure carries.
+func (f *Failure) FailureCode() string { return f.code }
+
+// coded is an error that names its failure code. A Failure is one, and so is an
+// error whose code depends on what it holds, as an APIError's does on its status.
+type coded interface{ FailureCode() string }
+
+// CodeOf returns the code an error carries: the first one found walking the chain
+// outermost first, through fmt.Errorf's %w and errors.Join. It returns "" for an
+// error with no code and for nil.
+func CodeOf(err error) string {
+	if err == nil {
+		return ""
+	}
+	if c, ok := err.(coded); ok {
+		if code := c.FailureCode(); code != "" {
+			return code
+		}
+	}
+	switch e := err.(type) {
+	case interface{ Unwrap() error }:
+		return CodeOf(e.Unwrap())
+	case interface{ Unwrap() []error }:
+		for _, inner := range e.Unwrap() {
+			if code := CodeOf(inner); code != "" {
+				return code
+			}
+		}
+	}
+	return ""
 }
