@@ -18,7 +18,11 @@
     "The queue_ cases ALSO run against a real slice: `run.sh --slice <backbone url>`",
     "hands each driver the slice's Backbone and checks the queue_ cases alone. The",
     "slice is the authority on the queue wire, so the same expectations hold the",
-    "local store to what the slice answers."
+    "local store to what the slice answers.",
+    "",
+    "The \"$loop\" section at the end is the one place that says what an SDK that",
+    "serves many calls from one process must do. check.py skips it; loop_check.py",
+    "reads it."
   ],
 
   "declared_queue_pop_empty": {
@@ -168,5 +172,171 @@
   "slice_identity_kept": {
     "why": "With DRIFT_SLICE=billing, a caller passing its own X-Drift-Slice: operator must not relabel the call. The header is a label and authorises nothing either way, but an SDK that lets the caller's copy win, or sends both, hands code a documented way to pose as another slice.",
     "expect": "billing"
+  },
+
+  "$loop": {
+    "comment": [
+      "THE LOOP A SLICE'S WARM WORKER SPEAKS, for every SDK that serves many calls",
+      "from one process. loop_check.py starts a small program per language (the",
+      "handler programs beside the drivers, each calling the SDK's own run entry)",
+      "with DRIFT_RUNTIME=1 and nothing else in its environment, sends it envelopes",
+      "over a pipe and compares what happens with `expect` below. check.py does not",
+      "read this section: its cases are the primitives, and these are a conversation.",
+      "",
+      "The protocol is warmpool.rs and protocol.rs in cloud/platform: one JSON",
+      "envelope per line in, exactly one line out, the next envelope only after the",
+      "reply, end of input ends the process with status 0, and a trigger's one-shot",
+      "spawn sends one envelope with no trailing newline and closes stdin.",
+      "",
+      "A case is a `session` (serve: calls, then end of input; one_shot; failure:",
+      "the last call's handler fails), the `calls` it sends, what to `observe` and",
+      "what to `expect`. A call may carry `tmpdir`, `secrets`, `secrets_previous`,",
+      "`print` (the handler writes that text to stdout) and `fail` (the handler",
+      "raises or panics); a member left out is left out of the envelope, as a slice",
+      "leaves out what it has nothing to say for. `only_on` limits a case to a",
+      "platform.",
+      "",
+      "not_applicable: languages whose calls never reach the SDK's run entry. Not",
+      "run.",
+      "pending: languages whose loop is not built. The cases run and failing is",
+      "reported, not failed; passing FAILS until the language is taken off this",
+      "list, so the list cannot rot. Every other language must pass."
+    ],
+
+    "pending": {
+      "rust": "drift_sdk::run reads one envelope, answers it and returns: it does not loop yet.",
+      "ruby": "Drift.run reads one envelope, answers it and returns: it does not loop yet.",
+      "php": "\\Drift\\run reads one envelope, answers it and returns: it does not loop yet."
+    },
+
+    "not_applicable": {
+      "python": "A deployed Python call reaches the slice's language server, which imports the function and calls its handler; the SDK's run entry is not on that path, so there is no loop of the SDK's own to hold to these cases.",
+      "node": "A deployed Node call reaches the slice's language server, which imports the function and calls its handler; the SDK's run entry is not on that path, so there is no loop of the SDK's own to hold to these cases."
+    },
+
+    "cases": {
+      "loop_one_reply_per_envelope": {
+        "why": "A warm worker serves many calls from one process: the slice writes an envelope, reads exactly one line back, then writes the next. A program that answers the first and exits, or answers it and swallows the rest, leaves the next call waiting until its runtime budget ends, and the slice cannot tell that from a slow function.",
+        "session": "serve",
+        "calls": [{}, {}, {}, {}, {}],
+        "observe": "replies",
+        "expect": 5
+      },
+
+      "loop_one_process": {
+        "why": "The point of the loop is that the process stays: its sandbox and language runtime are paid for once. Five calls answered by five processes are five spawns behind one wrapper, and the slice would be keeping a worker that saves nothing. Each reply reports the pid of the process that served it, and it must be the one the controller started.",
+        "session": "serve",
+        "calls": [{}, {}, {}, {}, {}],
+        "observe": "own_pid",
+        "expect": [true, true, true, true, true]
+      },
+
+      "loop_tmpdir_and_home_are_the_envelopes": {
+        "why": "The slice makes a scratch directory for each call, removes it afterwards and names it in the envelope's tmpdir. A one-shot child gets it as TMPDIR and HOME at spawn; a warm worker was spawned once, so the SDK points both at each envelope's directory before the handler runs. One left on the first call's directory writes into a directory the slice has already removed, or one the next call shares.",
+        "session": "serve",
+        "calls": [
+          {"tmpdir": "/scratch/loop-1"},
+          {"tmpdir": "/scratch/loop-2"},
+          {"tmpdir": "/scratch/loop-3"}
+        ],
+        "observe": "tmpdir_and_home",
+        "expect": [
+          ["/scratch/loop-1", "/scratch/loop-1"],
+          ["/scratch/loop-2", "/scratch/loop-2"],
+          ["/scratch/loop-3", "/scratch/loop-3"]
+        ]
+      },
+
+      "loop_secret_is_what_the_envelope_carries": {
+        "why": "The slice sends the current value of every declared secret in every envelope, because a rotation can happen between two calls of one process. The SDK reads DRIFT_SECRET_<NAME> from the environment, so each envelope's values replace the last call's, and a secret that first appears in a later call is set in that call.",
+        "session": "serve",
+        "calls": [
+          {"secrets": {"API_KEY": "key-one"}},
+          {"secrets": {"API_KEY": "key-two"}},
+          {"secrets": {"API_KEY": "key-two", "WEBHOOK_TOKEN": "token"}}
+        ],
+        "observe": "secrets",
+        "expect": [
+          {"DRIFT_SECRET_API_KEY": "key-one"},
+          {"DRIFT_SECRET_API_KEY": "key-two"},
+          {"DRIFT_SECRET_API_KEY": "key-two", "DRIFT_SECRET_WEBHOOK_TOKEN": "token"}
+        ]
+      },
+
+      "loop_secret_removed_when_not_carried": {
+        "why": "A secret deleted from the store stops being carried, and the next call must not be able to read it: a stale variable is indistinguishable from a live one to the accessor, so a process that only ever adds variables keeps serving a secret the tenant removed.",
+        "session": "serve",
+        "calls": [
+          {"secrets": {"API_KEY": "key-one", "WEBHOOK_TOKEN": "token"}},
+          {"secrets": {"API_KEY": "key-one"}},
+          {},
+          {}
+        ],
+        "observe": "secrets",
+        "expect": [
+          {"DRIFT_SECRET_API_KEY": "key-one", "DRIFT_SECRET_WEBHOOK_TOKEN": "token"},
+          {"DRIFT_SECRET_API_KEY": "key-one"},
+          {},
+          {}
+        ]
+      },
+
+      "loop_previous_secret_follows_the_same_rule": {
+        "why": "Inside a rotation's grace window the envelope carries the replaced value as secrets_previous, and the SDK exposes it as DRIFT_SECRET_<NAME>_PREVIOUS. The envelope stops carrying it when the window ends, and the variable has to go in that call, or the worker keeps accepting a credential that was retired. The current value is carried throughout, so this case isolates the _PREVIOUS variable.",
+        "session": "serve",
+        "calls": [
+          {"secrets": {"API_KEY": "new"}, "secrets_previous": {"API_KEY": "old"}},
+          {"secrets": {"API_KEY": "new"}},
+          {"secrets": {"API_KEY": "new"}, "secrets_previous": {"API_KEY": "older"}},
+          {"secrets": {"API_KEY": "new"}}
+        ],
+        "observe": "secrets",
+        "expect": [
+          {"DRIFT_SECRET_API_KEY": "new", "DRIFT_SECRET_API_KEY_PREVIOUS": "old"},
+          {"DRIFT_SECRET_API_KEY": "new"},
+          {"DRIFT_SECRET_API_KEY": "new", "DRIFT_SECRET_API_KEY_PREVIOUS": "older"},
+          {"DRIFT_SECRET_API_KEY": "new"}
+        ]
+      },
+
+      "loop_a_printed_line_reaches_stderr_only": {
+        "why": "The response stream is the slice's: one reply line per call. A function that prints is logging, and the slice reads the process's stderr as the function's log. A printed line on the response stream is read as the reply, or desynchronises every call after it, and the slice retires a worker over a stray line. The first call prints; both calls must still be answered, and the text must be on stderr.",
+        "session": "serve",
+        "calls": [{"print": "loop-conformance-printed-line"}, {}],
+        "observe": "printed_line",
+        "expect": {"replies": 2, "on_stderr": true}
+      },
+
+      "loop_reply_carries_rss_bytes": {
+        "why": "Nothing exits for the slice to weigh with wait4, so a warm worker reports its own peak resident size in every reply, and the slice's sizing and eviction read it. A worker that reports nothing makes its function's memory read as zero. Asserted on Linux, where a deployed function runs.",
+        "only_on": "linux",
+        "session": "serve",
+        "calls": [{}, {}, {}],
+        "observe": "rss_bytes",
+        "expect": [true, true, true]
+      },
+
+      "loop_eof_ends_the_process": {
+        "why": "Closing stdin is how the slice retires a worker. A process that ignores it stays until the slice kills it, and one that exits with a non-zero status makes a clean retirement look like a crash. After three answered calls and end of input the process must exit with status 0 within a second.",
+        "session": "serve",
+        "calls": [{}, {}, {}],
+        "observe": "exit_after_eof",
+        "expect": "status 0"
+      },
+
+      "loop_one_shot_spawn": {
+        "why": "A trigger's or a cron's spawn runs the same program: it sends ONE envelope with no trailing newline and closes stdin at once. The program must answer that envelope, without waiting for a newline that never comes, and exit with status 0 when its input ends.",
+        "session": "one_shot",
+        "calls": [{}],
+        "expect": {"replies": 1, "exit": "status 0"}
+      },
+
+      "loop_a_failing_handler_ends_the_process": {
+        "why": "A handler that raises or panics ends the process, as it does in a one-shot spawn, and writes nothing more to the response stream. The slice sees the pipe close, reports how the process ended from its exit status and its stderr, and gives the next call a fresh worker. A process that survives is in a state nobody knows, one that answers for the failed call hides the failure, and a fatal error printed to stdout (PHP's display_errors) arrives as a stray line instead of the closed pipe the slice reports from.",
+        "session": "failure",
+        "calls": [{}, {"fail": true}],
+        "expect": {"replies_before_the_failure": 1, "output_after_the_failure": "", "exit": "non-zero status"}
+      }
+    }
   }
 }
