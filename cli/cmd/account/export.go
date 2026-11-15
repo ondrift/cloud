@@ -490,7 +490,7 @@ func readme(username, stamp string, includeSecretValues bool, problems []string)
 	b.WriteString("  is your DATA; the material guarding it is not data you need a copy of.\n")
 	b.WriteString("  Pocket VALUES. They are encrypted on your own device and Drift holds no key\n")
 	b.WriteString("  for them, so there is nothing here to give you but the key names.\n")
-	b.WriteString("  Your deployed function CODE. `drift atomic` deploys it from your own repo;\n")
+	b.WriteString("  Your deployed function CODE. `drift apply` deploys it from your own repo;\n")
 	b.WriteString("  the source of record is where you wrote it.\n")
 	if len(problems) > 0 {
 		fmt.Fprintf(&b, "\nINCOMPLETE — %d thing(s) could not be read and are NOT in this archive:\n", len(problems))
