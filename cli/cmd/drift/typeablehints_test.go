@@ -46,6 +46,10 @@ var typeableHints = map[string][]string{
 	// `drift doctor explain` for a code numbered above every registered one, which
 	// is what a newer drift prints. The number is one no registry reaches.
 	"the newer-code answer of drift doctor explain": {doctor.NotRegistered("DRIFT-99999999").Error()},
+	// What a machine with no copy of the Driftfile format is told to run (DRIFT-1008).
+	"the no-schema refusal (DRIFT-1008)": {project.ErrNoSchema.Error()},
+	// What a compiled function booked under the floor is told to run (DRIFT-1010).
+	"the compiled-floor refusal (DRIFT-1010)": {project.FloorRefusal("16MB", []string{"  get:ping booked 8MiB, in go"}).Error()},
 }
 
 // yamlRefusal is the message every reader gives a YAML Driftfile.

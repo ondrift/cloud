@@ -173,6 +173,14 @@ func CheckSlotBookings(m *Manifest, backends []atomic_cmd.Backend, live *LiveSli
 	if len(bad) == 0 {
 		return nil
 	}
+	return FloorRefusal(floor.Declared, bad)
+}
+
+// FloorRefusal is the refusal of compiled slots booked under the floor, DRIFT-1010.
+// floor is the minimum as the schema declares it and bad has one line per slot
+// booked under it. It is the one place the sentence is written, so the commands
+// it names can be checked against the command tree.
+func FloorRefusal(floor string, bad []string) error {
 	return common.Failf("DRIFT-1010",
 		"a compiled function or worker needs at least %s, and %d of these book less:\n%s\n\n"+
 			"A compiled language carries a private language runtime inside every invocation, "+
@@ -181,7 +189,7 @@ func CheckSlotBookings(m *Manifest, backends []atomic_cmd.Backend, live *LiveSli
 			"as little as 8MiB.\n"+
 			"Raise each one's memory in the Driftfile to %s or higher, or run `drift size` against a "+
 			"deployed slice to size them from what they actually hold.",
-		floor.Declared, len(bad), strings.Join(bad, "\n"), floor.Declared)
+		floor, len(bad), strings.Join(bad, "\n"), floor)
 }
 
 // FindDriftfileFor locates the project a directory belongs to, by walking UP
