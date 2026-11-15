@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 const WAIT: Duration = Duration::from_secs(5);
 
 /// The built example, next to the test binary's own directory under target/.
-/// A plain `cargo test` has built it; `cargo test --test loop` has not, so it
-/// is built here once when it is missing.
+/// A plain `cargo test` has built it; `cargo test --test loop` has not, and
+/// would run a stale one, so it is built here once: a no-op when current.
 fn program() -> PathBuf {
     static BUILT: Once = Once::new();
     let mut dir = std::env::current_exe().unwrap();
@@ -29,9 +29,6 @@ fn program() -> PathBuf {
     dir.pop(); // deps/
     let exe = dir.join("examples").join(format!("loop_serve{}", std::env::consts::EXE_SUFFIX));
     BUILT.call_once(|| {
-        if exe.exists() {
-            return;
-        }
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
         let status = Command::new(cargo)
             .args(["build", "--quiet", "--example", "loop_serve"])
@@ -149,7 +146,6 @@ fn payload(reply: &Value) -> &Value {
 }
 
 #[test]
-#[ignore = "run enables this: #3555 - Move the response stream off fd 1 and loop"]
 fn three_envelopes_are_answered_by_one_process() {
     let mut worker = Worker::start();
     let pids: Vec<u64> = (0..3)
@@ -166,7 +162,6 @@ fn three_envelopes_are_answered_by_one_process() {
 }
 
 #[test]
-#[ignore = "run enables this: #3555 - Move the response stream off fd 1 and loop"]
 fn a_printed_line_reaches_stderr_and_the_reply_stays_one_line() {
     let mut worker = Worker::start();
     let first = worker.call(json!({"path": "/", "body": {"print": "loop-test-printed-line"}}));
@@ -185,7 +180,6 @@ fn a_printed_line_reaches_stderr_and_the_reply_stays_one_line() {
 }
 
 #[test]
-#[ignore = "run enables this: #3555 - Move the response stream off fd 1 and loop"]
 fn end_of_input_ends_the_process_with_status_zero() {
     let mut worker = Worker::start();
     for i in 0..3 {

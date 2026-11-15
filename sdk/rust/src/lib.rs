@@ -96,12 +96,102 @@ where
     }
 }
 
+/// The deployed loop: the slice (or a trigger's spawn) writes newline-delimited
+/// envelopes to stdin and reads one reply line per envelope from stdout, and
+/// stdin closing ends the process with status 0. A trigger's spawn is the same
+/// loop with one envelope, no trailing newline, and stdin closed at once.
+///
+/// The replies go to a duplicate of the original stdout, made before the first
+/// handler runs, and fd 1 is pointed at stderr: `println!` in a handler (or in
+/// a library it calls) is the function's log, never a stray line on the
+/// response stream. Where the descriptors cannot be rearranged the replies stay
+/// on stdout and the reason is written to stderr.
+///
+/// A handler that panics ends the process, as it does in a one-shot spawn, and
+/// the slice reports how from the exit status and stderr.
 fn run_deployed<F: Fn(Value) -> Value>(handler: &F) {
-    let mut input = String::new();
-    io::stdin().read_to_string(&mut input).unwrap();
-    let out = answer(handler, &input, |_| {}, |_| {});
-    io::stdout().write_all(out.as_bytes()).unwrap();
-    io::stdout().flush().unwrap();
+    let mut out: Box<dyn Write> = match sys::separate_protocol_stream() {
+        Ok(protocol) => Box::new(protocol),
+        Err(err) => {
+            eprintln!("drift-sdk: replies stay on stdout, the response stream could not be moved off it: {err}");
+            Box::new(io::stdout())
+        }
+    };
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        // The lock is released between envelopes, so a handler that touches
+        // stdin itself waits on nothing.
+        match io::stdin().lock().read_line(&mut line) {
+            Ok(0) | Err(_) => return, // stdin closed: this worker is done
+            Ok(_) => {}
+        }
+        let raw = line.trim();
+        if raw.is_empty() {
+            continue;
+        }
+
+        let reply = answer(handler, raw, |_| {}, |_| {});
+        if out.write_all(reply.as_bytes()).is_err()
+            || out.write_all(b"\n").is_err()
+            || out.flush().is_err()
+        {
+            return; // the slice stopped reading
+        }
+    }
+}
+
+/// The libc calls that move the response stream, declared here so the crate
+/// keeps its two dependencies (and stays pure Rust, which a deploy without a C
+/// compiler needs). Linux and macOS both have them, with the same numbers.
+#[cfg(unix)]
+mod sys {
+    use std::fs::File;
+    use std::io;
+    use std::os::raw::c_int;
+    use std::os::unix::io::FromRawFd;
+
+    extern "C" {
+        fn dup(fd: c_int) -> c_int;
+        fn dup2(old: c_int, new: c_int) -> c_int;
+        fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
+        fn close(fd: c_int) -> c_int;
+    }
+
+    const F_SETFD: c_int = 2;
+    const FD_CLOEXEC: c_int = 1;
+
+    /// Move the protocol off fd 1: duplicate the real stdout to a new
+    /// descriptor, closed on exec so a process the handler starts cannot hold
+    /// the slice's pipe open, then point fd 1 at stderr. The duplicate is
+    /// returned; everything that writes to fd 1 reaches stderr from then on.
+    pub fn separate_protocol_stream() -> io::Result<File> {
+        // SAFETY: plain descriptor calls; the new descriptor is owned by the
+        // File made from it, or closed here when the rearranging fails.
+        unsafe {
+            let fd = dup(1);
+            if fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 || dup2(2, 1) < 0 {
+                let err = io::Error::last_os_error();
+                close(fd);
+                return Err(err);
+            }
+            Ok(File::from_raw_fd(fd))
+        }
+    }
+}
+
+#[cfg(not(unix))]
+mod sys {
+    use std::fs::File;
+    use std::io;
+
+    pub fn separate_protocol_stream() -> io::Result<File> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "not a unix platform"))
+    }
 }
 
 /// What is done to one envelope, however many a process serves: the text is
