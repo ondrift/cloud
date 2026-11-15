@@ -1,7 +1,10 @@
 //! Drift SDK for Rust Atomic functions.
 //!
 //! Provides:
-//!   - run(handler): Entry point (deployed or local mode).
+//!   - run(handler): Entry point. Deployed (DRIFT_RUNTIME set) it serves many
+//!     calls from one process, reading newline-delimited envelopes until stdin
+//!     closes and writing one reply line per envelope (`LOOP_PROTOCOL`);
+//!     otherwise it starts the local development server.
 //!   - `backbone` — the B of the sacred A·B·C triad; the SOLE entrypoint for
 //!     every STATE primitive: `backbone::secret`, `backbone::cache`,
 //!     `backbone::nosql`, `backbone::queue`, `backbone::blob`, `backbone::lock`,
@@ -85,6 +88,19 @@ pub fn take_response_headers() -> Option<Value> {
 // Entry point
 // ---------------------------------------------------------------------------
 
+/// The loop `run` serves under DRIFT_RUNTIME, by number: newline-delimited
+/// envelopes in, one reply line per envelope out, until stdin closes. The CLI
+/// looks for this constant in the SDK a function resolves to, and declares the
+/// loop for the function only when it finds it.
+pub const LOOP_PROTOCOL: u32 = 1;
+
+/// Serve the handler.
+///
+/// Under DRIFT_RUNTIME (a deployed function, or a trigger's spawn) this is the
+/// loop `LOOP_PROTOCOL` names: one process reads envelopes until stdin closes
+/// and answers each with one line, with TMPDIR, HOME and the DRIFT_SECRET_
+/// variables set from the envelope for that call, `println!` going to stderr,
+/// and `rss_bytes` in every reply. Without it, a local development server.
 pub fn run<F>(handler: F)
 where
     F: Fn(Value) -> Value + 'static,

@@ -204,7 +204,6 @@
     ],
 
     "pending": {
-      "rust": "drift_sdk::run reads one envelope, answers it and returns: it does not loop yet."
     },
 
     "not_applicable": {
