@@ -99,7 +99,23 @@ where
 fn run_deployed<F: Fn(Value) -> Value>(handler: &F) {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input).unwrap();
-    let mut req: Value = serde_json::from_str(&input).unwrap_or(Value::Null);
+    let out = answer(handler, &input, |_| {}, |_| {});
+    io::stdout().write_all(out.as_bytes()).unwrap();
+    io::stdout().flush().unwrap();
+}
+
+/// What is done to one envelope, however many a process serves: the text is
+/// parsed (text that is not JSON is a null request), the query string is decoded
+/// into an object, `before` sees the request and runs ahead of the handler (a
+/// caller's per-call setup), the handler runs, `after` may add to its reply, and
+/// the reply is serialised.
+fn answer<F, B, A>(handler: &F, raw: &str, before: B, after: A) -> String
+where
+    F: Fn(Value) -> Value,
+    B: FnOnce(&Value),
+    A: FnOnce(&mut Value),
+{
+    let mut req: Value = serde_json::from_str(raw).unwrap_or(Value::Null);
     if let Some(q) = req.get("query").and_then(|v| v.as_str()).map(str::to_string) {
         let mut parsed = serde_json::Map::new();
         for pair in q.split('&').filter(|p| !p.is_empty()) {
@@ -113,10 +129,10 @@ fn run_deployed<F: Fn(Value) -> Value>(handler: &F) {
             obj.insert("query".to_string(), Value::Object(parsed));
         }
     }
-    let resp = handler(req);
-    let out = serde_json::to_string(&resp).unwrap();
-    io::stdout().write_all(out.as_bytes()).unwrap();
-    io::stdout().flush().unwrap();
+    before(&req);
+    let mut resp = handler(req);
+    after(&mut resp);
+    serde_json::to_string(&resp).unwrap()
 }
 
 fn percent_decode(s: &str) -> String {
