@@ -194,13 +194,19 @@ func (e *APIError) Error() string {
 // FailureCode is the code this failure carries, which CodeOf reads.
 func (e *APIError) FailureCode() string { return e.code() }
 
-// code names this failure, or "" for a status that has none yet.
+// code names this failure. Every status from 400 to 599 has one, except a 401 that
+// refuses a credential other than a login's, whose message is the platform's own
+// reason and whose person is the one to act on it.
 func (e *APIError) code() string {
 	switch {
 	case e.Status == http.StatusUnauthorized:
 		// A refused credential is not an expired session — the message already says
 		// what was refused, and pointing at `account login` would send the user to
-		// the command they just ran, or to one that cannot help.
+		// the command they just ran, or to one that cannot help. A refused login has
+		// a code of its own for that reason.
+		if e.Op == "log in" {
+			return "DRIFT-1017"
+		}
 		if e.refusesCredential() {
 			return ""
 		}
@@ -243,6 +249,13 @@ func (e *APIError) code() string {
 
 	case e.Status >= 500:
 		return "DRIFT-1005"
+
+	// Any other refusal is the platform saying the request itself is not
+	// acceptable. 400 is the commonest answer to a bad request body, and 405, 410,
+	// 413, 415 and 422 say the same thing about the method, the path's age, the size,
+	// the format and the content.
+	case e.Status >= 400 && e.Status < 500:
+		return "DRIFT-1016"
 	}
 	return ""
 }
@@ -350,7 +363,7 @@ func (e *APIError) message() string {
 func CheckResponse(resp *http.Response, op string) ([]byte, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("Couldn't %s: failed to read response body (%w)", op, err)
+		return nil, Failf("DRIFT-1020", "Couldn't %s: failed to read response body (%w)", op, err)
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return body, nil
@@ -599,9 +612,11 @@ func TransportError(op string, err error) error {
 	lead := "Couldn't " + op + ": "
 
 	// Session-expired error bubbles up from DoRequest's refresh path.
-	// Its message is already polite; just prepend the lead.
+	// Its message is already polite; just prepend the lead. The code it carries
+	// goes with it: the text keeps the code's line, and Coded names the failure
+	// for CodeOf.
 	if strings.Contains(err.Error(), "session expired") {
-		return fmt.Errorf("%s%s", lead, strings.TrimPrefix(err.Error(), "session expired — "))
+		return Coded(CodeOf(err), errors.New(lead+strings.TrimPrefix(err.Error(), "session expired — ")))
 	}
 
 	// Timeouts — check both url.Error and the generic net.Error interface.
@@ -634,6 +649,15 @@ func TransportError(op string, err error) error {
 		return Coded("DRIFT-1006", errors.New(out))
 	}
 
-	// Unknown — wrap it unchanged so the user still sees something.
-	return fmt.Errorf("%s%v", lead, err)
+	// A failure that already carries its code is wrapped with the lead and nothing
+	// else, so the code it was given stays the one CodeOf reads and the line prints
+	// once.
+	if CodeOf(err) != "" {
+		return fmt.Errorf("%s%w", lead, err)
+	}
+
+	// Unknown — the original text follows the lead unchanged, so the user still
+	// sees what the connection reported, under the code for a failure this does not
+	// recognise.
+	return Failf("DRIFT-1020", "%s%v", lead, err)
 }

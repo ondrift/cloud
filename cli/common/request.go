@@ -211,12 +211,12 @@ func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reade
 	// failure mode tells them apart, so it decides the message.
 	if err := RefreshAccessToken(); err != nil {
 		if errors.Is(err, ErrPlatformUnavailable) {
-			return nil, errors.New(MaintenanceMessage)
+			return nil, Failf("DRIFT-1012", "%s", MaintenanceMessage)
 		}
 		if errors.Is(err, ErrSessionRevoked) {
-			return nil, errors.New(SessionRevokedMessage)
+			return nil, Failf("DRIFT-1018", "%s", SessionRevokedMessage)
 		}
-		return nil, fmt.Errorf("session expired — run 'drift account login' to re-authenticate")
+		return nil, Failf("DRIFT-1001", "session expired — run 'drift account login' to re-authenticate")
 	}
 
 	return send()

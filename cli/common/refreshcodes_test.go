@@ -13,14 +13,6 @@ import (
 // wraps what DoRequest returns in. These drive the real request path against a
 // stub API, as the revoked-session tests do.
 
-// notWiredYet skips a test until the commit that wires DoRequest and
-// TransportError to the new codes lands; DRIFT-1018 is registered by the commit
-// before it.
-func notWiredYet(t *testing.T) {
-	t.Helper()
-	t.Skip("DRIFT-1018 is registered by the next commit and printed by the one after it")
-}
-
 // assertCodedOnce checks that the failure prints code's line exactly once, that
 // CodeOf reads the same code, and that the code is registered.
 func assertCodedOnce(t *testing.T, err error, code string) {
@@ -41,7 +33,6 @@ func assertCodedOnce(t *testing.T, err error, code string) {
 
 // A platform that cannot answer the refresh is unavailable, and says to wait.
 func TestARefreshTheUnavailablePlatformCannotAnswerPrintsDRIFT1012(t *testing.T) {
-	notWiredYet(t)
 	stubSession(t, func(w http.ResponseWriter) { w.WriteHeader(http.StatusServiceUnavailable) })
 
 	err := TransportError("list slices", askForSomething(t))
@@ -57,7 +48,6 @@ func TestARefreshTheUnavailablePlatformCannotAnswerPrintsDRIFT1012(t *testing.T)
 
 // A refresh the platform rejects is a session that ended, and says to log in.
 func TestARejectedRefreshPrintsDRIFT1001(t *testing.T) {
-	notWiredYet(t)
 	stubSession(t, reject(`{"error":"invalid or expired refresh token"}`))
 
 	err := TransportError("list slices", askForSomething(t))
@@ -76,7 +66,6 @@ func TestARejectedRefreshPrintsDRIFT1001(t *testing.T) {
 // A session the platform ended on purpose has a code of its own, because its next
 // step differs from an ordinary expiry's, and the code's remedy keeps that step.
 func TestARevokedRefreshPrintsItsOwnCodeAndKeepsItsSentence(t *testing.T) {
-	notWiredYet(t)
 	stubSession(t, reject(`{"error":"device mismatch; please log in again"}`))
 
 	err := TransportError("list slices", askForSomething(t))
@@ -96,7 +85,6 @@ func TestARevokedRefreshPrintsItsOwnCodeAndKeepsItsSentence(t *testing.T) {
 
 // The three failures are three codes: none of them is another's.
 func TestTheThreeRefreshFailuresPrintThreeCodes(t *testing.T) {
-	notWiredYet(t)
 	seen := map[string]string{}
 	for name, stub := range map[string]func(w http.ResponseWriter){
 		"unavailable": func(w http.ResponseWriter) { w.WriteHeader(http.StatusServiceUnavailable) },
@@ -117,7 +105,6 @@ func TestTheThreeRefreshFailuresPrintThreeCodes(t *testing.T) {
 
 // TransportError strips the lead off a session-expired failure and keeps its code.
 func TestTransportErrorKeepsTheCodeWhenItStripsTheLead(t *testing.T) {
-	notWiredYet(t)
 	err := TransportError("list slices",
 		Failf("DRIFT-1001", "session expired — run 'drift account login' to re-authenticate"))
 
@@ -130,7 +117,6 @@ func TestTransportErrorKeepsTheCodeWhenItStripsTheLead(t *testing.T) {
 // A failure that carries a code and is not one TransportError reads keeps it, and
 // the wrap adds its lead and nothing else.
 func TestTransportErrorKeepsTheCodeOfAnyFailureItWraps(t *testing.T) {
-	notWiredYet(t)
 	inner := Failf("DRIFT-1012", "%s", MaintenanceMessage)
 	err := TransportError("deploy", inner)
 

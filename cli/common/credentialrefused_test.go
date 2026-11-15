@@ -64,7 +64,6 @@ func TestAPIError_A401ThatIsNotARefusalStillSaysTheSessionExpired(t *testing.T) 
 // code for a refused login, which sends the person nowhere near the command they
 // just ran.
 func TestAPIError_ARefusedLoginNeedsNoField(t *testing.T) {
-	t.Skip("a refused login prints DRIFT-1017 once the commit that wires it lands")
 	e := &APIError{Op: "log in", Status: http.StatusUnauthorized}
 
 	if want := "Couldn't log in: invalid username or password."; !strings.HasPrefix(e.Error(), want) {

@@ -31,7 +31,6 @@ func stubExchange(t *testing.T, status int) {
 
 // A refused DRIFT_TOKEN prints the code for a refused token and not DRIFT-1011.
 func TestARefusedTokenPrintsItsOwnCodeAndNotDRIFT1011(t *testing.T) {
-	t.Skip("DRIFT-1019 is registered by the next commit and printed by exchangePAT in the one after it")
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		stubExchange(t, status)
 
@@ -52,7 +51,6 @@ func TestARefusedTokenPrintsItsOwnCodeAndNotDRIFT1011(t *testing.T) {
 // The hint for a value that is not a Drift token at all stays, after the sentence
 // and before the code's line.
 func TestARefusedTokenThatIsNotATokenStillSaysSo(t *testing.T) {
-	t.Skip("DRIFT-1019 is registered by the next commit and printed by exchangePAT in the one after it")
 	stubExchange(t, http.StatusUnauthorized)
 
 	_, err := exchangePAT(context.Background(), "hunter2")
@@ -77,25 +75,25 @@ func TestNoCredentialAtAllStillPrintsDRIFT1011(t *testing.T) {
 	assertCodedOnce(t, err, "DRIFT-1011")
 }
 
-// The control: a platform that cannot answer the exchange is not a refused token.
+// A platform that cannot answer the exchange is not a refused token, and is not
+// a connection the CLI fails to recognise either: it is an unavailable platform,
+// and prints the code that says to wait, through TransportError as a command
+// returns it.
 func TestAnUnavailablePlatformIsNotARefusedToken(t *testing.T) {
 	stubExchange(t, http.StatusServiceUnavailable)
 
-	_, err := exchangePAT(context.Background(), "drift_pat_fine")
+	_, cause := exchangePAT(context.Background(), "drift_pat_fine")
 
-	if !errors.Is(err, ErrPlatformUnavailable) {
-		t.Fatalf("a 503 on the exchange = %v, want an unavailable platform", err)
+	if !errors.Is(cause, ErrPlatformUnavailable) {
+		t.Fatalf("a 503 on the exchange = %v, want an unavailable platform", cause)
 	}
-	if got := CodeOf(err); got == "DRIFT-1019" || got == "DRIFT-1011" {
-		t.Errorf("an unavailable platform printed %s", got)
-	}
+	assertCodedOnce(t, TransportError("list slices", cause), "DRIFT-1012")
 }
 
 // A connection failure TransportError does not recognise prints the code for one
 // and keeps the original text after the lead. The failure here is a real one: a
 // TLS server whose certificate this client does not trust.
 func TestATLSVerificationFailurePrintsTheConnectionCodeAndKeepsItsText(t *testing.T) {
-	t.Skip("DRIFT-1020 is registered by the next commit and printed by TransportError in the one after it")
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	t.Cleanup(srv.Close)
 
@@ -118,7 +116,6 @@ func TestATLSVerificationFailurePrintsTheConnectionCodeAndKeepsItsText(t *testin
 // A response whose body is cut off mid-read is a connection failure too, and it
 // keeps its sentence and the text of what cut it off.
 func TestABodyCutOffMidReadPrintsTheConnectionCode(t *testing.T) {
-	t.Skip("DRIFT-1020 is registered by the next commit and printed by CheckResponse in the one after it")
 	cutOff := &http.Response{
 		StatusCode: http.StatusOK,
 		Body:       io.NopCloser(io.MultiReader(strings.NewReader(`{"slices":[`), errReader{io.ErrUnexpectedEOF})),

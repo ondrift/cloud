@@ -542,8 +542,6 @@ func TestAPIError_CarriesItsCode(t *testing.T) {
 		name string
 		err  APIError
 		want string
-		// skip, when set, is why the case does not run yet.
-		skip string
 	}{
 		{name: "expired session", err: APIError{Op: "list slices", Status: 401}, want: "DRIFT-1001"},
 		{name: "forbidden", err: APIError{Op: "delete slice", Status: 403}, want: "DRIFT-1002"},
@@ -552,15 +550,10 @@ func TestAPIError_CarriesItsCode(t *testing.T) {
 		{name: "platform fault", err: APIError{Op: "deploy", Status: 500}, want: "DRIFT-1005"},
 		// A refused LOGIN is not an expired session, and DRIFT-1001 would send the
 		// user back to the command they just ran. It has a code of its own.
-		{name: "refused login", err: APIError{Op: "log in", Status: 401}, want: "DRIFT-1017",
-			skip: "DRIFT-1017 is registered by the commit that registers the five codes and read by the commit that wires them"},
-		{name: "invalid request", err: APIError{Op: "deploy", Status: 400}, want: "DRIFT-1016",
-			skip: "DRIFT-1016 is registered by the commit that registers the five codes and read by the commit that wires them"},
+		{name: "refused login", err: APIError{Op: "log in", Status: 401}, want: "DRIFT-1017"},
+		{name: "invalid request", err: APIError{Op: "deploy", Status: 400}, want: "DRIFT-1016"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.skip != "" {
-				t.Skip(tc.skip)
-			}
 			got := tc.err.Error()
 			if !strings.Contains(got, tc.want) {
 				t.Errorf("want %s in the message, got: %s", tc.want, got)
@@ -576,7 +569,6 @@ func TestAPIError_CarriesItsCode(t *testing.T) {
 // `doctor explain` does not know. This walks the statuses the renderer maps and
 // checks each resolves — the half that would otherwise be caught only by a user.
 func TestAPIError_EveryRenderedCodeIsRegistered(t *testing.T) {
-	t.Skip("400, 405 and the other statuses with no code are named by the commit that wires DRIFT-1016")
 	withStatusFeed(t, 200, feedOK)
 
 	var bare []int
