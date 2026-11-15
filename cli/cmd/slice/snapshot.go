@@ -491,67 +491,7 @@ func getSnapshotRestoreCmd() *cobra.Command {
 			}
 			spinner.Stop()
 
-			var result struct {
-				Restored struct {
-					Secrets          int `json:"secrets"`
-					NoSQLCollections int `json:"nosql_collections"`
-					Blobs            int `json:"blobs"`
-					Queues           int `json:"queues"`
-					SQLDatabases     int `json:"sql_databases"`
-					Functions        int `json:"functions"`
-					Canvas           int `json:"canvas"`
-					VaultEntries     int `json:"vault_entries"`
-					LinkIdentities   int `json:"link_identities"`
-					PocketItems      int `json:"pocket_items"`
-				} `json:"restored"`
-				Errors []string `json:"errors"`
-			}
-			json.Unmarshal(respBody, &result) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
-
-			// The headline reflects the RESULT, not the HTTP status.
-			//
-			// This printed a green ✓ unconditionally, because a partial restore is
-			// still a 200 — the per-component errors are in the body. On alpha that
-			// produced "✓ Snapshot restored." above a list of five functions that
-			// had not been restored, which is the single most misleading thing this
-			// command could say: a restore is the one operation you run when the
-			// snapshot is the only copy left (#PLATFORM-CORE-OPERATOR-7CCX8J).
-			if len(result.Errors) > 0 {
-				fmt.Printf("%s Snapshot %s restored WITH ERRORS — %d component(s) did not come back.\n",
-					common.Cross(), id, len(result.Errors))
-			} else {
-				fmt.Printf("%s Snapshot %s restored.\n", common.Check(), id)
-			}
-			fmt.Println()
-			r := result.Restored
-			fmt.Printf("  Secrets:     %d\n", r.Secrets)
-			fmt.Printf("  NoSQL:       %d collections\n", r.NoSQLCollections)
-			fmt.Printf("  Blobs:       %d\n", r.Blobs)
-			fmt.Printf("  Queues:      %d\n", r.Queues)
-			fmt.Printf("  SQL:         %d databases\n", r.SQLDatabases)
-			fmt.Printf("  Vault:       %d entries\n", r.VaultEntries)
-			fmt.Printf("  Link:        %d identities\n", r.LinkIdentities)
-			fmt.Printf("  Pocket:      %d items\n", r.PocketItems)
-			fmt.Printf("  Functions:   %d\n", r.Functions)
-			fmt.Printf("  Canvas:      %d sites\n", r.Canvas)
-
-			if len(result.Errors) > 0 {
-				fmt.Println()
-				fmt.Printf("  Errors (%d):\n", len(result.Errors))
-				for _, e := range result.Errors {
-					fmt.Printf("    - %s\n", e)
-				}
-				fmt.Println()
-				fmt.Println("  A function listed above is NOT running. Check `restorable` in the")
-				fmt.Println("  snapshot's atomic-manifest.json — a function deployed before its entry")
-				fmt.Println("  point was recorded cannot be rebuilt from the archive, and redeploying")
-				fmt.Println("  it from source is the fix.")
-				// Non-zero exit, so a script that restores and carries on cannot
-				// mistake a partial restore for a whole one.
-				return fmt.Errorf("restore incomplete: %d component(s) failed", len(result.Errors))
-			}
-
-			return nil
+			return printRestoreReport(cmd.OutOrStdout(), id, respBody)
 		},
 	}
 	cmd.Flags().BoolVar(&passphraseStdin, "passphrase-stdin", false,
