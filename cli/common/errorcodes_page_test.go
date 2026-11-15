@@ -21,7 +21,6 @@ const errorCodePageBase = "https://docs.ondrift.eu/troubleshooting/error-codes/"
 // generator gives the code's section. A retired code keeps its section, so it keeps
 // its address.
 func TestErrorCodePage_IsTheDocsAddressWithTheCodeLowerCased(t *testing.T) {
-	t.Skip("fails until ErrorCodePage derives the address from the code (task #2563)")
 	codes := ErrorCodes()
 	if len(codes) == 0 {
 		t.Fatal("the registry is empty, so the loop below would prove nothing")
@@ -45,7 +44,6 @@ func TestErrorCodePage_IsTheDocsAddressWithTheCodeLowerCased(t *testing.T) {
 // A code typed three ways is one question, so it gets one address, as it does in
 // LookupErrorCode.
 func TestErrorCodePage_TreatsEverySpellingOfACodeAlike(t *testing.T) {
-	t.Skip("fails until ErrorCodePage derives the address from the code (task #2563)")
 	want := ErrorCodePage("DRIFT-1006")
 	if want == "" {
 		t.Fatal("DRIFT-1006 has no address")
