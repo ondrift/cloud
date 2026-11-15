@@ -4,10 +4,19 @@ package common
 // it, docs/src/errorcodes.json, and generates its troubleshooting pages from the copy,
 // so the copy has to be the registry byte for byte. docsCopyDrift compares the two and
 // says which codes differ and how: added, removed, reworded or retired.
+//
+// This repository's pull-request job checks out this repository alone, so the copy can
+// be reached only where a checkout of cloud/sites stands beside it, as it does in the
+// workspace, where cloud/public and cloud/sites sit under cloud/. compareDocsCopy looks
+// for it there. Where it is not found the test skips and says how the copy is made;
+// where it is found, a copy that is not the registry fails the test.
 
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -116,6 +125,102 @@ func docsCopyWordedFields(registry, docs ErrorCode) []string {
 		}
 	}
 	return names
+}
+
+// docsCopyOutcome is what comparing the registry with its copy in cloud/sites came
+// to. At most one field is set; neither is a pass.
+type docsCopyOutcome struct {
+	// skip says why nothing was compared.
+	skip string
+	// fail says what is wrong.
+	fail string
+}
+
+// docsCopyCacheNote ends every skip. go test keeps the result of a test and checks
+// only the files inside the module for a change, so a cloud/sites checked out after a
+// skip is not noticed until the test is run again with -count=1.
+const docsCopyCacheNote = "go test keeps a result and does not watch cloud/sites, so once it is there, run this test with -count=1."
+
+// compareDocsCopy finds the checkout of cloud/sites beside this repository and holds
+// the copy of the registry that it keeps to the registry itself.
+//
+// cloud is the directory that holds this repository and its siblings, and registry
+// is the path of this package's errorcodes.json. The climb to cloud is checked before
+// anything is looked for beside the repository, so that a wrong count fails as such
+// and does not look like a checkout with nothing beside it. With no cloud/sites
+// beside the repository, or one that holds no copy, nothing is compared and the
+// outcome is a skip that names the command that makes the copy: that is what a runner
+// that checks out this repository alone sees. A file that is there and cannot be
+// read, and a copy that is not the registry, are failures.
+func compareDocsCopy(cloud, registry string) docsCopyOutcome {
+	registryBytes, err := os.ReadFile(registry)
+	if err != nil {
+		return docsCopyOutcome{fail: "read the registry: " + err.Error()}
+	}
+	if err := holdsRepository(cloud, registry); err != nil {
+		return docsCopyOutcome{fail: "the climb to the directory above this repository is miscounted: " + err.Error()}
+	}
+
+	sites := filepath.Join(cloud, "sites")
+	if _, err := os.Stat(sites); err != nil {
+		return docsCopyOutcome{skip: fmt.Sprintf("cloud/sites is not checked out beside this repository (%v), so the docs copy of the registry is not compared.\n"+
+			"With it checked out, make the copy by running this in cloud/sites:\n  %s\n%s", err, docsCopyCommand(registry), docsCopyCacheNote)}
+	}
+	copyFile := filepath.Join(sites, "docs", "src", "errorcodes.json")
+	if _, err := os.Stat(copyFile); err != nil {
+		return docsCopyOutcome{skip: fmt.Sprintf("cloud/sites is beside this repository but holds no docs copy of the registry (%v), so there is nothing to compare.\n"+
+			"Make the copy by running this in cloud/sites:\n  %s\n%s", err, docsCopyCommand(registry), docsCopyCacheNote)}
+	}
+
+	copyBytes, err := os.ReadFile(copyFile)
+	if err != nil {
+		return docsCopyOutcome{fail: "read the docs copy of the registry: " + err.Error()}
+	}
+	if lines := docsCopyDrift(registryBytes, copyBytes); len(lines) > 0 {
+		return docsCopyOutcome{fail: fmt.Sprintf("the docs copy of the registry, %s, is not the registry:\n%s\n\nRefresh the copy by running this in cloud/sites:\n  %s",
+			docsCopyAbs(copyFile), docsCopyShow(lines), docsCopyCommand(registry))}
+	}
+	return docsCopyOutcome{}
+}
+
+// holdsRepository returns nil when dir holds a checkout of this repository, and the
+// reason when it does not. A checkout is an entry of dir whose cli/common/errorcodes.json
+// is the registry at the given path: the same file, not another like it.
+//
+// The entry is not asked for by name. The directory is called public in the
+// workspace, but a clone of the repository from GitHub is called cloud, and a
+// contributor can call theirs anything.
+func holdsRepository(dir, registry string) error {
+	registryInfo, err := os.Stat(registry)
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		candidate, err := os.Stat(filepath.Join(dir, entry.Name(), "cli", "common", "errorcodes.json"))
+		if err == nil && os.SameFile(registryInfo, candidate) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s holds no checkout of this repository", dir)
+}
+
+// docsCopyCommand is the command that makes the copy in cloud/sites, or brings it up
+// to date, from the registry at the given path. It is run in cloud/sites.
+func docsCopyCommand(registry string) string {
+	return "python3 docs/scripts/sync-errorcodes.py --from " + docsCopyAbs(registry)
+}
+
+// docsCopyAbs is path as an absolute path, so that a command or a message that names
+// it means the same wherever it is read.
+func docsCopyAbs(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
 
 // docsCopyCodes is the registry the cases below start from: three live codes, the
@@ -370,5 +475,245 @@ func TestDocsCopyDrift_NamesCodesInCodeOrderWhateverOrderTheFilesListThem(t *tes
 	got := docsCopyDrift(docsCopyRender(t, registry), docsCopyRender(t, docs))
 	if !slices.Equal(got, want) {
 		t.Errorf("got:\n%s\nwant:\n%s", docsCopyShow(got), docsCopyShow(want))
+	}
+}
+
+// docsCopyWorkspace builds, in a temporary directory that stands in for cloud/, a
+// checkout of this repository named repo whose registry holds the given bytes. It
+// returns that directory and the path of the registry.
+func docsCopyWorkspace(t *testing.T, repo string, registry []byte) (cloud, registryFile string) {
+	t.Helper()
+	cloud = t.TempDir()
+	dir := filepath.Join(cloud, repo, "cli", "common")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	registryFile = filepath.Join(dir, "errorcodes.json")
+	if err := os.WriteFile(registryFile, registry, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return cloud, registryFile
+}
+
+// docsCopyPut writes docs where cloud/sites keeps the copy, under dir, and returns the
+// path it wrote.
+func docsCopyPut(t *testing.T, dir string, docs []byte) string {
+	t.Helper()
+	file := filepath.Join(dir, "sites", "docs", "src", "errorcodes.json")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, docs, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
+// With no cloud/sites beside the repository there is nothing to compare, which is
+// the case on a runner that checks out this repository alone. The skip says what to
+// do and names the command that makes the copy, and it is not a failure.
+func TestCompareDocsCopy_WithNoSitesBesideTheRepositoryItSkipsAndNamesTheCommand(t *testing.T) {
+	cloud, registryFile := docsCopyWorkspace(t, "public", docsCopyRender(t, docsCopyCodes))
+
+	got := compareDocsCopy(cloud, registryFile)
+	if got.fail != "" {
+		t.Fatalf("a checkout with no cloud/sites beside it must not fail, got: %s", got.fail)
+	}
+	if got.skip == "" {
+		t.Fatal("a checkout with no cloud/sites beside it must skip")
+	}
+	for _, want := range []string{
+		"cloud/sites is not checked out beside this repository",
+		"python3 docs/scripts/sync-errorcodes.py --from " + registryFile,
+		"-count=1",
+	} {
+		if !strings.Contains(got.skip, want) {
+			t.Errorf("the skip must say %q, got: %s", want, got.skip)
+		}
+	}
+}
+
+// A cloud/sites that holds no docs/src/errorcodes.json has nothing to compare either,
+// and the skip names the same command.
+func TestCompareDocsCopy_WithSitesButNoCopyItSkipsAndNamesTheCommand(t *testing.T) {
+	cloud, registryFile := docsCopyWorkspace(t, "public", docsCopyRender(t, docsCopyCodes))
+	if err := os.MkdirAll(filepath.Join(cloud, "sites", "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := compareDocsCopy(cloud, registryFile)
+	if got.fail != "" {
+		t.Fatalf("a cloud/sites that holds no copy yet must not fail, got: %s", got.fail)
+	}
+	if got.skip == "" {
+		t.Fatal("a cloud/sites that holds no copy yet must skip")
+	}
+	for _, want := range []string{
+		"holds no docs copy of the registry",
+		"python3 docs/scripts/sync-errorcodes.py --from " + registryFile,
+	} {
+		if !strings.Contains(got.skip, want) {
+			t.Errorf("the skip must say %q, got: %s", want, got.skip)
+		}
+	}
+}
+
+// The pass: a copy that is the registry byte for byte neither skips nor fails.
+func TestCompareDocsCopy_AnEqualCopyIsNeitherASkipNorAFailure(t *testing.T) {
+	registry := docsCopyRender(t, docsCopyCodes)
+	cloud, registryFile := docsCopyWorkspace(t, "public", registry)
+	docsCopyPut(t, cloud, registry)
+
+	if got := compareDocsCopy(cloud, registryFile); got != (docsCopyOutcome{}) {
+		t.Errorf("an equal copy must pass, got: %+v", got)
+	}
+}
+
+// A copy that differs fails, and the failure is what the person has to act on: where
+// the copy is, every code that differs and how, and the command that refreshes it.
+func TestCompareDocsCopy_ACopyThatDiffersFailsNamingEachCodeAndTheCommand(t *testing.T) {
+	registry := docsCopyRender(t, docsCopyCodes)
+	cloud, registryFile := docsCopyWorkspace(t, "public", registry)
+
+	docs := docsCopyDrop(docsCopyCodes, "DRIFT-1002")
+	docs = docsCopyEdit(docs, "DRIFT-1001", func(c *ErrorCode) { c.Remedy = "Log in again." })
+	docs = docsCopyEdit(docs, "DRIFT-1003", func(c *ErrorCode) { c.Retired = true })
+	copyFile := docsCopyPut(t, cloud, docsCopyRender(t, docs))
+
+	got := compareDocsCopy(cloud, registryFile)
+	if got.skip != "" {
+		t.Fatalf("a copy that differs must not skip, got: %s", got.skip)
+	}
+	for _, want := range []string{
+		copyFile,
+		"DRIFT-1001 reworded (remedy)",
+		"DRIFT-1002 added: in the registry, not in the copy",
+		"DRIFT-1003 retired: only the copy marks it retired",
+		"python3 docs/scripts/sync-errorcodes.py --from " + registryFile,
+	} {
+		if !strings.Contains(got.fail, want) {
+			t.Errorf("the failure must say %q, got:\n%s", want, got.fail)
+		}
+	}
+}
+
+// A copy laid out differently from the registry is a failure too, though no code is
+// named: the sync script writes the registry's bytes, and a copy that is not those
+// bytes was not made by it.
+func TestCompareDocsCopy_ACopyLaidOutDifferentlyFailsAndSaysItIsNotByteIdentical(t *testing.T) {
+	registry := docsCopyRender(t, docsCopyCodes)
+	cloud, registryFile := docsCopyWorkspace(t, "public", registry)
+	docsCopyPut(t, cloud, bytes.ReplaceAll(registry, []byte("\n"), []byte("\r\n")))
+
+	got := compareDocsCopy(cloud, registryFile)
+	if got.skip != "" {
+		t.Fatalf("a copy that is laid out differently must not skip, got: %s", got.skip)
+	}
+	for _, want := range []string{
+		"not byte-identical",
+		"python3 docs/scripts/sync-errorcodes.py --from " + registryFile,
+	} {
+		if !strings.Contains(got.fail, want) {
+			t.Errorf("the failure must say %q, got:\n%s", want, got.fail)
+		}
+	}
+}
+
+// A climb that is counted wrong finds no cloud/sites anywhere, and a test that
+// skipped for that would skip for ever. So the climb is checked before anything is
+// looked for, and a wrong one fails. Every case has a copy that a search from the
+// wrong directory would find, so it is the check of the climb that is under test.
+func TestCompareDocsCopy_AMiscountedClimbFailsWhereverTheCopyIs(t *testing.T) {
+	registry := docsCopyRender(t, docsCopyCodes)
+	cloud, registryFile := docsCopyWorkspace(t, "public", registry)
+	docsCopyPut(t, filepath.Join(cloud, "public"), registry)
+	docsCopyPut(t, filepath.Dir(cloud), registry)
+	docsCopyPut(t, filepath.Join(cloud, "public", "cli"), registry)
+
+	cases := []struct {
+		name string
+		from string
+	}{
+		{"one directory too deep: the repository's root", filepath.Join(cloud, "public")},
+		{"two directories too deep: cli", filepath.Join(cloud, "public", "cli")},
+		{"one directory too far: above the workspace", filepath.Dir(cloud)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := compareDocsCopy(tc.from, registryFile)
+			if got.skip != "" {
+				t.Errorf("a miscounted climb must fail and never skip, got the skip: %s", got.skip)
+			}
+			if !strings.Contains(got.fail, "miscounted") || !strings.Contains(got.fail, tc.from) {
+				t.Errorf("the failure must say the climb is miscounted and name where it reached (%s), got: %q", tc.from, got.fail)
+			}
+		})
+	}
+}
+
+// The check of the climb asks what the directory holds, not what the repository is
+// called: a clone of the repository from GitHub is named cloud, and a contributor
+// can name theirs anything.
+func TestCompareDocsCopy_TheRepositoryMayBeCheckedOutUnderAnyName(t *testing.T) {
+	for _, name := range []string{"public", "cloud", "drift-cli"} {
+		t.Run(name, func(t *testing.T) {
+			registry := docsCopyRender(t, docsCopyCodes)
+			cloud, registryFile := docsCopyWorkspace(t, name, registry)
+
+			if got := compareDocsCopy(cloud, registryFile); got.skip == "" || got.fail != "" {
+				t.Errorf("with no cloud/sites beside it, want a skip and no failure, got: %+v", got)
+			}
+			docsCopyPut(t, cloud, registry)
+			if got := compareDocsCopy(cloud, registryFile); got != (docsCopyOutcome{}) {
+				t.Errorf("with an equal copy beside it, want a pass, got: %+v", got)
+			}
+			docsCopyPut(t, cloud, docsCopyRender(t, docsCopyDrop(docsCopyCodes, "DRIFT-1003")))
+			if got := compareDocsCopy(cloud, registryFile); got.fail == "" || got.skip != "" {
+				t.Errorf("with a copy that differs beside it, want a failure, got: %+v", got)
+			}
+		})
+	}
+}
+
+// Present and unreadable is a failure, not a skip: the skip is for what is absent.
+func TestCompareDocsCopy_AFileThatCannotBeReadFails(t *testing.T) {
+	t.Run("the copy", func(t *testing.T) {
+		registry := docsCopyRender(t, docsCopyCodes)
+		cloud, registryFile := docsCopyWorkspace(t, "public", registry)
+		// A directory where the file should be: it exists, and it cannot be read as one.
+		if err := os.MkdirAll(filepath.Join(cloud, "sites", "docs", "src", "errorcodes.json"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		got := compareDocsCopy(cloud, registryFile)
+		if got.skip != "" || !strings.Contains(got.fail, "read the docs copy of the registry") {
+			t.Errorf("a copy that exists and cannot be read must fail, got: %+v", got)
+		}
+	})
+
+	t.Run("the registry", func(t *testing.T) {
+		cloud, _ := docsCopyWorkspace(t, "public", docsCopyRender(t, docsCopyCodes))
+
+		got := compareDocsCopy(cloud, filepath.Join(cloud, "no-such-registry.json"))
+		if got.skip != "" || !strings.Contains(got.fail, "read the registry") {
+			t.Errorf("a registry that cannot be read must fail, got: %+v", got)
+		}
+	})
+}
+
+// The copy that cloud/sites holds must be the registry, in every checkout that has
+// both. This is that check on the real directories: it passes when the copy is the
+// registry, fails naming what differs when it is not, and skips where this
+// repository stands alone.
+func TestErrorCodes_TheDocsCopyIsCurrent(t *testing.T) {
+	// The test runs in cli/common. Each .. leaves one directory: the first leaves
+	// common, the second leaves cli, the third leaves public, the repository's root,
+	// and lands in cloud/, which holds public and its sibling sites.
+	got := compareDocsCopy("../../..", "errorcodes.json")
+	if got.fail != "" {
+		t.Fatal(got.fail)
+	}
+	if got.skip != "" {
+		t.Skip(got.skip)
 	}
 }
