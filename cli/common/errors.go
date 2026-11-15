@@ -191,6 +191,9 @@ func (e *APIError) Error() string {
 	return out
 }
 
+// FailureCode is the code this failure carries, which CodeOf reads.
+func (e *APIError) FailureCode() string { return e.code() }
+
 // code names this failure, or "" for a status that has none yet.
 func (e *APIError) code() string {
 	switch {
@@ -606,11 +609,11 @@ func TransportError(op string, err error) error {
 	// did not finish, so a deploy may have landed even though this failed.
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) && urlErr.Timeout() {
-		return errors.New(withCode(lead+"couldn't reach the Drift API (timed out). Is the platform up?", "DRIFT-1007"))
+		return Failf("DRIFT-1007", "%s", lead+"couldn't reach the Drift API (timed out). Is the platform up?")
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
-		return errors.New(withCode(lead+"couldn't reach the Drift API (timed out). Is the platform up?", "DRIFT-1007"))
+		return Failf("DRIFT-1007", "%s", lead+"couldn't reach the Drift API (timed out). Is the platform up?")
 	}
 
 	// Connection refused / DNS failure / dial errors.
@@ -626,7 +629,9 @@ func TransportError(op string, err error) error {
 		if note := platformFaultNote(DegradedComponents()); note != "" {
 			out += "\n" + note
 		}
-		return errors.New(out)
+		// The note follows the code's line, and Coded leaves a line that is there
+		// where it is.
+		return Coded("DRIFT-1006", errors.New(out))
 	}
 
 	// Unknown — wrap it unchanged so the user still sees something.

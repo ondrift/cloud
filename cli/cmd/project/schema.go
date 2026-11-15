@@ -44,10 +44,12 @@ import (
 // a validation failure. common/driftfile.go's own header calls this honest rather
 // than a gap: a binary that has never met the platform has no basis for claiming
 // what the format is, and inventing one is how the two definitions drifted apart.
-var ErrNoSchema = errors.New(
-	"this machine has no copy of the Driftfile format yet, so it cannot be validated.\n" +
-		"  The platform defines the format and this CLI fetches it on first contact —\n" +
-		"  run any online command once (`drift account login`, `drift slice list`) and\n" +
+//
+// It carries DRIFT-1008, so every command that returns it prints the code once.
+var ErrNoSchema = common.Failf("DRIFT-1008",
+	"this machine has no copy of the Driftfile format yet, so it cannot be validated.\n"+
+		"  The platform defines the format and this CLI fetches it on first contact —\n"+
+		"  run any online command once (`drift account login`, `drift slice list`) and\n"+
 		"  it is cached permanently at ~/.drift/driftfile.schema.json.")
 
 // compiledSchema caches the compiled schema for the process. Compiling is the

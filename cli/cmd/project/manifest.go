@@ -83,14 +83,22 @@ func (m *Manifest) PostDeploy() []string { return m.doc.Strings("hooks", "post_d
 // E2ETests are the commands `drift file test` runs against a local instance.
 func (m *Manifest) E2ETests() []string { return m.doc.Strings("tests", "e2e") }
 
+// ParseErrors are the messages a Driftfile is refused with, in the order they were
+// found. They are one failure, DRIFT-1009: the code's line comes once after the
+// whole list, not after each message.
 type ParseErrors []string
+
+const driftfileInvalidCode = "DRIFT-1009"
 
 func (p ParseErrors) Error() string {
 	if len(p) == 1 {
-		return p[0]
+		return common.Failf(driftfileInvalidCode, "%s", p[0]).Error()
 	}
-	return fmt.Sprintf("%d validation errors:\n  - %s", len(p), strings.Join(p, "\n  - "))
+	return common.Failf(driftfileInvalidCode, "%d validation errors:\n  - %s", len(p), strings.Join(p, "\n  - ")).Error()
 }
+
+// FailureCode is the code the refusal carries, which common.CodeOf reads.
+func (p ParseErrors) FailureCode() string { return driftfileInvalidCode }
 
 // ParseDriftfile compiles the Driftfile at path for its default slice and
 // resolves its secret references. Relative paths resolve against the file's
