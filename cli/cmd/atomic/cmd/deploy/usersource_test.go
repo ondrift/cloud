@@ -20,6 +20,7 @@ import (
 	"compress/gzip"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -66,6 +67,24 @@ func entriesUnder(entries []string, dir string) []string {
 		}
 	}
 	return under
+}
+
+// withParents is the entries an archive of a folder holding exactly these files
+// lists: the files and every directory above them, sorted.
+func withParents(files []string) []string {
+	seen := map[string]bool{}
+	for _, f := range files {
+		seen[f] = true
+		for d := path.Dir(f); d != "."; d = path.Dir(d) {
+			seen[d] = true
+		}
+	}
+	var all []string
+	for name := range seen {
+		all = append(all, name)
+	}
+	sort.Strings(all)
+	return all
 }
 
 // userSourceEntries makes the user-source archive of the backend folder dir, as
@@ -185,6 +204,30 @@ func (b interpretedBackend) checkUserSource(t *testing.T, entries []string) {
 	for _, root := range []string{"node_modules", "vendor"} {
 		if under := entriesUnder(entries, root); len(under) > 0 {
 			t.Errorf("the user-source archive carries the installed tree: %v", under)
+		}
+	}
+}
+
+// checkDeployArchive fails unless the entries of the archive that runs on the
+// slice hold what the build staged: the source, the generated wrapper, the
+// manifests and the SDK the install step put in node_modules or vendor (a Ruby
+// backend that declares only the SDK has its file at the root, for its wrapper
+// loads it from there).
+func (b interpretedBackend) checkDeployArchive(t *testing.T, entries []string) {
+	t.Helper()
+	files := []string{b.source, "app" + filepath.Ext(b.source)}
+	for name := range b.manifests {
+		files = append(files, name)
+	}
+	for _, item := range sdkVendorLayout[b.language] {
+		files = append(files, item.to)
+	}
+	if b.language == "php" {
+		files = append(files, "vendor/autoload.php")
+	}
+	for _, f := range files {
+		if !slices.Contains(entries, f) {
+			t.Errorf("the deploy archive is missing %s, which the build staged; it holds %v", f, entries)
 		}
 	}
 }
@@ -344,5 +387,122 @@ func TestSingleFunctionDeploy_UserSourceHoldsNoInstalledTree(t *testing.T) {
 		t.Run(b.language, func(t *testing.T) {
 			b.checkUserSource(t, b.deployAsFunction(t).userSource)
 		})
+	}
+}
+
+// compiledBackend is the folder of a backend written in a compiled language.
+type compiledBackend struct {
+	language string
+	// files are the files of the folder, relative to it. Each folder holds every
+	// directory a rule for an installed tree could reach for: a vendor/, which Go
+	// and Rust both use, a node_modules/ and a Rust target/.
+	files []string
+}
+
+var compiledBackends = []compiledBackend{
+	{
+		language: "go",
+		files:    []string{"main.go", "go.mod", "go.sum", "vendor/modules.txt", "vendor/mod/x.go", "node_modules/tool/index.js"},
+	},
+	{
+		// The label older records and released binaries still use for Go.
+		language: "native",
+		files:    []string{"main.go", "go.mod", "go.sum", "vendor/modules.txt", "vendor/mod/x.go", "node_modules/tool/index.js"},
+	},
+	{
+		language: "rust",
+		files:    []string{"Cargo.toml", "Cargo.lock", "src/main.rs", "vendor/crate/lib.rs", "target/debug/x", "node_modules/tool/index.js"},
+	},
+}
+
+// A backend written in a compiled language is archived whole: the notion of an
+// installed tree that is left out belongs to the interpreted languages, so a Go
+// backend's vendor/ and a Rust backend's target/ are archived with the rest.
+// Hidden entries are the only ones left out, as they are in every archive.
+func TestUserSourceArchive_ACompiledBackendKeepsEverything(t *testing.T) {
+	for _, b := range compiledBackends {
+		t.Run(b.language, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, f := range b.files {
+				writeFile(t, filepath.Join(dir, filepath.FromSlash(f)), "x\n")
+			}
+			writeFile(t, filepath.Join(dir, ".env"), "SECRET=1\n")
+			writeFile(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+
+			got := userSourceEntries(t, dir, b.language)
+
+			if want := withParents(b.files); !slices.Equal(got, want) {
+				t.Errorf("the archive of a %s backend is not the folder as it is:\n got  %v\n want %v", b.language, got, want)
+			}
+		})
+	}
+}
+
+// What is left out of an interpreted backend's archive is a directory: the
+// installed tree is one. A file that happens to be named node_modules or vendor
+// is source, and is archived.
+func TestUserSourceArchive_AFileNamedLikeTheTreeIsSource(t *testing.T) {
+	for _, b := range interpretedBackends {
+		t.Run(b.language, func(t *testing.T) {
+			dir := t.TempDir()
+			b.writeSource(t, dir)
+			for _, name := range []string{"node_modules", "vendor"} {
+				writeFile(t, filepath.Join(dir, name), "a file, not a directory\n")
+			}
+
+			entries := userSourceEntries(t, dir, b.language)
+
+			for _, name := range []string{"node_modules", "vendor"} {
+				if !slices.Contains(entries, name) {
+					t.Errorf("a file named %s is source and must be archived; the archive holds %v", name, entries)
+				}
+			}
+		})
+	}
+}
+
+// The archive that runs on the slice is the staged tree, installed dependencies
+// included: a deploy that brings its own node_modules or vendor replaces the
+// slice's, and only a deploy that brings none leaves them as they were.
+func TestInterpretedBackendDeploy_DeployArchiveStillCarriesTheInstalledTree(t *testing.T) {
+	for _, b := range interpretedBackends {
+		t.Run(b.language, func(t *testing.T) {
+			b.checkDeployArchive(t, b.deployAsBackend(t).deploy)
+		})
+	}
+}
+
+// The one-function build path ships the same.
+func TestSingleFunctionDeploy_DeployArchiveStillCarriesTheInstalledTree(t *testing.T) {
+	for _, b := range interpretedBackends {
+		t.Run(b.language, func(t *testing.T) {
+			b.checkDeployArchive(t, b.deployAsFunction(t).deploy)
+		})
+	}
+}
+
+// createTarGz is what every deploy path packs its staged tree with, so what it
+// archives by default is what runs on the slice: every non-hidden entry,
+// node_modules/ and vendor/ at the root and below included. A rule that leaves
+// the installed tree out of the user-source archive must not be made in it.
+func TestDeployArchive_StillCarriesTheInstalledTree(t *testing.T) {
+	stage := t.TempDir()
+	files := []string{
+		"app.js", "handlers.js", "package.json", "package-lock.json",
+		"node_modules/@ondrift/sdk/package.json", "node_modules/lodash/index.js",
+		"vendor/drift.py", "vendor/php/drift.php", "vendor/bundle/bundler/setup.rb",
+		"src/vendor/lib.js",
+	}
+	for _, f := range files {
+		writeFile(t, filepath.Join(stage, filepath.FromSlash(f)), "x\n")
+	}
+	archive := filepath.Join(t.TempDir(), "deploy.tar.gz")
+
+	if err := createTarGz(stage, archive); err != nil {
+		t.Fatalf("createTarGz: %v", err)
+	}
+
+	if got, want := archiveEntries(t, archive), withParents(files); !slices.Equal(got, want) {
+		t.Errorf("the deploy archive is not the staged tree:\n got  %v\n want %v", got, want)
 	}
 }
