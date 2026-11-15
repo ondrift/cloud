@@ -36,6 +36,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -345,7 +346,13 @@ func generateRustWrapper(dir, sourceModule, funcName, method string) error {
 
 // createTarGz creates a .tar.gz archive of the given directory, writing it to destPath.
 // Only regular files and directories are included. Hidden files (.git etc) are skipped.
-func createTarGz(srcDir, destPath string) error {
+//
+// skipTopLevel names entries directly under srcDir that are left out with
+// everything below them: a directory or a symbolic link of one of those names. A
+// regular file of that name is archived, and so is a directory of that name
+// deeper in the tree. Named none, it archives every entry that is not hidden,
+// which is how the archive that runs on the slice is made.
+func createTarGz(srcDir, destPath string, skipTopLevel ...string) error {
 	f, err := os.Create(destPath) // #nosec G304 — CLI creates temp archive
 	if err != nil {
 		return err
@@ -372,6 +379,12 @@ func createTarGz(srcDir, destPath string) error {
 		// Skip hidden directories/files.
 		base := filepath.Base(rel)
 		if strings.HasPrefix(base, ".") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if base == rel && !info.Mode().IsRegular() && slices.Contains(skipTopLevel, base) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -544,12 +557,39 @@ func refuseScheduleComments(dir string) error {
 // from the function directory. This is the portable, Drift-free snapshot of the
 // user's code — no generated wrappers, no injected SDKs, no compiled binaries.
 // Used for the snapshot/backup system so users can migrate away from Drift.
-func createUserSourceArchive(absFolder, name string) (string, error) {
+//
+// language is the language the backend is written in. An interpreted backend's
+// archive leaves out the tree its package manager installed (see
+// userSourceSkips); a compiled backend's holds every entry that is not hidden.
+func createUserSourceArchive(absFolder, name, language string) (string, error) {
 	archivePath := filepath.Join(os.TempDir(), fmt.Sprintf("drift-user-source-%s.tar.gz", name))
-	if err := createTarGz(absFolder, archivePath); err != nil {
+	if err := createTarGz(absFolder, archivePath, userSourceSkips(language)...); err != nil {
 		return "", fmt.Errorf("create user source archive: %w", err)
 	}
 	return archivePath, nil
+}
+
+// installedTreeDirs are the two directories at the root of an interpreted
+// backend that hold what a package manager installed rather than what the
+// developer wrote: node_modules for Node, vendor for Python, Ruby and PHP.
+//
+// They are the two directories a slice keeps across a deploy whose archive
+// brings none of its own. DEPENDENCY_DIRS in cloud/platform's
+// src/slice/src/atomic/deploy.rs owns the list, and this is that list.
+var installedTreeDirs = []string{"node_modules", "vendor"}
+
+// userSourceSkips is what the user-source archive of a backend written in
+// language leaves out at the root of its folder. The installed tree of an
+// interpreted backend is left out: the slice stores the archive as the
+// function's source and a snapshot restores it as such, so a tree carried from
+// the developer's disk would replace the one the slice installed for its own
+// architecture. Any other language leaves nothing out, and a Go backend's
+// vendor/ or a Rust backend's target/ is archived with the rest.
+func userSourceSkips(language string) []string {
+	if _, interpreted := interpretedLangs[language]; interpreted {
+		return installedTreeDirs
+	}
+	return nil
 }
 
 // operatorSink is the default SlotSink: it uploads the built function to the
@@ -829,7 +869,7 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	defer os.Remove(sourcePath)
 
 	// Create a portable archive of the user's original source files.
-	userSourcePath, usErr := createUserSourceArchive(absFolder, name)
+	userSourcePath, usErr := createUserSourceArchive(absFolder, name, language)
 	if usErr != nil {
 		userSourcePath = "" // best-effort — deploy still works without it
 	} else {
