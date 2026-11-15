@@ -45,7 +45,6 @@ func noSchemaProject(t *testing.T) {
 // A machine that has never fetched the format cannot validate a Driftfile, and
 // `drift plan` says so with the code that explains it.
 func TestPlan_NoSchemaOnTheMachineIsRefusedWithItsCode(t *testing.T) {
-	t.Skip("DRIFT-1008 is printed by no source file yet")
 	noSchemaProject(t)
 
 	_, err := planOutput(t, "--no-env-file")
@@ -60,7 +59,6 @@ func TestPlan_NoSchemaOnTheMachineIsRefusedWithItsCode(t *testing.T) {
 
 // `drift apply` refuses the same way, through the same value.
 func TestApply_NoSchemaOnTheMachineIsRefusedWithItsCode(t *testing.T) {
-	t.Skip("DRIFT-1008 is printed by no source file yet")
 	noSchemaProject(t)
 
 	err := runApply(applyOptions{noEnvFile: true, answers: noAnswers(), out: os.Stdout, in: strings.NewReader("")})

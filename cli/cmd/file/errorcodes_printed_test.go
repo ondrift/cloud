@@ -17,7 +17,6 @@ func codeLine(code string) string {
 // A machine that has never fetched the Driftfile format cannot lint, and says so
 // with the code that explains it. HOME is empty and the platform serves nothing.
 func TestLint_NoSchemaOnTheMachineIsRefusedWithItsCode(t *testing.T) {
-	t.Skip("DRIFT-1008 is printed by no source file yet")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	path := lintFixture(t, "GetPing")
