@@ -108,6 +108,12 @@ func LookupErrorCode(code string) (ErrorCode, bool) {
 	return c, ok
 }
 
+// ErrorCodePage is the address of a code's section on the docs, or "" for text that
+// is not a registered code. Nothing in the registry holds it.
+func ErrorCodePage(code string) string {
+	return ""
+}
+
 // normalizeErrorCode puts what a person typed into the registry's spelling,
 // "DRIFT-1006", whether they typed "drift-1006", " 1006 " or the code itself. It
 // does not judge the result: "banana" becomes "DRIFT-BANANA".
