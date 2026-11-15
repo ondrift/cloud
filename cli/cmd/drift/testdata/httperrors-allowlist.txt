@@ -1,0 +1,23 @@
+# Functions that read the status of an answer from the platform and report no
+# failure through the renderer, because they cannot fail the command.
+#
+# cmd/drift/httperrors_test.go reads every non-test Go file under cmd/ and holds
+# each function that calls one of common's Do* request functions and reads a
+# response's StatusCode to this: it names common.CheckResponse, common.NewAPIError
+# or common.APIError, and it never throws away the error common.CheckResponse
+# returns. A function outside that is a failure written by hand, which has no
+# code line, no note that a 5xx is the platform's and none of a quota's numbers.
+#
+# A function listed here is held to neither. One per line: its package directory,
+# a dot and its name (a method is Type.method, and a variable that holds a function
+# is its own name), then two spaces, a # and the reason it builds no failure. The
+# usual reason is that the read is a best-effort probe whose failure reads as an
+# answer the caller already has a way to act on.
+#
+# The list can only shrink. A line with no reason, a line that names no function
+# and a line whose function the scan no longer flags each fail the test, and the
+# line is deleted.
+
+cmd/atomic/cmd/deploy.fetchSliceRuntime  # a failed runtime report falls back to the default build target, so the deploy goes on and nothing it could say would change what is built
+cmd/backbone.secretWindowIsOpen  # a failed window probe reads as 'closed': saying a replaced credential is still live when it could not be checked would be the worse mistake
+cmd/slice.snapshotIsPassphraseProtected  # a failed probe reads as 'not protected': the download goes on without a passphrase and the platform refuses it if one was needed

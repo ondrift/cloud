@@ -328,9 +328,14 @@ func getSnapshotDownloadCmd() *cobra.Command {
 				if reason := passphraseRefused(resp.StatusCode, body); reason != "" {
 					return passphraseError(reason, id, "download")
 				}
-				// Was print + return nil, so a bad id or a missing snapshot
-				// exited 0 and left no file behind.
-				return fmt.Errorf("download failed: %s", strings.TrimSpace(string(body)))
+				// Every other failure is the renderer's: its code line, the note
+				// that a 5xx is the platform's, and the wait a throttle names.
+				// The body was read above, so the failure is built from it.
+				failure := common.NewAPIError("download snapshot", resp.StatusCode, resp.Header, body)
+				// A proof of identity refused a second time is the platform's
+				// answer to the proof this request carried, and no session ended.
+				failure.CredentialRefused = needsStepUp(resp.StatusCode, body) != ""
+				return failure
 			}
 
 			// Determine output filename.
@@ -414,11 +419,11 @@ func getSnapshotDeleteCmd() *cobra.Command {
 			}
 			defer resp.Body.Close()
 
-			if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
-				// #CLI-STANDARDUSAGE-3F5TDV — a snapshot that was NOT deleted must not
-				// report success; a retention script would move on believing it had.
-				return fmt.Errorf("delete failed: %s", strings.TrimSpace(string(body)))
+			// A snapshot that was not deleted fails the command, with the
+			// renderer's words: a retention script moves on only when the exit
+			// status says the snapshot is gone.
+			if _, err := common.CheckResponse(resp, "delete snapshot"); err != nil {
+				return err
 			}
 			fmt.Printf("%s Snapshot %s deleted.\n", common.Check(), id)
 			return nil

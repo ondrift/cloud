@@ -344,16 +344,9 @@ func postResize(payload map[string]any) (ok bool, refusal *resizeRefusal, err er
 			return false, &r, nil
 		}
 	}
-	// Anything else is the caller's to fix, and its own message is the best one
-	// available — the api relays the operator's verbatim.
-	var generic struct {
-		Error string `json:"error"`
-	}
-	_ = json.Unmarshal(raw, &generic)
-	if generic.Error == "" {
-		generic.Error = strings.TrimSpace(string(raw))
-	}
-	return false, nil, fmt.Errorf("resize refused: %s", generic.Error)
+	// Anything else is a failure like any other, and the renderer reports it: the
+	// api relays the operator's own reason, which is the detail it keeps.
+	return false, nil, common.NewAPIError("resize slice", resp.StatusCode, resp.Header, raw)
 }
 
 // noTTYResize is the refusal both form entry points give when there is no

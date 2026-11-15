@@ -12,6 +12,7 @@ package slice
 // password. This is the client half: notice the refusal, ask, retry once.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,11 +40,17 @@ type stepUpRefusal struct {
 	Purpose string `json:"step_up_required"`
 }
 
-// peek reads a refusal's body so it can be inspected, leaving the response
-// readable by nobody else — a refusal is small and the caller is about to
-// replace this response anyway.
+// peek reads the start of a response's body so it can be inspected, and puts
+// what it read back: the response reads from its first byte afterwards, whether
+// it turns out to be a refusal to report or an archive to save. A refusal is
+// small, so the start is all of it.
 func peek(resp *http.Response) []byte {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	rest := resp.Body
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(body), rest), rest}
 	if err != nil {
 		return nil
 	}
@@ -62,6 +69,10 @@ func needsStepUp(status int, body []byte) string {
 	return r.Purpose
 }
 
+// readPassword asks for the account password. A variable so a test can answer
+// the prompt without a terminal.
+var readPassword = common.PromptForInputHidden
+
 // mintStepUpGrant asks for the password and exchanges it for a single-use
 // grant.
 //
@@ -72,7 +83,7 @@ func needsStepUp(status int, body []byte) string {
 func mintStepUpGrant(purpose, why string) (string, error) {
 	fmt.Println()
 	fmt.Println(common.Hint("  " + why))
-	password := common.PromptForInputHidden("  Password")
+	password := readPassword("  Password")
 	if password == "" {
 		return "", fmt.Errorf("a password is needed to continue")
 	}
@@ -90,10 +101,14 @@ func mintStepUpGrant(purpose, why string) (string, error) {
 
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		// The platform's own wording, which distinguishes a wrong password from
-		// an account it could not read. Restating it here would be a second
-		// author of a refusal this side cannot see the reason for.
-		return "", fmt.Errorf("could not verify your password: %s", strings.TrimSpace(string(raw)))
+		// The platform's own reason is the detail, which distinguishes a wrong
+		// password from an account it could not read. Restating it here would be a
+		// second author of a refusal this side cannot see the reason for. A 401
+		// here is that refusal and no session ending, so it must not send the
+		// person to log in.
+		refused := common.NewAPIError("verify your password", resp.StatusCode, resp.Header, raw)
+		refused.CredentialRefused = resp.StatusCode == http.StatusUnauthorized
+		return "", refused
 	}
 	var out struct {
 		Grant string `json:"grant"`
