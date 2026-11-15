@@ -379,7 +379,6 @@ func httpErrScan(t *testing.T, sources map[string]string, allowlist string) []st
 // failure beside the renderer, and nothing on the allowlist is there for no
 // reason.
 func TestNoCommandReportsAnHTTPFailureBesideTheRenderer(t *testing.T) {
-	t.Skip("removed by #2743")
 	root := repoRoot(t)
 
 	funcs, err := httpErrFuncsOfTree(root)

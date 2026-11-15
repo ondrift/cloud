@@ -17,3 +17,7 @@
 # The list can only shrink. A line with no reason, a line that names no function
 # and a line whose function the scan no longer flags each fail the test, and the
 # line is deleted.
+
+cmd/atomic/cmd/deploy.fetchSliceRuntime  # a failed runtime report falls back to the default build target, so the deploy goes on and nothing it could say would change what is built
+cmd/backbone.secretWindowIsOpen  # a failed window probe reads as 'closed': saying a replaced credential is still live when it could not be checked would be the worse mistake
+cmd/slice.snapshotIsPassphraseProtected  # a failed probe reads as 'not protected': the download goes on without a passphrase and the platform refuses it if one was needed
