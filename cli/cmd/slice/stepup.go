@@ -62,6 +62,10 @@ func needsStepUp(status int, body []byte) string {
 	return r.Purpose
 }
 
+// readPassword asks for the account password. A variable so a test can answer
+// the prompt without a terminal.
+var readPassword = common.PromptForInputHidden
+
 // mintStepUpGrant asks for the password and exchanges it for a single-use
 // grant.
 //
@@ -72,7 +76,7 @@ func needsStepUp(status int, body []byte) string {
 func mintStepUpGrant(purpose, why string) (string, error) {
 	fmt.Println()
 	fmt.Println(common.Hint("  " + why))
-	password := common.PromptForInputHidden("  Password")
+	password := readPassword("  Password")
 	if password == "" {
 		return "", fmt.Errorf("a password is needed to continue")
 	}
