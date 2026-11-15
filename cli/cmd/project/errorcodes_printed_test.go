@@ -55,6 +55,9 @@ func TestPlan_NoSchemaOnTheMachineIsRefusedWithItsCode(t *testing.T) {
 		t.Fatalf("the refusal changed its words:\n%v", err)
 	}
 	requireOneCodeLine(t, "drift plan", err.Error(), "DRIFT-1008")
+	if got := common.CodeOf(err); got != "DRIFT-1008" {
+		t.Errorf("CodeOf reads %q from the refusal, want DRIFT-1008", got)
+	}
 }
 
 // `drift apply` refuses the same way, through the same value.
@@ -72,7 +75,6 @@ func TestApply_NoSchemaOnTheMachineIsRefusedWithItsCode(t *testing.T) {
 // explains the floor, once, whether the booking is the file's own (what `drift
 // file lint` checks) or the slice's (what `drift plan` and `drift apply` check).
 func TestFloorRefusal_CarriesItsCodeOnce(t *testing.T) {
-	t.Skip("DRIFT-1010 is printed by no source file yet")
 	withSchema(t, floorSchema)
 	root := demoProject(t, demoDriftfile) // get:ping books 8MB, in Go
 	err := checkFixture(t, root)
@@ -103,7 +105,6 @@ func TestFloorRefusal_CarriesItsCodeOnce(t *testing.T) {
 // A Driftfile with two unknown arguments is refused with both listed and the
 // code printed once, after the list, not after each.
 func TestCompileDriftfile_AnInvalidDriftfilePrintsItsCodeOnce(t *testing.T) {
-	t.Skip("DRIFT-1009 is printed by no source file yet")
 	withRealSchema(t)
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "Driftfile"), "slice \"demo\" {\n  first_unknown = 1\n  second_unknown = 2\n}\n")
@@ -121,5 +122,8 @@ func TestCompileDriftfile_AnInvalidDriftfilePrintsItsCodeOnce(t *testing.T) {
 	requireOneCodeLine(t, "the compile", rendered, "DRIFT-1009")
 	if !strings.HasSuffix(rendered, codeLine("DRIFT-1009")) {
 		t.Errorf("the code's line is not the last line of the refusal:\n%s", rendered)
+	}
+	if got := common.CodeOf(err); got != "DRIFT-1009" {
+		t.Errorf("CodeOf reads %q from the refusal, want DRIFT-1009", got)
 	}
 }

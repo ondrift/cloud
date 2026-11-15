@@ -39,7 +39,6 @@ func TestLint_NoSchemaOnTheMachineIsRefusedWithItsCode(t *testing.T) {
 // every error, and one code line after them. The wrapper that adds the name does
 // not add a second code.
 func TestLint_AnInvalidDriftfilePrintsItsNameItsErrorsAndOneCode(t *testing.T) {
-	t.Skip("DRIFT-1009 is printed by no source file yet")
 	withServedSchema(t)
 	dir := lintFixture(t, "GetPing")
 	path := filepath.Join(dir, "Driftfile")

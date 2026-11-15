@@ -114,7 +114,6 @@ func codeLiteralProblems(registry []ErrorCode, literals map[string][]string) []s
 // is named by the source: a code printed with no entry cannot be explained, and an
 // entry nothing prints is documentation for a failure that never carries it.
 func TestErrorCodes_TheSourceAndTheRegistryNameTheSameCodes(t *testing.T) {
-	t.Skip("DRIFT-1008, DRIFT-1009 and DRIFT-1010 are printed by no source file yet")
 	for _, problem := range codeLiteralProblems(ErrorCodes(), codeLiterals(t, moduleRoot(t))) {
 		t.Error(problem)
 	}

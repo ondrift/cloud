@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd/deploy"
+	"github.com/ondrift/cloud/cli/common"
 )
 
 // The two lists Atomic's work is declared in, under `atomic`.
@@ -172,7 +173,7 @@ func CheckSlotBookings(m *Manifest, backends []atomic_cmd.Backend, live *LiveSli
 	if len(bad) == 0 {
 		return nil
 	}
-	return fmt.Errorf(
+	return common.Failf("DRIFT-1010",
 		"a compiled function or worker needs at least %s, and %d of these book less:\n%s\n\n"+
 			"A compiled language carries a private language runtime inside every invocation, "+
 			"and the pool is charged what an invocation is measured to cost — that runtime "+
