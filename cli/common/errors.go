@@ -341,16 +341,28 @@ func CheckResponse(resp *http.Response, op string) ([]byte, error) {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return body, nil
 	}
+	return nil, NewAPIError(op, resp.StatusCode, resp.Header, body)
+}
+
+// NewAPIError builds the failure for a response that is not 2xx, from what a
+// caller holds once it has read the body itself: the op it was attempting, the
+// status, the header and the body. CheckResponse is this construction after it
+// reads the body, so a failure built here is the one it would have built.
+//
+// It is for a caller that has to read the body before it knows what the answer
+// is, such as a 401 that may be a refusal to be acted on. A caller that has not
+// read it calls CheckResponse. The header may be nil.
+func NewAPIError(op string, status int, header http.Header, body []byte) *APIError {
 	e := &APIError{
 		Op:     op,
-		Status: resp.StatusCode,
-		Detail: detailForStatus(resp.StatusCode, body),
+		Status: status,
+		Detail: detailForStatus(status, body),
 		Raw:    strings.TrimSpace(string(body)),
 	}
 	e.Action, e.Limit, e.Current, e.HasLimit = quotaFromBody(body)
-	e.RetryAfter = retryAfter(resp.Header.Get("Retry-After"), time.Now())
-	e.PlatformAPIVersion = platformAPIVersion(resp.Header)
-	return nil, e
+	e.RetryAfter = retryAfter(header.Get("Retry-After"), time.Now())
+	e.PlatformAPIVersion = platformAPIVersion(header)
+	return e
 }
 
 // pathMayHaveMoved reports whether this refusal is a request for a path the
