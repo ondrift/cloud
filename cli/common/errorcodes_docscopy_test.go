@@ -8,15 +8,114 @@ package common
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 )
 
-// docsCopyDrift is a stub that names nothing: the tests of what it must name fail
-// against it.
+// docsCopyDrift compares the registry with the copy of it that cloud/sites holds and
+// returns one line for each way the copy differs, in code order. A code only the
+// registry has is added, a code only the copy has is removed, a code whose meaning,
+// remedy or command differs is reworded, and a code that only one of the two marks
+// retired is retired. Identical bytes name nothing.
+//
+// Bytes that differ with no code differing are one line that names no code: the copy
+// is not the registry, and only its layout or its comment can be what differs. A
+// side that is not a registry in JSON is one line about that side, and nothing is
+// compared then.
 func docsCopyDrift(registry, docs []byte) []string {
-	return nil
+	// Equal bytes are decided before anything is parsed, so the common case costs
+	// nothing and a copy that is only laid out another way cannot pass for equal.
+	if bytes.Equal(registry, docs) {
+		return nil
+	}
+
+	registered, registryErr := docsCopyEntries(registry)
+	copied, copyErr := docsCopyEntries(docs)
+	var lines []string
+	if registryErr != nil {
+		lines = append(lines, "the registry is not a registry in JSON: "+registryErr.Error())
+	}
+	if copyErr != nil {
+		lines = append(lines, "the copy is not a registry in JSON: "+copyErr.Error())
+	}
+	if lines != nil {
+		return lines
+	}
+
+	// Every code either side holds, once, in code order.
+	codes := make([]string, 0, len(registered)+len(copied))
+	for code := range registered {
+		codes = append(codes, code)
+	}
+	for code := range copied {
+		if _, held := registered[code]; !held {
+			codes = append(codes, code)
+		}
+	}
+	slices.Sort(codes)
+
+	for _, code := range codes {
+		inRegistry, registryHas := registered[code]
+		inCopy, copyHas := copied[code]
+		switch {
+		case !copyHas:
+			lines = append(lines, code+" added: in the registry, not in the copy")
+		case !registryHas:
+			lines = append(lines, code+" removed: in the copy, not in the registry")
+		default:
+			if inRegistry.Retired != inCopy.Retired {
+				marks := "registry"
+				if inCopy.Retired {
+					marks = "copy"
+				}
+				lines = append(lines, code+" retired: only the "+marks+" marks it retired")
+			}
+			if fields := docsCopyWordedFields(inRegistry, inCopy); len(fields) > 0 {
+				lines = append(lines, code+" reworded ("+strings.Join(fields, ", ")+")")
+			}
+		}
+	}
+	if len(lines) == 0 {
+		lines = append(lines, "the copy is not byte-identical to the registry, though no code differs: the two differ only in layout or comment")
+	}
+	return lines
+}
+
+// docsCopyEntries reads the entries of a registry by code. A code listed twice keeps
+// its last entry, as the registry's own loader does.
+func docsCopyEntries(data []byte) (map[string]ErrorCode, error) {
+	var doc struct {
+		Codes []ErrorCode `json:"codes"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	byCode := make(map[string]ErrorCode, len(doc.Codes))
+	for _, entry := range doc.Codes {
+		byCode[entry.Code] = entry
+	}
+	return byCode, nil
+}
+
+// docsCopyWordedFields names, as the registry spells them, the fields in which two
+// entries of one code differ, leaving out the code and whether it is retired, which
+// are reported on their own. It reads the fields of ErrorCode itself, so a field the
+// registry gains is compared without this function being touched.
+func docsCopyWordedFields(registry, docs ErrorCode) []string {
+	var names []string
+	r, d := reflect.ValueOf(registry), reflect.ValueOf(docs)
+	for i := 0; i < r.NumField(); i++ {
+		name, _, _ := strings.Cut(r.Type().Field(i).Tag.Get("json"), ",")
+		if name == "code" || name == "retired" {
+			continue
+		}
+		if !reflect.DeepEqual(r.Field(i).Interface(), d.Field(i).Interface()) {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // docsCopyCodes is the registry the cases below start from: three live codes, the
@@ -88,8 +187,6 @@ func TestDocsCopyDrift_IdenticalBytesNameNothing(t *testing.T) {
 // Each way a code can differ gives a line that starts with the code, and a code that
 // does not differ is named nowhere.
 func TestDocsCopyDrift_EachWayACopyDiffersNamesItsCode(t *testing.T) {
-	t.Skip("removed by #2552")
-
 	cases := []struct {
 		name     string
 		registry []ErrorCode
@@ -175,8 +272,6 @@ func TestDocsCopyDrift_EachWayACopyDiffersNamesItsCode(t *testing.T) {
 // sync script writes the registry's bytes, so a copy laid out another way was not
 // made by it.
 func TestDocsCopyDrift_ACopyDifferingOnlyInLayoutIsNotIdenticalAndNamesNoCode(t *testing.T) {
-	t.Skip("removed by #2552")
-
 	registry := docsCopyRender(t, docsCopyCodes)
 	cases := []struct {
 		name string
@@ -212,8 +307,6 @@ func TestDocsCopyDrift_ACopyDifferingOnlyInLayoutIsNotIdenticalAndNamesNoCode(t 
 // A copy that cannot be read as a registry is one line that says so, and the line
 // is about the side that is wrong.
 func TestDocsCopyDrift_ACopyThatIsNotJSONIsOneLineSayingSo(t *testing.T) {
-	t.Skip("removed by #2552")
-
 	registry := docsCopyRender(t, docsCopyCodes)
 	cases := []struct {
 		name string
@@ -257,8 +350,6 @@ func TestDocsCopyDrift_ACopyThatIsNotJSONIsOneLineSayingSo(t *testing.T) {
 // The lines come in code order, however the two files list their entries, so the
 // first line names the lowest code that differs.
 func TestDocsCopyDrift_NamesCodesInCodeOrderWhateverOrderTheFilesListThem(t *testing.T) {
-	t.Skip("removed by #2552")
-
 	// The registry lists 1003 first. The copy lists 1004, 1003 and 1002 in that order,
 	// has 1003 retired and 1002 reworded, lacks 1001, and holds a 1004 the registry
 	// does not.
