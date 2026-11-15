@@ -211,6 +211,50 @@ jobs:
               print(f"::warning::the tests run against format {vendored['version']}; alpha serves {served['version']}. "
                     "Expected until the platform change that moved it is deployed; a surprise otherwise.")
           PY
+      # THE FAILURE-CODE REGISTRY IS APPEND-ONLY, AND ONLY THE BASE BRANCH CAN SAY
+      # WHAT IT WAS. A code is never renumbered, reused or deleted, and a key never
+      # changes. Two entries that swap contents, or a code that goes missing, leave
+      # the registry well formed and every check that reads only this branch green,
+      # so the tests compare it with the base branch's copy. This step fetches that
+      # copy (the checkout is one commit deep) and hands the tests its path in
+      # DRIFT_ERRORCODES_BASE.
+      #
+      # A base branch with no registry has nothing to compare, and the step says
+      # so. A base that cannot be fetched or read FAILS the step: without it the
+      # comparison cannot call the registry fine.
+      - name: hand the tests the registry as it stands on the base branch
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          registry=cli/common/errorcodes.json
+          git fetch --quiet --depth=1 origin "$BASE_REF"
+          if ! git cat-file -e "FETCH_HEAD:$registry" 2>/dev/null; then
+            echo "::notice::$BASE_REF has no $registry, so there is no earlier registry to compare with and the append-only check is skipped"
+            exit 0
+          fi
+          base="${RUNNER_TEMP:-/tmp}/errorcodes.base.json"
+          git show "FETCH_HEAD:$registry" > "$base"
+          echo "DRIFT_ERRORCODES_BASE=$base" >> "$GITHUB_ENV"
+          echo "the registry on $BASE_REF is handed to the tests as $base:"
+          jq -r '"  \(.codes | length) codes, \([.codes[] | select((.key // "") != "")] | length) with a key"' "$base"
+      # The comparison on its own and verbose. `go test ./...` prints nothing for a
+      # test that passed, was skipped or was never found, so a comparison that did
+      # not run would read as a pass. With a base handed over, anything but a pass
+      # of this test fails the job: a skip, or a rename that leaves -run no match.
+      - name: the registry only grew since the base branch
+        working-directory: cli
+        run: |
+          set -o pipefail
+          if [ -z "${DRIFT_ERRORCODES_BASE:-}" ]; then
+            echo "no base registry was handed over, so there is nothing to compare"
+            exit 0
+          fi
+          go test ./common -run '^TestErrorCodes_AppendOnlyAgainstBase$' -count=1 -v 2>&1 | tee /tmp/errorcodes-base.log
+          if ! grep -q -- '^--- PASS: TestErrorCodes_AppendOnlyAgainstBase ' /tmp/errorcodes-base.log; then
+            echo "::error::the comparison did not run to a pass although a base registry was handed over"
+            exit 1
+          fi
       - name: test
         working-directory: cli
         run: |

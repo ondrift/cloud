@@ -116,6 +116,15 @@ A site is declared in the Driftfile (`canvas { site "/" { dir = "./site" } }`) a
 | `drift file stop [env]` / `logs [env]` | Stop or tail the local run. |
 | `drift file benchmark` | What each function and worker has cost, measured by the slice, and what it should book. |
 
+### Doctor
+
+Offline, and no account or session needed: the registry of failure codes is compiled into the binary, so both commands answer during an outage.
+
+| Command | Description |
+|---------|-------------|
+| `drift doctor explain <code>` | Expand a failure code such as `DRIFT-1006` into what happened and what to do. `drift-1006` and `1006` are the same question. A code numbered above the ones this binary knows says the binary may be older than the code and names `drift upgrade`. |
+| `drift doctor codes` | List every failure code this binary can produce, with its meaning. |
+
 ### Migrate — leave another cloud
 
 Free, read-only, and honest about the parts that don't fit. Drift never holds your

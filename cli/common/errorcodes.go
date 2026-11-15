@@ -22,9 +22,13 @@ package common
 // in a chat log a year old must still resolve to the same failure. To stop using
 // one, mark it `retired` and leave it where it is.
 //
-// That rule is mechanical rather than remembered: the sequence must be dense, so
-// deleting an entry leaves a gap and the test fails. Reuse is impossible without
-// first deleting, so the same check covers both.
+// That rule is mechanical rather than remembered, in two parts. The sequence
+// must be dense, so deleting an entry leaves a gap and the test fails. And every
+// entry carries a Key, the name of the failure its code stands for, which is
+// unique and never changes: the pull-request job hands the tests the registry as
+// it stands on the base branch, and a code that went missing or whose key changed
+// fails the build. Two entries that swap contents, or a code pointed at another
+// failure, leave the sequence dense and change a key.
 
 import (
 	_ "embed"
@@ -43,6 +47,12 @@ var errorCodesJSON []byte
 type ErrorCode struct {
 	// Code is the stable identifier a user sees and pastes, "DRIFT-1006".
 	Code string `json:"code"`
+	// Key names the failure this code stands for, "session-expired": lowercase
+	// words joined by hyphens, unique in the registry, and never changed once the
+	// code is minted. The wording around a code can be improved and its number is
+	// only an address; the key is what the code IS, and what a pull request's
+	// registry is compared on against the base branch's.
+	Key string `json:"key"`
 	// Meaning is one line saying what happened, in the user's terms.
 	Meaning string `json:"meaning"`
 	// Remedy is the prose: what to do and why, for `doctor explain`.
@@ -94,12 +104,50 @@ func loadErrorCodes() {
 func LookupErrorCode(code string) (ErrorCode, bool) {
 	errorCodesOnce.Do(loadErrorCodes)
 
-	q := strings.ToUpper(strings.TrimSpace(code))
+	c, ok := errorCodesByID[normalizeErrorCode(code)]
+	return c, ok
+}
+
+// normalizeErrorCode puts what a person typed into the registry's spelling,
+// "DRIFT-1006", whether they typed "drift-1006", " 1006 " or the code itself. It
+// does not judge the result: "banana" becomes "DRIFT-BANANA".
+func normalizeErrorCode(typed string) string {
+	q := strings.ToUpper(strings.TrimSpace(typed))
 	if !strings.HasPrefix(q, "DRIFT-") {
 		q = "DRIFT-" + q
 	}
-	c, ok := errorCodesByID[q]
-	return c, ok
+	return q
+}
+
+// NewerErrorCode reports whether typed is shaped like a failure code and numbered
+// above every registered one. That is the code a drift newer than this binary
+// prints, and this binary has never heard of it. It returns the code in the
+// registry's spelling and the highest code this binary registers, so the caller
+// can say what this binary knows.
+//
+// Text that is not a code is never newer, and neither is a number at or below the
+// highest.
+func NewerErrorCode(typed string) (code, highest string, newer bool) {
+	errorCodesOnce.Do(loadErrorCodes)
+
+	code = normalizeErrorCode(typed)
+	digits := strings.TrimPrefix(code, "DRIFT-")
+	// Atoi reads a sign and a code has none, so only digits are let through to it.
+	if strings.Trim(digits, "0123456789") != "" {
+		return "", "", false
+	}
+	n, err := strconv.Atoi(digits)
+	if err != nil {
+		return "", "", false
+	}
+
+	top := -1
+	for _, c := range errorCodesAll {
+		if m := errorCodeNumber(c.Code); m > top {
+			top, highest = m, c.Code
+		}
+	}
+	return code, highest, n > top
 }
 
 // ErrorCodes returns every registered failure, in code order — retired ones
@@ -113,8 +161,8 @@ func ErrorCodes() []ErrorCode {
 }
 
 // errorCodeNumber pulls the numeric part out of a code, or -1 if it is not
-// shaped like one. Used by the registry's own tests to prove the sequence is
-// dense.
+// shaped like one. NewerErrorCode uses it to find the highest registered code,
+// and the registry's own tests use it to prove the sequence is dense.
 func errorCodeNumber(code string) int {
 	n, err := strconv.Atoi(strings.TrimPrefix(strings.ToUpper(code), "DRIFT-"))
 	if err != nil {
