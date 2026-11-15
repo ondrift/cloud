@@ -118,6 +118,7 @@ fn run_deployed<F: Fn(Value) -> Value>(handler: &F) {
         }
     };
 
+    let mut call_state = CallState::default();
     let mut line = String::new();
     loop {
         line.clear();
@@ -132,7 +133,25 @@ fn run_deployed<F: Fn(Value) -> Value>(handler: &F) {
             continue;
         }
 
-        let reply = answer(handler, raw, |_| {}, |_| {});
+        // The process environment is read by the SDK's accessors and by the
+        // handler on this thread. A handler must not leave a thread running
+        // that reads the environment after it returns: the next envelope's
+        // values replace these under it.
+        let reply = answer(
+            handler,
+            raw,
+            |req| call_state.apply(req),
+            |reply| {
+                // Nothing exits for the slice to weigh with wait4, so the
+                // process reports its own high-water mark.
+                let rss = peak_rss_bytes();
+                if rss > 0 {
+                    if let Some(obj) = reply.as_object_mut() {
+                        obj.insert("rss_bytes".to_string(), Value::from(rss));
+                    }
+                }
+            },
+        );
         if out.write_all(reply.as_bytes()).is_err()
             || out.write_all(b"\n").is_err()
             || out.flush().is_err()
@@ -140,6 +159,81 @@ fn run_deployed<F: Fn(Value) -> Value>(handler: &F) {
             return; // the slice stopped reading
         }
     }
+}
+
+/// What an envelope sets in the process environment for the call it carries.
+///
+/// A one-shot child gets its scratch directory and its secrets at spawn; a
+/// process that serves many calls was spawned once, so each envelope's values
+/// are applied before its handler runs: TMPDIR and HOME become the envelope's
+/// `tmpdir` (when it is an absolute path), every `secrets` entry becomes
+/// `DRIFT_SECRET_<NAME>` and every `secrets_previous` entry
+/// `DRIFT_SECRET_<NAME>_PREVIOUS`, and a variable an earlier envelope set is
+/// removed when this one no longer carries it. Only variables this process set
+/// from an envelope are ever removed: one the process held before its first
+/// envelope is treated the same once an envelope has carried it.
+#[derive(Default)]
+struct CallState {
+    /// Secret names (as the envelope spells them) whose current value, and
+    /// whose previous value, this process has set.
+    current: std::collections::HashSet<String>,
+    previous: std::collections::HashSet<String>,
+}
+
+impl CallState {
+    fn apply(&mut self, req: &Value) {
+        if let Some(dir) = req.get("tmpdir").and_then(Value::as_str) {
+            if std::path::Path::new(dir).is_absolute() {
+                std::env::set_var("TMPDIR", dir);
+                std::env::set_var("HOME", dir);
+            }
+        }
+        let carried = |member: &str| -> BTreeMap<String, String> {
+            req.get(member)
+                .and_then(Value::as_object)
+                .map(|o| {
+                    o.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        sync_secrets(&mut self.current, &carried("secrets"), "");
+        sync_secrets(&mut self.previous, &carried("secrets_previous"), "_PREVIOUS");
+    }
+}
+
+/// Make the environment's `DRIFT_SECRET_<NAME><suffix>` variables match
+/// `carried`: set each carried value, remove each one `set` holds that is no
+/// longer carried.
+fn sync_secrets(set: &mut std::collections::HashSet<String>, carried: &BTreeMap<String, String>, suffix: &str) {
+    let var = |name: &str| format!("DRIFT_SECRET_{}{}", name.to_uppercase(), suffix);
+    set.retain(|name| {
+        let keep = carried.contains_key(name);
+        if !keep {
+            std::env::remove_var(var(name));
+        }
+        keep
+    });
+    for (name, value) in carried {
+        std::env::set_var(var(name), value);
+        set.insert(name.clone());
+    }
+}
+
+/// This process's peak resident size in bytes: VmHWM in /proc/self/status, which
+/// a sandboxed function can read. Zero where there is no such file, and the
+/// reply then carries no `rss_bytes`.
+fn peak_rss_bytes() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find_map(|l| l.strip_prefix("VmHWM:"))
+                .and_then(|rest| rest.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+        })
+        .map_or(0, |kb| kb * 1024)
 }
 
 /// The libc calls that move the response stream, declared here so the crate

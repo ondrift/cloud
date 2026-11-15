@@ -190,7 +190,6 @@ fn end_of_input_ends_the_process_with_status_zero() {
 }
 
 #[test]
-#[ignore = "scratch directory and secrets: #3556 - Apply the scratch directory and secrets per call, and report peak resident size"]
 fn the_scratch_directory_is_the_envelopes_on_every_call() {
     let mut worker = Worker::start();
     for dir in ["/scratch/loop-1", "/scratch/loop-2", "/scratch/loop-3"] {
@@ -203,7 +202,6 @@ fn the_scratch_directory_is_the_envelopes_on_every_call() {
 }
 
 #[test]
-#[ignore = "scratch directory and secrets: #3556 - Apply the scratch directory and secrets per call, and report peak resident size"]
 fn a_secret_the_envelope_no_longer_carries_is_gone() {
     let mut worker = Worker::start();
     let secrets = |reply: &Value| payload(reply)["secrets"].clone();
@@ -219,7 +217,6 @@ fn a_secret_the_envelope_no_longer_carries_is_gone() {
 }
 
 #[test]
-#[ignore = "scratch directory and secrets: #3556 - Apply the scratch directory and secrets per call, and report peak resident size"]
 fn a_previous_secret_follows_the_same_rule() {
     let mut worker = Worker::start();
     let secrets = |reply: &Value| payload(reply)["secrets"].clone();
@@ -232,7 +229,6 @@ fn a_previous_secret_follows_the_same_rule() {
 }
 
 #[test]
-#[ignore = "scratch directory and secrets: #3556 - Apply the scratch directory and secrets per call, and report peak resident size"]
 #[cfg(target_os = "linux")]
 fn every_reply_carries_the_peak_resident_size() {
     let mut worker = Worker::start();
