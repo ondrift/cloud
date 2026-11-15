@@ -92,7 +92,7 @@ func withParents(files []string) []string {
 func userSourceEntries(t *testing.T, dir, language string) []string {
 	t.Helper()
 	t.Setenv("TMPDIR", t.TempDir())
-	archive, err := createUserSourceArchive(dir, "usersource-test")
+	archive, err := createUserSourceArchive(dir, "usersource-test", language)
 	if err != nil {
 		t.Fatalf("createUserSourceArchive: %v", err)
 	}
@@ -272,7 +272,6 @@ func offlineDeploy(t *testing.T) {
 // A backend folder holding source, manifests and an installed tree is archived
 // as its source and its manifests: nothing under node_modules or vendor.
 func TestUserSourceArchive_LeavesOutTheInstalledTree(t *testing.T) {
-	t.Skip("removed by #2938")
 	for _, b := range interpretedBackends {
 		t.Run(b.language, func(t *testing.T) {
 			dir := t.TempDir()
@@ -287,7 +286,6 @@ func TestUserSourceArchive_LeavesOutTheInstalledTree(t *testing.T) {
 // folder, whichever language the backend is written in. The same names deeper in
 // the tree are source the developer wrote.
 func TestUserSourceArchive_LeavesOutOnlyTheTopLevelTree(t *testing.T) {
-	t.Skip("removed by #2938")
 	for _, b := range interpretedBackends {
 		t.Run(b.language, func(t *testing.T) {
 			dir := t.TempDir()
@@ -311,7 +309,6 @@ func TestUserSourceArchive_LeavesOutOnlyTheTopLevelTree(t *testing.T) {
 // cannot be archived, so it is left out with what it points to, and the archive
 // is still made.
 func TestUserSourceArchive_ASymlinkedInstalledTreeIsLeftOut(t *testing.T) {
-	t.Skip("removed by #2938")
 	for _, b := range interpretedBackends {
 		t.Run(b.language, func(t *testing.T) {
 			dir, shared := t.TempDir(), t.TempDir()
@@ -372,7 +369,6 @@ func (b interpretedBackend) deployAsFunction(t *testing.T) capturedDeploy {
 // A deploy of an interpreted backend stores the developer's source and manifests
 // as its user-source archive and not the tree installed beside them.
 func TestInterpretedBackendDeploy_UserSourceHoldsNoInstalledTree(t *testing.T) {
-	t.Skip("removed by #2938")
 	for _, b := range interpretedBackends {
 		t.Run(b.language, func(t *testing.T) {
 			b.checkUserSource(t, b.deployAsBackend(t).userSource)
@@ -382,7 +378,6 @@ func TestInterpretedBackendDeploy_UserSourceHoldsNoInstalledTree(t *testing.T) {
 
 // The one-function build path stores the same.
 func TestSingleFunctionDeploy_UserSourceHoldsNoInstalledTree(t *testing.T) {
-	t.Skip("removed by #2938")
 	for _, b := range interpretedBackends {
 		t.Run(b.language, func(t *testing.T) {
 			b.checkUserSource(t, b.deployAsFunction(t).userSource)

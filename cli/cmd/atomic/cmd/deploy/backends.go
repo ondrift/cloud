@@ -464,7 +464,7 @@ func DeployGoBackend(el Backend, digest string, out io.Writer) error {
 
 	// One user-source archive for the backend's package, shared by its
 	// functions (they all compile from the same source).
-	userSrc, usErr := createUserSourceArchive(el.Dir, el.Name)
+	userSrc, usErr := createUserSourceArchive(el.Dir, el.Name, "go")
 	if usErr == nil {
 		defer os.Remove(userSrc) // #nosec G104
 	} else {

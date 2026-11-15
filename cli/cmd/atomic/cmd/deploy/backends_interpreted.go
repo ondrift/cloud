@@ -77,7 +77,10 @@ func DeployInterpretedBackend(el Backend, digest string, out io.Writer) error {
 		return ierr
 	}
 
-	userSrc, usErr := createUserSourceArchive(el.Dir, el.Name)
+	// The developer's own folder is what is stored as the user-source: without
+	// the tree an install left in it, because the stage above holds the one built
+	// for the slice.
+	userSrc, usErr := createUserSourceArchive(el.Dir, el.Name, el.Lang)
 	if usErr == nil {
 		defer os.Remove(userSrc) // #nosec G104
 	} else {
