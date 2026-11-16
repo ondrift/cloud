@@ -60,9 +60,74 @@ function run(callable $handler): void {
     }
 }
 
+/**
+ * The deployed loop: the slice (or a trigger's spawn) writes newline-delimited
+ * envelopes to stdin and reads one reply line per envelope from stdout, and
+ * stdin closing ends the process with status 0. A trigger's spawn is the same
+ * loop with one envelope, no trailing newline, and stdin closed at once.
+ *
+ * The reply is written to the STDOUT constant and nothing else may reach it.
+ * PHP cannot duplicate a file descriptor from userland, so a handler's `echo`
+ * and `print` are caught by an output buffer that passes them to stderr, and
+ * PHP's own diagnostics (warnings, notices, an uncaught exception) are sent to
+ * stderr by configuration: stderr is the function's log. A handler that writes
+ * to the STDOUT constant itself puts a stray line on the response stream; the
+ * slice reads it as the reply, cannot parse it, fails that call and retires the
+ * worker.
+ *
+ * A handler that throws ends the process, as it does in a one-shot spawn, and
+ * the slice reports how from the exit status and stderr.
+ */
 function _run_deployed(callable $handler): void {
-    $input = file_get_contents('php://stdin');
-    fwrite(STDOUT, json_encode(_answer($handler, $input)));
+    ini_set('display_errors', 'stderr');
+    ini_set('log_errors', '1');
+
+    while (($line = fgets(STDIN)) !== false) {
+        $raw = trim($line);
+        if ($raw === '') {
+            continue;
+        }
+        $resp = _call_with_output_to_stderr($handler, $raw);
+        // A reply that cannot be encoded throws rather than putting an empty
+        // line on the response stream.
+        if (!_write_line(json_encode($resp, JSON_THROW_ON_ERROR))) {
+            return; // the slice stopped reading
+        }
+    }
+}
+
+/**
+ * One envelope through the handler, with whatever the handler prints going to
+ * stderr as it is printed. A buffer the handler opened and left open is closed
+ * into this one afterwards, so nothing it holds is lost or reaches stdout.
+ */
+function _call_with_output_to_stderr(callable $handler, string $raw) {
+    $level = ob_get_level();
+    ob_start(static function (string $chunk): string {
+        fwrite(STDERR, $chunk);
+        return '';
+    }, 1);
+    try {
+        return _answer($handler, $raw);
+    } finally {
+        while (ob_get_level() > $level) {
+            ob_end_flush();
+        }
+    }
+}
+
+/** Write one line to the response stream, whole, and flush it. False when the stream is closed. */
+function _write_line(string $line): bool {
+    $data = $line . "\n";
+    $length = strlen($data);
+    for ($done = 0; $done < $length;) {
+        $n = @fwrite(STDOUT, substr($data, $done));
+        if ($n === false || $n === 0) {
+            return false;
+        }
+        $done += $n;
+    }
+    return @fflush(STDOUT);
 }
 
 /**
