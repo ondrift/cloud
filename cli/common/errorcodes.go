@@ -108,6 +108,23 @@ func LookupErrorCode(code string) (ErrorCode, bool) {
 	return c, ok
 }
 
+// errorCodesPage is the docs' troubleshooting page, where each code has a section
+// whose id is the code in lower case.
+const errorCodesPage = "https://docs.ondrift.eu/troubleshooting/error-codes/"
+
+// ErrorCodePage is the address of a code's section on the docs, or "" for text that
+// is not a registered code. It is derived from the code, so the registry holds no
+// field for it and there is no second copy to drift. A retired code keeps its
+// section, because a message from an older install can still name it. The address
+// is printed and never fetched.
+func ErrorCodePage(code string) string {
+	entry, ok := LookupErrorCode(code)
+	if !ok {
+		return ""
+	}
+	return errorCodesPage + "#" + strings.ToLower(entry.Code)
+}
+
 // normalizeErrorCode puts what a person typed into the registry's spelling,
 // "DRIFT-1006", whether they typed "drift-1006", " 1006 " or the code itself. It
 // does not judge the result: "banana" becomes "DRIFT-BANANA".

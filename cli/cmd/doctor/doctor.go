@@ -70,6 +70,9 @@ func getExplainCmd() *cobra.Command {
 			if entry.Retired {
 				fmt.Fprintf(out, "\n  %s\n", common.Hint("This code is retired — a current CLI no longer produces it."))
 			}
+			// The address of the code's own page, printed and never fetched, so
+			// it is as good offline as the rest. It ends the answer.
+			fmt.Fprintf(out, "\n  %s  %s\n", common.Hint("more:"), common.ErrorCodePage(entry.Code))
 			fmt.Fprintln(out)
 			return nil
 		},
