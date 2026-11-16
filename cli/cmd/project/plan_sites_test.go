@@ -97,18 +97,22 @@ func TestPlan_ASiteWhoseDigestDiffersFromItsFolderIsChanged(t *testing.T) {
 func TestPlan_ASiteTheSliceLacksIsAddedAndOneAtAnotherRouteIsChanged(t *testing.T) {
 	digest := fmt.Sprintf(`,"digest":%q`, siteFolderDigest(t))
 
-	added := siteLineOf(t, planWithSites(t, `{"deployed":true,"sites":[]}`))
-	if !strings.Contains(added, "+ site /") || !strings.Contains(added, "uploads canvas") {
-		t.Errorf("a site the slice lacks reads %q, want it added with the folder it uploads", added)
-	}
+	t.Run("a site the slice lacks", func(t *testing.T) {
+		added := siteLineOf(t, planWithSites(t, `{"deployed":true,"sites":[]}`))
+		if !strings.Contains(added, "+ site /") || !strings.Contains(added, "uploads canvas") {
+			t.Errorf("a site the slice lacks reads %q, want it added with the folder it uploads", added)
+		}
+	})
 
-	moved := siteLineOf(t, planWithSites(t, siteRegistry("default", "/old", digest)))
-	if !strings.Contains(moved, "~ site /") {
-		t.Errorf("a site at another route is not marked ~: %q", moved)
-	}
-	if !strings.Contains(moved, "/old") || !strings.Contains(moved, "→ /") {
-		t.Errorf("the site line is %q, want it to show the live route /old and the file's route /", moved)
-	}
+	t.Run("a site at another route", func(t *testing.T) {
+		moved := siteLineOf(t, planWithSites(t, siteRegistry("default", "/old", digest)))
+		if !strings.Contains(moved, "~ site /") {
+			t.Errorf("a site at another route is not marked ~: %q", moved)
+		}
+		if !strings.Contains(moved, "/old") || !strings.Contains(moved, "→ /") {
+			t.Errorf("the site line is %q, want it to show the live route /old and the file's route /", moved)
+		}
+	})
 }
 
 // A site the slice holds no digest for (an older platform, or a site deployed

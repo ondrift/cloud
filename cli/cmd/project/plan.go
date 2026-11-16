@@ -843,31 +843,57 @@ func (p *planState) diffSites(d *planDiff, creating bool) {
 		d.notes = append(d.notes, err.Error())
 		return
 	}
-	liveSlugs := map[string]bool{}
+	liveBySlug := map[string]liveCanvasSite{}
 	for _, s := range p.sites {
-		liveSlugs[s.Slug] = true
+		liveBySlug[s.Slug] = s
 	}
 	named := map[string]bool{}
 	for _, s := range declared {
 		named[s.Slug] = true
 		addr := "site " + s.Route
+		live, served := liveBySlug[s.Slug]
 		switch {
 		case creating:
 			d.add("+", addr, "uploads %s", s.Dir)
 		case p.sitesErr != nil:
 			d.unread(addr, "sites", p.sitesErr)
-		case !liveSlugs[s.Slug]:
+		case !served:
 			d.add("+", addr, "uploads %s", s.Dir)
+		case live.Route != s.Route:
+			d.add("~", addr, "route %s → %s; uploaded again on apply", live.Route, s.Route)
 		default:
-			// The slice keeps no hash of a site's files, so a plan cannot say
-			// whether they differ; apply uploads the folder again.
-			d.add(" ", addr, "served; uploaded again on apply (its files are not compared)")
+			p.diffSiteFiles(d, addr, p.c.Manifest.ResolvePath(s.Dir), live.Digest)
 		}
 	}
 	for _, s := range p.sites {
 		if !named[s.Slug] {
 			d.add("-", "site "+s.Route, "still served: no drift command removes a site yet")
 		}
+	}
+}
+
+// errNoSiteDigest is why a served site's files are not compared when the slice
+// recorded no digest for it: an older platform, or a site deployed before the
+// platform kept one.
+var errNoSiteDigest = errors.New("the slice holds no digest for it")
+
+// diffSiteFiles says whether a served site's files are the folder's, by the
+// digest `drift apply` uploads the folder with. A site whose files it could not
+// compare is recorded on d as unread: the line has no mark, and no match is
+// claimed on a fact the plan did not read.
+func (p *planState) diffSiteFiles(d *planDiff, addr, folder, liveDigest string) {
+	local, err := common.FolderDigest(folder)
+	switch {
+	case err != nil:
+		d.add(" ", addr, "files not compared: %v", err)
+		d.noteUnread(addr, "site files", err)
+	case liveDigest == "":
+		d.add(" ", addr, "files not compared: %v", errNoSiteDigest)
+		d.noteUnread(addr, "site files", errNoSiteDigest)
+	case liveDigest == local:
+		d.add(" ", addr, "unchanged (digest %s)", shortDigest(local))
+	default:
+		d.add("~", addr, "files changed (digest %s → %s)", shortDigest(liveDigest), shortDigest(local))
 	}
 }
 

@@ -172,10 +172,13 @@ func (p *planState) unnamed(d *planDiff) unnamedResources {
 	return u
 }
 
-// liveCanvasSite is one entry of the slice's canvas registry.
+// liveCanvasSite is one entry of the slice's canvas registry. Digest is the
+// common.FolderDigest the site was deployed with; it is empty when the platform
+// does not list one (an older platform) or the site was deployed without one.
 type liveCanvasSite struct {
-	Slug  string `json:"slug"`
-	Route string `json:"route"`
+	Slug   string `json:"slug"`
+	Route  string `json:"route"`
+	Digest string `json:"digest"`
 }
 
 func fetchLiveCanvasSites() ([]liveCanvasSite, error) {

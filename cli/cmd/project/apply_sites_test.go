@@ -24,6 +24,7 @@ func siteProject(t *testing.T) (slice *fakeSlice, folder string, apply func() st
 
 	path := writeDriftfile(t, shipsDriftfile)
 	folder = filepath.Join(filepath.Dir(path), "site")
+	writeFile(t, filepath.Join(filepath.Dir(path), "atomic", "hello.py"), "def get_hello(req):\n    return 200, 'OK', {}\n")
 	writeFile(t, filepath.Join(folder, "index.html"), "<!doctype html>one")
 
 	apply = func() string {
