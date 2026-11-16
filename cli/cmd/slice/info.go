@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	atomic_cmd "github.com/ondrift/cloud/cli/cmd/atomic/cmd"
 	"github.com/ondrift/cloud/cli/common"
@@ -252,24 +253,33 @@ func getInfoCmd() *cobra.Command {
 		Example: "  drift slice info",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := FetchScheduler()
-			if err != nil {
-				return err
-			}
+			out := cmd.OutOrStdout()
+
+			// The scheduler is the slice's own answer and the platform section is
+			// the platform's, so a slice that cannot answer still gets its name and
+			// what the platform did to it, and the scheduler's error comes after.
+			s, serr := FetchScheduler()
 
 			active := common.GetActiveSlice()
 			if active != "" {
-				fmt.Printf("%s\n\n", active)
+				fmt.Fprintf(out, "%s\n", active)
 			}
 
-			fmt.Printf("  compute        %s\n", heldLabel(s.Slice.CommittedBytes, s.Slice.BudgetBytes))
-			fmt.Printf("  in flight      %d invocation(s)\n", s.Slice.InvocationsInFlight)
-			fmt.Printf("  warm workers   %d parked\n", s.Slice.WarmWorkersIdle)
+			pa, perr := FetchPlatformActions()
+			printPlatformSection(out, pa, perr, time.Now())
+			if serr != nil {
+				return serr
+			}
+			fmt.Fprintln(out)
+
+			fmt.Fprintf(out, "  compute        %s\n", heldLabel(s.Slice.CommittedBytes, s.Slice.BudgetBytes))
+			fmt.Fprintf(out, "  in flight      %d invocation(s)\n", s.Slice.InvocationsInFlight)
+			fmt.Fprintf(out, "  warm workers   %d parked\n", s.Slice.WarmWorkersIdle)
 			if s.Slice.EvictedTotal > 0 {
 				// Said only when it has happened, and said plainly when it has.
 				// A steady eviction count is a product signal — the bookings are
 				// too small — not only an incident one.
-				fmt.Printf("  stopped        %d invocation(s) for overrunning their booking, %s reclaimed\n",
+				fmt.Fprintf(out, "  stopped        %d invocation(s) for overrunning their booking, %s reclaimed\n",
 					s.Slice.EvictedTotal, bytesLabel(s.Slice.EvictedReclaimedBytes))
 			}
 
@@ -277,11 +287,11 @@ func getInfoCmd() *cobra.Command {
 				// Not an error and not an empty slice: a slice with no
 				// registered functions or workers has no pools, which is a different
 				// fact from a slice whose pools could not be read.
-				fmt.Printf("\n  no functions or workers deployed\n")
+				fmt.Fprintf(out, "\n  no functions or workers deployed\n")
 			} else {
-				fmt.Printf("\n  pools\n")
+				fmt.Fprintf(out, "\n  pools\n")
 				for _, p := range s.Pools {
-					fmt.Printf("    %-28s %s\n", poolLabel(p.Function), heldLabel(p.CommittedBytes, p.BookedBytes))
+					fmt.Fprintf(out, "    %-28s %s\n", poolLabel(p.Function), heldLabel(p.CommittedBytes, p.BookedBytes))
 				}
 			}
 
