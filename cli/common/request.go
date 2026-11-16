@@ -32,6 +32,11 @@ var NotLoggedInHints = []string{
 	"  Scripting this? Mint a token with `drift account token create` and put it in " + TokenEnv + ".",
 }
 
+// SessionExpiredMessage is what a person sees when the platform rejected the
+// refresh of an access token that aged out (DRIFT-1001). It is declared here so
+// cmd/drift's TestPrintedHintsNameRealCommands can resolve the command it names.
+const SessionExpiredMessage = "session expired — run 'drift account login' to re-authenticate"
+
 func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request, error) {
 	return newAuthenticatedRequestCtx(context.Background(), method, url, body)
 }
@@ -211,12 +216,12 @@ func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reade
 	// failure mode tells them apart, so it decides the message.
 	if err := RefreshAccessToken(); err != nil {
 		if errors.Is(err, ErrPlatformUnavailable) {
-			return nil, errors.New(MaintenanceMessage)
+			return nil, Failf("DRIFT-1012", "%s", MaintenanceMessage)
 		}
 		if errors.Is(err, ErrSessionRevoked) {
-			return nil, errors.New(SessionRevokedMessage)
+			return nil, Failf("DRIFT-1018", "%s", SessionRevokedMessage)
 		}
-		return nil, fmt.Errorf("session expired — run 'drift account login' to re-authenticate")
+		return nil, Failf("DRIFT-1001", "%s", SessionExpiredMessage)
 	}
 
 	return send()

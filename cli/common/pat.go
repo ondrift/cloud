@@ -74,6 +74,12 @@ var exchanged struct {
 	token string
 }
 
+// TokenRefusedMessage is what a person sees when the platform refused the token
+// in DRIFT_TOKEN (DRIFT-1019). It is declared here so cmd/drift's
+// TestPrintedHintsNameRealCommands can resolve the command it names.
+const TokenRefusedMessage = "the token in " + TokenEnv + " was refused — it may have been revoked, or have expired." +
+	"\n  List what this account holds with `drift account token list`."
+
 // exchangePAT swaps the personal access token for a short-lived access token.
 //
 // The refusals are kept apart for the same reason RefreshAccessToken keeps its
@@ -103,11 +109,11 @@ func exchangePAT(ctx context.Context, raw string) (string, error) {
 			// diagnose: something else entirely is in the variable.
 			hint = "\n  " + TokenEnv + " does not look like a Drift token — they start with " + patPrefix
 		}
-		return "", Failf("DRIFT-1011", "%s",
-			"the token in "+TokenEnv+" was refused — it may have been revoked, or have expired."+
-				"\n  List what this account holds with `drift account token list`."+hint)
+		return "", Failf("DRIFT-1019", "%s", TokenRefusedMessage+hint)
 	case resp.StatusCode >= 500:
-		return "", fmt.Errorf("%w (exchange returned %d)", ErrPlatformUnavailable, resp.StatusCode)
+		// Still an unavailable platform to errors.Is, and named as one to the person.
+		return "", Coded("DRIFT-1012",
+			fmt.Errorf("%w (exchange returned %d)", ErrPlatformUnavailable, resp.StatusCode))
 	case resp.StatusCode != http.StatusOK:
 		return "", fmt.Errorf("exchanging %s returned %d", TokenEnv, resp.StatusCode)
 	}

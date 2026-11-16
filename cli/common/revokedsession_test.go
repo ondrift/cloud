@@ -104,7 +104,7 @@ func TestAnOrdinaryExpiryStaysAnExpiry(t *testing.T) {
 func TestAnUnavailablePlatformStillSaysWait(t *testing.T) {
 	stubSession(t, func(w http.ResponseWriter) { w.WriteHeader(http.StatusServiceUnavailable) })
 	err := askForSomething(t)
-	if err == nil || err.Error() != MaintenanceMessage {
+	if err == nil || !strings.HasPrefix(err.Error(), MaintenanceMessage) {
 		t.Fatalf("a 503 on refresh = %v, want the maintenance message", err)
 	}
 }

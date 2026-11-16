@@ -617,7 +617,7 @@ func TestAPIError_OnlyANotFoundIsReadAsAVersionDifference(t *testing.T) {
 		"a refusal":     {http.StatusForbidden, `{"error":"not the owner"}`, "not the owner", "DRIFT-1002"},
 		"a conflict":    {http.StatusConflict, `{"error":"name taken"}`, "name taken", "DRIFT-1013"},
 		"a quota":       {http.StatusTooManyRequests, `{"error":"function limit reached"}`, "function limit reached", "DRIFT-1004"},
-		"a bad request": {http.StatusBadRequest, `{"error":"not found"}`, "not found", ""},
+		"a bad request": {http.StatusBadRequest, `{"error":"not found"}`, "not found", "DRIFT-1016"},
 		"a fault":       {http.StatusInternalServerError, `{"error":"not found"}`, "having trouble", "DRIFT-1005"},
 	} {
 		t.Run(name, func(t *testing.T) {

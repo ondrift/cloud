@@ -105,6 +105,41 @@
       "meaning": "The platform speaks a newer API version than this drift, and it answered not found to a request this drift made.",
       "remedy": "The platform states the API version it speaks on every reply. When that is ahead of the one this drift was built for, a request for a path the platform no longer serves comes back as a plain not found. `drift upgrade` installs the release that speaks the platform's version. If the same request still says not found after upgrading, the thing you named does not exist: see DRIFT-1003.",
       "command": "drift upgrade"
+    },
+    {
+      "code": "DRIFT-1016",
+      "key": "invalid-request",
+      "meaning": "The platform rejected the request as invalid.",
+      "remedy": "The message names what the platform did not accept: a field, a value or a format. Change what it names and run the command again, because the same request is refused the same way every time. No single command fixes it, since what to change is in the message.",
+      "command": ""
+    },
+    {
+      "code": "DRIFT-1017",
+      "key": "login-refused",
+      "meaning": "The username or password was refused.",
+      "remedy": "Check the username and the password and try again; a mistyped password is by far the commonest cause. This is not an expired session (DRIFT-1001): there is no session yet to renew, so logging in again is the command that just failed. If the password is forgotten, `drift account reset-password` starts a reset.",
+      "command": "drift account reset-password"
+    },
+    {
+      "code": "DRIFT-1018",
+      "key": "session-revoked",
+      "meaning": "The platform ended your session on purpose.",
+      "remedy": "A refresh arrived from a different machine than the one you logged in on, or with a token that had already been used. Drift treats that as a stolen session file and cuts every session on the account. Run `drift account login` to get back in. If that was not you on another machine, also run `drift account reset-password`, because someone else may hold the old session file. Unlike an ordinary expiry (DRIFT-1001), logging in alone is not enough when you did not end the session yourself.",
+      "command": "drift account login"
+    },
+    {
+      "code": "DRIFT-1019",
+      "key": "token-refused",
+      "meaning": "The access token in DRIFT_TOKEN was refused.",
+      "remedy": "The platform answered and said no: the token was revoked or has expired, or the variable holds something that is not a Drift token, which starts with drift_pat_. `drift account token list` shows the tokens the account holds, and `drift account token create` mints a replacement to put in DRIFT_TOKEN. This is different from DRIFT-1011, where no credential was found at all. Both commands are four words, so no single command is named here.",
+      "command": ""
+    },
+    {
+      "code": "DRIFT-1020",
+      "key": "connection-failed",
+      "meaning": "The connection to the platform failed in a way the CLI does not recognise.",
+      "remedy": "The text before this code's line is the error exactly as the connection reported it. A certificate that could not be verified usually means a proxy or a security product on this network is re-signing the traffic, and the fix is to trust its certificate on this machine or to use another network. A response that ended early means the connection dropped in the middle of the answer, and running the command again usually succeeds. Unlike DRIFT-1006, where nothing answered, and DRIFT-1007, where the answer took too long, something answered here and the exchange broke. If it repeats, send the whole message, this code included, to support. No single command fixes it.",
+      "command": ""
     }
   ]
 }

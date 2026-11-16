@@ -60,15 +60,20 @@ func TestAPIError_A401ThatIsNotARefusalStillSaysTheSessionExpired(t *testing.T) 
 }
 
 // The control: a refused login is a refused credential by its op, as it was, and
-// with no reason it still says the username or password was wrong.
+// with no reason it still says the username or password was wrong. It carries the
+// code for a refused login, which sends the person nowhere near the command they
+// just ran.
 func TestAPIError_ARefusedLoginNeedsNoField(t *testing.T) {
 	e := &APIError{Op: "log in", Status: http.StatusUnauthorized}
 
-	if want := "Couldn't log in: invalid username or password."; e.Error() != want {
-		t.Errorf("Error() = %q, want %q", e.Error(), want)
+	if want := "Couldn't log in: invalid username or password."; !strings.HasPrefix(e.Error(), want) {
+		t.Errorf("Error() = %q, want it to start %q", e.Error(), want)
 	}
-	if code := e.code(); code != "" {
-		t.Errorf("code() = %q, want none", code)
+	if code := e.code(); code != "DRIFT-1017" {
+		t.Errorf("code() = %q, want DRIFT-1017", code)
+	}
+	if strings.Contains(e.Error(), "DRIFT-1001") {
+		t.Errorf("a refused login names the expired-session code:\n%s", e.Error())
 	}
 }
 

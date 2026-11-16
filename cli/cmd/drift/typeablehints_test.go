@@ -46,6 +46,11 @@ var typeableHints = map[string][]string{
 	// `drift doctor explain` for a code numbered above every registered one, which
 	// is what a newer drift prints. The number is one no registry reaches.
 	"the newer-code answer of drift doctor explain": {doctor.NotRegistered("DRIFT-99999999").Error()},
+	// A refresh the platform rejected (DRIFT-1001), a session it ended on purpose
+	// (DRIFT-1018) and a token it refused (DRIFT-1019) each name what to run.
+	"the rejected-refresh sentence (DRIFT-1001)": {common.SessionExpiredMessage},
+	"the revoked-session sentence (DRIFT-1018)":  {common.SessionRevokedMessage},
+	"the refused-token sentence (DRIFT-1019)":    {common.TokenRefusedMessage},
 	// What a machine with no copy of the Driftfile format is told to run (DRIFT-1008).
 	"the no-schema refusal (DRIFT-1008)": {project.ErrNoSchema.Error()},
 	// What a compiled function booked under the floor is told to run (DRIFT-1010).

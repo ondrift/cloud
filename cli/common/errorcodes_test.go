@@ -539,28 +539,22 @@ func TestAPIError_CarriesItsCode(t *testing.T) {
 	withStatusFeed(t, 200, feedOK)
 
 	for _, tc := range []struct {
-		name   string
-		err    APIError
-		want   string
-		absent bool
+		name string
+		err  APIError
+		want string
 	}{
 		{name: "expired session", err: APIError{Op: "list slices", Status: 401}, want: "DRIFT-1001"},
 		{name: "forbidden", err: APIError{Op: "delete slice", Status: 403}, want: "DRIFT-1002"},
 		{name: "not found", err: APIError{Op: "delete atomic function", Status: 404}, want: "DRIFT-1003"},
 		{name: "quota", err: APIError{Op: "deploy", Status: 429}, want: "DRIFT-1004"},
 		{name: "platform fault", err: APIError{Op: "deploy", Status: 500}, want: "DRIFT-1005"},
-		// A refused LOGIN is not an expired session. Pointing at `account login`
-		// would send the user back to the command they just ran.
-		{name: "refused login", err: APIError{Op: "log in", Status: 401}, absent: true},
+		// A refused LOGIN is not an expired session, and DRIFT-1001 would send the
+		// user back to the command they just ran. It has a code of its own.
+		{name: "refused login", err: APIError{Op: "log in", Status: 401}, want: "DRIFT-1017"},
+		{name: "invalid request", err: APIError{Op: "deploy", Status: 400}, want: "DRIFT-1016"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := tc.err.Error()
-			if tc.absent {
-				if strings.Contains(got, "DRIFT-") {
-					t.Errorf("this failure must carry no code, got: %s", got)
-				}
-				return
-			}
 			if !strings.Contains(got, tc.want) {
 				t.Errorf("want %s in the message, got: %s", tc.want, got)
 			}
@@ -575,15 +569,28 @@ func TestAPIError_CarriesItsCode(t *testing.T) {
 // `doctor explain` does not know. This walks the statuses the renderer maps and
 // checks each resolves — the half that would otherwise be caught only by a user.
 func TestAPIError_EveryRenderedCodeIsRegistered(t *testing.T) {
+	withStatusFeed(t, 200, feedOK)
+
+	var bare []int
 	for status := 400; status < 600; status++ {
-		e := APIError{Op: "do the thing", Status: status}
+		e := &APIError{Op: "do the thing", Status: status}
 		code := e.code()
 		if code == "" {
+			bare = append(bare, status)
 			continue
 		}
 		if _, ok := LookupErrorCode(code); !ok {
 			t.Errorf("status %d renders %s, which is not in the registry", status, code)
 		}
+		if line := "\n  " + code + " · drift doctor explain " + code; !strings.Contains(e.Error(), line) {
+			t.Errorf("status %d has the code %s and does not print its line:\n%s", status, code, e.Error())
+		}
+	}
+	// One failure for all of them: a status with no code prints a message nobody
+	// can look up, whichever status it is.
+	if len(bare) > 0 {
+		t.Errorf("%d statuses print with no code, so `drift doctor explain` has nothing to answer for them: %v",
+			len(bare), bare)
 	}
 }
 
