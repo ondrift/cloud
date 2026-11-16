@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ondrift/cloud/cli/cmd/slice"
 	"github.com/ondrift/cloud/cli/common"
 )
 
@@ -95,7 +96,7 @@ func (f FreeSlots) fullRefusal() string {
 	for _, s := range f.Held {
 		fmt.Fprintf(&b, "    %s", s.Name)
 		if s.Failed {
-			fmt.Fprintf(&b, "   (never provisioned: `drift slice delete %s` gives the slot back)", s.Name)
+			fmt.Fprintf(&b, "   (%s)", slice.NeverProvisioned(s.Name, slice.SlotRefusal))
 		}
 		b.WriteByte('\n')
 	}

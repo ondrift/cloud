@@ -53,6 +53,11 @@ type SliceEntry struct {
 	Config struct {
 		Labels map[string]string `json:"labels"`
 	} `json:"config"`
+
+	// NeverProvisioned is the platform's word that the slice's provision never
+	// finished. It is read and never computed: the rule that decides it is the
+	// platform's. A platform that does not send the key reads as false.
+	NeverProvisioned bool `json:"never_provisioned,omitempty"`
 }
 
 // FetchSlices returns the caller's slices. Data-only (no printing) so both the
@@ -158,22 +163,32 @@ func getListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			active := common.GetActiveSlice()
-			for _, s := range slices {
-				marker := "  "
-				if s.Name == active {
-					marker = "* "
-				}
-				fmt.Printf("%s%-20s %s%s\n", marker, s.Name, PriceLabel(s.Tier, s.MonthlyCostCents), cooledNote(s))
-				// On its own line, and only when there are any. Labels are free
-				// text up to 256 bytes each and a slice may carry 32 of them, so
-				// appending them to the row above would wrap the one column a
-				// reader scans — the slice name — out of alignment.
-				if line := LabelsLine(s.Config.Labels); line != "" {
-					fmt.Printf("  %-20s %s\n", "", line)
-				}
-			}
+			fmt.Print(listRows(slices, common.GetActiveSlice()))
 			return nil
 		},
 	}
+}
+
+// listRows renders the rows of `drift slice list`, the active slice marked.
+func listRows(slices []SliceEntry, active string) string {
+	var b strings.Builder
+	for _, s := range slices {
+		marker := "  "
+		if s.Name == active {
+			marker = "* "
+		}
+		note := cooledNote(s)
+		if s.NeverProvisioned {
+			note = "  " + NeverProvisioned(s.Name, ListRow)
+		}
+		fmt.Fprintf(&b, "%s%-20s %s%s\n", marker, s.Name, PriceLabel(s.Tier, s.MonthlyCostCents), note)
+		// On its own line, and only when there are any. Labels are free
+		// text up to 256 bytes each and a slice may carry 32 of them, so
+		// appending them to the row above would wrap the one column a
+		// reader scans — the slice name — out of alignment.
+		if line := LabelsLine(s.Config.Labels); line != "" {
+			fmt.Fprintf(&b, "  %-20s %s\n", "", line)
+		}
+	}
+	return b.String()
 }
