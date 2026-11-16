@@ -148,5 +148,47 @@ with_worker do |worker|
   check('no second line follows the one reply', extra.nil?, extra.inspect)
 end
 
+puts 'a printed line reaches stderr and the reply stays one line'
+with_worker do |worker|
+  first = worker.call({ 'path' => '/', 'body' => { 'print' => 'loop-test-printed-line' } })
+  check('the call that printed is answered 200', first && first['status'] == 200, first.inspect)
+  second = worker.call({ 'path' => '/', 'body' => {} })
+  check('the call after the print is answered 200', second && second['status'] == 200, second.inspect)
+  worker.close_stdin
+  status = worker.exit_status
+  check('the process exits 0', status && status.exitstatus == 0, status.inspect)
+  check('the printed text is on stderr', worker.stderr.include?('loop-test-printed-line'), worker.stderr.inspect)
+end
+
+puts 'a write to file descriptor 1 reaches stderr and the reply stays one line'
+with_worker do |worker|
+  first = worker.call({ 'path' => '/', 'body' => { 'fd1' => 'loop-test-fd1-line' } })
+  check('the call that wrote fd 1 is answered 200', first && first['status'] == 200, first.inspect)
+  second = worker.call({ 'path' => '/', 'body' => {} })
+  check('the call after the write is answered 200', second && second['status'] == 200, second.inspect)
+  worker.close_stdin
+  worker.exit_status
+  check('the text is on stderr', worker.stderr.include?('loop-test-fd1-line'), worker.stderr.inspect)
+end
+
+puts 'end of input ends the process with status 0'
+with_worker do |worker|
+  3.times { |i| worker.call({ 'path' => '/', 'body' => { 'n' => i } }) }
+  worker.close_stdin
+  status = worker.exit_status
+  check('the process exits 0 after three calls', status && status.exitstatus == 0, status.inspect)
+end
+
+puts 'a handler that raises ends the process'
+with_worker do |worker|
+  ok = worker.call({ 'path' => '/', 'body' => {} })
+  check('a call before the failure is answered', ok && ok['status'] == 200, ok.inspect)
+  worker.send_envelope({ 'path' => '/', 'body' => { 'fail' => true } })
+  status = worker.exit_status
+  check('the process exits non-zero', status && !status.exitstatus.zero?, status.inspect)
+  extra = worker.reply_line(0.3)
+  check('no reply follows the failure', extra.nil?, extra.inspect)
+end
+
 puts($failures.zero? ? "\n✅ every case passed" : "\n❌ #{$failures} assertion(s) failed")
 exit($failures.zero? ? 0 : 1)

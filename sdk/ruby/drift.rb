@@ -71,10 +71,40 @@ module Drift
     end
   end
 
+  # The deployed loop: the slice (or a trigger's spawn) writes newline-delimited
+  # envelopes to stdin and reads one reply line per envelope from stdout, and
+  # stdin closing ends the process with status 0. A trigger's spawn is the same
+  # loop with one envelope, no trailing newline, and stdin closed at once.
+  #
+  # A handler that raises ends the process (the exception is not rescued), and
+  # the slice reports how from the exit status and stderr.
   def self._run_deployed(handler)
-    raw = $stdin.read
-    $stdout.write(_answer(handler, raw))
-    $stdout.flush
+    out = _separate_protocol_stream
+    while (line = $stdin.gets)
+      raw = line.strip
+      next if raw.empty?
+
+      out.write("#{_answer(handler, raw)}\n")
+      out.flush
+    end
+  end
+
+  # The stream replies are written to: a duplicate of the original stdout made
+  # before the first handler runs, with fd 1 (and so $stdout, +puts+, +print+
+  # and a native extension's own writes) pointed at stderr. A function's output
+  # is its log, never a stray line on the response stream. The duplicate is
+  # close-on-exec, so a process a handler starts cannot hold the slice's pipe
+  # open. Where the descriptors cannot be rearranged the replies stay on stdout
+  # and the reason is written to stderr.
+  def self._separate_protocol_stream
+    protocol = $stdout.dup
+    protocol.sync = true
+    $stdout.reopen($stderr)
+    $stdout.sync = true
+    protocol
+  rescue SystemCallError, IOError => e
+    $stderr.puts("drift-sdk: replies stay on stdout, the response stream could not be moved off it: #{e.message}")
+    $stdout
   end
 
   # What is done to one envelope, however many a process serves: the text is
