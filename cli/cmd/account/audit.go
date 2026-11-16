@@ -9,9 +9,11 @@ package account
 // Until this command there was no way for the person it is about to read a
 // single line of it.
 //
-// It shows events you PERFORMED. Actions the platform took on its own — an
-// operator tearing a slice down, say — carry that operator as their actor and do
-// not appear; the server scopes every query to the authenticated username and
+// It shows your account's trail, never another account's. What the platform's
+// own checks did to a slice, such as putting an idle one to sleep or warming it
+// up, is read for one slice with `drift slice info`; an operator's action
+// carries that operator as its actor and is not part of this account's query.
+// The server scopes every query to the authenticated username and
 // ignores any actor the client asks for, which is what stops one tenant reading
 // another's trail.
 
@@ -64,8 +66,10 @@ func GetAuditCmd() *cobra.Command {
 			"The trail is hash-chained and kept for two years, and it survives account\n" +
 			"deletion by design — the record that an account existed is exactly what must\n" +
 			"outlive it.\n\n" +
-			"Only YOUR events: the server scopes every query to you and ignores any actor\n" +
-			"a client asks for.",
+			"The server scopes every query to your account and ignores any actor a client\n" +
+			"asks for. What the platform did to one slice on its own, such as putting it to\n" +
+			"sleep or warming it up, is shown by `drift slice info`, with when the\n" +
+			"platform last checked.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		Example: "  drift account audit\n" +
