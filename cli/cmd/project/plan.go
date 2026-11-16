@@ -84,8 +84,8 @@ with nothing to apply says it again on its last line:
            is the file
   match    no line carries a mark and every fact was read: "Nothing to change."
 
-A fact the plan could not read, such as the slice's sites, secrets, keys, alerts,
-edge settings, deployed functions, seed documents or cache entries, or the build
+A fact the plan could not read, such as the slice's sites and their digests,
+secrets, keys, alerts, edge settings, deployed functions, seed documents or cache entries, or the build
 of the project, is unread. The plan never takes it for a match: when nothing else
 differs, its last line says so and lists each unread fact with why. A difference
 found is a difference even when another fact is unread.
@@ -120,6 +120,14 @@ under "Held, not in the file", with the command that removes it. Apply removes
 none of them, because a slice can serve more than one project, and closes with
 the same list. A site the file does not name is a "-" line: no command removes
 a site yet.
+
+A site the file declares is compared by the digest of its folder against the one
+the slice recorded when the site was deployed: "unchanged (digest ab12…)", or
+"files changed (digest ab12… → cd34…)", or "route /old → /new" when the slice
+serves it at another route. A site the slice holds no digest for (one deployed
+before the slice kept them, or a platform that does not list them) says "files
+not compared" and is unread. Apply uploads a site only when its route or its
+digest differs, and --force uploads every site.
 
 A script reads the verdict from the exit status with --exit-code: 0 when it is a
 match, 2 when it is create or differs, 3 when it is unread, 1 when the plan
