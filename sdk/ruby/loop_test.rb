@@ -184,7 +184,9 @@ Dir.mktmpdir('drift-loop-test') do |root|
   with_worker do |worker|
     %w[one two three].each do |name|
       dir = File.join(root, name)
-      Dir.mkdir(dir)
+      # 0700 as a slice makes a call's scratch directory: Dir.tmpdir passes over a
+      # world-writable directory without the sticky bit, which a umask of 0 would make.
+      Dir.mkdir(dir, 0o700)
       seen = payload(worker.call({ 'path' => '/', 'tmpdir' => dir }))
       check("TMPDIR is #{name}", seen && seen['tmpdir'] == dir, seen.inspect)
       check("HOME is #{name}", seen && seen['home'] == dir, seen.inspect)
