@@ -63,6 +63,19 @@ module Drift
   # Entry point
   # ---------------------------------------------------------------------------
 
+  # The loop Drift.run serves under DRIFT_RUNTIME, by number: newline-delimited
+  # envelopes in, one reply line per envelope out, until stdin closes. The CLI
+  # looks for this constant in the SDK a function resolves to, and declares the
+  # loop for the function only when it finds it.
+  LOOP_PROTOCOL = 1
+
+  # Serve the handler.
+  #
+  # Under DRIFT_RUNTIME (a deployed function, or a trigger's spawn) this is the
+  # loop LOOP_PROTOCOL names: one process reads envelopes until stdin closes and
+  # answers each with one line, with TMPDIR, HOME and the DRIFT_SECRET_
+  # variables set from the envelope for that call, +puts+ going to stderr, and
+  # rss_bytes in every reply. Without it, a local development server.
   def self.run(handler)
     if ENV['DRIFT_RUNTIME']
       _run_deployed(handler)

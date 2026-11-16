@@ -247,5 +247,10 @@ with_worker do |worker|
   check('no reply follows the failure', extra.nil?, extra.inspect)
 end
 
+puts 'the SDK names its loop for the CLI'
+require_relative 'drift'
+check('Drift::LOOP_PROTOCOL is 1', defined?(Drift::LOOP_PROTOCOL) && Drift::LOOP_PROTOCOL == 1,
+      defined?(Drift::LOOP_PROTOCOL) ? Drift::LOOP_PROTOCOL.inspect : 'not defined')
+
 puts($failures.zero? ? "\n✅ every case passed" : "\n❌ #{$failures} assertion(s) failed")
 exit($failures.zero? ? 0 : 1)

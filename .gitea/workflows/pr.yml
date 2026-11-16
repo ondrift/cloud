@@ -344,6 +344,9 @@ jobs:
       - name: ruby — a SQL statement always sends an args array
         working-directory: sdk
         run: ruby ruby/sql_args_test.rb
+      - name: ruby — Drift.run serves many calls from one process
+        working-directory: sdk
+        run: ruby ruby/loop_test.rb
       - name: version consistency
         working-directory: sdk
         # Six languages, ONE version. A manifest left behind is the failure this
