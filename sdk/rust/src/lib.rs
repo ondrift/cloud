@@ -1,7 +1,10 @@
 //! Drift SDK for Rust Atomic functions.
 //!
 //! Provides:
-//!   - run(handler): Entry point (deployed or local mode).
+//!   - run(handler): Entry point. Deployed (DRIFT_RUNTIME set) it serves many
+//!     calls from one process, reading newline-delimited envelopes until stdin
+//!     closes and writing one reply line per envelope (`LOOP_PROTOCOL`);
+//!     otherwise it starts the local development server.
 //!   - `backbone` — the B of the sacred A·B·C triad; the SOLE entrypoint for
 //!     every STATE primitive: `backbone::secret`, `backbone::cache`,
 //!     `backbone::nosql`, `backbone::queue`, `backbone::blob`, `backbone::lock`,
@@ -85,6 +88,19 @@ pub fn take_response_headers() -> Option<Value> {
 // Entry point
 // ---------------------------------------------------------------------------
 
+/// The loop `run` serves under DRIFT_RUNTIME, by number: newline-delimited
+/// envelopes in, one reply line per envelope out, until stdin closes. The CLI
+/// looks for this constant in the SDK a function resolves to, and declares the
+/// loop for the function only when it finds it.
+pub const LOOP_PROTOCOL: u32 = 1;
+
+/// Serve the handler.
+///
+/// Under DRIFT_RUNTIME (a deployed function, or a trigger's spawn) this is the
+/// loop `LOOP_PROTOCOL` names: one process reads envelopes until stdin closes
+/// and answers each with one line, with TMPDIR, HOME and the DRIFT_SECRET_
+/// variables set from the envelope for that call, `println!` going to stderr,
+/// and `rss_bytes` in every reply. Without it, a local development server.
 pub fn run<F>(handler: F)
 where
     F: Fn(Value) -> Value + 'static,
@@ -96,10 +112,210 @@ where
     }
 }
 
+/// The deployed loop: the slice (or a trigger's spawn) writes newline-delimited
+/// envelopes to stdin and reads one reply line per envelope from stdout, and
+/// stdin closing ends the process with status 0. A trigger's spawn is the same
+/// loop with one envelope, no trailing newline, and stdin closed at once.
+///
+/// The replies go to a duplicate of the original stdout, made before the first
+/// handler runs, and fd 1 is pointed at stderr: `println!` in a handler (or in
+/// a library it calls) is the function's log, never a stray line on the
+/// response stream. Where the descriptors cannot be rearranged the replies stay
+/// on stdout and the reason is written to stderr.
+///
+/// A handler that panics ends the process, as it does in a one-shot spawn, and
+/// the slice reports how from the exit status and stderr.
 fn run_deployed<F: Fn(Value) -> Value>(handler: &F) {
-    let mut input = String::new();
-    io::stdin().read_to_string(&mut input).unwrap();
-    let mut req: Value = serde_json::from_str(&input).unwrap_or(Value::Null);
+    let mut out: Box<dyn Write> = match sys::separate_protocol_stream() {
+        Ok(protocol) => Box::new(protocol),
+        Err(err) => {
+            eprintln!("drift-sdk: replies stay on stdout, the response stream could not be moved off it: {err}");
+            Box::new(io::stdout())
+        }
+    };
+
+    let mut call_state = CallState::default();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        // The lock is released between envelopes, so a handler that touches
+        // stdin itself waits on nothing.
+        match io::stdin().lock().read_line(&mut line) {
+            Ok(0) | Err(_) => return, // stdin closed: this worker is done
+            Ok(_) => {}
+        }
+        let raw = line.trim();
+        if raw.is_empty() {
+            continue;
+        }
+
+        // The process environment is read by the SDK's accessors and by the
+        // handler on this thread. A handler must not leave a thread running
+        // that reads the environment after it returns: the next envelope's
+        // values replace these under it.
+        let reply = answer(
+            handler,
+            raw,
+            |req| call_state.apply(req),
+            |reply| {
+                // Nothing exits for the slice to weigh with wait4, so the
+                // process reports its own high-water mark.
+                let rss = peak_rss_bytes();
+                if rss > 0 {
+                    if let Some(obj) = reply.as_object_mut() {
+                        obj.insert("rss_bytes".to_string(), Value::from(rss));
+                    }
+                }
+            },
+        );
+        if out.write_all(reply.as_bytes()).is_err()
+            || out.write_all(b"\n").is_err()
+            || out.flush().is_err()
+        {
+            return; // the slice stopped reading
+        }
+    }
+}
+
+/// What an envelope sets in the process environment for the call it carries.
+///
+/// A one-shot child gets its scratch directory and its secrets at spawn; a
+/// process that serves many calls was spawned once, so each envelope's values
+/// are applied before its handler runs: TMPDIR and HOME become the envelope's
+/// `tmpdir` (when it is an absolute path), every `secrets` entry becomes
+/// `DRIFT_SECRET_<NAME>` and every `secrets_previous` entry
+/// `DRIFT_SECRET_<NAME>_PREVIOUS`, and a variable an earlier envelope set is
+/// removed when this one no longer carries it. Only variables this process set
+/// from an envelope are ever removed: one the process held before its first
+/// envelope is treated the same once an envelope has carried it.
+#[derive(Default)]
+struct CallState {
+    /// Secret names (as the envelope spells them) whose current value, and
+    /// whose previous value, this process has set.
+    current: std::collections::HashSet<String>,
+    previous: std::collections::HashSet<String>,
+}
+
+impl CallState {
+    fn apply(&mut self, req: &Value) {
+        if let Some(dir) = req.get("tmpdir").and_then(Value::as_str) {
+            if std::path::Path::new(dir).is_absolute() {
+                std::env::set_var("TMPDIR", dir);
+                std::env::set_var("HOME", dir);
+            }
+        }
+        let carried = |member: &str| -> BTreeMap<String, String> {
+            req.get(member)
+                .and_then(Value::as_object)
+                .map(|o| {
+                    o.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        sync_secrets(&mut self.current, &carried("secrets"), "");
+        sync_secrets(&mut self.previous, &carried("secrets_previous"), "_PREVIOUS");
+    }
+}
+
+/// Make the environment's `DRIFT_SECRET_<NAME><suffix>` variables match
+/// `carried`: set each carried value, remove each one `set` holds that is no
+/// longer carried.
+fn sync_secrets(set: &mut std::collections::HashSet<String>, carried: &BTreeMap<String, String>, suffix: &str) {
+    let var = |name: &str| format!("DRIFT_SECRET_{}{}", name.to_uppercase(), suffix);
+    set.retain(|name| {
+        let keep = carried.contains_key(name);
+        if !keep {
+            std::env::remove_var(var(name));
+        }
+        keep
+    });
+    for (name, value) in carried {
+        std::env::set_var(var(name), value);
+        set.insert(name.clone());
+    }
+}
+
+/// This process's peak resident size in bytes: VmHWM in /proc/self/status, which
+/// a sandboxed function can read. Zero where there is no such file, and the
+/// reply then carries no `rss_bytes`.
+fn peak_rss_bytes() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find_map(|l| l.strip_prefix("VmHWM:"))
+                .and_then(|rest| rest.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+        })
+        .map_or(0, |kb| kb * 1024)
+}
+
+/// The libc calls that move the response stream, declared here so the crate
+/// keeps its two dependencies (and stays pure Rust, which a deploy without a C
+/// compiler needs). Linux and macOS both have them, with the same numbers.
+#[cfg(unix)]
+mod sys {
+    use std::fs::File;
+    use std::io;
+    use std::os::raw::c_int;
+    use std::os::unix::io::FromRawFd;
+
+    extern "C" {
+        fn dup(fd: c_int) -> c_int;
+        fn dup2(old: c_int, new: c_int) -> c_int;
+        fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
+        fn close(fd: c_int) -> c_int;
+    }
+
+    const F_SETFD: c_int = 2;
+    const FD_CLOEXEC: c_int = 1;
+
+    /// Move the protocol off fd 1: duplicate the real stdout to a new
+    /// descriptor, closed on exec so a process the handler starts cannot hold
+    /// the slice's pipe open, then point fd 1 at stderr. The duplicate is
+    /// returned; everything that writes to fd 1 reaches stderr from then on.
+    pub fn separate_protocol_stream() -> io::Result<File> {
+        // SAFETY: plain descriptor calls; the new descriptor is owned by the
+        // File made from it, or closed here when the rearranging fails.
+        unsafe {
+            let fd = dup(1);
+            if fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 || dup2(2, 1) < 0 {
+                let err = io::Error::last_os_error();
+                close(fd);
+                return Err(err);
+            }
+            Ok(File::from_raw_fd(fd))
+        }
+    }
+}
+
+#[cfg(not(unix))]
+mod sys {
+    use std::fs::File;
+    use std::io;
+
+    pub fn separate_protocol_stream() -> io::Result<File> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "not a unix platform"))
+    }
+}
+
+/// What is done to one envelope, however many a process serves: the text is
+/// parsed (text that is not JSON is a null request), the query string is decoded
+/// into an object, `before` sees the request and runs ahead of the handler (a
+/// caller's per-call setup), the handler runs, `after` may add to its reply, and
+/// the reply is serialised.
+fn answer<F, B, A>(handler: &F, raw: &str, before: B, after: A) -> String
+where
+    F: Fn(Value) -> Value,
+    B: FnOnce(&Value),
+    A: FnOnce(&mut Value),
+{
+    let mut req: Value = serde_json::from_str(raw).unwrap_or(Value::Null);
     if let Some(q) = req.get("query").and_then(|v| v.as_str()).map(str::to_string) {
         let mut parsed = serde_json::Map::new();
         for pair in q.split('&').filter(|p| !p.is_empty()) {
@@ -113,10 +329,10 @@ fn run_deployed<F: Fn(Value) -> Value>(handler: &F) {
             obj.insert("query".to_string(), Value::Object(parsed));
         }
     }
-    let resp = handler(req);
-    let out = serde_json::to_string(&resp).unwrap();
-    io::stdout().write_all(out.as_bytes()).unwrap();
-    io::stdout().flush().unwrap();
+    before(&req);
+    let mut resp = handler(req);
+    after(&mut resp);
+    serde_json::to_string(&resp).unwrap()
 }
 
 fn percent_decode(s: &str) -> String {
