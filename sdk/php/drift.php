@@ -62,14 +62,26 @@ function run(callable $handler): void {
 
 function _run_deployed(callable $handler): void {
     $input = file_get_contents('php://stdin');
-    $req = json_decode($input, true);
+    fwrite(STDOUT, json_encode(_answer($handler, $input)));
+}
+
+/**
+ * What is done to one envelope, however many a process serves: the text is
+ * decoded (text that is not JSON is a null request), the query string becomes
+ * an array, `$before` sees the request and runs ahead of the handler (a
+ * caller's per-call setup), and the handler's reply is returned as it gave it.
+ */
+function _answer(callable $handler, string $raw, ?callable $before = null) {
+    $req = json_decode($raw, true);
     if (is_array($req) && isset($req['query']) && is_string($req['query'])) {
         $parsed = [];
         parse_str($req['query'], $parsed);
         $req['query'] = $parsed;
     }
-    $resp = $handler($req);
-    fwrite(STDOUT, json_encode($resp));
+    if ($before !== null) {
+        $before($req);
+    }
+    return $handler($req);
 }
 
 /**
