@@ -336,6 +336,11 @@ func gatherPlan(c *Compiled, declinedFree bool) (*planState, error) {
 		return nil, err
 	}
 	p.live = live
+	if live != nil && live.NeverProvisioned {
+		// Nothing else about the slice can be read or applied: its namespace
+		// does not exist. Stop with the one fact and the delete that clears it.
+		return nil, errors.New(slice.NeverProvisioned(m.Name(), slice.PlanStop))
+	}
 	if live != nil {
 		c.Use(liveIsFree(live))
 	} else {

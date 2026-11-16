@@ -22,6 +22,10 @@ type LiveSlice struct {
 	Tier             string      `json:"tier"`
 	Config           SliceConfig `json:"config"`
 	MonthlyCostCents int         `json:"monthly_cost_cents"`
+	// NeverProvisioned is the platform's word that the slice's provision never
+	// finished, read as sent and never derived from the phases. A platform that
+	// does not send the key reads as false.
+	NeverProvisioned bool `json:"never_provisioned,omitempty"`
 }
 
 // FetchLiveSlice GETs /ops/slice?name=<name>. Returns nil if the
