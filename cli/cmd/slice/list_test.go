@@ -2,6 +2,7 @@ package slice
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -118,6 +119,35 @@ func TestLabelsLine_IsOrderedByKey(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		if got := LabelsLine(labels); got != want {
 			t.Fatalf("run %d rendered %q, want %q — map order reached the output", i, got, want)
+		}
+	}
+}
+
+// A slice whose JSON carries never_provisioned says so on its row, with the one
+// command that clears it; every other row prints nothing extra. Both are in one
+// body, because the second half is what keeps the first from being printed for
+// every slice.
+func TestListRows_ANeverProvisionedSliceNamesItsDelete(t *testing.T) {
+	const body = `[` +
+		`{"name":"stuck","tier":"custom","monthly_cost_cents":272,"never_provisioned":true},` +
+		`{"name":"fine","tier":"custom","monthly_cost_cents":272},` +
+		`{"name":"freebie","tier":"hacker"}]`
+
+	var got []SliceEntry
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	rows := listRows(got, "fine")
+
+	if !strings.Contains(rows, "never provisioned: drift slice delete stuck") {
+		t.Errorf("the stuck slice's row does not name its delete:\n%s", rows)
+	}
+	if n := strings.Count(rows, "never provisioned"); n != 1 {
+		t.Errorf("%d rows say never provisioned, want exactly 1:\n%s", n, rows)
+	}
+	for _, line := range strings.Split(strings.TrimRight(rows, "\n"), "\n") {
+		if (strings.Contains(line, "fine") || strings.Contains(line, "freebie")) && strings.Contains(line, "delete") {
+			t.Errorf("a slice that provisioned carries a delete: %q", line)
 		}
 	}
 }
