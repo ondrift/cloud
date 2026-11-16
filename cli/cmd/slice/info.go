@@ -248,6 +248,10 @@ func getInfoCmd() *cobra.Command {
 			"invocation shares, how many are running, how many workers are parked, and\n" +
 			"what has been stopped for overrunning its booking. Then each worker: whether it\n" +
 			"is running, for how long, and how often it has been restarted.\n\n" +
+			"It also says what the platform did to the slice in the last 7 days, newest\n" +
+			"first, and when the platform last looked: one line for each thing it checks,\n" +
+			"with how long ago and how often. This is printed even when the slice itself\n" +
+			"cannot answer, which is when it matters most.\n\n" +
 			"Read this when something is slow. `drift file benchmark` answers the other\n" +
 			"question: what a function or worker has cost and what it should therefore book.",
 		Example: "  drift slice info",
