@@ -8,6 +8,7 @@ import (
 	atomic_cmd_new "github.com/ondrift/cloud/cli/cmd/atomic/cmd/new"
 	"github.com/ondrift/cloud/cli/cmd/doctor"
 	"github.com/ondrift/cloud/cli/cmd/project"
+	"github.com/ondrift/cloud/cli/cmd/slice"
 	"github.com/ondrift/cloud/cli/common"
 
 	"github.com/spf13/cobra"
@@ -55,6 +56,10 @@ var typeableHints = map[string][]string{
 	"the no-schema refusal (DRIFT-1008)": {project.ErrNoSchema.Error()},
 	// What a compiled function booked under the floor is told to run (DRIFT-1010).
 	"the compiled-floor refusal (DRIFT-1010)": {project.FloorRefusal("16MB", []string{"  get:ping booked 8MiB, in go"}).Error()},
+	// What a slice that never provisioned is told to run: the sentence that quotes
+	// the delete. The list row and the plan's stop print it unquoted and are built
+	// from the same pieces.
+	"the never-provisioned free-slot clause": {slice.NeverProvisioned("demo", slice.SlotRefusal)},
 }
 
 // yamlRefusal is the message every reader gives a YAML Driftfile.
