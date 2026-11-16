@@ -32,11 +32,11 @@ import (
 // looks for `./Driftfile` and nowhere else.
 const driftfileName = "Driftfile"
 
-// atomicForce, when set by `drift apply --force`, makes applyAtomic redeploy
-// every slot regardless of whether its source digest matches what is already
-// deployed. Read in applyAtomic, which runs concurrently under
-// applySliceInOrder and can't easily take extra parameters.
-var atomicForce bool
+// forceRedeploy, when set by `drift apply --force`, makes applyAtomic redeploy
+// every slot, and applyCanvas upload every site, regardless of whether its
+// digest matches what is already deployed. Read in both, which run concurrently
+// under applySliceInOrder and can't easily take extra parameters.
+var forceRedeploy bool
 
 // preflightManifest is everything that can refuse a file before the network is
 // asked, returned with the build it read so the caller can hold the bookings to
@@ -304,7 +304,7 @@ func applyAtomicBackends(backends []atomic_cmd.Backend, out io.Writer) error {
 	// the deploy command before any reconcile.)
 
 	deployed := map[string]string{}
-	if !atomicForce {
+	if !forceRedeploy {
 		if d, err := atomic_cmd.DeployedDigests(); err == nil {
 			deployed = d
 		} else {
@@ -326,7 +326,7 @@ func applyAtomicBackends(backends []atomic_cmd.Backend, out io.Writer) error {
 			fmt.Fprintf(out, "  %s\n", common.Hint(fmt.Sprintf("backend %s (%s)", el.Name, el.Lang)))
 		}
 
-		if !atomicForce && backendUnchanged(el, digest, deployed) {
+		if !forceRedeploy && backendUnchanged(el, digest, deployed) {
 			for _, f := range el.Funcs {
 				fmt.Fprintf(out, "    %s %s %s\n", common.Check(), f.MethodPath(), common.Hint("(unchanged)"))
 				skippedCount++
@@ -563,8 +563,33 @@ func applyCanvas(m *Manifest, out io.Writer) error {
 	}
 
 	fmt.Fprintf(out, "  %s\n", common.CanvasHeader())
+
+	// A site the slice already holds as its folder is (same slug, same route,
+	// same digest) is not uploaded. A list that cannot be read says nothing
+	// about what the slice holds, so every site goes up.
+	var live map[string]liveCanvasSite
+	if !forceRedeploy {
+		sites, err := fetchLiveCanvasSites()
+		if err != nil {
+			fmt.Fprintf(out, "  %s couldn't check which sites are unchanged, so uploading all of them\n", common.Hint("·"))
+		}
+		live = make(map[string]liveCanvasSite, len(sites))
+		for _, s := range sites {
+			live[s.Slug] = s
+		}
+	}
+
 	for _, s := range resolved {
-		if err := deployCanvas(m.ResolvePath(s.Dir), s.Slug, s.Route); err != nil {
+		folder := m.ResolvePath(s.Dir)
+		digest, err := common.FolderDigest(folder)
+		if err != nil {
+			return fmt.Errorf("canvas deploy failed for %s: %w", s.Dir, err)
+		}
+		if held, ok := live[s.Slug]; ok && held.Route == s.Route && held.Digest == digest {
+			fmt.Fprintf(out, "    %s %s %s\n", common.Check(), s.Dir, common.Hint("unchanged"))
+			continue
+		}
+		if err := deployCanvas(folder, s.Slug, s.Route, digest); err != nil {
 			return fmt.Errorf("canvas deploy failed for %s: %w", s.Dir, err)
 		}
 		fmt.Fprintf(out, "    %s %s → %s\n", common.Check(), s.Dir, s.Route)
@@ -641,7 +666,10 @@ func canvasSites(m *Manifest) ([]canvasSite, error) {
 
 // ─── API gateway calls (resource-application path) ─────────────────
 
-func deployCanvas(dir, slug, route string) error {
+// deployCanvas uploads one site's folder. The digest is common.FolderDigest of
+// that folder: the slice stores it with the route, and the next plan and apply
+// compare against it.
+func deployCanvas(dir, slug, route, digest string) error {
 	zipData, err := common.ZipFolder(dir)
 	if err != nil {
 		return fmt.Errorf("zip folder: %w", err)
@@ -649,6 +677,7 @@ func deployCanvas(dir, slug, route string) error {
 	q := url.Values{}
 	q.Set("site", slug)
 	q.Set("route", route)
+	q.Set("digest", digest)
 	resp, err := common.DoRequestWithHeaders(
 		http.MethodPost,
 		common.APIBaseURL+"/ops/canvas?"+q.Encode(),

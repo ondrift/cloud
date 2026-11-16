@@ -139,7 +139,7 @@ its variables.`,
 	cmd.Flags().BoolVar(&useFree, "use-free-slice", false, "Agree that a new slice whose shape fits the free grant takes one of your free slices")
 	cmd.Flags().StringArrayVar(&removes, "approve-remove", nil, "Agree to remove a resource, by its address as the plan prints it (repeatable)")
 	cmd.Flags().StringArrayVar(&dataLoss, "allow-data-loss", nil, "Agree that a resource's data may be lost, by its address (repeatable)")
-	cmd.Flags().BoolVar(&force, "force", false, "Redeploy every function and worker even if its source is unchanged")
+	cmd.Flags().BoolVar(&force, "force", false, "Redeploy every function and worker and upload every site, even if its files are unchanged")
 	return cmd
 }
 
@@ -330,7 +330,7 @@ func runApply(o applyOptions) error {
 	if err := resolveSecretEnvRefs(c.Manifest); err != nil {
 		return err
 	}
-	atomicForce = o.force
+	forceRedeploy = o.force
 	if err := deployInto(c.Manifest, o.out); err != nil {
 		return err
 	}

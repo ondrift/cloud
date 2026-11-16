@@ -55,7 +55,7 @@ func stubCanvasAPI(t *testing.T) *uploads {
 	t.Helper()
 	up := &uploads{pairs: map[string]string{}}
 	rec := stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/ops/canvas" {
+		if r.Method == http.MethodPost && r.URL.Path == "/ops/canvas" {
 			up.note(r.URL.Query())
 		}
 		w.WriteHeader(http.StatusOK)

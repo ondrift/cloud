@@ -124,8 +124,8 @@ func TestApply_ASiteThatDiffersFromTheSlicesIsUploaded(t *testing.T) {
 func TestApply_ForceUploadsEverySite(t *testing.T) {
 	slice, _, apply := siteProject(t)
 	apply()
-	atomicForce = true
-	t.Cleanup(func() { atomicForce = false })
+	forceRedeploy = true
+	t.Cleanup(func() { forceRedeploy = false })
 
 	apply()
 
