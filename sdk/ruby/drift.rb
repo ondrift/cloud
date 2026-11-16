@@ -63,6 +63,19 @@ module Drift
   # Entry point
   # ---------------------------------------------------------------------------
 
+  # The loop Drift.run serves under DRIFT_RUNTIME, by number: newline-delimited
+  # envelopes in, one reply line per envelope out, until stdin closes. The CLI
+  # looks for this constant in the SDK a function resolves to, and declares the
+  # loop for the function only when it finds it.
+  LOOP_PROTOCOL = 1
+
+  # Serve the handler.
+  #
+  # Under DRIFT_RUNTIME (a deployed function, or a trigger's spawn) this is the
+  # loop LOOP_PROTOCOL names: one process reads envelopes until stdin closes and
+  # answers each with one line, with TMPDIR, HOME and the DRIFT_SECRET_
+  # variables set from the envelope for that call, +puts+ going to stderr, and
+  # rss_bytes in every reply. Without it, a local development server.
   def self.run(handler)
     if ENV['DRIFT_RUNTIME']
       _run_deployed(handler)
@@ -71,8 +84,104 @@ module Drift
     end
   end
 
+  # The deployed loop: the slice (or a trigger's spawn) writes newline-delimited
+  # envelopes to stdin and reads one reply line per envelope from stdout, and
+  # stdin closing ends the process with status 0. A trigger's spawn is the same
+  # loop with one envelope, no trailing newline, and stdin closed at once.
+  #
+  # A handler that raises ends the process (the exception is not rescued), and
+  # the slice reports how from the exit status and stderr.
   def self._run_deployed(handler)
-    req = JSON.parse($stdin.read)
+    out = _separate_protocol_stream
+    # The secret names (as an envelope spells them) whose current value, and
+    # whose previous value, this process has set in ENV.
+    set = { '' => [], '_PREVIOUS' => [] }
+    # ENV is read by the SDK's accessors and by the handler on this thread. A
+    # handler must not leave a thread running that reads ENV after it returns:
+    # the next envelope's values replace these under it.
+    add_rss = lambda do |resp|
+      # Nothing exits for the slice to weigh with wait4, so the process reports
+      # its own high-water mark.
+      rss = _peak_rss_bytes
+      rss.positive? && resp.is_a?(Hash) ? resp.merge('rss_bytes' => rss) : resp
+    end
+    while (line = $stdin.gets)
+      raw = line.strip
+      next if raw.empty?
+
+      reply = _answer(handler, raw, before: ->(req) { _apply_call(req, set) }, after: add_rss)
+      out.write("#{reply}\n")
+      out.flush
+    end
+  end
+
+  # What an envelope sets in the process environment for the call it carries.
+  #
+  # A one-shot child gets its scratch directory and its secrets at spawn; a
+  # process that serves many calls was spawned once, so each envelope's values
+  # are applied before its handler runs: TMPDIR and HOME become the envelope's
+  # +tmpdir+ (when it is an absolute path, which Dir.tmpdir and Dir.home read at
+  # call time), every +secrets+ entry becomes DRIFT_SECRET_<NAME> and every
+  # +secrets_previous+ entry DRIFT_SECRET_<NAME>_PREVIOUS, and a variable an
+  # earlier envelope set is removed when this one no longer carries it. +set+ is
+  # the names this process has set, per suffix.
+  def self._apply_call(req, set)
+    return unless req.is_a?(Hash)
+
+    dir = req['tmpdir']
+    if dir.is_a?(String) && dir.start_with?('/')
+      ENV['TMPDIR'] = dir
+      ENV['HOME'] = dir
+    end
+    { '' => 'secrets', '_PREVIOUS' => 'secrets_previous' }.each do |suffix, member|
+      carried = req[member].is_a?(Hash) ? req[member].select { |_, v| v.is_a?(String) } : {}
+      set[suffix].reject! do |name|
+        gone = !carried.key?(name)
+        ENV.delete("DRIFT_SECRET_#{name.upcase}#{suffix}") if gone
+        gone
+      end
+      carried.each do |name, value|
+        ENV["DRIFT_SECRET_#{name.upcase}#{suffix}"] = value
+        set[suffix] << name unless set[suffix].include?(name)
+      end
+    end
+  end
+
+  # This process's peak resident size in bytes: VmHWM in /proc/self/status.
+  # Zero where there is no such file, and the reply then carries no rss_bytes.
+  def self._peak_rss_bytes
+    File.foreach('/proc/self/status') do |l|
+      return Regexp.last_match(1).to_i * 1024 if l =~ /\AVmHWM:\s*(\d+)\s*kB/
+    end
+    0
+  rescue SystemCallError
+    0
+  end
+
+  # The stream replies are written to: a duplicate of the original stdout made
+  # before the first handler runs, with fd 1 (and so $stdout, +puts+, +print+
+  # and a native extension's own writes) pointed at stderr. A function's output
+  # is its log, never a stray line on the response stream. The duplicate is
+  # close-on-exec, so a process a handler starts cannot hold the slice's pipe
+  # open. Where the descriptors cannot be rearranged the replies stay on stdout
+  # and the reason is written to stderr.
+  def self._separate_protocol_stream
+    protocol = $stdout.dup
+    protocol.sync = true
+    $stdout.reopen($stderr)
+    $stdout.sync = true
+    protocol
+  rescue SystemCallError, IOError => e
+    $stderr.puts("drift-sdk: replies stay on stdout, the response stream could not be moved off it: #{e.message}")
+    $stdout
+  end
+
+  # What is done to one envelope, however many a process serves: the text is
+  # parsed, the query string is decoded into a hash, +before+ sees the request
+  # and runs ahead of the handler (a caller's per-call setup), the handler runs,
+  # +after+ may return a changed reply, and the reply is serialised.
+  def self._answer(handler, raw, before: nil, after: nil)
+    req = JSON.parse(raw)
     raw_query = req['query']
     if raw_query.is_a?(String)
       parsed = {}
@@ -83,9 +192,10 @@ module Drift
       end
       req['query'] = parsed
     end
+    before&.call(req)
     resp = handler.call(req)
-    $stdout.write(JSON.generate(resp))
-    $stdout.flush
+    resp = after.call(resp) if after
+    JSON.generate(resp)
   end
 
   # Turn a wrapper's response hash into the body and headers to write, using the
