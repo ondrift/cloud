@@ -28,6 +28,17 @@
  *
  * This single-file SDK provides:
  *   - \Drift\run($handler): the entry point the generated wrapper calls.
+ *     Deployed (DRIFT_RUNTIME set) one process serves many calls: it reads
+ *     newline-delimited envelopes until stdin closes and writes one reply line
+ *     per envelope (\Drift\LOOP_PROTOCOL); otherwise it starts the local
+ *     development server. For each call TMPDIR, HOME and the DRIFT_SECRET_
+ *     variables are the envelope's, in getenv(), $_ENV and $_SERVER alike. What
+ *     a handler echoes or prints, and PHP's own warnings and notices, go to
+ *     stderr, the function's log; writing the STDOUT constant yourself puts a
+ *     stray line on the reply stream and the slice fails that call. The
+ *     directory sys_get_temp_dir(), tempnam() and tmpfile() use is the worker's
+ *     own, emptied after every call, not the envelope's: PHP resolves it once
+ *     and keeps it. A handler that throws ends the process.
  *   - \Drift\Backbone\* — the B of the sacred A·B·C triad; the SOLE entrypoint
  *     for every STATE primitive: Secret, Cache, Nosql, queue, Blob, Lock,
  *     sql, Realtime. (There is no \Drift\Secret etc. — go through the
@@ -52,6 +63,24 @@ namespace Drift {
 // Entry point
 // ---------------------------------------------------------------------------
 
+/**
+ * The loop \Drift\run serves under DRIFT_RUNTIME, by number: newline-delimited
+ * envelopes in, one reply line per envelope out, until stdin closes. The CLI
+ * looks for this constant in the SDK a function resolves to, and declares the
+ * loop for the function only when it finds it.
+ */
+const LOOP_PROTOCOL = 1;
+
+/**
+ * Serve the handler.
+ *
+ * Under DRIFT_RUNTIME (a deployed function, or a trigger's spawn) this is the
+ * loop LOOP_PROTOCOL names: one process reads envelopes until stdin closes and
+ * answers each with one line, with TMPDIR, HOME and the DRIFT_SECRET_ variables
+ * set from the envelope for that call, a handler's echo and PHP's diagnostics
+ * going to stderr, and `rss_bytes` in every reply. Without it, a local
+ * development server.
+ */
 function run(callable $handler): void {
     if (getenv('DRIFT_RUNTIME')) {
         _run_deployed($handler);
