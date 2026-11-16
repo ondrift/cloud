@@ -317,6 +317,13 @@ jobs:
       - name: php — a non-2xx is an error, not a value
         working-directory: sdk
         run: php php/status_test.php
+      # \Drift\run serves many calls from one process under DRIFT_RUNTIME: a
+      # handler's echo and diagnostics stay off the response stream, and the
+      # scratch directory and secrets are each call's own, in getenv, $_ENV and
+      # $_SERVER alike.
+      - name: php — run serves many calls from one process
+        working-directory: sdk
+        run: php php/loop_test.php
       # The same question of Python's transport, which raised an HTTPError with
       # no body and lost the slice's words.
       - name: python — a refusal carries the slice's words, and push returns the id
