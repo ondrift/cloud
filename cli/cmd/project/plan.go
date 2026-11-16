@@ -84,8 +84,8 @@ with nothing to apply says it again on its last line:
            is the file
   match    no line carries a mark and every fact was read: "Nothing to change."
 
-A fact the plan could not read, such as the slice's sites, secrets, keys, alerts,
-edge settings, deployed functions, seed documents or cache entries, or the build
+A fact the plan could not read, such as the slice's sites and their digests,
+secrets, keys, alerts, edge settings, deployed functions, seed documents or cache entries, or the build
 of the project, is unread. The plan never takes it for a match: when nothing else
 differs, its last line says so and lists each unread fact with why. A difference
 found is a difference even when another fact is unread.
@@ -120,6 +120,14 @@ under "Held, not in the file", with the command that removes it. Apply removes
 none of them, because a slice can serve more than one project, and closes with
 the same list. A site the file does not name is a "-" line: no command removes
 a site yet.
+
+A site the file declares is compared by the digest of its folder against the one
+the slice recorded when the site was deployed: "unchanged (digest ab12…)", or
+"files changed (digest ab12… → cd34…)", or "route /old → /new" when the slice
+serves it at another route. A site the slice holds no digest for (one deployed
+before the slice kept them, or a platform that does not list them) says "files
+not compared" and is unread. Apply uploads a site only when its route or its
+digest differs, and --force uploads every site.
 
 A script reads the verdict from the exit status with --exit-code: 0 when it is a
 match, 2 when it is create or differs, 3 when it is unread, 1 when the plan
@@ -843,31 +851,57 @@ func (p *planState) diffSites(d *planDiff, creating bool) {
 		d.notes = append(d.notes, err.Error())
 		return
 	}
-	liveSlugs := map[string]bool{}
+	liveBySlug := map[string]liveCanvasSite{}
 	for _, s := range p.sites {
-		liveSlugs[s.Slug] = true
+		liveBySlug[s.Slug] = s
 	}
 	named := map[string]bool{}
 	for _, s := range declared {
 		named[s.Slug] = true
 		addr := "site " + s.Route
+		live, served := liveBySlug[s.Slug]
 		switch {
 		case creating:
 			d.add("+", addr, "uploads %s", s.Dir)
 		case p.sitesErr != nil:
 			d.unread(addr, "sites", p.sitesErr)
-		case !liveSlugs[s.Slug]:
+		case !served:
 			d.add("+", addr, "uploads %s", s.Dir)
+		case live.Route != s.Route:
+			d.add("~", addr, "route %s → %s; uploaded again on apply", live.Route, s.Route)
 		default:
-			// The slice keeps no hash of a site's files, so a plan cannot say
-			// whether they differ; apply uploads the folder again.
-			d.add(" ", addr, "served; uploaded again on apply (its files are not compared)")
+			p.diffSiteFiles(d, addr, p.c.Manifest.ResolvePath(s.Dir), live.Digest)
 		}
 	}
 	for _, s := range p.sites {
 		if !named[s.Slug] {
 			d.add("-", "site "+s.Route, "still served: no drift command removes a site yet")
 		}
+	}
+}
+
+// errNoSiteDigest is why a served site's files are not compared when the slice
+// recorded no digest for it: an older platform, or a site deployed before the
+// platform kept one.
+var errNoSiteDigest = errors.New("the slice holds no digest for it")
+
+// diffSiteFiles says whether a served site's files are the folder's, by the
+// digest `drift apply` uploads the folder with. A site whose files it could not
+// compare is recorded on d as unread: the line has no mark, and no match is
+// claimed on a fact the plan did not read.
+func (p *planState) diffSiteFiles(d *planDiff, addr, folder, liveDigest string) {
+	local, err := common.FolderDigest(folder)
+	switch {
+	case err != nil:
+		d.add(" ", addr, "files not compared: %v", err)
+		d.noteUnread(addr, "site files", err)
+	case liveDigest == "":
+		d.add(" ", addr, "files not compared: %v", errNoSiteDigest)
+		d.noteUnread(addr, "site files", errNoSiteDigest)
+	case liveDigest == local:
+		d.add(" ", addr, "unchanged (digest %s)", shortDigest(local))
+	default:
+		d.add("~", addr, "files changed (digest %s → %s)", shortDigest(liveDigest), shortDigest(local))
 	}
 }
 

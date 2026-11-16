@@ -8,6 +8,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -25,14 +26,22 @@ import (
 
 // fakeSlice records what an apply sent: each function's last-deployed digest,
 // which it reports back from GET /ops/atomic the way the operator does, and the
-// files of each uploaded site.
+// files of each uploaded site. Its site registry is the slice's: a site upload
+// enters it with the route and the digest the query carried, and GET /ops/canvas
+// lists it.
 type fakeSlice struct {
-	mu       sync.Mutex
-	digests  map[string]string // "get:hello" -> digest
-	uploads  int               // POST /ops/atomic
-	sites    []map[string]string
-	sentMeta []map[string]any
+	mu          sync.Mutex
+	digests     map[string]string // "get:hello" -> digest
+	uploads     int               // POST /ops/atomic
+	sites       []map[string]string
+	siteQueries []url.Values        // the query of each POST /ops/canvas
+	registry    map[string]siteSeen // slug -> what the slice holds for the site
+	listFails   bool                // GET /ops/canvas answers 500
+	sentMeta    []map[string]any
 }
+
+// siteSeen is one entry of the fake slice's site registry.
+type siteSeen struct{ route, digest string }
 
 func (f *fakeSlice) handler(t *testing.T) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -52,9 +61,25 @@ func (f *fakeSlice) handler(t *testing.T) http.HandlerFunc {
 			f.sentMeta = append(f.sentMeta, meta)
 			f.digests[meta["method"].(string)+":"+meta["name"].(string)] = meta["digest"].(string)
 			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/ops/canvas":
+			if f.listFails {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			sites := []map[string]string{}
+			for slug, s := range f.registry {
+				sites = append(sites, map[string]string{"slug": slug, "route": s.route, "digest": s.digest})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"deployed": len(sites) > 0, "sites": sites})
 		case r.Method == http.MethodPost && r.URL.Path == "/ops/canvas":
 			body, _ := io.ReadAll(r.Body)
 			f.sites = append(f.sites, unzip(t, body))
+			q := r.URL.Query()
+			f.siteQueries = append(f.siteQueries, q)
+			if f.registry == nil {
+				f.registry = map[string]siteSeen{}
+			}
+			f.registry[q.Get("site")] = siteSeen{route: q.Get("route"), digest: q.Get("digest")}
 			_, _ = w.Write([]byte(`{}`))
 		default:
 			_, _ = w.Write([]byte(`{}`))

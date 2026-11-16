@@ -97,7 +97,7 @@ A function or worker is removed by deleting its block from the Driftfile and run
 
 ### Canvas — static sites
 
-A site is declared in the Driftfile (`canvas { site "/" { dir = "./site" } }`) and uploaded by `drift apply`, served same-origin with your functions. There is no separate deploy command.
+A site is declared in the Driftfile (`canvas { site "/" { dir = "./site" } }`) and uploaded by `drift apply`, served same-origin with your functions. There is no separate deploy command. An apply uploads a site only when its files or its route differ from what the slice holds, and `drift plan` says which.
 
 ### The Driftfile
 

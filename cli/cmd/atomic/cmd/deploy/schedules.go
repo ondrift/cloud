@@ -23,7 +23,7 @@
 //
 // Threading a manifest through three deploy signatures to carry one optional
 // map would put the Driftfile's whole vocabulary into paths that need one field
-// of it. Same shape as the existing `atomicForce` flag, and for the same reason.
+// of it. Same shape as the existing `forceRedeploy` flag, and for the same reason.
 
 package atomic_cmd
 

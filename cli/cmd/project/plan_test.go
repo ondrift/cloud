@@ -2,6 +2,7 @@ package project
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -52,6 +53,9 @@ func planStub(t *testing.T, live, deployed string, failing ...string) *recorder 
 // with its body in place of the stub's, and a path whose body is "" is not found.
 func planStubWith(t *testing.T, live, deployed string, answers map[string]string, failing ...string) *recorder {
 	t.Helper()
+	// The site the slice serves was deployed from the fixture's folder, so its
+	// digest is that folder's.
+	sites := fmt.Sprintf(`{"deployed":true,"sites":[{"slug":"default","route":"/","digest":%q}]}`, siteFolderDigest(t))
 	return stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if slices.Contains(failing, r.URL.Path) {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -77,7 +81,7 @@ func planStubWith(t *testing.T, live, deployed string, answers map[string]string
 		case "/ops/atomic":
 			_, _ = io.WriteString(w, deployed)
 		case "/ops/canvas":
-			_, _ = io.WriteString(w, `{"deployed":true,"sites":[{"slug":"default","route":"/"}]}`)
+			_, _ = io.WriteString(w, sites)
 		case "/ops/backbone/secret/list":
 			_, _ = io.WriteString(w, `[]`)
 		case "/ops/atomic/auth":
