@@ -82,18 +82,171 @@ function _run_deployed(callable $handler): void {
     ini_set('display_errors', 'stderr');
     ini_set('log_errors', '1');
 
-    while (($line = fgets(STDIN)) !== false) {
-        $raw = trim($line);
-        if ($raw === '') {
-            continue;
+    $apply = _envelope_environment();
+    $scratch = _claim_scratch_directory();
+    try {
+        while (($line = fgets(STDIN)) !== false) {
+            $raw = trim($line);
+            if ($raw === '') {
+                continue;
+            }
+            // The directory is in place for every call, even when what held it
+            // (the temporary directory the worker was started with) has been
+            // removed since the last.
+            if ($scratch !== null && !is_dir($scratch)) {
+                @mkdir($scratch, 0700, true);
+            }
+            $resp = _call_with_output_to_stderr($handler, $raw, $apply);
+            if ($scratch !== null) {
+                _empty_directory($scratch);
+            }
+            // Nothing exits for the slice to weigh with wait4, so the process
+            // reports its own high-water mark.
+            $rss = is_array($resp) ? _peak_rss_bytes() : 0;
+            if ($rss > 0) {
+                $resp['rss_bytes'] = $rss;
+            }
+            // A reply that cannot be encoded throws rather than putting an
+            // empty line on the response stream.
+            if (!_write_line(json_encode($resp, JSON_THROW_ON_ERROR))) {
+                return; // the slice stopped reading
+            }
         }
-        $resp = _call_with_output_to_stderr($handler, $raw);
-        // A reply that cannot be encoded throws rather than putting an empty
-        // line on the response stream.
-        if (!_write_line(json_encode($resp, JSON_THROW_ON_ERROR))) {
-            return; // the slice stopped reading
+    } finally {
+        if ($scratch !== null) {
+            _empty_directory($scratch);
+            @rmdir($scratch);
         }
     }
+}
+
+/**
+ * What an envelope sets in the process environment for the call it carries,
+ * as a function to call with the decoded request ahead of the handler.
+ *
+ * A one-shot child gets its scratch directory and its secrets at spawn; a
+ * process that serves many calls was spawned once, so each envelope's values
+ * are applied before its handler runs: TMPDIR and HOME become the envelope's
+ * `tmpdir` (when it is an absolute path), every `secrets` entry becomes
+ * DRIFT_SECRET_<NAME> and every `secrets_previous` entry
+ * DRIFT_SECRET_<NAME>_PREVIOUS, and a secret variable an earlier envelope set
+ * is removed when this one no longer carries it. Only variables this function
+ * set from an envelope are ever removed.
+ *
+ * A variable is set where a handler can read it three ways, and the three agree:
+ * getenv() (which is what the SDK's own accessors read), $_ENV and $_SERVER.
+ * $_ENV and $_SERVER are filled once at start, so without this a rotated secret
+ * read from either would be the first call's.
+ */
+function _envelope_environment(): callable {
+    $held = [];
+    return static function ($req) use (&$held): void {
+        $vars = [];
+        if (is_array($req)) {
+            $dir = $req['tmpdir'] ?? null;
+            if (is_string($dir) && str_starts_with($dir, '/')) {
+                $vars['TMPDIR'] = $dir;
+                $vars['HOME'] = $dir;
+            }
+            foreach (['secrets' => '', 'secrets_previous' => '_PREVIOUS'] as $member => $suffix) {
+                $carried = $req[$member] ?? null;
+                if (!is_array($carried)) {
+                    continue;
+                }
+                foreach ($carried as $name => $value) {
+                    $name = strtoupper((string) $name);
+                    if ($name === '' || !is_string($value) || strpbrk($name, "=\0") !== false || str_contains($value, "\0")) {
+                        continue;
+                    }
+                    $vars['DRIFT_SECRET_' . $name . $suffix] = $value;
+                }
+            }
+        }
+        foreach (array_keys($held) as $name) {
+            if (!array_key_exists($name, $vars)) {
+                putenv($name);
+                unset($_ENV[$name], $_SERVER[$name], $held[$name]);
+            }
+        }
+        foreach ($vars as $name => $value) {
+            putenv("$name=$value");
+            $_ENV[$name] = $value;
+            $_SERVER[$name] = $value;
+            if (str_starts_with($name, 'DRIFT_SECRET_')) {
+                $held[$name] = true;
+            }
+        }
+    };
+}
+
+/**
+ * The directory sys_get_temp_dir(), tempnam() and tmpfile() use for the life of
+ * a worker, and the rule that keeps it per call.
+ *
+ * PHP asks for the temporary directory once, the first time any of them needs
+ * it, and keeps the answer: setting TMPDIR for a later call changes what
+ * getenv() says and nothing else. The slice removes each envelope's directory
+ * after the call, so a worker that let PHP resolve it from the first envelope
+ * would find tempnam() and tmpfile() failing from the second call on, and a
+ * worker that let it fall to the shared /tmp would leave files that outlive the
+ * call. So the worker makes a directory of its own before anything has asked,
+ * lets PHP resolve to that, and empties it after every call: a file written in
+ * one call is not there for the next, and the directory is removed when the
+ * worker ends. TMPDIR and HOME still name the envelope's directory for the
+ * call; this is the directory PHP's own functions use.
+ *
+ * Null when it cannot be done (no directory could be made, or PHP resolved the
+ * temporary directory before this ran, as a function's own top-level code can
+ * do): the reason is written to stderr and files in PHP's directory are left
+ * where they are.
+ */
+function _claim_scratch_directory(): ?string {
+    $base = getenv('TMPDIR');
+    $base = is_string($base) && $base !== '' ? rtrim($base, '/') : '/tmp';
+    $dir = $base . '/drift-php-' . getmypid() . '-' . bin2hex(random_bytes(6));
+    if (!@mkdir($dir, 0700)) {
+        fwrite(STDERR, "drift-sdk: no scratch directory of its own could be made in $base; files PHP writes to its temporary directory are not removed between calls\n");
+        return null;
+    }
+    $before = getenv('TMPDIR');
+    putenv("TMPDIR=$dir");
+    $resolved = sys_get_temp_dir();
+    putenv($before === false ? 'TMPDIR' : "TMPDIR=$before");
+    if ($resolved !== $dir) {
+        @rmdir($dir);
+        fwrite(STDERR, "drift-sdk: PHP's temporary directory was already resolved to $resolved, so it is shared by every call: files in it are not removed between calls\n");
+        return null;
+    }
+    return $dir;
+}
+
+/** Remove everything in a directory and leave the directory. Links are removed, never followed. */
+function _empty_directory(string $dir): void {
+    foreach (@scandir($dir) ?: [] as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+        $path = "$dir/$entry";
+        if (is_dir($path) && !is_link($path)) {
+            _empty_directory($path);
+            @rmdir($path);
+        } else {
+            @unlink($path);
+        }
+    }
+}
+
+/**
+ * This process's peak resident size in bytes: VmHWM in /proc/self/status
+ * (memory_get_peak_usage is PHP's heap, not the process). Zero where the file
+ * cannot be read, and the reply then carries no `rss_bytes`.
+ */
+function _peak_rss_bytes(): int {
+    $status = @file_get_contents('/proc/self/status');
+    if (is_string($status) && preg_match('/^VmHWM:\s+(\d+)\s+kB/m', $status, $m) === 1) {
+        return (int) $m[1] * 1024;
+    }
+    return 0;
 }
 
 /**
@@ -101,14 +254,14 @@ function _run_deployed(callable $handler): void {
  * stderr as it is printed. A buffer the handler opened and left open is closed
  * into this one afterwards, so nothing it holds is lost or reaches stdout.
  */
-function _call_with_output_to_stderr(callable $handler, string $raw) {
+function _call_with_output_to_stderr(callable $handler, string $raw, ?callable $before = null) {
     $level = ob_get_level();
     ob_start(static function (string $chunk): string {
         fwrite(STDERR, $chunk);
         return '';
     }, 1);
     try {
-        return _answer($handler, $raw);
+        return _answer($handler, $raw, $before);
     } finally {
         while (ob_get_level() > $level) {
             ob_end_flush();

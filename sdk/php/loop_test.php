@@ -221,8 +221,10 @@ final class Worker {
     }
 
     public function stop(): void {
+        // End of input first, so a worker that is working correctly removes its
+        // own scratch directory before it is gone.
         $this->closeStdin();
-        if (proc_get_status($this->proc)['running']) proc_terminate($this->proc, 9);
+        if ($this->exit(1.0) === null) proc_terminate($this->proc, 9);
         foreach ([1, 2] as $i) {
             if (is_resource($this->pipes[$i])) fclose($this->pipes[$i]);
         }
