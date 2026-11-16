@@ -12,31 +12,39 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
 /// How long a worker has to answer an envelope or to end after its input does.
 const WAIT: Duration = Duration::from_secs(5);
 
-/// The built example, next to the test binary's own directory under target/.
-/// A plain `cargo test` has built it; `cargo test --test loop` has not, and
-/// would run a stale one, so it is built here once: a no-op when current.
+/// The built example. It is built here once (a no-op when current), because
+/// `cargo test --test loop` does not build examples and a plain `cargo test`
+/// may have been run with another target directory, profile or target triple
+/// than a guess from the test binary's own path would assume: cargo itself says
+/// where the executable is (`--message-format=json`, the `executable` of the
+/// `loop_serve` artifact).
 fn program() -> PathBuf {
-    static BUILT: Once = Once::new();
-    let mut dir = std::env::current_exe().unwrap();
-    dir.pop(); // the test binary
-    dir.pop(); // deps/
-    let exe = dir.join("examples").join(format!("loop_serve{}", std::env::consts::EXE_SUFFIX));
-    BUILT.call_once(|| {
-        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let status = Command::new(cargo)
-            .args(["build", "--quiet", "--example", "loop_serve"])
-            .status()
-            .expect("cargo runs");
-        assert!(status.success(), "building the loop_serve example failed");
-    });
-    exe
+    static BUILT: OnceLock<PathBuf> = OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+            let out = Command::new(cargo)
+                .args(["build", "--quiet", "--example", "loop_serve", "--message-format=json"])
+                .stderr(Stdio::inherit())
+                .output()
+                .expect("cargo runs");
+            assert!(out.status.success(), "building the loop_serve example failed");
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+                .filter(|m| m["reason"] == "compiler-artifact" && m["target"]["name"] == "loop_serve")
+                .filter_map(|m| m["executable"].as_str().map(PathBuf::from))
+                .last()
+                .expect("cargo names the loop_serve executable")
+        })
+        .clone()
 }
 
 /// A worker: its pipes, what it has written to stdout (line by line) and to
