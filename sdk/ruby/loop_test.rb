@@ -179,6 +179,63 @@ with_worker do |worker|
   check('the process exits 0 after three calls', status && status.exitstatus == 0, status.inspect)
 end
 
+puts 'the scratch directory is the envelope\'s on every call'
+Dir.mktmpdir('drift-loop-test') do |root|
+  with_worker do |worker|
+    %w[one two three].each do |name|
+      dir = File.join(root, name)
+      Dir.mkdir(dir)
+      seen = payload(worker.call({ 'path' => '/', 'tmpdir' => dir }))
+      check("TMPDIR is #{name}", seen && seen['tmpdir'] == dir, seen.inspect)
+      check("HOME is #{name}", seen && seen['home'] == dir, seen.inspect)
+      check("Dir.tmpdir is #{name}", seen && seen['dir_tmpdir'] == dir, seen.inspect)
+      check("Dir.home is #{name}", seen && seen['dir_home'] == dir, seen.inspect)
+    end
+  end
+end
+
+puts 'a relative scratch directory is ignored'
+with_worker do |worker|
+  seen = payload(worker.call({ 'path' => '/', 'tmpdir' => 'relative/dir' }))
+  check('TMPDIR stays unset', seen && seen['tmpdir'].nil?, seen.inspect)
+end
+
+puts 'a secret the envelope no longer carries is gone'
+with_worker do |worker|
+  secrets = ->(reply) { payload(reply)&.fetch('secrets', nil) }
+
+  one = worker.call({ 'secrets' => { 'API_KEY' => 'key-one', 'WEBHOOK_TOKEN' => 'token' } })
+  check('both secrets are set', secrets.(one) == { 'DRIFT_SECRET_API_KEY' => 'key-one', 'DRIFT_SECRET_WEBHOOK_TOKEN' => 'token' }, secrets.(one).inspect)
+
+  two = worker.call({ 'secrets' => { 'API_KEY' => 'key-two' } })
+  check('the changed one is replaced and the dropped one is gone', secrets.(two) == { 'DRIFT_SECRET_API_KEY' => 'key-two' }, secrets.(two).inspect)
+
+  three = worker.call({})
+  check('an envelope with none leaves none', secrets.(three) == {}, secrets.(three).inspect)
+end
+
+puts 'a previous secret follows the same rule'
+with_worker do |worker|
+  secrets = ->(reply) { payload(reply)&.fetch('secrets', nil) }
+
+  one = worker.call({ 'secrets' => { 'API_KEY' => 'new' }, 'secrets_previous' => { 'API_KEY' => 'old' } })
+  check('both values are set', secrets.(one) == { 'DRIFT_SECRET_API_KEY' => 'new', 'DRIFT_SECRET_API_KEY_PREVIOUS' => 'old' }, secrets.(one).inspect)
+
+  two = worker.call({ 'secrets' => { 'API_KEY' => 'new' } })
+  check('the previous value is gone when not carried', secrets.(two) == { 'DRIFT_SECRET_API_KEY' => 'new' }, secrets.(two).inspect)
+end
+
+if File.exist?('/proc/self/status')
+  puts 'every reply carries the peak resident size'
+  with_worker do |worker|
+    3.times do |i|
+      reply = worker.call({ 'path' => '/', 'body' => { 'n' => i } })
+      rss = reply && reply['rss_bytes']
+      check("call #{i + 1} carries a positive rss_bytes", rss.is_a?(Integer) && rss.positive?, reply.inspect)
+    end
+  end
+end
+
 puts 'a handler that raises ends the process'
 with_worker do |worker|
   ok = worker.call({ 'path' => '/', 'body' => {} })
