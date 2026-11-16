@@ -72,7 +72,17 @@ module Drift
   end
 
   def self._run_deployed(handler)
-    req = JSON.parse($stdin.read)
+    raw = $stdin.read
+    $stdout.write(_answer(handler, raw))
+    $stdout.flush
+  end
+
+  # What is done to one envelope, however many a process serves: the text is
+  # parsed, the query string is decoded into a hash, +before+ sees the request
+  # and runs ahead of the handler (a caller's per-call setup), the handler runs,
+  # +after+ may add to its reply, and the reply is serialised.
+  def self._answer(handler, raw, before: nil, after: nil)
+    req = JSON.parse(raw)
     raw_query = req['query']
     if raw_query.is_a?(String)
       parsed = {}
@@ -83,9 +93,10 @@ module Drift
       end
       req['query'] = parsed
     end
+    before&.call(req)
     resp = handler.call(req)
-    $stdout.write(JSON.generate(resp))
-    $stdout.flush
+    after&.call(resp)
+    JSON.generate(resp)
   end
 
   # Turn a wrapper's response hash into the body and headers to write, using the
