@@ -748,7 +748,6 @@ func fixedCeilingCode(t *testing.T) string {
 // full printed the code for an invalid request and a 409 the code for a conflict, because the
 // code was read from the status alone.
 func TestAPIError_ACeilingPrintsTheQuotaCodeAndItsNumbersWhateverItsStatus(t *testing.T) {
-	t.Skip("fails until APIError.code() and Error() read the ceiling's fields (task #2735)")
 	withStatusFeed(t, 200, feedOK)
 	inNoProject(t)
 
@@ -780,7 +779,6 @@ func TestAPIError_ACeilingPrintsTheQuotaCodeAndItsNumbersWhateverItsStatus(t *te
 // the slice holds, and a cap on one item, which holds nothing and says only the limit. A
 // missing current is never a zero.
 func TestAPIError_TheNumbersLineSaysTheCeilingInTheWordsTheFieldsGive(t *testing.T) {
-	t.Skip("fails until Error() renders the numbers line from the fields (task #2735)")
 	withStatusFeed(t, 200, feedOK)
 	inNoProject(t)
 
@@ -823,7 +821,6 @@ func TestAPIError_TheNumbersLineSaysTheCeilingInTheWordsTheFieldsGive(t *testing
 // A ceiling the platform fixes has a code of its own, and says nothing about raising it: the
 // quota's advice is to resize, which would send a person to a form that has no line for it.
 func TestAPIError_ACeilingThePlatformFixesHasItsOwnCodeAndNoAdvice(t *testing.T) {
-	t.Skip("fails until code() and message() read the fixed field (task #2735)")
 	withStatusFeed(t, 200, feedOK)
 	inNoProject(t)
 	code := fixedCeilingCode(t)
@@ -870,7 +867,6 @@ func TestAPIError_ACeilingThePlatformFixesHasItsOwnCodeAndNoAdvice(t *testing.T)
 // A refusal at a ceiling that carries no sentence still says what sort of refusal it is, and a
 // fixed one does not call itself the plan's.
 func TestAPIError_ACeilingWithNoSentenceStillSaysWhatSortOfRefusalItIs(t *testing.T) {
-	t.Skip("fails until message() reads the ceiling's fields (task #2735)")
 	withStatusFeed(t, 200, feedOK)
 	inNoProject(t)
 	code := fixedCeilingCode(t)
