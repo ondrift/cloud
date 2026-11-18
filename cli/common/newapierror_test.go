@@ -70,6 +70,23 @@ func TestNewAPIError_AQuotaCarriesItsCeiling(t *testing.T) {
 	}
 }
 
+// A ceiling the platform writes with every field carries all of them onto the failure: what
+// it limits, the unit of its figures and that nothing raises it.
+func TestNewAPIError_ACeilingCarriesWhatItsUnitAndWhetherItIsFixed(t *testing.T) {
+	body := []byte(`{"error":"the cache holds 64 MiB of the 64 MiB it allows","action":"backbone.set_cache_value",` +
+		`"what":"cache size","limit":67108864,"current":67108864,"unit":"bytes","fixed":true}`)
+
+	e := NewAPIError("set the cache value", http.StatusTooManyRequests, http.Header{}, body)
+
+	if !e.HasLimit || !e.HasCurrent || e.Limit != 67108864 || e.Current != 67108864 {
+		t.Errorf("the figures did not carry: HasLimit=%v HasCurrent=%v Limit=%d Current=%d",
+			e.HasLimit, e.HasCurrent, e.Limit, e.Current)
+	}
+	if e.Action != "backbone.set_cache_value" || e.What != "cache size" || e.Unit != "bytes" || !e.Fixed {
+		t.Errorf("the words did not carry: Action=%q What=%q Unit=%q Fixed=%v", e.Action, e.What, e.Unit, e.Fixed)
+	}
+}
+
 // The header is the response's own, and a caller with none passes nil: that reads
 // as a platform that stated no wait and no version.
 func TestNewAPIError_ANilHeaderStatesNothing(t *testing.T) {

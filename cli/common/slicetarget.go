@@ -99,6 +99,15 @@ func ResolveSlice() (SliceTarget, error) {
 	return r.target, r.err
 }
 
+// actsOnDriftfileSlice reports whether the slice this invocation acts on is the one
+// the nearest Driftfile declares: no DRIFT_SLICE names another, and a Driftfile on the
+// way up from the working directory names one slice. A Driftfile that cannot name one
+// slice resolves nothing.
+func actsOnDriftfileSlice() bool {
+	t, err := ResolveSlice()
+	return err == nil && t.From == SliceFromDriftfile
+}
+
 // GetActiveSlice is the slice this invocation acts on, or "" when it has none.
 func GetActiveSlice() string {
 	t, _ := ResolveSlice()

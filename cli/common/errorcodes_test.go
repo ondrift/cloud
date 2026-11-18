@@ -602,13 +602,13 @@ func TestAPIError_ARefusalCarriesTheNumbers(t *testing.T) {
 
 	body := []byte(`{"error":"limit reached for atomic.deploy_function (current: 6, max: 6)",` +
 		`"action":"atomic.deploy_function","limit":6,"current":6}`)
-	action, limit, current, has := quotaFromBody(body)
-	if !has || limit != 6 || current != 6 || action != "atomic.deploy_function" {
-		t.Fatalf("the fields did not parse: %q %d %d %v", action, limit, current, has)
+	q := quotaFromBody(body)
+	if !q.HasLimit || q.Limit != 6 || q.Current != 6 || q.Action != "atomic.deploy_function" {
+		t.Fatalf("the fields did not parse: %+v", q)
 	}
 
 	e := &APIError{Op: "deploy", Status: 429, Detail: "limit reached",
-		Action: action, Limit: limit, Current: current, HasLimit: has}
+		Action: q.Action, Limit: q.Limit, Current: q.Current, HasLimit: q.HasLimit, HasCurrent: q.HasCurrent}
 	got := e.Error()
 	if !strings.Contains(got, "6 of 6 used") {
 		t.Errorf("the refusal must state current and ceiling, got: %s", got)
@@ -626,7 +626,7 @@ func TestAPIError_ARefusalCarriesTheNumbers(t *testing.T) {
 func TestAPIError_ARefusalWithoutNumbersSaysNothingAboutThem(t *testing.T) {
 	withStatusFeed(t, 200, feedOK)
 
-	if _, _, _, has := quotaFromBody([]byte(`{"error":"limit reached"}`)); has {
+	if quotaFromBody([]byte(`{"error":"limit reached"}`)).HasLimit {
 		t.Fatal("a body with no ceiling must not report one")
 	}
 	got := (&APIError{Op: "deploy", Status: 429, Detail: "limit reached"}).Error()
@@ -638,7 +638,47 @@ func TestAPIError_ARefusalWithoutNumbersSaysNothingAboutThem(t *testing.T) {
 // Numbers are read from the fields, never re-parsed out of the sentence — that
 // coupling is what publishing fields exists to remove.
 func TestQuotaFromBody_IgnoresNumbersInTheProse(t *testing.T) {
-	if _, _, _, has := quotaFromBody([]byte(`{"error":"limit reached (current: 6, max: 6)"}`)); has {
+	if quotaFromBody([]byte(`{"error":"limit reached (current: 6, max: 6)"}`)).HasLimit {
 		t.Error("the figures in the message must NOT be scraped — only fields count")
+	}
+}
+
+// What a ceiling carries beside its limit is read as it is written: the thing limited, the
+// unit of the figures, whether nothing raises it, and a current that is absent, which is not
+// a current of zero. A ceiling that was not published carries none of it.
+func TestQuotaFromBody_ReadsWhatUnitFixedAndAnOptionalCurrent(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want quota
+	}{
+		{"a count the slice holds",
+			`{"error":"x","action":"atomic.deploy_function","what":"function slots","limit":6,"current":6}`,
+			quota{Action: "atomic.deploy_function", What: "function slots", Limit: 6, Current: 6, HasLimit: true, HasCurrent: true}},
+		{"bytes the slice holds, and fixed",
+			`{"error":"x","what":"cache size","limit":67108864,"current":1048576,"unit":"bytes","fixed":true}`,
+			quota{What: "cache size", Limit: 67108864, Current: 1048576, Unit: "bytes", HasLimit: true, HasCurrent: true, Fixed: true}},
+		{"a cap on one item has no current key",
+			`{"error":"x","what":"secret size","limit":1024,"unit":"bytes"}`,
+			quota{What: "secret size", Limit: 1024, Unit: "bytes", HasLimit: true}},
+		{"a current of zero is a current",
+			`{"error":"x","what":"secrets","limit":5,"current":0}`,
+			quota{What: "secrets", Limit: 5, HasLimit: true, HasCurrent: true}},
+		{"a limit of zero is a ceiling",
+			`{"error":"x","what":"scheduled jobs","limit":0}`,
+			quota{What: "scheduled jobs", HasLimit: true}},
+		{"a fixed that is false is not fixed",
+			`{"error":"x","limit":6,"fixed":false}`,
+			quota{Limit: 6, HasLimit: true}},
+		{"no limit, so the rest of a ceiling is not one",
+			`{"error":"x","action":"atomic.deploy_function","what":"function slots","current":6,"unit":"bytes","fixed":true}`,
+			quota{Action: "atomic.deploy_function", What: "function slots"}},
+		{"a body that is not JSON", `Internal Server Error`, quota{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := quotaFromBody([]byte(tc.body)); got != tc.want {
+				t.Errorf("quotaFromBody(%s) =\n  %+v\nwant\n  %+v", tc.body, got, tc.want)
+			}
+		})
 	}
 }

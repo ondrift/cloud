@@ -2,6 +2,7 @@ package common
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -649,5 +650,443 @@ func TestErrorCodes_ThePlatformAheadRemedyIsTheUpgradeCommand(t *testing.T) {
 	}
 	if !strings.Contains(c.Remedy, "DRIFT-1003") {
 		t.Errorf("the remedy does not say what a 404 that survives the upgrade means:\n%s", c.Remedy)
+	}
+}
+
+// ─── a refusal at a ceiling ─────────────────────────────────────────────────
+//
+// The platform says a ceiling as fields beside `error`: `what` names the thing limited in a
+// person's words, `limit` is the ceiling, `current` is what the slice holds against it when
+// the ceiling is a stock, `unit` is "bytes" when the figures are sizes, and `fixed` is true
+// when no change to the slice raises the ceiling. The status is the platform's to choose (a
+// count is a 429 except the member cap, which is a 409, and a size is a 413), so the code and
+// the advice follow from the fields and not from the status.
+
+// One body for each shape of ceiling. The sentences are the platform's own and carry no final
+// full stop, because the CLI adds its own.
+const (
+	// A count the slice holds: `current`, and no `unit`.
+	bodySlots = `{"error":"this slice allows 6 function slots and holds 6","action":"atomic.deploy_function",` +
+		`"what":"function slots","limit":6,"current":6}`
+	// Bytes the slice holds: `current` and `unit` both.
+	bodyBucket = `{"error":"bucket \"uploads\" holds 5 MiB of the 5 MiB it allows","action":"backbone.put_blob",` +
+		`"what":"bucket \"uploads\"","limit":5242880,"current":5242880,"unit":"bytes"}`
+	// A cap on one item: nothing is held against it, so there is no `current` key at all.
+	bodySecretSize = `{"error":"a secret can be at most 1 KiB; this one is 2 KiB","action":"backbone.set_secret",` +
+		`"what":"secret size","limit":1024,"unit":"bytes"}`
+	// A cap on one item that the slice's shape does set.
+	bodySiteSize = `{"error":"this site is 120 MiB, over the 100 MiB this slice allows for a site","action":"canvas.deploy_site",` +
+		`"what":"site size","limit":104857600,"unit":"bytes"}`
+	// A cap on one item that no change to the slice raises.
+	bodyFunctionSize = `{"error":"this function is over the 64 MiB limit on a function's size","action":"atomic.deploy_function",` +
+		`"what":"function size","limit":67108864,"unit":"bytes","fixed":true}`
+	// A count held, fixed: the account's member cap.
+	bodyMembers = `{"error":"this account is at its limit of 25 members and pending invites; remove one first",` +
+		`"action":"account.invite_member","what":"members and pending invites","limit":25,"current":25,"fixed":true}`
+	// Bytes held, fixed: the cache's size.
+	bodyCacheSize = `{"error":"the cache holds 64 MiB of the 64 MiB it allows","action":"backbone.set_cache_value",` +
+		`"what":"cache size","limit":67108864,"current":67108864,"unit":"bytes","fixed":true}`
+	// What a platform wrote before `what`, `unit` and `fixed`: the action token, a limit and a current.
+	bodyBeforeTheFields = `{"error":"limit reached for atomic.deploy_function (current: 6, max: 6)",` +
+		`"action":"atomic.deploy_function","limit":6,"current":6}`
+)
+
+// refusedAtCeiling builds the failure CheckResponse builds for an answer with this status and
+// body, from a platform that sends no Retry-After, which is how it says a quota and not a
+// throttle.
+func refusedAtCeiling(t *testing.T, op string, status int, body string) *APIError {
+	t.Helper()
+	resp := &http.Response{
+		StatusCode: status,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+	_, err := CheckResponse(resp, op)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	return apiErr
+}
+
+// inNoProject makes the working directory a place where no Driftfile resolves and the
+// environment names no slice, so a quota's advice is the resize form.
+func inNoProject(t *testing.T) {
+	t.Helper()
+	t.Setenv(SliceEnv, "")
+	withDriftfileSlice(t, func(string) (string, string, bool, error) { return "", "", false, nil })
+}
+
+// ceilingFailure is what the CLI prints for a refusal: its sentence, the code's line, and the
+// numbers on a line of their own. A code or numbers left empty leave their line out.
+func ceilingFailure(sentence, code, numbers string) string {
+	out := sentence
+	if code != "" {
+		out += fmt.Sprintf("\n  %[1]s · drift doctor explain %[1]s", code)
+	}
+	if numbers != "" {
+		out += "\n  " + numbers
+	}
+	return out
+}
+
+// fixedCeilingCode is the registered code for a ceiling the platform fixes. It is found by its
+// key, because the registry assigns the number and a test that held it would be wrong the day
+// an earlier code is minted.
+func fixedCeilingCode(t *testing.T) string {
+	t.Helper()
+	for _, c := range ErrorCodes() {
+		if c.Key == "platform-limit" {
+			return c.Code
+		}
+	}
+	t.Fatal(`no registry entry has the key "platform-limit", the code for a ceiling the platform fixes`)
+	return ""
+}
+
+// A ceiling is a quota whatever status the platform chose for it. A 413 that says a bucket is
+// full printed the code for an invalid request and a 409 the code for a conflict, because the
+// code was read from the status alone.
+func TestAPIError_ACeilingPrintsTheQuotaCodeAndItsNumbersWhateverItsStatus(t *testing.T) {
+	withStatusFeed(t, 200, feedOK)
+	inNoProject(t)
+
+	want := ceilingFailure(
+		"Couldn't deploy the function: this slice allows 6 function slots and holds 6. Run 'drift slice resize' to add capacity.",
+		"DRIFT-1004", "function slots: 6 of 6 used.")
+
+	for _, status := range []int{
+		http.StatusPaymentRequired,
+		http.StatusConflict,
+		http.StatusRequestEntityTooLarge,
+		http.StatusUnprocessableEntity,
+		http.StatusTooManyRequests,
+	} {
+		t.Run(fmt.Sprintf("%d %s", status, http.StatusText(status)), func(t *testing.T) {
+			e := refusedAtCeiling(t, "deploy the function", status, bodySlots)
+
+			if got := e.code(); got != "DRIFT-1004" {
+				t.Errorf("code() = %q, want DRIFT-1004", got)
+			}
+			if got := e.Error(); got != want {
+				t.Errorf("the failure reads\n%s\nwant\n%s", got, want)
+			}
+		})
+	}
+}
+
+// The numbers line has three shapes, each read from the fields: a count the slice holds, bytes
+// the slice holds, and a cap on one item, which holds nothing and says only the limit. A
+// missing current is never a zero.
+func TestAPIError_TheNumbersLineSaysTheCeilingInTheWordsTheFieldsGive(t *testing.T) {
+	withStatusFeed(t, 200, feedOK)
+	inNoProject(t)
+
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		line   string
+	}{
+		{"a count the slice holds", http.StatusTooManyRequests, bodySlots,
+			"function slots: 6 of 6 used."},
+		{"bytes the slice holds", http.StatusRequestEntityTooLarge, bodyBucket,
+			`bucket "uploads": 5 MiB of 5 MiB used.`},
+		{"a cap on one item", http.StatusRequestEntityTooLarge, bodySecretSize,
+			"secret size: limit is 1 KiB."},
+		{"a count with no stock, for a slice allowed none", http.StatusTooManyRequests,
+			`{"error":"this slice has no scheduled jobs","what":"scheduled jobs","limit":0}`,
+			"scheduled jobs: limit is 0."},
+		{"a size that is not whole in its unit", http.StatusRequestEntityTooLarge,
+			`{"error":"x","what":"collection \"events\"","limit":1048576,"current":1536,"unit":"bytes"}`,
+			`collection "events": 1.5 KiB of 1 MiB used.`},
+		{"no what and no current, so the action names the limit and no zero is printed", http.StatusTooManyRequests,
+			`{"error":"x","action":"atomic.deploy_function","limit":6}`,
+			"atomic.deploy_function: limit is 6."},
+		{"the figures are the fields and not the digits in the sentence", http.StatusTooManyRequests,
+			`{"error":"limit reached (current: 9, max: 9)","what":"function slots","limit":6,"current":6}`,
+			"function slots: 6 of 6 used."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := refusedAtCeiling(t, "deploy", tc.status, tc.body).Error()
+
+			lines := strings.Split(got, "\n")
+			if last := lines[len(lines)-1]; last != "  "+tc.line {
+				t.Errorf("the numbers line reads %q, want %q; the whole failure:\n%s", last, "  "+tc.line, got)
+			}
+		})
+	}
+}
+
+// A ceiling the platform fixes has a code of its own, and says nothing about raising it: the
+// quota's advice is to resize, which would send a person to a form that has no line for it.
+func TestAPIError_ACeilingThePlatformFixesHasItsOwnCodeAndNoAdvice(t *testing.T) {
+	withStatusFeed(t, 200, feedOK)
+	inNoProject(t)
+	code := fixedCeilingCode(t)
+	if code == "DRIFT-1004" {
+		t.Fatal("the fixed ceiling shares the quota's code, so a person cannot tell them apart")
+	}
+
+	for _, tc := range []struct {
+		name   string
+		op     string
+		status int
+		body   string
+		want   string
+	}{
+		{"a cap on one item", "deploy the function", http.StatusRequestEntityTooLarge, bodyFunctionSize,
+			ceilingFailure("Couldn't deploy the function: this function is over the 64 MiB limit on a function's size.",
+				code, "function size: limit is 64 MiB.")},
+		{"a count held, as a 409", "invite a member", http.StatusConflict, bodyMembers,
+			ceilingFailure("Couldn't invite a member: this account is at its limit of 25 members and pending invites; remove one first.",
+				code, "members and pending invites: 25 of 25 used.")},
+		{"bytes held, as a 429", "set the cache value", http.StatusTooManyRequests, bodyCacheSize,
+			ceilingFailure("Couldn't set the cache value: the cache holds 64 MiB of the 64 MiB it allows.",
+				code, "cache size: 64 MiB of 64 MiB used.")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := refusedAtCeiling(t, tc.op, tc.status, tc.body)
+
+			if got := e.code(); got != code {
+				t.Errorf("code() = %q, want %s", got, code)
+			}
+			got := e.Error()
+			if got != tc.want {
+				t.Errorf("the failure reads\n%s\nwant\n%s", got, tc.want)
+			}
+			for _, advice := range []string{"resize", "Driftfile", "drift apply", "capacity"} {
+				if strings.Contains(got, advice) {
+					t.Errorf("a ceiling nothing raises must not advise %q:\n%s", advice, got)
+				}
+			}
+		})
+	}
+}
+
+// A refusal at a ceiling that carries no sentence still says what sort of refusal it is, and a
+// fixed one does not call itself the plan's.
+func TestAPIError_ACeilingWithNoSentenceStillSaysWhatSortOfRefusalItIs(t *testing.T) {
+	withStatusFeed(t, 200, feedOK)
+	inNoProject(t)
+	code := fixedCeilingCode(t)
+
+	got := refusedAtCeiling(t, "deploy", http.StatusTooManyRequests,
+		`{"what":"function slots","limit":6,"current":6}`).Error()
+	want := ceilingFailure("Couldn't deploy: you're at your plan limit. Run 'drift slice resize' to add capacity.",
+		"DRIFT-1004", "function slots: 6 of 6 used.")
+	if got != want {
+		t.Errorf("a quota with no sentence reads\n%s\nwant\n%s", got, want)
+	}
+
+	got = refusedAtCeiling(t, "deploy", http.StatusRequestEntityTooLarge,
+		`{"what":"function size","limit":67108864,"unit":"bytes","fixed":true}`).Error()
+	want = ceilingFailure("Couldn't deploy: that is over a limit Drift sets for every slice.",
+		code, "function size: limit is 64 MiB.")
+	if got != want {
+		t.Errorf("a fixed ceiling with no sentence reads\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A status that is not a refusal at a capacity keeps its own code whatever its body carries:
+// a session that ran out, a permission, a missing thing and a platform fault each have a
+// remedy of their own, and a quota's advice would send the person the wrong way.
+func TestAPIError_AStatusThatIsNotARefusalKeepsItsOwnCodeWhateverItsBodyCarries(t *testing.T) {
+	withStatusFeed(t, 200, feedOK)
+	inNoProject(t)
+
+	for _, tc := range []struct {
+		status int
+		code   string
+	}{
+		{http.StatusUnauthorized, "DRIFT-1001"},
+		{http.StatusForbidden, "DRIFT-1002"},
+		{http.StatusNotFound, "DRIFT-1003"},
+		{http.StatusInternalServerError, "DRIFT-1005"},
+		{http.StatusServiceUnavailable, "DRIFT-1012"},
+	} {
+		t.Run(fmt.Sprintf("%d %s", tc.status, http.StatusText(tc.status)), func(t *testing.T) {
+			e := refusedAtCeiling(t, "list slices", tc.status, bodySlots)
+
+			if got := e.code(); got != tc.code {
+				t.Errorf("code() = %q, want %s", got, tc.code)
+			}
+			got := e.Error()
+			for _, advice := range []string{"drift slice resize", "Driftfile"} {
+				if strings.Contains(got, advice) {
+					t.Errorf("a status that is not a quota must not advise %q:\n%s", advice, got)
+				}
+			}
+		})
+	}
+}
+
+// A throttle is told from a quota by Retry-After, and a throttle that also carries a ceiling is
+// still a throttle: it clears by itself, and resizing does not lift it.
+func TestAPIError_AThrottleThatCarriesACeilingIsStillAThrottle(t *testing.T) {
+	inNoProject(t)
+
+	resp := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{"Retry-After": {"60"}},
+		Body:       io.NopCloser(strings.NewReader(bodySlots)),
+	}
+	_, err := CheckResponse(resp, "deploy")
+	var e *APIError
+	if !errors.As(err, &e) {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+
+	if got := e.code(); got != "DRIFT-1014" {
+		t.Errorf("code() = %q, want DRIFT-1014", got)
+	}
+	got := e.Error()
+	if !strings.Contains(got, "try again in 60 seconds") {
+		t.Errorf("a throttle must say when to try again:\n%s", got)
+	}
+	for _, advice := range []string{"resize", "Driftfile", "capacity"} {
+		if strings.Contains(got, advice) {
+			t.Errorf("a throttle must not advise %q:\n%s", advice, got)
+		}
+	}
+}
+
+// A body from a platform that predates the fields (no what, no unit, no fixed) renders exactly
+// as it always did, and a refusal that names no ceiling prints no numbers line and keeps the
+// code its status has.
+func TestAPIError_ABodyFromAPlatformBeforeTheFieldsRendersAsItAlwaysDid(t *testing.T) {
+	withStatusFeed(t, 200, feedOK)
+	inNoProject(t)
+
+	const resize = " Run 'drift slice resize' to add capacity."
+
+	for _, status := range []int{http.StatusPaymentRequired, http.StatusTooManyRequests} {
+		t.Run(fmt.Sprintf("a ceiling at %d", status), func(t *testing.T) {
+			want := ceilingFailure(
+				"Couldn't deploy: limit reached for atomic.deploy_function (current: 6, max: 6)."+resize,
+				"DRIFT-1004", "atomic.deploy_function: 6 of 6 used.")
+
+			if got := refusedAtCeiling(t, "deploy", status, bodyBeforeTheFields).Error(); got != want {
+				t.Errorf("the failure reads\n%s\nwant\n%s", got, want)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{"a quota that names no ceiling", http.StatusTooManyRequests, `{"error":"limit reached"}`,
+			ceilingFailure("Couldn't deploy: limit reached."+resize, "DRIFT-1004", "")},
+		{"a quota with nothing to say", http.StatusPaymentRequired, `{}`,
+			ceilingFailure("Couldn't deploy: you're at your plan limit."+resize, "DRIFT-1004", "")},
+		{"a conflict", http.StatusConflict, `{"error":"already exists"}`,
+			ceilingFailure("Couldn't deploy: already exists.", "DRIFT-1013", "")},
+		{"a body too large that is no ceiling", http.StatusRequestEntityTooLarge, `{"error":"request body too large"}`,
+			ceilingFailure("Couldn't deploy: request body too large.", "DRIFT-1016", "")},
+		{"digits in the sentence are no ceiling", http.StatusTooManyRequests,
+			`{"error":"limit reached (current: 6, max: 6)"}`,
+			ceilingFailure("Couldn't deploy: limit reached (current: 6, max: 6)."+resize, "DRIFT-1004", "")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := refusedAtCeiling(t, "deploy", tc.status, tc.body).Error(); got != tc.want {
+				t.Errorf("the failure reads\n%s\nwant\n%s", got, tc.want)
+			}
+		})
+	}
+}
+
+// A quota is raised where the slice's shape is written. For a slice a Driftfile declares that is
+// the file, because `drift apply` makes the slice the file's shape and undoes a limit raised on
+// the resize form; for any other slice it is the form. The Driftfile counts only when it is
+// what names the slice: DRIFT_SLICE names a slice the file may not declare.
+func TestAPIError_AQuotaNamesTheDriftfileWhenOneResolvesAndTheResizeFormWhenNoneDoes(t *testing.T) {
+	withStatusFeed(t, 200, feedOK)
+
+	const (
+		inTheFile = "Raise it in the Driftfile, then run 'drift apply'."
+		onTheForm = "Run 'drift slice resize' to add capacity."
+	)
+	project := func(string) (string, string, bool, error) { return "orders", "/p/Driftfile", true, nil }
+	none := func(string) (string, string, bool, error) { return "", "", false, nil }
+	unnamed := func(string) (string, string, bool, error) {
+		return "", "/p/Driftfile", true, errors.New("it declares 2 slice blocks")
+	}
+
+	for _, tc := range []struct {
+		name   string
+		env    string
+		find   func(string) (string, string, bool, error)
+		status int
+		body   string
+		says   string
+	}{
+		{"a Driftfile resolves: a count", "", project, http.StatusTooManyRequests, bodySlots, inTheFile},
+		{"a Driftfile resolves: a size the slice allows", "", project, http.StatusRequestEntityTooLarge, bodySiteSize, inTheFile},
+		{"a Driftfile resolves: a refusal that names no ceiling", "", project, http.StatusPaymentRequired, `{"error":"limit reached"}`, inTheFile},
+		{"a Driftfile resolves: the platform fixes the ceiling", "", project, http.StatusRequestEntityTooLarge, bodyFunctionSize, ""},
+		{"no Driftfile resolves: a count", "", none, http.StatusTooManyRequests, bodySlots, onTheForm},
+		{"no Driftfile resolves: a size the slice allows", "", none, http.StatusRequestEntityTooLarge, bodySiteSize, onTheForm},
+		{"no Driftfile resolves: a refusal that names no ceiling", "", none, http.StatusTooManyRequests, `{"error":"limit reached"}`, onTheForm},
+		{"a Driftfile resolves and DRIFT_SLICE names a slice", "other", project, http.StatusTooManyRequests, bodySlots, onTheForm},
+		{"a Driftfile that names no one slice", "", unnamed, http.StatusTooManyRequests, bodySlots, onTheForm},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(SliceEnv, tc.env)
+			withDriftfileSlice(t, tc.find)
+
+			got := refusedAtCeiling(t, "deploy", tc.status, tc.body).Error()
+			first := strings.SplitN(got, "\n", 2)[0]
+
+			if tc.says != "" && !strings.HasSuffix(first, " "+tc.says) {
+				t.Errorf("the refusal should end with %q:\n%s", tc.says, got)
+			}
+			for _, sentence := range []string{inTheFile, onTheForm} {
+				if sentence != tc.says && strings.Contains(got, sentence) {
+					t.Errorf("the refusal should not say %q:\n%s", sentence, got)
+				}
+			}
+		})
+	}
+}
+
+// The code for a ceiling the platform fixes is registered like every other, and it names no
+// command: nothing a person can run raises the limit, and the remedy says to send less.
+func TestErrorCodes_TheFixedCeilingCodeNamesNoCommandAndDoesNotAdviseResizing(t *testing.T) {
+	c, ok := LookupErrorCode(fixedCeilingCode(t))
+	if !ok {
+		t.Fatal("the code for a ceiling the platform fixes does not resolve")
+	}
+	if c.Command != "" {
+		t.Errorf("nothing a person can run raises a fixed ceiling, so it names no command, got %q", c.Command)
+	}
+	if strings.TrimSpace(c.Meaning) == "" || strings.TrimSpace(c.Remedy) == "" {
+		t.Errorf("a code needs a meaning and a remedy: %+v", c)
+	}
+	if strings.Contains(strings.ToLower(c.Remedy), "resize") {
+		t.Errorf("the remedy for a ceiling no resize raises must not mention resizing:\n%s", c.Remedy)
+	}
+	quota, _ := LookupErrorCode("DRIFT-1004")
+	if c.Key == quota.Key || c.Remedy == quota.Remedy {
+		t.Error("the fixed ceiling and the quota carry the same key or remedy, so the split added a number and no information")
+	}
+}
+
+// The quota's remedy names the route a slice with a Driftfile takes, as its command, and keeps
+// the resize form in its prose for the slice that has none.
+func TestErrorCodes_TheQuotaRemedyNamesTheDriftfileRouteAndKeepsTheResizeRoute(t *testing.T) {
+	c, ok := LookupErrorCode("DRIFT-1004")
+	if !ok {
+		t.Fatal("DRIFT-1004 is not in the registry")
+	}
+	if c.Command != "drift apply" {
+		t.Errorf("Command = %q, want %q", c.Command, "drift apply")
+	}
+	for _, want := range []string{"Driftfile", "drift slice resize"} {
+		if !strings.Contains(c.Remedy, want) {
+			t.Errorf("the remedy does not mention %q:\n%s", want, c.Remedy)
+		}
 	}
 }

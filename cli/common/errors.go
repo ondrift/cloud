@@ -76,18 +76,29 @@ type APIError struct {
 	// mapping — we'd rather show the raw body than nothing.
 	Raw string
 
-	// Action, Limit and Current are a refusal's numbers, taken from the response
-	// FIELDS rather than parsed out of Detail.
+	// Action, What, Limit, Current, Unit and Fixed are a refusal's ceiling, taken from
+	// the response FIELDS rather than parsed out of Detail.
 	//
 	// The server is the only thing that knows a quota, so it is the only thing
 	// allowed to state one: a ceiling the CLI re-derived is a ceiling the CLI can
 	// be wrong about, and being confidently wrong about someone's limit is worse
 	// than saying nothing. HasLimit distinguishes "the server published no
 	// ceiling" from "the ceiling is zero".
-	Action   string
-	Limit    int
-	Current  int
-	HasLimit bool
+	//
+	// What is the thing limited in a person's words ("function slots") and Action the
+	// token for what was asked ("atomic.deploy_function"). Unit is "bytes" when Limit
+	// and Current are sizes, and empty when they are counts. HasCurrent says the server
+	// published what the slice holds against the ceiling: a cap on one item holds
+	// nothing, so it publishes no current, and an absent current is not a zero. Fixed
+	// says no change to the slice's shape raises the ceiling.
+	Action     string
+	What       string
+	Limit      int
+	Current    int
+	Unit       string
+	HasLimit   bool
+	HasCurrent bool
+	Fixed      bool
 
 	// RetryAfter is how long the server asked the caller to wait, from the
 	// response's Retry-After header, or zero when it sent none.
@@ -164,21 +175,18 @@ const MaintenanceMessage = "Drift is temporarily unavailable — most likely bri
 
 // Error renders the failure and, where the failure has a name, appends it.
 //
-// The code is chosen from the STATUS rather than the message, because the status
-// is what the platform actually said — a message is rewritten as wording
-// improves, and a code that moved with the wording would not be stable enough to
-// paste. A status with no registered code renders exactly as before.
+// The code is chosen from the STATUS and from the ceiling the platform published,
+// never from the message, because the status and the fields are what the platform
+// actually said: a message is rewritten as wording improves, and a code that moved
+// with the wording would not be stable enough to paste. A status with no registered
+// code renders exactly as before.
 func (e *APIError) Error() string {
 	out := withCode(e.message(), e.code())
 	// The numbers, on their own line, from the server's fields. A refusal that
 	// does not say what the ceiling is leaves the user to guess how much to free
 	// up, which is a second command away at best.
 	if e.HasLimit {
-		what := e.Action
-		if what == "" {
-			what = "this resource"
-		}
-		out += fmt.Sprintf("\n  %s: %d of %d used.", what, e.Current, e.Limit)
+		out += "\n  " + e.numbersLine()
 	}
 	// Only a 5xx. A 4xx is the platform telling the user something true about
 	// their request, and checking component health there would offer an excuse
@@ -196,7 +204,8 @@ func (e *APIError) FailureCode() string { return e.code() }
 
 // code names this failure. Every status from 400 to 599 has one, except a 401 that
 // refuses a credential other than a login's, whose message is the platform's own
-// reason and whose person is the one to act on it.
+// reason and whose person is the one to act on it. A throttle is named before a
+// quota, so a 429 with a Retry-After is a throttle whatever else its body carries.
 func (e *APIError) code() string {
 	switch {
 	case e.Status == http.StatusUnauthorized:
@@ -219,7 +228,15 @@ func (e *APIError) code() string {
 		return "DRIFT-1003"
 	case e.throttled():
 		return "DRIFT-1014"
-	case e.Status == http.StatusPaymentRequired || e.Status == http.StatusTooManyRequests:
+
+	// A refusal at a ceiling is named by the ceiling and not by the status the
+	// platform chose for it: a bucket that is full answers 413 and the member cap
+	// 409, and neither is an invalid request or a conflict. A ceiling the platform
+	// fixes has a code of its own, because the quota's remedy is to raise the limit
+	// and nothing raises this one.
+	case e.fixedCeiling():
+		return "DRIFT-1021"
+	case e.atCeiling() || e.Status == http.StatusPaymentRequired || e.Status == http.StatusTooManyRequests:
 		return "DRIFT-1004"
 
 	// A CONFLICT carries a code of its own. It used to fall through to "" — so a
@@ -296,12 +313,6 @@ func (e *APIError) message() string {
 		}
 		return lead + ": that resource wasn't found."
 
-	case e.Status == http.StatusConflict:
-		if e.Detail != "" {
-			return lead + ": " + e.Detail + "."
-		}
-		return lead + ": that conflicts with existing state."
-
 	// A throttle says when, and nothing about capacity: resizing changes what a
 	// slice costs and does not lift a rate limit.
 	case e.throttled():
@@ -311,11 +322,18 @@ func (e *APIError) message() string {
 		}
 		return lead + ": " + reason + ". This clears by itself; try again in " + humanWait(e.RetryAfter) + "."
 
-	case e.Status == http.StatusPaymentRequired || e.Status == http.StatusTooManyRequests:
+	// A refusal at a ceiling says what stopped it in the platform's own sentence,
+	// whatever status the platform chose for it, and then where to raise the limit,
+	// unless nothing raises it. A 402 and a 429 are this refusal even when the body
+	// publishes no ceiling.
+	case e.atCeiling() || e.Status == http.StatusPaymentRequired || e.Status == http.StatusTooManyRequests:
+		return lead + ": " + e.ceilingReason() + "." + e.raiseAdvice()
+
+	case e.Status == http.StatusConflict:
 		if e.Detail != "" {
-			return lead + ": " + e.Detail + ". Run 'drift slice resize' to add capacity."
+			return lead + ": " + e.Detail + "."
 		}
-		return lead + ": you're at your plan limit. Run 'drift slice resize' to add capacity."
+		return lead + ": that conflicts with existing state."
 
 	case e.Status >= 400 && e.Status < 500:
 		// Generic 4xx — trust the server's detail if it sent one.
@@ -386,7 +404,9 @@ func NewAPIError(op string, status int, header http.Header, body []byte) *APIErr
 		Detail: detailForStatus(status, body),
 		Raw:    strings.TrimSpace(string(body)),
 	}
-	e.Action, e.Limit, e.Current, e.HasLimit = quotaFromBody(body)
+	q := quotaFromBody(body)
+	e.Action, e.What, e.Limit, e.Current, e.Unit = q.Action, q.What, q.Limit, q.Current, q.Unit
+	e.HasLimit, e.HasCurrent, e.Fixed = q.HasLimit, q.HasCurrent, q.Fixed
 	e.RetryAfter = retryAfter(header.Get("Retry-After"), time.Now())
 	e.PlatformAPIVersion = platformAPIVersion(header)
 	return e
@@ -412,6 +432,96 @@ func (e *APIError) pathMayHaveMoved() bool {
 // a 429 that says when to retry.
 func (e *APIError) throttled() bool {
 	return e.Status == http.StatusTooManyRequests && e.RetryAfter > 0
+}
+
+// atCeiling reports whether this refusal is the platform stopping a request at a
+// ceiling it published, whatever status it chose for it: a count answers 429 except
+// the member cap, which answers 409, and a size answers 413. A 5xx is the platform
+// failing and not a refusal, so it is none.
+//
+// It is asked after a 401, a 403, a 404 and a throttle have been named, in code() and
+// in message() alike: each of those keeps its own code and sentence whatever numbers
+// its body carries, and a throttle is a rate and not a capacity.
+func (e *APIError) atCeiling() bool {
+	return e.HasLimit && e.Status >= 400 && e.Status < 500
+}
+
+// fixedCeiling reports whether this refusal is at a ceiling that no change to the
+// slice's shape raises.
+func (e *APIError) fixedCeiling() bool {
+	return e.atCeiling() && e.Fixed
+}
+
+// ceilingReason is the platform's own sentence for a refusal at a ceiling, and
+// the CLI's where the platform sent none.
+func (e *APIError) ceilingReason() string {
+	switch {
+	case e.Detail != "":
+		return e.Detail
+	case e.fixedCeiling():
+		return "that is over a limit Drift sets for every slice"
+	}
+	return "you're at your plan limit"
+}
+
+// The two sentences that end a quota refusal, each saying where the limit is raised.
+// A slice a Driftfile declares is raised in the file, because `drift apply` makes the
+// slice the shape the file says and undoes a limit raised on the resize form. Any other
+// slice is raised on that form.
+const (
+	QuotaDriftfileMessage = "Raise it in the Driftfile, then run 'drift apply'."
+	QuotaResizeMessage    = "Run 'drift slice resize' to add capacity."
+)
+
+// raiseAdvice ends a refusal at a ceiling with where to raise the limit, led by the
+// space that joins it to the sentence before. It is empty for a ceiling the platform
+// fixes, because nothing the person can run raises it.
+//
+// The Driftfile is named when the slice this command acts on is the one a Driftfile
+// declares, found as every command finds its slice. The check is the working
+// directory's and not the request's, so a command that names another slice by
+// argument is advised as if it acted on the project's. DRIFT_SLICE names a slice the
+// file need not declare, and gets the resize form.
+func (e *APIError) raiseAdvice() string {
+	switch {
+	case e.fixedCeiling():
+		return ""
+	case actsOnDriftfileSlice():
+		return " " + QuotaDriftfileMessage
+	}
+	return " " + QuotaResizeMessage
+}
+
+// unitBytes is the unit the platform names for a ceiling that is a size. A ceiling
+// that is a count has no unit.
+const unitBytes = "bytes"
+
+// numbersLine says where the person stands against the ceiling, in the words the
+// platform's fields give. What names the limit, and Action stands in for a platform
+// that sends no What. A ceiling that is a stock the slice holds reads "function
+// slots: 6 of 6 used."; a cap on one item holds nothing, and reads "secret size:
+// limit is 1 KiB.", because a current that is absent is not a zero.
+func (e *APIError) numbersLine() string {
+	what := e.What
+	if what == "" {
+		what = e.Action
+	}
+	if what == "" {
+		what = "this resource"
+	}
+	if !e.HasCurrent {
+		return fmt.Sprintf("%s: limit is %s.", what, e.figure(e.Limit))
+	}
+	return fmt.Sprintf("%s: %s of %s used.", what, e.figure(e.Current), e.figure(e.Limit))
+}
+
+// figure writes one of the ceiling's numbers: a size as KiB, MiB or GiB, and any
+// other as the plain count.
+func (e *APIError) figure(n int) string {
+	if e.Unit == unitBytes {
+		return FormatBytes(int64(n))
+	}
+	return strconv.Itoa(n)
 }
 
 // retryAfter reads a Retry-After header in either form RFC 9110 allows, a
@@ -454,31 +564,51 @@ func humanWait(d time.Duration) string {
 	}
 }
 
-// quotaFromBody reads a refusal's numbers out of the response FIELDS.
+// quota is what a refusal says about its ceiling, as the response's fields carry it.
+// The fields of APIError that hold a ceiling are these, one for one.
+type quota struct {
+	Action     string
+	What       string
+	Limit      int
+	Current    int
+	Unit       string
+	HasLimit   bool
+	HasCurrent bool
+	Fixed      bool
+}
+
+// quotaFromBody reads a refusal's ceiling out of the response FIELDS.
 //
 // Never out of Detail: the sentence carries the same figures, and parsing them
 // back out would make the CLI's rendering depend on the server's wording — the
 // exact coupling that publishing fields removes.
 //
-// A body with no ceiling yields hasLimit=false, and callers then say nothing
-// about limits. That is the honest reading of an older platform, or of an action
-// with no quota at all.
-func quotaFromBody(body []byte) (action string, limit, current int, hasLimit bool) {
+// A body with no limit yields HasLimit=false, and callers then say nothing about
+// limits. That is the honest reading of an older platform, or of an action with
+// no quota at all. A ceiling that was not published has no current, unit or fixed
+// either, so those are dropped with it: a `fixed` beside no limit is not a fixed
+// ceiling. An absent current is not a zero, and HasCurrent keeps the two apart.
+func quotaFromBody(body []byte) quota {
 	var parsed struct {
 		Action  string `json:"action"`
+		What    string `json:"what"`
 		Limit   *int   `json:"limit"`
 		Current *int   `json:"current"`
+		Unit    string `json:"unit"`
+		Fixed   bool   `json:"fixed"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", 0, 0, false
+		return quota{}
 	}
+	q := quota{Action: parsed.Action, What: parsed.What}
 	if parsed.Limit == nil {
-		return parsed.Action, 0, 0, false
+		return q
 	}
+	q.Limit, q.HasLimit, q.Unit, q.Fixed = *parsed.Limit, true, parsed.Unit, parsed.Fixed
 	if parsed.Current != nil {
-		current = *parsed.Current
+		q.Current, q.HasCurrent = *parsed.Current, true
 	}
-	return parsed.Action, *parsed.Limit, current, true
+	return q
 }
 
 // extractDetail pulls a human-readable message out of a JSON error body.
