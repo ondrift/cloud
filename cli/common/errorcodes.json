@@ -140,6 +140,13 @@
       "meaning": "The connection to the platform failed in a way the CLI does not recognise.",
       "remedy": "The text before this code's line is the error exactly as the connection reported it. A certificate that could not be verified usually means a proxy or a security product on this network is re-signing the traffic, and the fix is to trust its certificate on this machine or to use another network. A response that ended early means the connection dropped in the middle of the answer, and running the command again usually succeeds. Unlike DRIFT-1006, where nothing answered, and DRIFT-1007, where the answer took too long, something answered here and the exchange broke. If it repeats, send the whole message, this code included, to support. No single command fixes it.",
       "command": ""
+    },
+    {
+      "code": "DRIFT-1021",
+      "key": "platform-limit",
+      "meaning": "The platform's own limit stopped this, and no change to your slice raises it.",
+      "remedy": "The message names the limit that was hit and the last line gives its figure. Drift sets this limit itself and it is the same for everyone, so it is not a quota on your plan and nothing about your slice raises it. Bring what you hold or send under it instead: a smaller file, value or statement, fewer items in one request, or one fewer member, whichever the message names. Then run the command again. No command lifts the limit, so none is named here.",
+      "command": ""
     }
   ]
 }

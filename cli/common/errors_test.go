@@ -1060,7 +1060,6 @@ func TestAPIError_AQuotaNamesTheDriftfileWhenOneResolvesAndTheResizeFormWhenNone
 // The code for a ceiling the platform fixes is registered like every other, and it names no
 // command: nothing a person can run raises the limit, and the remedy says to send less.
 func TestErrorCodes_TheFixedCeilingCodeNamesNoCommandAndDoesNotAdviseResizing(t *testing.T) {
-	t.Skip("fails until the registry holds the code for a ceiling the platform fixes (task #2734)")
 	c, ok := LookupErrorCode(fixedCeilingCode(t))
 	if !ok {
 		t.Fatal("the code for a ceiling the platform fixes does not resolve")
