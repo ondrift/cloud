@@ -76,18 +76,29 @@ type APIError struct {
 	// mapping — we'd rather show the raw body than nothing.
 	Raw string
 
-	// Action, Limit and Current are a refusal's numbers, taken from the response
-	// FIELDS rather than parsed out of Detail.
+	// Action, What, Limit, Current, Unit and Fixed are a refusal's ceiling, taken from
+	// the response FIELDS rather than parsed out of Detail.
 	//
 	// The server is the only thing that knows a quota, so it is the only thing
 	// allowed to state one: a ceiling the CLI re-derived is a ceiling the CLI can
 	// be wrong about, and being confidently wrong about someone's limit is worse
 	// than saying nothing. HasLimit distinguishes "the server published no
 	// ceiling" from "the ceiling is zero".
-	Action   string
-	Limit    int
-	Current  int
-	HasLimit bool
+	//
+	// What is the thing limited in a person's words ("function slots") and Action the
+	// token for what was asked ("atomic.deploy_function"). Unit is "bytes" when Limit
+	// and Current are sizes, and empty when they are counts. HasCurrent says the server
+	// published what the slice holds against the ceiling: a cap on one item holds
+	// nothing, so it publishes no current, and an absent current is not a zero. Fixed
+	// says no change to the slice's shape raises the ceiling.
+	Action     string
+	What       string
+	Limit      int
+	Current    int
+	Unit       string
+	HasLimit   bool
+	HasCurrent bool
+	Fixed      bool
 
 	// RetryAfter is how long the server asked the caller to wait, from the
 	// response's Retry-After header, or zero when it sent none.
@@ -386,7 +397,9 @@ func NewAPIError(op string, status int, header http.Header, body []byte) *APIErr
 		Detail: detailForStatus(status, body),
 		Raw:    strings.TrimSpace(string(body)),
 	}
-	e.Action, e.Limit, e.Current, e.HasLimit = quotaFromBody(body)
+	q := quotaFromBody(body)
+	e.Action, e.What, e.Limit, e.Current, e.Unit = q.Action, q.What, q.Limit, q.Current, q.Unit
+	e.HasLimit, e.HasCurrent, e.Fixed = q.HasLimit, q.HasCurrent, q.Fixed
 	e.RetryAfter = retryAfter(header.Get("Retry-After"), time.Now())
 	e.PlatformAPIVersion = platformAPIVersion(header)
 	return e
@@ -454,31 +467,51 @@ func humanWait(d time.Duration) string {
 	}
 }
 
-// quotaFromBody reads a refusal's numbers out of the response FIELDS.
+// quota is what a refusal says about its ceiling, as the response's fields carry it.
+// The fields of APIError that hold a ceiling are these, one for one.
+type quota struct {
+	Action     string
+	What       string
+	Limit      int
+	Current    int
+	Unit       string
+	HasLimit   bool
+	HasCurrent bool
+	Fixed      bool
+}
+
+// quotaFromBody reads a refusal's ceiling out of the response FIELDS.
 //
 // Never out of Detail: the sentence carries the same figures, and parsing them
 // back out would make the CLI's rendering depend on the server's wording — the
 // exact coupling that publishing fields removes.
 //
-// A body with no ceiling yields hasLimit=false, and callers then say nothing
-// about limits. That is the honest reading of an older platform, or of an action
-// with no quota at all.
-func quotaFromBody(body []byte) (action string, limit, current int, hasLimit bool) {
+// A body with no limit yields HasLimit=false, and callers then say nothing about
+// limits. That is the honest reading of an older platform, or of an action with
+// no quota at all. A ceiling that was not published has no current, unit or fixed
+// either, so those are dropped with it: a `fixed` beside no limit is not a fixed
+// ceiling. An absent current is not a zero, and HasCurrent keeps the two apart.
+func quotaFromBody(body []byte) quota {
 	var parsed struct {
 		Action  string `json:"action"`
+		What    string `json:"what"`
 		Limit   *int   `json:"limit"`
 		Current *int   `json:"current"`
+		Unit    string `json:"unit"`
+		Fixed   bool   `json:"fixed"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", 0, 0, false
+		return quota{}
 	}
+	q := quota{Action: parsed.Action, What: parsed.What}
 	if parsed.Limit == nil {
-		return parsed.Action, 0, 0, false
+		return q
 	}
+	q.Limit, q.HasLimit, q.Unit, q.Fixed = *parsed.Limit, true, parsed.Unit, parsed.Fixed
 	if parsed.Current != nil {
-		current = *parsed.Current
+		q.Current, q.HasCurrent = *parsed.Current, true
 	}
-	return parsed.Action, *parsed.Limit, current, true
+	return q
 }
 
 // extractDetail pulls a human-readable message out of a JSON error body.

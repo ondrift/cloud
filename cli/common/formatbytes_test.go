@@ -12,7 +12,6 @@ import (
 // decimal and any other size prints with one, so "1.0 KiB" says a little over one KiB where
 // "1 KiB" says exactly one.
 func TestFormatBytes_SaysASizeInBytesKiBMiBOrGiB(t *testing.T) {
-	t.Skip("fails until FormatBytes says a size in KiB, MiB and GiB (task #2733)")
 	for _, c := range []struct {
 		n    int64
 		want string
@@ -59,7 +58,6 @@ func TestFormatBytes_SaysASizeInBytesKiBMiBOrGiB(t *testing.T) {
 // second is the one a person expects. The window below each edge is wider than the rounding
 // reaches, and every size in it is held to the rule.
 func TestFormatBytes_ASizeJustUnderAnEdgeIsSaidInTheNextUnit(t *testing.T) {
-	t.Skip("fails until FormatBytes says a size in KiB, MiB and GiB (task #2733)")
 	for _, edge := range []int64{1 << 10, 1 << 20, 1 << 30} {
 		for n := max(0, edge-100_000); n < edge; n++ {
 			got := FormatBytes(n)
@@ -77,7 +75,6 @@ func TestFormatBytes_ASizeJustUnderAnEdgeIsSaidInTheNextUnit(t *testing.T) {
 
 // Whole in its unit is no decimal, and anything else is one decimal, in every unit.
 func TestFormatBytes_AWholeNumberOfAUnitHasNoDecimalAndNothingElseDoesNot(t *testing.T) {
-	t.Skip("fails until FormatBytes says a size in KiB, MiB and GiB (task #2733)")
 	for _, unit := range []struct {
 		size int64
 		name string
