@@ -464,14 +464,32 @@ func (e *APIError) ceilingReason() string {
 	return "you're at your plan limit"
 }
 
+// The two sentences that end a quota refusal, each saying where the limit is raised.
+// A slice a Driftfile declares is raised in the file, because `drift apply` makes the
+// slice the shape the file says and undoes a limit raised on the resize form. Any other
+// slice is raised on that form.
+const (
+	QuotaDriftfileMessage = "Raise it in the Driftfile, then run 'drift apply'."
+	QuotaResizeMessage    = "Run 'drift slice resize' to add capacity."
+)
+
 // raiseAdvice ends a refusal at a ceiling with where to raise the limit, led by the
 // space that joins it to the sentence before. It is empty for a ceiling the platform
 // fixes, because nothing the person can run raises it.
+//
+// The Driftfile is named when the slice this command acts on is the one a Driftfile
+// declares, found as every command finds its slice. The check is the working
+// directory's and not the request's, so a command that names another slice by
+// argument is advised as if it acted on the project's. DRIFT_SLICE names a slice the
+// file need not declare, and gets the resize form.
 func (e *APIError) raiseAdvice() string {
-	if e.fixedCeiling() {
+	switch {
+	case e.fixedCeiling():
 		return ""
+	case actsOnDriftfileSlice():
+		return " " + QuotaDriftfileMessage
 	}
-	return " Run 'drift slice resize' to add capacity."
+	return " " + QuotaResizeMessage
 }
 
 // unitBytes is the unit the platform names for a ceiling that is a size. A ceiling

@@ -1003,7 +1003,6 @@ func TestAPIError_ABodyFromAPlatformBeforeTheFieldsRendersAsItAlwaysDid(t *testi
 // the resize form; for any other slice it is the form. The Driftfile counts only when it is
 // what names the slice: DRIFT_SLICE names a slice the file may not declare.
 func TestAPIError_AQuotaNamesTheDriftfileWhenOneResolvesAndTheResizeFormWhenNoneDoes(t *testing.T) {
-	t.Skip("fails until message() chooses the sentence by the Driftfile (task #2736)")
 	withStatusFeed(t, 200, feedOK)
 
 	const (
@@ -1078,7 +1077,6 @@ func TestErrorCodes_TheFixedCeilingCodeNamesNoCommandAndDoesNotAdviseResizing(t 
 // The quota's remedy names the route a slice with a Driftfile takes, as its command, and keeps
 // the resize form in its prose for the slice that has none.
 func TestErrorCodes_TheQuotaRemedyNamesTheDriftfileRouteAndKeepsTheResizeRoute(t *testing.T) {
-	t.Skip("fails until the quota's command is drift apply (task #2736)")
 	c, ok := LookupErrorCode("DRIFT-1004")
 	if !ok {
 		t.Fatal("DRIFT-1004 is not in the registry")

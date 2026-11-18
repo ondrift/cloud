@@ -60,6 +60,11 @@ var typeableHints = map[string][]string{
 	// the delete. The list row and the plan's stop print it unquoted and are built
 	// from the same pieces.
 	"the never-provisioned free-slot clause": {slice.NeverProvisioned("demo", slice.SlotRefusal)},
+	// The two sentences that end a quota refusal (DRIFT-1004). A slice a Driftfile
+	// declares is raised in the file, because `drift apply` makes the slice the shape
+	// the file says; any other slice is raised on the resize form.
+	"the quota advice for a slice a Driftfile declares (DRIFT-1004)": {common.QuotaDriftfileMessage},
+	"the quota advice for any other slice (DRIFT-1004)":              {common.QuotaResizeMessage},
 }
 
 // yamlRefusal is the message every reader gives a YAML Driftfile.

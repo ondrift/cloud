@@ -26,8 +26,8 @@
       "code": "DRIFT-1004",
       "key": "quota",
       "meaning": "You have hit a quota on your plan.",
-      "remedy": "The message names which one. Free a slot by deleting something you no longer need, or raise the limit on the form `drift slice resize` draws.",
-      "command": "drift slice resize"
+      "remedy": "The message names which one. Free a slot by deleting something you no longer need, or raise the limit. For a slice a Driftfile declares, raise it in the Driftfile and run `drift apply`: an apply makes the slice the shape the file says, so a limit raised on the resize form is undone by the next one. For any other slice, raise it on the form `drift slice resize` draws.",
+      "command": "drift apply"
     },
     {
       "code": "DRIFT-1005",
