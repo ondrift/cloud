@@ -1,3 +1,4 @@
+const ProbeProtocol = 1
 func (*EgressDeniedError) Error() string
 func (*EgressDeniedError) Unwrap() error
 func (*JWTError) Error() string

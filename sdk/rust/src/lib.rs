@@ -94,6 +94,10 @@ pub fn take_response_headers() -> Option<Value> {
 /// loop for the function only when it finds it.
 pub const LOOP_PROTOCOL: u32 = 1;
 
+/// The version of the start check this SDK answers, by number; 0 when it
+/// answers none.
+pub const PROBE_PROTOCOL: u32 = 0;
+
 /// Serve the handler.
 ///
 /// Under DRIFT_RUNTIME (a deployed function, or a trigger's spawn) this is the

@@ -44,6 +44,13 @@ func fromQuery(q string) ProbeBody {
 }
 
 func probe(ctx context.Context, body ProbeBody, req drift.Request) (int, string, any, map[string]string) {
+	// A start check never reaches a handler: the SDK answers it before it reads a
+	// request. A call under one is a defect, and it ends the process where the
+	// test that started it can see it.
+	if os.Getenv("DRIFT_INVOKE") == "probe1" {
+		fmt.Fprintln(os.Stderr, "HANDLER_CALLED")
+		os.Exit(97)
+	}
 	switch body.Op {
 	case "print":
 		fmt.Println("printed by the handler")

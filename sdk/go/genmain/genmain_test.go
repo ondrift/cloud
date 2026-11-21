@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -683,5 +684,103 @@ func TestLocalHandler(t *testing.T) {
 	}
 	if got.Payload.Path != "/items" || got.Payload.Query != "x=1" || string(got.Payload.Body) != `{"a":1}` || got.Payload.Budget != 9 {
 		t.Fatalf("handler saw %+v", got.Payload)
+	}
+}
+
+// The start check. Before a deploy replaces the function that serves, the slice
+// starts the new version once with DRIFT_INVOKE=probe1 and stdin closed. It
+// wants one line on the protocol stream and exit status 0, and the handler never
+// called: testdata/probe/probe.go ends the process with status 97 and a marker
+// on stderr if it is. The platform owns the contract (protocol.rs, "The start
+// check"); these literals are this SDK's own copy of it.
+const (
+	startCheckHello = `{"hello":{"proto":"drift-probe","v":1}}` + "\n"
+	handlerCalled   = "HANDLER_CALLED"
+)
+
+// startedAs starts a built template as the slice does, under env and with stdin
+// as given: nil is the null device, which is what the slice gives a check. It
+// returns what the process wrote and its exit status, and fails the test when
+// the process is still running after the ten seconds the slice allows a check.
+func startedAs(t *testing.T, name string, env []string, stdin io.Reader) (stdout, stderr string, exit int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(buildProbes(t), name))
+	cmd.Env = append([]string{"PATH=/usr/bin:/bin", "TMPDIR=" + t.TempDir(), "DRIFT_RUNTIME=1"}, env...)
+	cmd.Stdin = stdin
+	var out, errs bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errs
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		t.Fatalf("%s was still running after 10 s; stdout %q, stderr %q", name, out.String(), errs.String())
+	}
+	var ended *exec.ExitError
+	switch {
+	case err == nil:
+	case errors.As(err, &ended):
+		exit = ended.ExitCode()
+	default:
+		t.Fatalf("%s: %v", name, err)
+	}
+	return out.String(), errs.String(), exit
+}
+
+// Every program the CLI generates for a buffered Function answers a start check:
+// the hello, once, on the protocol stream, then status 0, with the handler left
+// alone.
+func TestServeAnswersTheStartCheck(t *testing.T) {
+	for _, name := range []string{"next-post", "next-post-ctx", "next-get", "next-get-ctx"} {
+		t.Run(name, func(t *testing.T) {
+			stdout, stderr, exit := startedAs(t, name, []string{"DRIFT_INVOKE=probe1"}, nil)
+			if stdout != startCheckHello {
+				t.Errorf("stdout = %q, want exactly %q", stdout, startCheckHello)
+			}
+			if exit != 0 {
+				t.Errorf("exit status %d, want 0; stderr: %q", exit, stderr)
+			}
+			if strings.Contains(stderr, handlerCalled) {
+				t.Errorf("the handler was called: %q", stderr)
+			}
+		})
+	}
+}
+
+// Without the start check the same programs serve as they did: DRIFT_INVOKE
+// unset and another version of the check each read the envelope and answer it
+// from the handler, and DRIFT_INVOKE=mux1 says the multiplexed hello, which is
+// not the check's.
+func TestServeIsUnchangedWithoutTheStartCheck(t *testing.T) {
+	envelope := `{"path":"/p","body":{"op":"echo","text":"x"}}` + "\n"
+	for name, env := range map[string][]string{"unset": nil, "another version": {"DRIFT_INVOKE=probe2"}} {
+		t.Run(name, func(t *testing.T) {
+			stdout, stderr, exit := startedAs(t, "next-post-ctx", env, strings.NewReader(envelope))
+			if exit != 0 || strings.Count(stdout, "\n") != 1 || !strings.Contains(stdout, `"status":200`) || !strings.Contains(stdout, `"path":"/p"`) {
+				t.Errorf("exit %d, stdout %q, stderr %q, want the handler's one reply line and status 0", exit, stdout, stderr)
+			}
+			if strings.Contains(stdout, "drift-probe") {
+				t.Errorf("a start check was answered: %q", stdout)
+			}
+		})
+	}
+	t.Run("mux1", func(t *testing.T) {
+		stdout, stderr, exit := startedAs(t, "next-post-ctx", []string{"DRIFT_INVOKE=mux1", "DRIFT_MUX_SLOTS=2"}, nil)
+		if exit != 0 || !strings.HasPrefix(stdout, `{"hello":{"proto":"drift-mux","v":1,"slots":2,"pid":`) || strings.Count(stdout, "\n") != 1 {
+			t.Errorf("exit %d, stdout %q, stderr %q, want the one multiplexed hello and status 0", exit, stdout, stderr)
+		}
+	})
+}
+
+// THE CONTROL. A program whose SDK does not know the check ignores
+// DRIFT_INVOKE and reads its request: the frozen native templates under
+// testdata/templates are that. Started as a check with a request waiting, its
+// handler runs, and the guard in testdata/probe/probe.go ends the process, so
+// the guard is shown able to fire and "the handler was not called" above means
+// something.
+func TestTheGuardFiresWhenACheckedProgramReachesItsHandler(t *testing.T) {
+	envelope := `{"path":"/p","body":{"op":"echo","text":"x"}}` + "\n"
+	stdout, stderr, exit := startedAs(t, "cli-v0.57.0-post", []string{"DRIFT_INVOKE=probe1"}, strings.NewReader(envelope))
+	if exit != 97 || !strings.Contains(stderr, handlerCalled) || strings.Contains(stdout, "drift-probe") {
+		t.Fatalf("exit %d, stdout %q, stderr %q, want status 97 and the marker on stderr", exit, stdout, stderr)
 	}
 }
