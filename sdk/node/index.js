@@ -63,7 +63,31 @@
 // Entry point
 // ---------------------------------------------------------------------------
 
+// The version of the start check this SDK answers, by number. Before a deploy
+// replaces the function that serves, the slice starts the new version once with
+// DRIFT_INVOKE=probe<PROBE_PROTOCOL> and stdin closed, and wants one hello line
+// on stdout and exit status 0, with the handler never called. A deploy declares
+// the check by this number, and the slice runs it only for a function that did.
+// The platform owns the contract (src/slice/src/atomic/protocol.rs in
+// cloud/platform, "The start check").
+const PROBE_PROTOCOL = 1;
+
+// _answerStartCheck answers the slice's start check when this process was
+// started as one, and says whether it did. Started to learn only that it
+// starts, the process says hello on stdout and leaves with status 0 once the
+// line is written, before a request is read and before the handler is touched,
+// so the caller must return without serving when this is true.
+function _answerStartCheck() {
+  if (process.env.DRIFT_INVOKE !== `probe${PROBE_PROTOCOL}`) return false;
+  process.stdout.write(
+    `{"hello":{"proto":"drift-probe","v":${PROBE_PROTOCOL}}}\n`,
+    () => process.exit(0)
+  );
+  return true;
+}
+
 function run(handler) {
+  if (_answerStartCheck()) return;
   if (process.env.DRIFT_RUNTIME) {
     _runDeployed(handler);
   } else {
@@ -1011,6 +1035,7 @@ async function httpRequest(method, url, headers, body, opts) {
  *   });
  */
 function runSSE(handler) {
+  if (_answerStartCheck()) return;
   if (process.env.DRIFT_RUNTIME) {
     let data = "";
     process.stdin.on("data", (chunk) => (data += chunk));
@@ -1106,6 +1131,7 @@ function _runLocalSSE(handler) {
  *   });
  */
 function runWS(handler) {
+  if (_answerStartCheck()) return;
   if (process.env.DRIFT_RUNTIME) {
     const readline = require("readline");
     const rl = readline.createInterface({ input: process.stdin });
@@ -1614,6 +1640,7 @@ function env(key) {
 
 module.exports = {
   run, runSSE, runWS,
+  PROBE_PROTOCOL,
   log, httpRequest, env,
   backbone,
   deed,

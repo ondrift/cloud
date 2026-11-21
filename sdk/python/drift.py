@@ -70,6 +70,31 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # Entry point
 # ---------------------------------------------------------------------------
 
+# The version of the start check this SDK answers, by number. Before a deploy
+# replaces the function that serves, the slice starts the new version once with
+# DRIFT_INVOKE=probe<PROBE_PROTOCOL> and stdin closed, and wants one hello line
+# on stdout and exit status 0, with the handler never called. A deploy declares
+# the check by this number, and the slice runs it only for a function that did.
+# The platform owns the contract (src/slice/src/atomic/protocol.rs in
+# cloud/platform, "The start check").
+PROBE_PROTOCOL = 1
+
+
+def _answer_start_check():
+    """Answer the slice's start check when this process was started as one.
+
+    Started to learn only that it starts, the process says hello on stdout and
+    leaves with status 0, before a request is read and before the handler is
+    touched. It leaves through os._exit, so nothing the function registered to run
+    at exit, and no thread of its own, runs or holds the check.
+    """
+    if os.environ.get("DRIFT_INVOKE") != "probe%d" % PROBE_PROTOCOL:
+        return
+    sys.stdout.write('{"hello":{"proto":"drift-probe","v":%d}}\n' % PROBE_PROTOCOL)
+    sys.stdout.flush()
+    os._exit(0)
+
+
 def run(handler):
     """Entry point for Drift Atomic functions.
 
@@ -78,6 +103,7 @@ def run(handler):
 
     In local dev mode: starts an HTTP server on PORT (default 8080).
     """
+    _answer_start_check()
     if os.environ.get("DRIFT_RUNTIME"):
         _run_deployed(handler)
     else:
@@ -1054,6 +1080,7 @@ def run_sse(handler):
 
         drift.run_sse(get_events)
     """
+    _answer_start_check()
     if os.environ.get("DRIFT_RUNTIME"):
         req = json.loads(sys.stdin.read())
         def emit(event, data):
@@ -1158,6 +1185,7 @@ def run_ws(handler):
 
         drift.run_ws(get_chat)
     """
+    _answer_start_check()
     if os.environ.get("DRIFT_RUNTIME"):
         # First stdin line is the initial request.
         first_line = sys.stdin.readline()
