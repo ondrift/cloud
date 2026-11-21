@@ -69,6 +69,29 @@ module Drift
   # loop for the function only when it finds it.
   LOOP_PROTOCOL = 1
 
+  # The version of the start check this SDK answers, by number. Before a deploy
+  # replaces the function that serves, the slice starts the new version once with
+  # DRIFT_INVOKE=probe<PROBE_PROTOCOL> and stdin closed, and wants one hello line
+  # on stdout and exit status 0, with the handler never called. A deploy declares
+  # the check by this number, and the slice runs it only for a function that did.
+  # The platform owns the contract (src/slice/src/atomic/protocol.rs in
+  # cloud/platform, "The start check").
+  PROBE_PROTOCOL = 1
+
+  # Answer the slice's start check when this process was started as one.
+  #
+  # Started to learn only that it starts, the process says hello on stdout and
+  # leaves with status 0, before a request is read and before the handler is
+  # touched. It leaves through exit!, so nothing the function registered to run
+  # at exit, and no thread of its own, runs or holds the check.
+  def self._answer_start_check
+    return unless ENV['DRIFT_INVOKE'] == "probe#{PROBE_PROTOCOL}"
+
+    $stdout.write(%({"hello":{"proto":"drift-probe","v":#{PROBE_PROTOCOL}}}\n))
+    $stdout.flush
+    exit!(0)
+  end
+
   # Serve the handler.
   #
   # Under DRIFT_RUNTIME (a deployed function, or a trigger's spawn) this is the
@@ -77,6 +100,7 @@ module Drift
   # variables set from the envelope for that call, +puts+ going to stderr, and
   # rss_bytes in every reply. Without it, a local development server.
   def self.run(handler)
+    _answer_start_check
     if ENV['DRIFT_RUNTIME']
       _run_deployed(handler)
     else
@@ -1361,6 +1385,7 @@ module Drift
   # ─── SSE ──────────────────────────────────────────────────────────────────────
 
   def self.run_sse(&handler)
+    _answer_start_check
     if ENV['DRIFT_RUNTIME']
       req = JSON.parse($stdin.read)
       emit = ->(event, data) {
@@ -1471,6 +1496,7 @@ module Drift
   end
 
   def self.run_ws(&handler)
+    _answer_start_check
     if ENV['DRIFT_RUNTIME']
       first_line = $stdin.gets
       req = first_line ? JSON.parse(first_line) : {}

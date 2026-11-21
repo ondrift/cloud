@@ -72,6 +72,32 @@ namespace Drift {
 const LOOP_PROTOCOL = 1;
 
 /**
+ * The version of the start check this SDK answers, by number. Before a deploy
+ * replaces the function that serves, the slice starts the new version once with
+ * DRIFT_INVOKE=probe<PROBE_PROTOCOL> and stdin closed, and wants one hello line
+ * on stdout and exit status 0, with the handler never called. A deploy declares
+ * the check by this number, and the slice runs it only for a function that did.
+ * The platform owns the contract (src/slice/src/atomic/protocol.rs in
+ * cloud/platform, "The start check").
+ */
+const PROBE_PROTOCOL = 1;
+
+/**
+ * Answer the slice's start check when this process was started as one.
+ *
+ * Started to learn only that it starts, the process says hello on the response
+ * stream and leaves with status 0, before a request is read and before the
+ * handler is touched.
+ */
+function _answer_start_check(): void {
+    if (getenv('DRIFT_INVOKE') !== 'probe' . PROBE_PROTOCOL) {
+        return;
+    }
+    _write_line('{"hello":{"proto":"drift-probe","v":' . PROBE_PROTOCOL . '}}');
+    exit(0);
+}
+
+/**
  * Serve the handler.
  *
  * Under DRIFT_RUNTIME (a deployed function, or a trigger's spawn) this is the
@@ -82,6 +108,7 @@ const LOOP_PROTOCOL = 1;
  * development server.
  */
 function run(callable $handler): void {
+    _answer_start_check();
     if (getenv('DRIFT_RUNTIME')) {
         _run_deployed($handler);
     } else {
@@ -922,6 +949,7 @@ function http_request(string $method, string $url, ?array $headers = null, $body
 // ─── SSE ────────────────────────────────────────────────────────────────────
 
 function run_sse(callable $handler): void {
+    _answer_start_check();
     if (getenv('DRIFT_RUNTIME')) {
         $input = file_get_contents('php://stdin');
         $req = json_decode($input, true) ?? [];
@@ -1035,6 +1063,7 @@ class WsConn {
 }
 
 function run_ws(callable $handler): void {
+    _answer_start_check();
     if (getenv('DRIFT_RUNTIME')) {
         $firstLine = fgets(STDIN);
         $req = $firstLine ? json_decode(trim($firstLine), true) : [];
