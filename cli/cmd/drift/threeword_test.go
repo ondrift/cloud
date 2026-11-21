@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -41,23 +42,29 @@ func TestRemedies_ResolveToRealCommands(t *testing.T) {
 		if c.Command == "" {
 			continue
 		}
-		words := strings.Fields(c.Command)
-		if words[0] != root.Name() {
-			t.Errorf("%s suggests %q, which does not start with %q", c.Code, c.Command, root.Name())
-			continue
-		}
-		cmd, _, err := root.Find(words[1:])
-		if err != nil {
-			t.Errorf("%s suggests %q, which does not resolve: %v", c.Code, c.Command, err)
-			continue
-		}
-		// Find returns the deepest command it matched, so a typo in the LAST
-		// word resolves to the parent and looks like a pass. Compare the name.
-		if cmd.Name() != words[len(words)-1] {
-			t.Errorf("%s suggests %q, but that resolves to %q — the last word names "+
-				"no command", c.Code, c.Command, cmd.CommandPath())
+		if problem := unresolved(root, c.Command); problem != "" {
+			t.Errorf("%s suggests %q, %s", c.Code, c.Command, problem)
 		}
 	}
+}
+
+// unresolved says why a remedy names no command in the tree, or "" when it names
+// one. Every test that holds a suggested command to the tree uses this resolver.
+func unresolved(root *cobra.Command, command string) string {
+	words := strings.Fields(command)
+	if len(words) == 0 || words[0] != root.Name() {
+		return fmt.Sprintf("which does not start with %q", root.Name())
+	}
+	cmd, _, err := root.Find(words[1:])
+	if err != nil {
+		return fmt.Sprintf("which does not resolve: %v", err)
+	}
+	// Find returns the deepest command it matched, so a typo in the LAST
+	// word resolves to the parent and looks like a pass. Compare the name.
+	if cmd.Name() != words[len(words)-1] {
+		return fmt.Sprintf("but that resolves to %q — the last word names no command", cmd.CommandPath())
+	}
+	return ""
 }
 
 // An empty command is a real answer and must stay available: a platform fault or

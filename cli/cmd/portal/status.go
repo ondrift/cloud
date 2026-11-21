@@ -7,11 +7,8 @@ package portal
 // they're "platform / external" actions rather than tab navigation.
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
+	"context"
 	"strings"
-	"time"
 
 	"github.com/ondrift/cloud/cli/common"
 )
@@ -22,11 +19,8 @@ type platformStatus struct {
 	err   string
 }
 
-// statusItem mirrors one capability from GET /ops/status.
-type statusItem struct {
-	Name   string `json:"name"`
-	Status string `json:"status"` // operational | degraded | down | checking
-}
+// statusItem is one capability of the status feed: operational | degraded | down.
+type statusItem = common.StatusRow
 
 // openActiveURL opens the active slice's public URL (Ctrl-O / o in the main pane).
 func (m *model) openActiveURL() {
@@ -45,30 +39,12 @@ func (m *model) openActiveURL() {
 // openStatus fetches the platform status and opens the popup.
 func (m *model) openStatus() {
 	ps := &platformStatus{}
-	if items, err := fetchPlatformStatus(); err != nil {
-		ps.err = err.Error()
+	if feed := common.ReadStatusFeed(context.Background()); feed.Read {
+		ps.items = feed.Rows
 	} else {
-		ps.items = items
+		ps.err = feed.Reason
 	}
 	m.platform = ps
-}
-
-// fetchPlatformStatus GETs the api's status feed, from the configured API base.
-func fetchPlatformStatus() ([]statusItem, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(common.StatusFeedURL()) // #nosec G107 -- URL derived from the configured API base
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status page returned %d", resp.StatusCode)
-	}
-	var items []statusItem
-	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 // statusColor maps a capability state to its accent colour.

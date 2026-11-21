@@ -118,10 +118,11 @@ A site is declared in the Driftfile (`canvas { site "/" { dir = "./site" } }`) a
 
 ### Doctor
 
-Offline, and no account or session needed: the registry of failure codes is compiled into the binary, so both commands answer during an outage.
+No account or session needed. `explain` and `codes` run offline: the registry of failure codes is compiled into the binary, so both answer during an outage. Bare `drift doctor` asks the platform, bounds every check, and reports one that cannot answer as `unknown` with the reason.
 
 | Command | Description |
 |---------|-------------|
+| `drift doctor` | The checkup: one line per check, each starting with `ok`, `problem`, `unknown` or `skipped`. A problem carries its failure code and the fix the registry holds for it; an unknown or skipped line says why. The first check is the platform's component health, read from the same status feed that adds the "not your code" note to a 5xx. Exits 1 when any line is a problem. |
 | `drift doctor explain <code>` | Expand a failure code such as `DRIFT-1006` into what happened and what to do. `drift-1006` and `1006` are the same question. A code numbered above the ones this binary knows says the binary may be older than the code and names `drift upgrade`. |
 | `drift doctor codes` | List every failure code this binary can produce, with its meaning. |
 
