@@ -17,6 +17,11 @@ default-run = "conformance-rust"
 name = "conformance-rust-loop"
 path = "src/loop_program.rs"
 
+# The program the start check cases run.
+[[bin]]
+name = "conformance-rust-probe"
+path = "src/probe_program.rs"
+
 [dependencies]
 drift-sdk = { path = "../../rust" }
 serde_json = "1"

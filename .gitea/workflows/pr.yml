@@ -347,6 +347,25 @@ jobs:
       - name: ruby — Drift.run serves many calls from one process
         working-directory: sdk
         run: ruby ruby/loop_test.rb
+      # THE START CHECK, IN EACH LANGUAGE'S OWN WORDS. Before a deploy replaces
+      # the function that serves, the slice starts the new version once with
+      # DRIFT_INVOKE=probe1 and stdin closed, and wants one hello line, exit
+      # status 0 and the handler never called. Each of these starts run, run_sse
+      # and run_ws as a process of its own, so an SDK that reads its request first
+      # fails here before the conformance job gets to it. Go's and Rust's are in
+      # `go test` and `cargo test` above.
+      - name: python, a start check is answered before a request is read
+        working-directory: sdk
+        run: python3 python/probe_test.py
+      - name: node, a start check is answered before a request is read
+        working-directory: sdk
+        run: node node/probe_test.js
+      - name: ruby, a start check is answered before a request is read
+        working-directory: sdk
+        run: ruby ruby/probe_test.rb
+      - name: php, a start check is answered before a request is read
+        working-directory: sdk
+        run: php php/probe_test.php
       - name: version consistency
         working-directory: sdk
         # Six languages, ONE version. A manifest left behind is the failure this
@@ -387,7 +406,9 @@ jobs:
   # nothing is the exact defect this harness exists to find.
   #
   # The same run holds every SDK that serves many calls from one process to the
-  # loop a slice's warm worker speaks (the "$loop" cases in expected.json).
+  # loop a slice's warm worker speaks (the "$loop" cases in expected.json), and
+  # every SDK to the start check a slice runs before a deploy (the "$probe"
+  # cases): one hello line, exit status 0, the handler never called.
   conformance:
     name: SDK conformance — six languages, one set of assertions
     needs: changes
@@ -453,6 +474,17 @@ jobs:
       - name: loop controller passes a loop and fails every way a loop can break
         working-directory: sdk
         run: python3 conformance/loop_check_test.py
+
+      # THE PROBE CONTROLLER, HELD TO ITS OWN WORD. The step after the loop
+      # controller's runs probe_check.py against each language's program; a
+      # controller that cannot fail would make every language look as though it
+      # answers the start check. This runs it against a fake program that answers
+      # correctly and against one that breaks each rule in turn (no hello, the
+      # wrong line, a late exit, a handler reached, a start answered when nobody
+      # asked) and asserts it fails each on the case that states the rule.
+      - name: probe controller passes a probe and fails every way a probe can break
+        working-directory: sdk
+        run: python3 conformance/probe_check_test.py
 
       # run.sh runs the loop cases (expected.json, "$loop") after each language's
       # driver: a program serving one handler through the SDK's own run entry, fed
