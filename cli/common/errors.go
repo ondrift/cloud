@@ -768,9 +768,10 @@ func TransportError(op string, err error) error {
 		strings.Contains(msg, "dial tcp") {
 		out := withCode(
 			fmt.Sprintf("%scouldn't reach the Drift API. Is the platform up? (%v)", lead, err), "DRIFT-1006")
-		// The status page is a different host, so it can often answer when the
-		// API cannot — which is exactly the case where the user most needs to
-		// hear that the fault is not theirs.
+		// The feed is the API's own, so when the API does not answer it usually
+		// does not either, and the note is then silent. When the API answers the
+		// feed but refused this request, it is the case where the user most needs
+		// to hear that the fault is not theirs.
 		if note := platformFaultNote(DegradedComponents()); note != "" {
 			out += "\n" + note
 		}
