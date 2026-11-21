@@ -10,6 +10,12 @@ This single-file SDK provides:
   - http_request(): Outbound HTTP from within a function.
   - run(handler): the entry point the CLI's generated wrapper calls. You do NOT
     call this yourself -- see the contract below.
+  - A start check: a process the slice starts only to learn that it starts
+    (DRIFT_INVOKE=probe1, stdin closed) gets one hello line and exit status 0
+    from run, run_sse and run_ws, before a request is read and without calling
+    the handler, as the platform defines it (src/slice/src/atomic/protocol.rs in
+    cloud/platform, which owns the contract); PROBE_PROTOCOL is the version this
+    SDK answers.
 
 All backbone helpers use only stdlib (urllib.request) -- zero external dependencies.
 

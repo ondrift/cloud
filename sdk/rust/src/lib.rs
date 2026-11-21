@@ -5,6 +5,12 @@
 //!     calls from one process, reading newline-delimited envelopes until stdin
 //!     closes and writing one reply line per envelope (`LOOP_PROTOCOL`);
 //!     otherwise it starts the local development server.
+//!   - A start check: a process the slice starts only to learn that it starts
+//!     (`DRIFT_INVOKE=probe1`, stdin closed) gets one hello line and exit status
+//!     0 from run, run_sse and run_ws, before a request is read and without
+//!     calling the handler, as the platform defines it
+//!     (`src/slice/src/atomic/protocol.rs` in cloud/platform, which owns the
+//!     contract); `PROBE_PROTOCOL` is the version this SDK answers.
 //!   - `backbone` — the B of the sacred A·B·C triad; the SOLE entrypoint for
 //!     every STATE primitive: `backbone::secret`, `backbone::cache`,
 //!     `backbone::nosql`, `backbone::queue`, `backbone::blob`, `backbone::lock`,

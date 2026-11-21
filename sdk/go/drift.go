@@ -81,6 +81,12 @@ type Response struct {
 // In local dev mode (no DRIFT_RUNTIME): starts a local HTTP server on
 // the port specified by the PORT env var (default 8080) so developers can
 // test their functions with `drift atomic run`.
+//
+// A process the slice starts only to learn that it starts (DRIFT_INVOKE=probe1,
+// stdin closed) gets one hello line and exit status 0 from Run, RunSSE and
+// RunWS, before a request is read and without calling the handler, as the
+// platform defines it (src/slice/src/atomic/protocol.rs in cloud/platform, which
+// owns the contract); ProbeProtocol is the version this SDK answers.
 func Run(handler func(Request) Response) {
 	answerStartCheck()
 	if os.Getenv("DRIFT_RUNTIME") != "" {

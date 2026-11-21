@@ -28,6 +28,12 @@
 #
 # This single-file SDK provides:
 #   - Drift.run(handler): the entry point the generated wrapper calls.
+#   - A start check: a process the slice starts only to learn that it starts
+#     (DRIFT_INVOKE=probe1, stdin closed) gets one hello line and exit status 0
+#     from Drift.run, Drift.run_sse and Drift.run_ws, before a request is read and
+#     without calling the handler, as the platform defines it
+#     (src/slice/src/atomic/protocol.rs in cloud/platform, which owns the
+#     contract); Drift::PROBE_PROTOCOL is the version this SDK answers.
 #   - Drift::Backbone — the B of the sacred A·B·C triad; the SOLE entrypoint for
 #     every STATE primitive: Secret, Cache, Nosql, queue, Blob, Lock, sql,
 #     Realtime. (There is no top-level Drift::Secret etc. — go through
