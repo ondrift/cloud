@@ -5,13 +5,19 @@
 // remember, not a list to search; `explain` living here rather than as a
 // top-level `drift explain` is that rule applied to its first verb.
 //
-// Everything under this noun works OFFLINE and without a session. That is not a
-// nicety: the moment a person needs a diagnostic is the moment the network, the
-// platform or their credentials are the thing that failed, and a doctor that
-// needs the patient to be healthy is no doctor at all.
+// Everything under this noun works without a session, and `explain` and `codes`
+// work OFFLINE. That is not a nicety: the moment a person needs a diagnostic is
+// the moment the network, the platform or their credentials are the thing that
+// failed, and a doctor that needs the patient to be healthy is no doctor at all.
+// The checkup asks the platform, so it bounds every check and reports one that
+// cannot answer as unknown, with the reason, instead of failing with it.
+//
+// The noun holds exactly two verbs, `explain` and `codes`, and the bare form is
+// the checkup. A request for a third verb replaces one of them.
 package doctor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -23,11 +29,34 @@ import (
 // GetCmd returns the `drift doctor` command group.
 func GetCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "doctor",
-		Short:   "Work out what went wrong — offline, no account needed",
-		Long:    "Diagnostics for when something has failed. Everything here runs offline and without a session, because that is when you need it.",
-		Example: "  drift doctor explain DRIFT-1006\n  drift doctor explain 1006\n  drift doctor codes",
+		Use:   "doctor",
+		Short: "Check what is wrong, and expand a failure code",
+		Long: "Bare, runs the checkup: one line for each check, starting with ok, problem, unknown or skipped. " +
+			"A problem carries its failure code and the fix for it. The checkup finishes within seconds " +
+			"even when the platform does not answer, and exits 1 when any line is a problem.\n\n" +
+			"`explain` and `codes` run offline and without a session, because that is when you need them.",
+		Example: "  drift doctor\n  drift doctor explain DRIFT-1006\n  drift doctor explain 1006\n  drift doctor codes",
 		GroupID: "project",
+		// Group-level refusal lives here and not in the root's refuseUnknownVerbs,
+		// which leaves a command with its own run function to decide for itself.
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			return fmt.Errorf("unknown command %q for %q. Run '%s --help' for the commands it has",
+				args[0], cmd.CommandPath(), cmd.CommandPath())
+		},
+		// A problem found is the answer, not a command held wrongly.
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			outcomes := Run(ctx, Checklist(), checkBound)
+			Render(cmd.OutOrStdout(), outcomes)
+			return verdict(outcomes)
+		},
 	}
 	cmd.AddCommand(getExplainCmd(), getCodesCmd())
 	return cmd
