@@ -17,7 +17,27 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/ondrift/cloud/sdk/go/internal/probe"
 )
+
+// ProbeProtocol is the version of the start check this SDK answers, by number.
+// Before a deploy replaces the function that serves, the slice starts the new
+// version once with DRIFT_INVOKE=probe<ProbeProtocol> and stdin closed, and wants
+// one hello line on stdout and exit status 0, with the handler never called. A
+// deploy declares the check by this number, and the slice runs it only for a
+// function that did. The platform owns the contract
+// (src/slice/src/atomic/protocol.rs in cloud/platform, "The start check").
+const ProbeProtocol = 1
+
+// answerStartCheck answers the slice's start check when this process was started
+// as one: the hello on stdout, then status 0, before a request is read and
+// before the handler is touched.
+func answerStartCheck() {
+	if probe.Requested(ProbeProtocol) {
+		probe.Answer(os.Stdout, ProbeProtocol)
+	}
+}
 
 // Request is the incoming HTTP request passed to the function handler.
 // The runner serializes the original HTTP request into this struct
@@ -62,6 +82,7 @@ type Response struct {
 // the port specified by the PORT env var (default 8080) so developers can
 // test their functions with `drift atomic run`.
 func Run(handler func(Request) Response) {
+	answerStartCheck()
 	if os.Getenv("DRIFT_RUNTIME") != "" {
 		runDeployed(handler)
 	} else {
@@ -2280,6 +2301,7 @@ func wrapEgressDenied(rawURL string, err error) *EgressDeniedError {
 //	    })
 //	}
 func RunSSE(handler func(Request, Emitter)) {
+	answerStartCheck()
 	if os.Getenv("DRIFT_RUNTIME") != "" {
 		var req Request
 		json.NewDecoder(os.Stdin).Decode(&req) // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
@@ -2389,6 +2411,7 @@ func (e Emitter) SendRaw(event, data string) {
 //	    })
 //	}
 func RunWS(handler func(Request, Conn)) {
+	answerStartCheck()
 	// The runner writes the initial request as the first stdin line. Lines
 	// are read with no length limit: a message is as long as the client sent.
 	r := bufio.NewReader(os.Stdin)
