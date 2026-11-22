@@ -229,8 +229,24 @@ func copyFileMode(src, dst string, mode os.FileMode) error {
 	return os.Chmod(dst, mode)
 }
 
+// Modes of what extractTarGz places. The runtime reads the baked directory as a
+// user of its own, never as the person who ran `drift`, and the build writes the
+// wrappers it generates 0600. So whatever the archive recorded, a file lands
+// readable by everyone and a directory enterable by everyone; only the
+// executable bit is taken from the archive. This is the user's own machine and
+// nothing here is secret.
+const (
+	extractedFileMode = 0o644
+	extractedExecMode = 0o755
+	extractedDirMode  = 0o755
+)
+
 // extractTarGz unpacks a .tar.gz into dst, path-traversal-safe. The source is
 // the CLI's own build output (trusted), but the guard stays as defence in depth.
+//
+// Every mode is set with a chmod after the file or directory exists, as
+// copyFileMode does: the umask narrows the mode a create is given, and a strict
+// umask would otherwise leave the runtime's user unable to read what lands.
 func extractTarGz(srcTarGz, dst string) error {
 	f, err := os.Open(srcTarGz) // #nosec G304 — CLI reads its own build output
 	if err != nil {
@@ -258,14 +274,21 @@ func extractTarGz(srcTarGz, dst string) error {
 		target := filepath.Join(dst, clean)
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := os.MkdirAll(target, extractedDirMode); err != nil {
+				return err
+			}
+			if err := os.Chmod(target, extractedDirMode); err != nil { // #nosec G302 -- see extractedDirMode
 				return err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), extractedDirMode); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode&0o777)) // #nosec G115
+			mode := os.FileMode(extractedFileMode)
+			if hdr.Mode&0o111 != 0 {
+				mode = extractedExecMode
+			}
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G302 G304 -- see extractedFileMode
 			if err != nil {
 				return err
 			}
@@ -274,6 +297,9 @@ func extractTarGz(srcTarGz, dst string) error {
 				return err
 			}
 			if err := out.Close(); err != nil {
+				return err
+			}
+			if err := os.Chmod(target, mode); err != nil {
 				return err
 			}
 		}

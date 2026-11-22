@@ -50,7 +50,7 @@ func TestParseImageDataDirAndUser(t *testing.T) {
 // The container is created rather than run, so the queues are in place before
 // the slice boots and restores them.
 func TestLocalRunArgs_CreatesTheContainerWithoutStartingIt(t *testing.T) {
-	args := localRunArgs(manifestFrom(Node{"slice": "lab"}), "drift-lab", "drift-run-lab", 8002, false, "")
+	args := mustLocalRunArgs(t, manifestFrom(Node{"slice": "lab"}), "drift-lab", "drift-run-lab", 8002, false, "")
 	if args[0] != "create" || containsArg(args, "-d") {
 		t.Errorf("the container must be created and started later, got %v", args)
 	}

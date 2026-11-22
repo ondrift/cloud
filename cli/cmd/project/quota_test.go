@@ -90,7 +90,7 @@ func TestLocalQuotaConfig_StartsAnywayAndSaysSoWhenTheSliceCannotBeRead(t *testi
 func TestLocalRunArgs_HandsTheContainerTheSlicesOwnLimits(t *testing.T) {
 	m := manifestFrom(Node{"slice": "lab"})
 
-	args := localRunArgs(m, "drift-lab", "drift-run-lab", 8002, false, sliceQuotaBody)
+	args := mustLocalRunArgs(t, m, "drift-lab", "drift-run-lab", 8002, false, sliceQuotaBody)
 
 	want := "DRIFT_QUOTA_CONFIG=" + sliceQuotaBody
 	if !containsArg(args, want) {
@@ -109,7 +109,7 @@ func TestLocalRunArgs_HandsTheContainerTheSlicesOwnLimits(t *testing.T) {
 func TestLocalRunArgs_OmitsTheVariableWhenNoLimitsWereRead(t *testing.T) {
 	m := manifestFrom(Node{"slice": "lab"})
 
-	args := localRunArgs(m, "drift-lab", "drift-run-lab", 8002, false, "")
+	args := mustLocalRunArgs(t, m, "drift-lab", "drift-run-lab", 8002, false, "")
 
 	for _, a := range args {
 		if strings.HasPrefix(a, "DRIFT_QUOTA_CONFIG") {
@@ -120,17 +120,17 @@ func TestLocalRunArgs_OmitsTheVariableWhenNoLimitsWereRead(t *testing.T) {
 
 // Declared secrets still ride in beside the limits.
 func TestLocalRunArgs_KeepsTheDeclaredSecrets(t *testing.T) {
-	m := manifestFrom(Node{"slice": "lab", "backbone": map[string]any{
+	m := manifestRooted(Node{"slice": "lab", "backbone": map[string]any{
 		"secrets": map[string]any{"STRIPE_KEY": "sk_test_1"},
-	}})
+	}}, t.TempDir())
 
-	args := localRunArgs(m, "drift-lab", "drift-run-lab", 8002, true, sliceQuotaBody)
+	args := mustLocalRunArgs(t, m, "drift-lab", "drift-run-lab", 8002, true, sliceQuotaBody)
 
 	if !containsArg(args, "DRIFT_SECRET_STRIPE_KEY=sk_test_1") {
-		t.Errorf("a declared secret must still be passed, got %v", args)
+		t.Errorf("a declared secret must still be passed, got %v", masked(args))
 	}
 	if !containsArg(args, "drift-lab-data:/data") {
-		t.Errorf("--persist must still mount the volume, got %v", args)
+		t.Errorf("--persist must still mount the volume, got %v", masked(args))
 	}
 }
 
