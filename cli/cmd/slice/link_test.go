@@ -46,11 +46,16 @@ func TestLink_OnlyListsWhatIsLive(t *testing.T) {
 }
 
 // The calls name the slice they act on, so a reconcile for one slice cannot
-// land on whichever slice this machine last used.
+// land on whichever slice this machine last used. Only the link calls are
+// counted: the CLI also makes requests of its own beside them (the Driftfile
+// schema's refresh, a session refresh), and one of those landing in the middle
+// is no reason to fail.
 func TestLinkCalls_NameTheirSlice(t *testing.T) {
 	var got []string
 	stubLinkAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		got = append(got, r.Method+" "+r.Header.Get("X-Slice"))
+		if r.URL.Path == "/ops/slice/link" {
+			got = append(got, r.Method+" "+r.Header.Get("X-Slice"))
+		}
 		switch r.Method {
 		case http.MethodGet:
 			_, _ = w.Write([]byte(`[]`))

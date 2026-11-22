@@ -5,6 +5,12 @@
 //!     calls from one process, reading newline-delimited envelopes until stdin
 //!     closes and writing one reply line per envelope (`LOOP_PROTOCOL`);
 //!     otherwise it starts the local development server.
+//!   - A start check: a process the slice starts only to learn that it starts
+//!     (`DRIFT_INVOKE=probe1`, stdin closed) gets one hello line and exit status
+//!     0 from run, run_sse and run_ws, before a request is read and without
+//!     calling the handler, as the platform defines it
+//!     (`src/slice/src/atomic/protocol.rs` in cloud/platform, which owns the
+//!     contract); `PROBE_PROTOCOL` is the version this SDK answers.
 //!   - `backbone` — the B of the sacred A·B·C triad; the SOLE entrypoint for
 //!     every STATE primitive: `backbone::secret`, `backbone::cache`,
 //!     `backbone::nosql`, `backbone::queue`, `backbone::blob`, `backbone::lock`,
@@ -94,6 +100,33 @@ pub fn take_response_headers() -> Option<Value> {
 /// loop for the function only when it finds it.
 pub const LOOP_PROTOCOL: u32 = 1;
 
+/// The version of the start check this SDK answers, by number. Before a deploy
+/// replaces the function that serves, the slice starts the new version once with
+/// `DRIFT_INVOKE=probe<PROBE_PROTOCOL>` and stdin closed, and wants one hello
+/// line on stdout and exit status 0, with the handler never called. A deploy
+/// declares the check by this number, and the slice runs it only for a function
+/// that did. The platform owns the contract (`src/slice/src/atomic/protocol.rs`
+/// in cloud/platform, "The start check").
+pub const PROBE_PROTOCOL: u32 = 1;
+
+/// Answer the slice's start check when this process was started as one.
+///
+/// Started to learn only that it starts, the process says hello on stdout and
+/// leaves with status 0, before a request is read and before the handler is
+/// touched.
+fn answer_start_check() {
+    if !matches!(std::env::var("DRIFT_INVOKE"), Ok(v) if v == format!("probe{PROBE_PROTOCOL}")) {
+        return;
+    }
+    let hello = serde_json::json!({"hello": {"proto": "drift-probe", "v": PROBE_PROTOCOL}});
+    let mut out = io::stdout().lock();
+    if let Err(err) = writeln!(out, "{hello}").and_then(|()| out.flush()) {
+        eprintln!("drift-sdk: the start check's hello could not be written: {err}");
+        std::process::exit(1);
+    }
+    std::process::exit(0);
+}
+
 /// Serve the handler.
 ///
 /// Under DRIFT_RUNTIME (a deployed function, or a trigger's spawn) this is the
@@ -105,6 +138,7 @@ pub fn run<F>(handler: F)
 where
     F: Fn(Value) -> Value + 'static,
 {
+    answer_start_check();
     if std::env::var("DRIFT_RUNTIME").is_ok() {
         run_deployed(&handler);
     } else {
@@ -2374,6 +2408,7 @@ pub fn run_sse<F>(handler: F)
 where
     F: Fn(serde_json::Value, &dyn Fn(&str, &serde_json::Value)) + Send + Sync + 'static,
 {
+    answer_start_check();
     if std::env::var("DRIFT_RUNTIME").is_ok() {
         run_sse_deployed(&handler);
     } else {
@@ -2568,6 +2603,7 @@ pub fn run_ws<F>(handler: F)
 where
     F: FnOnce(serde_json::Value, &mut WsConn),
 {
+    answer_start_check();
     let mut conn = WsConn::new();
 
     // First line is the initial request.

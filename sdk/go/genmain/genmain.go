@@ -3,9 +3,13 @@
 // released drift CLIs, which a test in this package compiles against it. Do not
 // import it.
 //
-// One process answers the calls the slice sends it, in one of three modes
+// One process answers the calls the slice sends it, in one of four modes
 // chosen once at start:
 //
+//   - DRIFT_INVOKE=probe1: the slice's start check. The process writes one
+//     hello line on the protocol stream and exits 0, without reading a request
+//     or calling the handler (internal/probe). It is answered before any other
+//     mode, whatever else the environment says.
 //   - DRIFT_INVOKE=mux1: the concurrent loop. Id-tagged frames on stdin and
 //     the protocol stream, up to DRIFT_MUX_SLOTS calls at once, each on its own
 //     goroutine with its own context (mux.go).
@@ -14,7 +18,7 @@
 //     warm worker and a one-shot spawn (legacy.go).
 //   - neither: a local HTTP server for development (local.go).
 //
-// In both slice modes the protocol owns the process's real stdout, and fd 1 is
+// In every slice mode the protocol owns the process's real stdout, and fd 1 is
 // pointed at stderr before any handler runs (stdio_*.go). A handler that
 // prints therefore writes to the function's log, never into a frame or a
 // response line.
@@ -29,6 +33,7 @@ import (
 	"time"
 
 	drift "github.com/ondrift/cloud/sdk/go"
+	"github.com/ondrift/cloud/sdk/go/internal/probe"
 )
 
 // maxSlots is the most calls one process serves at once: a Function's
@@ -51,9 +56,12 @@ type handlerFunc = func(ctx context.Context, req drift.Request) drift.Response
 // one envelope at a time otherwise; and over local HTTP outside a slice.
 //
 // It returns when the slice closes stdin, after the calls in flight have been
-// answered. In local mode it serves until the process is stopped.
+// answered. In local mode it serves until the process is stopped. A start check
+// does not return: the process answers it and exits with status 0.
 func Serve(handler func(ctx context.Context, req drift.Request) drift.Response) {
 	switch {
+	case probe.Requested(drift.ProbeProtocol):
+		probe.Answer(protocolOut(), drift.ProbeProtocol)
 	case os.Getenv("DRIFT_INVOKE") == "mux1":
 		serveMux(os.Stdin, protocolOut(), slotsFromEnv(os.Getenv("DRIFT_MUX_SLOTS")), handler)
 	case os.Getenv("DRIFT_RUNTIME") != "":
