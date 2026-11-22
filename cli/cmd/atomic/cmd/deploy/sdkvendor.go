@@ -307,6 +307,85 @@ func vendorDriftSDK(lang, stageDir string) error {
 	return nil
 }
 
+// probeConstant is the name every interpreted SDK gives the start probe's
+// version, added alongside the probe itself: PROBE_PROTOCOL = 1 (Python,
+// Ruby), const PROBE_PROTOCOL = 1 (Node, PHP). Its presence in the installed
+// file, rather than a version number, is what this binary checks — nothing
+// here can know in advance which SDK release first carried it, the same
+// reason build_go.go reads genmain's own source instead of comparing
+// versions.
+const probeConstant = "PROBE_PROTOCOL"
+
+// sdkFileBasename is the filename the wrapper imports for lang's SDK,
+// whichever path installed it: sdkVendorLayout's own destination for the
+// fast vendor path, and (because the real package is the same single file
+// under its own name) also what a real install leaves behind.
+var sdkFileBasename = map[string]string{
+	"python": "drift.py",
+	"node":   "index.js",
+	"ruby":   "drift.rb",
+	"php":    "drift.php",
+}
+
+// interpretedSDKAnswersProbe reports whether the SDK installed into stageDir
+// for lang — vendored by the fast path, or installed by the real package
+// manager — exposes the probe's version constant, so a deploy knows whether
+// to declare `probe` to the operator.
+//
+// It checks the fast path's own destination first (sdkVendorLayout), since
+// that is exactly where it wrote the file. Where the real package manager
+// installed it instead, the destination is a package-manager detail (a
+// gem's own version directory, composer's vendor/<name>/ layout) this binary
+// does not track, so it falls back to the first file named like the SDK's
+// own under stageDir.
+func interpretedSDKAnswersProbe(stageDir, lang string) bool {
+	for _, item := range sdkVendorLayout[lang] {
+		base := filepath.Base(item.to)
+		if base != sdkFileBasename[lang] {
+			continue
+		}
+		if data, err := os.ReadFile(filepath.Join(stageDir, filepath.FromSlash(item.to))); err == nil { // #nosec G304 -- this build's own stage dir
+			return strings.Contains(string(data), probeConstant)
+		}
+	}
+	return findSDKFileAnswersProbe(stageDir, sdkFileBasename[lang])
+}
+
+// sdkFileSearchLimit bounds how many files findSDKFileAnswersProbe visits
+// before giving up: a backend's installed dependency tree can be large, and
+// this is a best-effort fallback for a path the fast vendor layout did not
+// already name, not a general-purpose search.
+const sdkFileSearchLimit = 5000
+
+// findSDKFileAnswersProbe walks dir for the first file named base and reports
+// whether it carries the probe's version constant, or false when none is
+// found within sdkFileSearchLimit visits.
+func findSDKFileAnswersProbe(dir, base string) bool {
+	if base == "" {
+		return false
+	}
+	found := false
+	visited := 0
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || found {
+			return nil
+		}
+		visited++
+		if visited > sdkFileSearchLimit {
+			return filepath.SkipAll
+		}
+		if info.IsDir() || info.Name() != base {
+			return nil
+		}
+		data, rerr := os.ReadFile(path) // #nosec G304 -- this build's own stage dir
+		if rerr == nil && strings.Contains(string(data), probeConstant) {
+			found = true
+		}
+		return nil
+	})
+	return found
+}
+
 // ─── Fetch + cache ──────────────────────────────────────────────────────────
 
 // The SDK lives in the public MONOREPO with the CLI. It used to have a

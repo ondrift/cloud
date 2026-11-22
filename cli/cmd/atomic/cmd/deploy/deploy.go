@@ -664,6 +664,12 @@ func operatorSink(a FuncArtifact) error {
 	if a.Concurrent {
 		fields["concurrent"] = true
 	}
+	// Declared only when the resolved SDK answers it (see FuncArtifact.Probe):
+	// an older SDK is never asked to answer a probe it predates, and deploys
+	// exactly as it always has.
+	if a.Probe {
+		fields["probe"] = 1
+	}
 	meta, err := json.Marshal(fields)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
@@ -849,19 +855,25 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 	}
 
 	var sourcePath string
+	var probe bool
 	switch language {
 	case "python":
-		sourcePath, err = buildPython(absFolder, method, name, callable)
+		sourcePath, probe, err = buildPython(absFolder, method, name, callable)
 	case "node":
-		sourcePath, err = buildNode(absFolder, method, name, callable)
+		sourcePath, probe, err = buildNode(absFolder, method, name, callable)
 	case "ruby":
-		sourcePath, err = buildRuby(absFolder, method, name, callable)
+		sourcePath, probe, err = buildRuby(absFolder, method, name, callable)
 	case "php":
-		sourcePath, err = buildPHP(absFolder, method, name, callable)
+		sourcePath, probe, err = buildPHP(absFolder, method, name, callable)
 	case "rust":
+		// The Rust SDK is a Cargo dependency this build fetches into the
+		// container; checking whether it answers the probe needs the same
+		// registry-cache read build_go.go does for genmain, which is not
+		// implemented yet. Treated as not answering, same as an SDK that
+		// predates the probe: no `probe` is declared, and nothing changes.
 		sourcePath, err = buildRust(absFolder, method, name, callable)
 	default:
-		sourcePath, err = buildGo(absFolder, spec)
+		sourcePath, probe, err = buildGo(absFolder, spec)
 	}
 	if err != nil {
 		return err
@@ -906,6 +918,7 @@ func DeployFunction(spec FunctionSpec, quiet bool) error {
 		Backend: backend, Stream: stream, Response: response, Secrets: secrets,
 		Env:        spec.Env,
 		Concurrent: spec.IsConcurrent(),
+		Probe:      probe,
 		Triggers:   triggers, Digest: digest,
 		SourcePath: sourcePath, UserSourcePath: userSourcePath,
 		SourceModule: wrapSourceModule, EntryFunc: wrapEntryFunc,

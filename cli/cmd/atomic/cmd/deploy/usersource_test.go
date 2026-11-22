@@ -339,7 +339,7 @@ func (b interpretedBackend) deployAsBackend(t *testing.T) capturedDeploy {
 	if err != nil {
 		t.Fatalf("BuildBackends: %v", err)
 	}
-	if err := DeployInterpretedBackend(backends[0], "digest", nil); err != nil {
+	if _, _, err := DeployInterpretedBackend(backends[0], "digest", nil); err != nil {
 		t.Fatalf("DeployInterpretedBackend: %v", err)
 	}
 	if len(*deployed) != 1 {

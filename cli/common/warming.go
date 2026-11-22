@@ -12,6 +12,12 @@ package common
 // A slice that no request has reached for months has its data stored away as an
 // archive, and the same answer carries X-Drift-Restoring beside X-Drift-Warming:
 // bringing it back takes minutes, so the command says that and waits longer.
+//
+// A slice whose pod is being replaced (a resize, a redeploy of the runner
+// itself) answers the same way for an unrelated reason: X-Drift-Restarting
+// instead of X-Drift-Warming, with its own one-line notice, waited out on the
+// same bound and Retry-After clamp as an ordinary warm-up. A 503 with neither
+// header is a real failure and is handed back at once, as it always was.
 
 import (
 	"context"
@@ -30,6 +36,10 @@ const (
 	// RestoringHeader marks the warm-up as a restore from an archive. It rides with
 	// WarmingHeader, never instead of it.
 	RestoringHeader = "X-Drift-Restoring"
+
+	// RestartingHeader marks a 503 as a slice whose pod is being replaced rather
+	// than warming from a cooldown. It never rides with WarmingHeader.
+	RestartingHeader = "X-Drift-Restarting"
 
 	// warmingMaxWait bounds the wait. A warm-up takes about twenty seconds; the
 	// platform gives up on a pod that is not ready after three minutes, and so
@@ -75,16 +85,28 @@ func IsRestoring(resp *http.Response) bool {
 	return IsWarming(resp) && resp.Header.Get(RestoringHeader) == "1"
 }
 
-// waitWhileWarming sends the request and, while the answer is a slice warming,
-// waits and sends it again. send must build a fresh request each time.
+// IsRestartingSlice reports whether a response is the platform saying the
+// slice's pod is being replaced: a 503 with X-Drift-Restarting, waited out like
+// a warming slice but for an unrelated reason.
+func IsRestartingSlice(resp *http.Response) bool {
+	return resp != nil && resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get(RestartingHeader) == "1"
+}
+
+// waitWhileWarming sends the request and, while the answer is a slice warming
+// or a slice restarting, waits and sends it again. send must build a fresh
+// request each time.
 func waitWhileWarming(ctx context.Context, send func() (*http.Response, error)) (*http.Response, error) {
 	var waited time.Duration
 	limit := warmingMaxWait
-	told, toldRestoring := false, false
+	told, toldRestoring, toldRestarting := false, false, false
 	for {
 		resp, err := send()
-		if err != nil || !IsWarming(resp) {
+		if err != nil {
 			return resp, err
+		}
+		warming, restarting := IsWarming(resp), IsRestartingSlice(resp)
+		if !warming && !restarting {
+			return resp, nil
 		}
 		restoring := IsRestoring(resp)
 		if restoring {
@@ -92,16 +114,19 @@ func waitWhileWarming(ctx context.Context, send func() (*http.Response, error)) 
 		}
 		delay := warmingDelay(resp)
 		if waited+delay > limit {
-			return resp, nil // still warming after the limit: the caller sees the 503
+			return resp, nil // still warming or restarting after the limit: the caller sees the 503
 		}
 		_ = resp.Body.Close()
 		switch {
 		case restoring && !toldRestoring:
 			fmt.Fprintln(warmingNotice, "This slice was stored away after months without requests. Restoring it takes a few minutes...")
 			told, toldRestoring = true, true
-		case !told:
+		case warming && !told:
 			fmt.Fprintln(warmingNotice, "This slice was cooled down for want of requests. Warming it up, about 20 seconds...")
 			told = true
+		case restarting && !toldRestarting:
+			fmt.Fprintln(warmingNotice, "This slice is restarting. Waiting for it, about 20 seconds...")
+			toldRestarting = true
 		}
 		if err := warmingSleep(ctx, delay); err != nil {
 			return nil, err

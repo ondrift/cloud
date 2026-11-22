@@ -451,14 +451,18 @@ func triggersFor(f BackendFunc) []TriggerSpec {
 // been attempted; nil writes nothing. The caller's writer rather than stdout,
 // because `drift apply` buffers each section and prints it under its own
 // heading: a line written straight to stdout lands above that heading.
-func DeployGoBackend(el Backend, digest string, out io.Writer) error {
+//
+// It also returns the method-path of every function that deployed, in the
+// backend's order, whether or not the backend as a whole errors: `drift
+// apply` reports what landed and what did not when a run stops partway.
+func DeployGoBackend(el Backend, digest string, out io.Writer) ([]string, error) {
 	if len(el.Funcs) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	stage, err := buildGoBackendStage(el.Dir, el.Name)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer os.RemoveAll(stage.dir) // #nosec G104
 
@@ -476,7 +480,7 @@ func DeployGoBackend(el Backend, digest string, out io.Writer) error {
 	// package-wide compile error surfaces here once rather than N times across
 	// the workers.
 	if _, warmDir, werr := buildGoEntrypointIsolated(stage, goEntryOf(el.Funcs[0].Spec), "warm"); werr != nil {
-		return fmt.Errorf("backend %q failed to compile: %w", el.Name, werr)
+		return nil, fmt.Errorf("backend %q failed to compile: %w", el.Name, werr)
 	} else {
 		os.RemoveAll(warmDir) // #nosec G104
 	}
@@ -499,6 +503,7 @@ func DeployGoBackend(el Backend, digest string, out io.Writer) error {
 			Secrets:    f.Spec.Secrets,
 			Env:        f.Spec.Env,
 			Concurrent: f.Spec.IsConcurrent(),
+			Probe:      stage.sdk.probe,
 			Triggers:   triggersFor(f), Digest: DeployDigest(digest, f.Spec),
 			SourcePath: bin, UserSourcePath: userSrc,
 		})
@@ -519,8 +524,10 @@ func DeployGoBackend(el Backend, digest string, out io.Writer) error {
 	}
 	wg.Wait()
 
-	// Ordered report; return the first failure with its real error.
+	// Ordered report; return the first failure with its real error, and every
+	// function that deployed.
 	var firstErr error
+	var succeeded []string
 	for i, f := range el.Funcs {
 		switch {
 		case results[i] != nil:
@@ -530,9 +537,12 @@ func DeployGoBackend(el Backend, digest string, out io.Writer) error {
 			if out != nil {
 				fmt.Fprintf(out, "    %s %s\n", common.Cross(), f.MethodPath())
 			}
-		case out != nil:
-			fmt.Fprintf(out, "    %s %s\n", common.Check(), f.MethodPath())
+		default:
+			succeeded = append(succeeded, f.MethodPath())
+			if out != nil {
+				fmt.Fprintf(out, "    %s %s\n", common.Check(), f.MethodPath())
+			}
 		}
 	}
-	return firstErr
+	return succeeded, firstErr
 }

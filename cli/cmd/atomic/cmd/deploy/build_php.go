@@ -16,14 +16,15 @@ import (
 )
 
 // c names the callable and the file declaring it, both resolved from the
-// Driftfile entry this function is being built for.
-func buildPHP(absFolder, method, name string, c atomic_common.Callable) (string, error) {
+// Driftfile entry this function is being built for. Returns the archive's
+// path and whether the installed SDK answers the start probe.
+func buildPHP(absFolder, method, name string, c atomic_common.Callable) (string, bool, error) {
 	funcName := c.Handler
 	sourceModule := strings.TrimSuffix(filepath.Base(c.SourceFile), ".php")
 
 	stageDir, err := stageTempDir("drift-php-")
 	if err != nil {
-		return "", fmt.Errorf("create staging dir: %w", err)
+		return "", false, fmt.Errorf("create staging dir: %w", err)
 	}
 	defer os.RemoveAll(stageDir)
 
@@ -35,33 +36,34 @@ func buildPHP(absFolder, method, name string, c atomic_common.Callable) (string,
 		}
 		data, err := os.ReadFile(filepath.Join(absFolder, e.Name())) // #nosec G304 -- path is built from a CLI-validated argument or a regex-validated name plus a controlled base directory; never untrusted input.
 		if err != nil {
-			return "", fmt.Errorf("read %s: %w", e.Name(), err)
+			return "", false, fmt.Errorf("read %s: %w", e.Name(), err)
 		}
 		if err := os.WriteFile(filepath.Join(stageDir, e.Name()), data, 0o644); err != nil { // #nosec G306 G703 -- the path is the CLI's stageDir on the user's machine; mode 0644 is intentional for a build-time artefact.
-			return "", fmt.Errorf("write %s: %w", e.Name(), err)
+			return "", false, fmt.Errorf("write %s: %w", e.Name(), err)
 		}
 	}
 
 	if err := generatePHPWrapper(stageDir, sourceModule, funcName, method); err != nil {
-		return "", fmt.Errorf("generate wrapper: %w", err)
+		return "", false, fmt.Errorf("generate wrapper: %w", err)
 	}
 
 	// Install the user's declared packages (the Drift SDK among them) if a
 	// composer.json is present. The CLI is SDK-agnostic — it installs the
 	// manifest verbatim.
 	if err := installPHPDeps(absFolder, stageDir); err != nil {
-		return "", err
+		return "", false, err
 	}
+	probe := interpretedSDKAnswersProbe(stageDir, "php")
 
 	archiveFile, err := os.CreateTemp("", fmt.Sprintf("drift-php-%s-*.tar.gz", safeTmpName(name)))
 	if err != nil {
-		return "", fmt.Errorf("create archive temp: %w", err)
+		return "", false, fmt.Errorf("create archive temp: %w", err)
 	}
 	archivePath := archiveFile.Name()
 	archiveFile.Close()                                        // #nosec G104 -- best-effort close; createTarGz re-creates the file
 	if err := createTarGz(stageDir, archivePath); err != nil { // #nosec G104
-		return "", fmt.Errorf("create archive: %w", err)
+		return "", false, fmt.Errorf("create archive: %w", err)
 	}
 
-	return archivePath, nil
+	return archivePath, probe, nil
 }

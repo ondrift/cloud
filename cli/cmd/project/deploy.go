@@ -297,6 +297,13 @@ func backendUnchanged(el atomic_cmd.Backend, digest string, deployed map[string]
 // applyAtomicBackends deploys the project's Atomic functions Backend by Backend.
 // Each Go backend is staged + dependency-resolved once, then every function is
 // compiled and shipped; an unchanged backend is skipped wholesale.
+//
+// A function refused by the platform stops the run: nothing in a later
+// backend is attempted. The error that stops it names every function this run
+// had already deployed and every one it never attempted, and says that
+// Backbone — which always applies before Atomic (applySliceInOrder) — was
+// already applied, so the person reading it knows exactly what state the
+// slice is in.
 func applyAtomicBackends(backends []atomic_cmd.Backend, out io.Writer) error {
 	fmt.Fprintf(out, "  %s\n", common.AtomicHeader())
 
@@ -313,7 +320,8 @@ func applyAtomicBackends(backends []atomic_cmd.Backend, out io.Writer) error {
 	}
 
 	deployedCount, skippedCount := 0, 0
-	for _, el := range backends {
+	var landed []string
+	for i, el := range backends {
 		// One flat digest per backend — any top-level source change rebuilds all
 		// its functions; named-backend subdirs never bleed into a Default digest.
 		digest, _ := atomic_cmd.BackendDigest(el.Dir, el.Name)
@@ -330,6 +338,7 @@ func applyAtomicBackends(backends []atomic_cmd.Backend, out io.Writer) error {
 			for _, f := range el.Funcs {
 				fmt.Fprintf(out, "    %s %s %s\n", common.Check(), f.MethodPath(), common.Hint("(unchanged)"))
 				skippedCount++
+				landed = append(landed, f.MethodPath())
 			}
 			continue
 		}
@@ -339,26 +348,35 @@ func applyAtomicBackends(backends []atomic_cmd.Backend, out io.Writer) error {
 		// done, so a line written anywhere else lands above the heading.
 		switch {
 		case el.Lang == "go":
-			if err := atomic_cmd.DeployGoBackend(el, digest, out); err != nil {
-				return fmt.Errorf("atomic deploy failed in backend %q: %w", el.Name, err)
+			succeeded, err := atomic_cmd.DeployGoBackend(el, digest, out)
+			landed = append(landed, succeeded...)
+			if err != nil {
+				return applyAtomicFailure(fmt.Errorf("atomic deploy failed in backend %q: %w", el.Name, err),
+					landed, nil, backends[i+1:])
 			}
 			deployedCount += len(el.Funcs)
 		case el.Lang == "python" || el.Lang == "node" || el.Lang == "ruby" || el.Lang == "php":
-			if err := atomic_cmd.DeployInterpretedBackend(el, digest, out); err != nil {
-				return fmt.Errorf("atomic deploy failed in backend %q: %w", el.Name, err)
+			succeeded, notAttempted, err := atomic_cmd.DeployInterpretedBackend(el, digest, out)
+			landed = append(landed, succeeded...)
+			if err != nil {
+				return applyAtomicFailure(fmt.Errorf("atomic deploy failed in backend %q: %w", el.Name, err),
+					landed, notAttempted, backends[i+1:])
 			}
 			deployedCount += len(el.Funcs)
 		case len(el.Funcs) == 1:
 			// One function on its own — every language can be built this way.
 			if err := atomic_cmd.DeployFunction(el.Funcs[0].Spec, true); err != nil {
-				return fmt.Errorf("atomic deploy failed for %q: %w", el.Funcs[0].MethodPath(), err)
+				return applyAtomicFailure(fmt.Errorf("atomic deploy failed for %q: %w", el.Funcs[0].MethodPath(), err),
+					landed, nil, backends[i+1:])
 			}
 			fmt.Fprintf(out, "    %s %s\n", common.Check(), el.Funcs[0].MethodPath())
+			landed = append(landed, el.Funcs[0].MethodPath())
 			deployedCount++
 		default:
-			return fmt.Errorf("backend %q is %s with %d functions — multi-function %s "+
+			err := fmt.Errorf("backend %q is %s with %d functions — multi-function %s "+
 				"backends aren't built yet; keep one function per folder for %s until it lands",
 				el.Name, el.Lang, len(el.Funcs), el.Lang, el.Lang)
+			return applyAtomicFailure(err, landed, nil, backends[i+1:])
 		}
 	}
 
@@ -367,6 +385,32 @@ func applyAtomicBackends(backends []atomic_cmd.Backend, out io.Writer) error {
 	}
 	fmt.Fprintln(out)
 	return nil
+}
+
+// applyAtomicFailure wraps a refused function's error with what this run of
+// `drift apply` had already landed, and what it never got to: withinBackend
+// is the rest of the backend that refused (nil for a Go backend, which
+// attempts every function concurrently and so leaves none of its own
+// unattempted), and notReached is every backend after it, whose functions
+// were never started. It also says that Backbone was already applied before
+// Atomic started (applySliceInOrder), so stopping here never leaves Backbone
+// and Atomic disagreeing about which one ran.
+func applyAtomicFailure(err error, landed, withinBackend []string, notReached []atomic_cmd.Backend) error {
+	deployedLine := "Deployed this run: none"
+	if len(landed) > 0 {
+		deployedLine = "Deployed this run: " + strings.Join(landed, ", ")
+	}
+	notAttempted := append([]string{}, withinBackend...)
+	for _, el := range notReached {
+		for _, f := range el.Funcs {
+			notAttempted = append(notAttempted, f.MethodPath())
+		}
+	}
+	notAttemptedLine := "Not attempted: none"
+	if len(notAttempted) > 0 {
+		notAttemptedLine = "Not attempted: " + strings.Join(notAttempted, ", ")
+	}
+	return fmt.Errorf("%w\n\nBackbone was already applied.\n%s\n%s", err, deployedLine, notAttemptedLine)
 }
 
 // applySliceInOrder applies what the Driftfile declares into the slice in two

@@ -60,6 +60,74 @@ func TestWaitWhileWarming_WaitsOutAWarmingSlice(t *testing.T) {
 	}
 }
 
+func restarting(retryAfter string) *http.Response {
+	h := http.Header{}
+	h.Set(RestartingHeader, "1")
+	if retryAfter != "" {
+		h.Set("Retry-After", retryAfter)
+	}
+	return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: h, Body: io.NopCloser(strings.NewReader("{}"))}
+}
+
+// A slice whose pod is being replaced is waited out exactly like a warming one:
+// the platform's Retry-After, the same bound, and its own one-line notice.
+func TestWaitWhileWarming_WaitsOutARestartingSlice(t *testing.T) {
+	pauses, out := noWaiting(t)
+	calls := 0
+	resp, err := waitWhileWarming(t.Context(), func() (*http.Response, error) {
+		calls++
+		if calls < 3 {
+			return restarting("7"), nil
+		}
+		return answer(http.StatusOK, false, ""), nil
+	})
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("got %v, %v; want the 200 once the slice is back", resp, err)
+	}
+	if calls != 3 {
+		t.Errorf("sent %d times, want 3", calls)
+	}
+	if len(*pauses) != 2 || (*pauses)[0] != 7*time.Second {
+		t.Errorf("pauses = %v, want two of the 7 seconds the platform asked for", *pauses)
+	}
+	if strings.Count(out.String(), "restarting") != 1 {
+		t.Errorf("the notice was written %d times, want once:\n%s", strings.Count(out.String(), "restarting"), out.String())
+	}
+	if strings.Contains(out.String(), "cooled down") {
+		t.Errorf("a restarting slice must not say it was cooled down:\n%s", out.String())
+	}
+}
+
+// A restart that does not finish is not waited for forever, bounded the same
+// as a warm-up and not a restore.
+func TestWaitWhileWarming_GivesUpOnARestartAfterTheWarmingLimit(t *testing.T) {
+	pauses, _ := noWaiting(t)
+	resp, _ := waitWhileWarming(t.Context(), func() (*http.Response, error) { return restarting("30"), nil })
+	if !IsRestartingSlice(resp) {
+		t.Fatalf("after the limit the caller should see the restarting 503, got %v", resp)
+	}
+	var total time.Duration
+	for _, p := range *pauses {
+		total += p
+	}
+	if total > warmingMaxWait {
+		t.Errorf("waited %s, more than the warming limit %s", total, warmingMaxWait)
+	}
+}
+
+// A 503 with neither header is a real failure, handed back at once.
+func TestWaitWhileWarming_LeavesA503WithNoHeaderAlone(t *testing.T) {
+	pauses, _ := noWaiting(t)
+	calls := 0
+	resp, _ := waitWhileWarming(t.Context(), func() (*http.Response, error) {
+		calls++
+		return answer(http.StatusServiceUnavailable, false, "7"), nil
+	})
+	if calls != 1 || resp.StatusCode != http.StatusServiceUnavailable || len(*pauses) != 0 {
+		t.Errorf("a 503 with no warming or restarting header was retried: %d sends, pauses %v", calls, *pauses)
+	}
+}
+
 // restoring is the warming answer a slice stored away as an archive gives.
 func restoring(retryAfter string) *http.Response {
 	r := answer(http.StatusServiceUnavailable, true, retryAfter)

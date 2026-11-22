@@ -154,6 +154,13 @@
       "meaning": "A part of the platform is not operational.",
       "remedy": "The platform's own status feed reports at least one component as degraded or down, and the line that carries this code names it. This is the platform and not your project, so nothing in your Driftfile or your code causes it and nothing you can run repairs it. Wait, then run `drift doctor` again; status.ondrift.eu shows the same components. A command that failed while a component was down is worth running again once it is back.",
       "command": ""
+    },
+    {
+      "code": "DRIFT-1023",
+      "key": "start-check-refused",
+      "meaning": "A function's new version failed its start check, so it was never deployed and the previous one is still running.",
+      "remedy": "The lines above are the new version's own failure, and the line after them names what is still serving. Read the failure, fix the function, and run `drift apply` again; nothing was left half-deployed in the meantime.",
+      "command": "drift apply"
     }
   ]
 }

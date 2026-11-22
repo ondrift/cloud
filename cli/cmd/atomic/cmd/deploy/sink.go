@@ -40,7 +40,14 @@ type FuncArtifact struct {
 	Env map[string]string
 	// Concurrent is whether the Function was declared concurrent, in either
 	// spelling. Both sinks write `concurrent` only when it is true.
-	Concurrent     bool
+	Concurrent bool
+	// Probe says the resolved SDK this build linked or vendored answers the
+	// start probe (DRIFT_INVOKE=probe1): Go from the linked genmain, an
+	// interpreted language from the vendored or installed SDK file's version
+	// constant. operatorSink declares `probe: 1` only when this is true, so a
+	// platform that checks a new version before replacing the running one
+	// never asks an SDK that predates the probe to answer it.
+	Probe          bool
 	Triggers       []TriggerSpec
 	Digest         string
 	SourcePath     string
@@ -107,9 +114,9 @@ func StageBackendsLocally(backends []Backend, runnerDir string, quiet bool) erro
 		var err error
 		switch {
 		case el.Lang == "go":
-			err = DeployGoBackend(el, digest, report)
+			_, err = DeployGoBackend(el, digest, report)
 		case el.Lang == "python" || el.Lang == "node" || el.Lang == "ruby" || el.Lang == "php":
-			err = DeployInterpretedBackend(el, digest, report)
+			_, _, err = DeployInterpretedBackend(el, digest, report)
 		case len(el.Funcs) == 1:
 			err = DeployFunction(el.Funcs[0].Spec, quiet)
 		default:

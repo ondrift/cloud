@@ -20,11 +20,14 @@ import (
 // binary bound to spec's handler. The backend path (buildGoBackendStage +
 // buildGoEntrypoint) is the multi-function generalization, which stages once
 // and links per function.
-func buildGo(absFolder string, spec FunctionSpec) (string, error) {
+//
+// It also reports whether the resolved SDK answers the start probe, so the
+// caller can declare it to the operator.
+func buildGo(absFolder string, spec FunctionSpec) (string, bool, error) {
 	_, name := spec.Wire()
 	stage, err := buildGoBackendStage(absFolder, name)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	// Deliberately no RemoveAll(stage.dir) on success: the returned binary
 	// lives inside it and the caller's `defer os.Remove` cleans the binary
@@ -32,9 +35,9 @@ func buildGo(absFolder string, spec FunctionSpec) (string, error) {
 	bin, err := buildGoEntrypoint(stage.dir, goEntryOf(spec), stage.sdk, "app")
 	if err != nil {
 		os.RemoveAll(stage.dir) // #nosec G104
-		return "", err
+		return "", false, err
 	}
-	return bin, nil
+	return bin, stage.sdk.probe, nil
 }
 
 // goStage is a Go backend's package, staged and dependency-resolved once.
@@ -54,6 +57,11 @@ type goSDK struct {
 	// resolves one (a CLI released before its SDK, or a module proxy still
 	// answering @latest with the previous tag) gets the native templates.
 	genmain bool
+	// probe reports whether the linked genmain answers the start probe
+	// (DRIFT_INVOKE=probe1): it says hello and exits before reading a request.
+	// A deploy declares `probe: 1` to the operator only when this is true, so
+	// an SDK from before the probe existed is never asked to answer one.
+	probe bool
 }
 
 // buildGoBackendStage copies a Go Backend's package into a fresh host-side
@@ -129,7 +137,22 @@ func resolvedGoSDK(stageDir, modCache string) goSDK {
 	}
 	pkg := filepath.Join(modCache, filepath.FromSlash(atomic_common.DriftGoModule)+"@"+version, "go", "genmain")
 	info, err := os.Stat(pkg)
-	return goSDK{version: version, genmain: err == nil && info.IsDir()}
+	genmain := err == nil && info.IsDir()
+	return goSDK{version: version, genmain: genmain, probe: genmain && genmainAnswersProbe(pkg)}
+}
+
+// genmainAnswersProbe reports whether the genmain package at pkg (a resolved
+// SDK's go/genmain, in the module cache) answers the start probe: it was
+// added alongside concurrent Functions' own genmain.go, as the first case
+// Serve checks, so its presence in the source is read directly rather than
+// guessed from a sibling directory or a version number no build here can
+// know in advance.
+func genmainAnswersProbe(pkg string) bool {
+	data, err := os.ReadFile(filepath.Join(pkg, "genmain.go")) // #nosec G304 -- the module cache this build resolved
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "probe.Requested(")
 }
 
 // buildGoEntrypoint generates the main for e in the already-staged buildDir

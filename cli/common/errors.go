@@ -129,6 +129,28 @@ type APIError struct {
 	// this binary. Only a platform a major ahead of this binary can have dropped a
 	// path it knows, so only that platform's bare 404 is read as the second.
 	PlatformAPIVersion int
+
+	// RefusedBy names the gate that refused a deploy, read from the response
+	// field of the same name and never from the status alone: a 422 is used for
+	// other refusals too, and nothing here guesses from wording. "start_check" is
+	// the one gate this binary knows: a function's new version did not start, so
+	// the slice kept the one that was running and never replaced it.
+	RefusedBy string
+
+	// FailureTail is the last lines of the refused process's own stderr, from
+	// the response's "detail" field. It is what the function itself said, not a
+	// sentence the platform composed, so it is shown as the process wrote it.
+	FailureTail string
+
+	// StillRunningKnown says the response named a version that kept serving
+	// (StillRunningDigest, StillRunningAge) rather than naming none: a first
+	// deploy that is refused has nothing still running, and the two cases read
+	// differently to the person waiting for an answer.
+	StillRunningKnown bool
+	// StillRunningDigest is the digest of the version that is still running.
+	StillRunningDigest string
+	// StillRunningAge is how long ago that version was deployed.
+	StillRunningAge time.Duration
 }
 
 // ErrPlatformUnavailable and ErrSessionRejected split the two ways a token
@@ -229,6 +251,12 @@ func (e *APIError) code() string {
 	case e.throttled():
 		return "DRIFT-1014"
 
+	// A function refused by the start check is named by the gate in
+	// RefusedBy, never by the bare 422: that status answers other refusals
+	// too, and nothing here reads it from the message's wording.
+	case e.refusedByStartCheck():
+		return "DRIFT-1023"
+
 	// A refusal at a ceiling is named by the ceiling and not by the status the
 	// platform chose for it: a bucket that is full answers 413 and the member cap
 	// 409, and neither is an invalid request or a conflict. A ceiling the platform
@@ -322,6 +350,13 @@ func (e *APIError) message() string {
 		}
 		return lead + ": " + reason + ". This clears by itself; try again in " + humanWait(e.RetryAfter) + "."
 
+	// A function the deploy shipped failed its own start check: what was asked
+	// (lead, from Op), that the new version never replaced the one that was
+	// running, the last lines of the process's own failure, and what still
+	// serves.
+	case e.refusedByStartCheck():
+		return e.startCheckMessage(lead)
+
 	// A refusal at a ceiling says what stopped it in the platform's own sentence,
 	// whatever status the platform chose for it, and then where to raise the limit,
 	// unless nothing raises it. A 402 and a 429 are this refusal even when the body
@@ -409,6 +444,8 @@ func NewAPIError(op string, status int, header http.Header, body []byte) *APIErr
 	e.HasLimit, e.HasCurrent, e.Fixed = q.HasLimit, q.HasCurrent, q.Fixed
 	e.RetryAfter = retryAfter(header.Get("Retry-After"), time.Now())
 	e.PlatformAPIVersion = platformAPIVersion(header)
+	e.RefusedBy, e.FailureTail, e.StillRunningKnown, e.StillRunningDigest, e.StillRunningAge =
+		startCheckFromBody(body, time.Now())
 	return e
 }
 
@@ -432,6 +469,58 @@ func (e *APIError) pathMayHaveMoved() bool {
 // a 429 that says when to retry.
 func (e *APIError) throttled() bool {
 	return e.Status == http.StatusTooManyRequests && e.RetryAfter > 0
+}
+
+// refusedByStartCheck reports whether this refusal is a deploy whose new
+// version failed to start: RefusedBy names the gate, read from the response
+// field and never from the bare status, which a 422 also carries for other
+// refusals.
+func (e *APIError) refusedByStartCheck() bool {
+	return e.RefusedBy == "start_check"
+}
+
+// startCheckMessage renders a start-check refusal: that the new version never
+// replaced the one that was running, the last lines of the process's own
+// failure, and what still serves.
+func (e *APIError) startCheckMessage(lead string) string {
+	out := lead + ": the new version failed its start check, and did not replace the version that was running."
+	if tail := strings.TrimSpace(e.FailureTail); tail != "" {
+		out += "\n" + indentLines(tail)
+	}
+	out += "\n" + e.stillRunningLine()
+	return out
+}
+
+// stillRunningLine says what kept serving a refused deploy: a short digest and
+// how long ago it was deployed, or that nothing was running, for a first
+// deploy that was refused.
+func (e *APIError) stillRunningLine() string {
+	if !e.StillRunningKnown {
+		return "Nothing was running before this deploy."
+	}
+	return fmt.Sprintf("Still running: %s, deployed %s ago.", shortDigest(e.StillRunningDigest), humanWait(e.StillRunningAge))
+}
+
+// indentLines indents every line of s by two spaces, so a process's own
+// stderr reads as something quoted rather than part of the CLI's own sentence.
+func indentLines(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i, l := range lines {
+		lines[i] = "  " + l
+	}
+	return strings.Join(lines, "\n")
+}
+
+// shortDigest shortens a content digest ("sha256:deadbeef...") to the twelve
+// characters a person can compare at a glance, its algorithm prefix dropped.
+func shortDigest(digest string) string {
+	if i := strings.IndexByte(digest, ':'); i >= 0 {
+		digest = digest[i+1:]
+	}
+	if len(digest) > 12 {
+		digest = digest[:12]
+	}
+	return digest
 }
 
 // atCeiling reports whether this refusal is the platform stopping a request at a
@@ -609,6 +698,38 @@ func quotaFromBody(body []byte) quota {
 		q.Current, q.HasCurrent = *parsed.Current, true
 	}
 	return q
+}
+
+// startCheckFromBody reads a start-check refusal's fields: the gate that
+// refused, the last lines of the process's own stderr, and which version kept
+// serving, read as the response's fields published it rather than as a count
+// re-derived from them.
+//
+// still_running is absent from a body that is not a start-check refusal, so
+// a response with no refused_by also has known=false, which is the honest
+// reading of "this is not that kind of refusal" rather than "nothing was
+// running".
+func startCheckFromBody(body []byte, now time.Time) (refusedBy, tail string, known bool, digest string, age time.Duration) {
+	var parsed struct {
+		RefusedBy    string `json:"refused_by"`
+		Detail       string `json:"detail"`
+		StillRunning *struct {
+			Digest     string `json:"digest"`
+			DeployedAt string `json:"deployed_at"`
+		} `json:"still_running"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", "", false, "", 0
+	}
+	refusedBy, tail = parsed.RefusedBy, parsed.Detail
+	if parsed.StillRunning == nil {
+		return refusedBy, tail, false, "", 0
+	}
+	deployedAt, err := time.Parse(time.RFC3339Nano, parsed.StillRunning.DeployedAt)
+	if err != nil {
+		return refusedBy, tail, false, "", 0
+	}
+	return refusedBy, tail, true, parsed.StillRunning.Digest, now.Sub(deployedAt)
 }
 
 // extractDetail pulls a human-readable message out of a JSON error body.

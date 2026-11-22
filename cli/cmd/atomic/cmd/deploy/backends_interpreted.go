@@ -41,23 +41,28 @@ var interpretedLangs = map[string]interpretedLang{
 //
 // out receives one line per slot as it is shipped; nil writes nothing. See
 // DeployGoBackend for why it is the caller's writer.
-func DeployInterpretedBackend(el Backend, digest string, out io.Writer) error {
+//
+// It also returns the method-path of every function that deployed, and of
+// every function this call never attempted because an earlier one in the same
+// backend failed first: `drift apply` reports what landed and what did not
+// when a run stops partway. Both are nil on success.
+func DeployInterpretedBackend(el Backend, digest string, out io.Writer) ([]string, []string, error) {
 	lg, ok := interpretedLangs[el.Lang]
 	if !ok {
-		return fmt.Errorf("multi-function %s backends aren't built yet (backend %q); "+
+		return nil, nil, fmt.Errorf("multi-function %s backends aren't built yet (backend %q); "+
 			"keep one function per folder for %s until it lands", el.Lang, el.Name, el.Lang)
 	}
 
 	stageDir, err := stageTempDir("drift-" + lg.label + "-backend-")
 	if err != nil {
-		return fmt.Errorf("create staging dir: %w", err)
+		return nil, nil, fmt.Errorf("create staging dir: %w", err)
 	}
 	defer os.RemoveAll(stageDir) // #nosec G104
 
 	// Stage the backend's source files (one language, flat).
 	entries, err := os.ReadDir(el.Dir)
 	if err != nil {
-		return fmt.Errorf("read backend dir: %w", err)
+		return nil, nil, fmt.Errorf("read backend dir: %w", err)
 	}
 	for _, e := range entries {
 		if e.IsDir() || !lg.exts[filepath.Ext(e.Name())] {
@@ -65,17 +70,18 @@ func DeployInterpretedBackend(el Backend, digest string, out io.Writer) error {
 		}
 		data, rerr := os.ReadFile(filepath.Join(el.Dir, e.Name())) // #nosec G304
 		if rerr != nil {
-			return fmt.Errorf("read %s: %w", e.Name(), rerr)
+			return nil, nil, fmt.Errorf("read %s: %w", e.Name(), rerr)
 		}
 		if werr := os.WriteFile(filepath.Join(stageDir, e.Name()), data, 0o644); werr != nil { // #nosec G306
-			return fmt.Errorf("write %s: %w", e.Name(), werr)
+			return nil, nil, fmt.Errorf("write %s: %w", e.Name(), werr)
 		}
 	}
 
 	// Install declared dependencies ONCE for the whole backend.
 	if ierr := lg.install(el.Dir, stageDir); ierr != nil {
-		return ierr
+		return nil, nil, ierr
 	}
+	probe := interpretedSDKAnswersProbe(stageDir, el.Lang)
 
 	// The developer's own folder is what is stored as the user-source: without
 	// the tree an install left in it, because the stage above holds the one built
@@ -89,25 +95,27 @@ func DeployInterpretedBackend(el Backend, digest string, out io.Writer) error {
 
 	// Per function: write the wrapper bound to it, archive, and ship. Sequential
 	// — the dependency install (the cost) is already done; tarring is cheap.
+	// Stops at the first failure: a function after it was never attempted, and
+	// the caller's summary says so.
 	var firstErr error
-	for _, f := range el.Funcs {
+	var succeeded []string
+	stoppedAt := len(el.Funcs)
+	for i, f := range el.Funcs {
 		method, name := f.Spec.Wire()
 		sourceModule := strings.TrimSuffix(f.SourceFile, filepath.Ext(f.SourceFile))
 		if werr := lg.wrapper(stageDir, sourceModule, f.Spec.Handler, method); werr != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("%s: generate wrapper: %w", f.MethodPath(), werr)
-			}
-			continue
+			firstErr, stoppedAt = fmt.Errorf("%s: generate wrapper: %w", f.MethodPath(), werr), i
+			break
 		}
 		archive, aerr := os.CreateTemp("", fmt.Sprintf("drift-%s-%s-*.tar.gz", lg.label, safeTmpName(name)))
 		if aerr != nil {
-			return fmt.Errorf("create archive temp: %w", aerr)
+			return succeeded, nil, fmt.Errorf("create archive temp: %w", aerr)
 		}
 		archivePath := archive.Name()
 		archive.Close() // #nosec G104
 		if terr := createTarGz(stageDir, archivePath); terr != nil {
 			os.Remove(archivePath) // #nosec G104
-			return fmt.Errorf("%s: archive: %w", f.MethodPath(), terr)
+			return succeeded, nil, fmt.Errorf("%s: archive: %w", f.MethodPath(), terr)
 		}
 
 		serr := sendSourceToOperator(FuncArtifact{
@@ -115,6 +123,7 @@ func DeployInterpretedBackend(el Backend, digest string, out io.Writer) error {
 			Backend: el.Name, Stream: f.Spec.Stream, Response: f.Spec.Response,
 			Secrets:  f.Spec.Secrets,
 			Env:      f.Spec.Env,
+			Probe:    probe,
 			Triggers: triggersFor(f), Digest: DeployDigest(digest, f.Spec),
 			SourcePath: archivePath, UserSourcePath: userSrc,
 			// The same two facts the wrapper was just rendered from, so the slice
@@ -123,19 +132,24 @@ func DeployInterpretedBackend(el Backend, digest string, out io.Writer) error {
 		})
 		os.Remove(archivePath) // #nosec G104
 		if serr != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("%s: %w", f.MethodPath(), serr)
-			}
+			firstErr, stoppedAt = fmt.Errorf("%s: %w", f.MethodPath(), serr), i
 			if out != nil {
 				fmt.Fprintf(out, "    %s %s\n", common.Cross(), f.MethodPath())
 			}
-			continue
+			break
 		}
+		succeeded = append(succeeded, f.MethodPath())
 		if out != nil {
 			fmt.Fprintf(out, "    %s %s\n", common.Check(), f.MethodPath())
 		}
 	}
-	return firstErr
+	var notAttempted []string
+	if firstErr != nil {
+		for _, f := range el.Funcs[stoppedAt+1:] {
+			notAttempted = append(notAttempted, f.MethodPath())
+		}
+	}
+	return succeeded, notAttempted, firstErr
 }
 
 // installPythonDeps installs the backend's requirements.txt (the Drift SDK
