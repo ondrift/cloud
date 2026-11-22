@@ -335,5 +335,84 @@
         "expect": {"replies_before_the_failure": 1, "output_after_the_failure": "", "exit": "non-zero status"}
       }
     }
+  },
+
+  "$probe": {
+    "comment": [
+      "THE START CHECK a slice runs before a deploy replaces the function that serves,",
+      "for every SDK. probe_check.py starts a small program per language (the probe",
+      "programs beside the drivers, each handing a handler that must not run to the",
+      "SDK's own entry point) with DRIFT_RUNTIME=1, DRIFT_INVOKE=probe1 and nothing",
+      "else in its environment, stdin closed, and the entry's name as its first",
+      "argument. check.py does not read this section: its cases are the primitives,",
+      "and these are a process that is started and left.",
+      "",
+      "The contract is protocol.rs in cloud/platform (\"The start check\"): exactly one",
+      "line on stdout, {\"hello\":{\"proto\":\"drift-probe\",\"v\":1}}, then exit status 0,",
+      "inside ten seconds of the spawn, and the handler never called. A language that",
+      "answers nothing, answers late, answers differently or reaches its handler",
+      "fails the case that says so.",
+      "",
+      "A case names the `entry` the program calls: run is the language's main run",
+      "entry (Go's genmain.Serve, the entry the CLI's generated program calls),",
+      "run_sse and run_ws the streaming ones. `invoke` is DRIFT_INVOKE (null leaves it",
+      "unset) and `stdin` is closed or a request. What a case observes is stdout in",
+      "full, how the process ended, and whether its handler was called, which the",
+      "program says by writing the marker the controller hands it on stderr and",
+      "exiting 97. The control cases start the same programs without the check: the",
+      "handler must be reached there, so a program whose marker cannot appear does",
+      "not pass the cases above by saying nothing.",
+      "",
+      "Every language is held to every case; there is no list of exceptions."
+    ],
+    "cases": {
+      "probe_run": {
+        "why": "A deploy that declares the check starts the new version once, before it replaces the one that serves, and refuses the deploy unless the process says hello and exits 0. The run entry is what the function's program calls. An SDK that reads its request first finds a closed stdin, which looks exactly like a function that cannot start, and a working function's deploy is refused. The hello must be this line with no spaces and a newline, and nothing else on stdout.",
+        "entry": "run",
+        "invoke": "probe1",
+        "stdin": "closed",
+        "expect": {"stdout": "{\"hello\":{\"proto\":\"drift-probe\",\"v\":1}}\n", "exit": 0, "handler_called": false}
+      },
+
+      "probe_run_sse": {
+        "why": "A function that streams server-sent events is started the same way, through the entry that serves its stream. A stream entry that reads its first request before it answers either fails on the closed stdin or runs a handler written to hold a connection open, which the check then waits on until its deadline.",
+        "entry": "run_sse",
+        "invoke": "probe1",
+        "stdin": "closed",
+        "expect": {"stdout": "{\"hello\":{\"proto\":\"drift-probe\",\"v\":1}}\n", "exit": 0, "handler_called": false}
+      },
+
+      "probe_run_ws": {
+        "why": "A WebSocket function is started the same way, through the entry that serves its connection. Its first stdin line is the connection's request, so an entry that reads it before it answers finds none and calls a handler with an empty request, which is user code the check promised never to run.",
+        "entry": "run_ws",
+        "invoke": "probe1",
+        "stdin": "closed",
+        "expect": {"stdout": "{\"hello\":{\"proto\":\"drift-probe\",\"v\":1}}\n", "exit": 0, "handler_called": false}
+      },
+
+      "probe_control_run": {
+        "why": "The same program started without the check reads its request and calls its handler. Without this, the three cases above pass for a program whose handler can never run or whose marker cannot reach stderr, and \"the handler was never called\" would prove nothing. Every SDK behaves as before when DRIFT_INVOKE is not the check.",
+        "entry": "run",
+        "invoke": null,
+        "stdin": "request",
+        "expect": {"stdout": "", "exit": 97, "handler_called": true}
+      },
+
+      "probe_control_run_sse": {
+        "why": "The control for the stream entry: without the check it reads its request and calls the handler, so the marker can appear and the check's cases can fail.",
+        "entry": "run_sse",
+        "invoke": null,
+        "stdin": "request",
+        "expect": {"stdout": "", "exit": 97, "handler_called": true}
+      },
+
+      "probe_control_run_ws": {
+        "why": "The control for the connection entry: without the check it reads its first line as the request and calls the handler, so the marker can appear and the check's cases can fail.",
+        "entry": "run_ws",
+        "invoke": null,
+        "stdin": "request",
+        "expect": {"stdout": "", "exit": 97, "handler_called": true}
+      }
+    }
   }
 }

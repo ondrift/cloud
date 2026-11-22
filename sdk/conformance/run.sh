@@ -44,13 +44,26 @@
 # applicable, pending (a failing case is reported, a PASSING language fails the
 # run until it is taken off the list) or held to every case. Not run with
 # --slice, which is about the queue cases and nothing else.
+#
+# ── THE PROBE CASES, FOR EVERY SDK ───────────────────────────────────────────
+#
+# Before a deploy replaces the function that serves, the slice starts the new
+# version once with DRIFT_INVOKE=probe1 and stdin closed, and wants one hello
+# line, exit status 0 and the handler never called. After the loop cases,
+# probe_check.py starts a small program per language that hands a handler which
+# must not run to the SDK's own entries (run, run_sse, run_ws), under exactly
+# that, and holds what the process does to expect in expected.json's "$probe".
+# Every language is held to every case, with no list of exceptions: a language
+# with no probe program, one that does not build, or an SDK that does not answer
+# fails the run, strict or not. --strict adds the missing toolchain. Not run with
+# --slice.
 # =============================================================================
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SDK="$(cd "$HERE/.." && pwd)"
-LOOP_DIR="$(mktemp -d)"
-trap 'rm -rf "$LOOP_DIR"' EXIT
+PROGRAM_DIR="$(mktemp -d)"
+trap 'rm -rf "$PROGRAM_DIR"' EXIT
 
 strict=0
 slice=""
@@ -103,6 +116,23 @@ drive() {
 	esac
 }
 
+# rust_exe <bin>: print the path of one of the conformance crate's binaries,
+# found from cargo's own report, so the process the cases start is the program
+# and not a `cargo run` in front of it. Fails when it does not build.
+rust_exe() {
+	(cd "$HERE/rust" && cargo build --quiet --bin "$1" --message-format=json |
+		python3 -c '
+import json, sys
+for line in sys.stdin:
+    try:
+        message = json.loads(line)
+    except ValueError:
+        continue
+    if message.get("reason") == "compiler-artifact" and message.get("executable") and message["target"]["name"] == sys.argv[1]:
+        print(message["executable"])
+' "$1")
+}
+
 # loop_program <language>: build what the loop cases run, and set LOOP_PROGRAM
 # to the command that starts it. Empty for a language that is not applicable:
 # loop_check.py says so itself. Fails when the program does not build.
@@ -110,26 +140,14 @@ loop_program() {
 	LOOP_PROGRAM=()
 	case "$1" in
 	go)
-		(cd "$SDK" && go build -o "$LOOP_DIR/go-loop" ./conformance/go/loop) || return 1
-		LOOP_PROGRAM=("$LOOP_DIR/go-loop")
+		(cd "$SDK" && go build -o "$PROGRAM_DIR/go-loop" ./conformance/go/loop) || return 1
+		LOOP_PROGRAM=("$PROGRAM_DIR/go-loop")
 		;;
 	ruby) LOOP_PROGRAM=(ruby "$HERE/loop_ruby.rb") ;;
 	php) LOOP_PROGRAM=(php "$HERE/loop_php.php") ;;
 	rust)
-		# The binary itself, found from cargo's own report, so the process the
-		# cases start is the program and not a `cargo run` in front of it.
 		local exe
-		exe="$(cd "$HERE/rust" && cargo build --quiet --bin conformance-rust-loop --message-format=json |
-			python3 -c '
-import json, sys
-for line in sys.stdin:
-    try:
-        message = json.loads(line)
-    except ValueError:
-        continue
-    if message.get("reason") == "compiler-artifact" and message.get("executable") and message["target"]["name"] == "conformance-rust-loop":
-        print(message["executable"])
-')" || return 1
+		exe="$(rust_exe conformance-rust-loop)" || return 1
 		[ -n "$exe" ] || return 1
 		LOOP_PROGRAM=("$exe")
 		;;
@@ -145,11 +163,43 @@ loop_cases() {
 	python3 "$HERE/loop_check.py" "$1" -- ${LOOP_PROGRAM[@]+"${LOOP_PROGRAM[@]}"}
 }
 
+# probe_program <language>: build what the probe cases run, and set PROBE_PROGRAM
+# to the command that starts it. Every language has one; a language without
+# stays empty and probe_check.py fails it. Fails when the program does not build.
+probe_program() {
+	PROBE_PROGRAM=()
+	case "$1" in
+	go)
+		(cd "$SDK" && go build -o "$PROGRAM_DIR/go-probe" ./conformance/go/probe) || return 1
+		PROBE_PROGRAM=("$PROGRAM_DIR/go-probe")
+		;;
+	node) PROBE_PROGRAM=(node "$HERE/probe_node.js") ;;
+	python) PROBE_PROGRAM=(python3 "$HERE/probe_python.py") ;;
+	ruby) PROBE_PROGRAM=(ruby "$HERE/probe_ruby.rb") ;;
+	php) PROBE_PROGRAM=(php "$HERE/probe_php.php") ;;
+	rust)
+		local exe
+		exe="$(rust_exe conformance-rust-probe)" || return 1
+		[ -n "$exe" ] || return 1
+		PROBE_PROGRAM=("$exe")
+		;;
+	esac
+}
+
+# probe_cases <language>: the probe cases against that language's program.
+probe_cases() {
+	if ! probe_program "$1"; then
+		echo "  $1 probe: the program the probe cases run did not build"
+		return 1
+	fi
+	python3 "$HERE/probe_check.py" "$1" -- ${PROBE_PROGRAM[@]+"${PROBE_PROGRAM[@]}"}
+}
+
 echo
 if [ -n "$slice" ]; then
 	echo "── SDK conformance: the queue cases, against the slice at $slice ──"
 else
-	echo "── SDK conformance: the same cases, six languages, and the loop cases ──"
+	echo "── SDK conformance: the same cases, six languages, the loop cases and the start check ──"
 fi
 echo
 
@@ -165,6 +215,7 @@ for lang in "${langs[@]}"; do
 	drive "$lang" 2>/dev/null | python3 "$HERE/check.py" "$lang" "${only[@]}" || ok=0
 	if [ -z "$slice" ]; then
 		loop_cases "$lang" || ok=0
+		probe_cases "$lang" || ok=0
 	fi
 	if [ "$ok" -eq 1 ]; then
 		pass=$((pass + 1))
