@@ -173,7 +173,10 @@ func startLocal(selectedEnv string, hostPort int, persist, noEnvFile bool) (app,
 	// here. Read before the container starts and forwarded unparsed; see
 	// quota.go for why the CLI does not build this document itself.
 	quotaJSON := localQuotaConfig(app, os.Stdout)
-	runArgs := localRunArgs(m, container, image, port, persist, quotaJSON)
+	runArgs, err := localRunArgs(m, container, image, port, persist, quotaJSON)
+	if err != nil {
+		return "", "", "", err
+	}
 	if out, err := exec.Command("docker", runArgs...).CombinedOutput(); err != nil {
 		return "", "", "", fmt.Errorf("docker create failed: %s", string(out))
 	}
@@ -205,7 +208,7 @@ func startLocal(selectedEnv string, hostPort int, persist, noEnvFile bool) (app,
 // without a Docker daemon. An environment variable either reaches the container
 // or silently does not, and this list is the only place that difference is
 // visible before the process exists.
-func localRunArgs(m *Manifest, container, image string, port int, persist bool, quotaJSON string) []string {
+func localRunArgs(m *Manifest, container, image string, port int, persist bool, quotaJSON string) ([]string, error) {
 	args := []string{
 		"create", "--name", container,
 		"-p", fmt.Sprintf("127.0.0.1:%d:8002", port), // canvas only; :8000/:8001 stay internal
@@ -234,7 +237,7 @@ func localRunArgs(m *Manifest, container, image string, port int, persist bool, 
 	if persist {
 		args = append(args, "-v", container+"-data:/data")
 	}
-	return append(args, image)
+	return append(args, image), nil
 }
 
 // seedDeclaredQueues writes one directory per declared queue into the created,
