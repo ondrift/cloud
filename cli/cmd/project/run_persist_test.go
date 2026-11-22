@@ -327,12 +327,16 @@ func TestRunCmd_PersistHelpSaysTheKeyLivesBesideTheProject(t *testing.T) {
 // ─── the command ────────────────────────────────────────────────────────────
 
 // fakeDocker puts a `docker` on PATH that records the arguments of every call,
-// one line a call, and succeeds. It returns the path of the record.
+// one line a call, and succeeds. While FAKE_DOCKER_FAIL_CREATE is set, a create
+// fails instead and says its own arguments, as a daemon that quotes the command
+// it refused would. It returns the path of the record.
 func fakeDocker(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	record := filepath.Join(dir, "calls")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + record + "'\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + record + "'\n" +
+		"if [ \"$1\" = create ] && [ -n \"$FAKE_DOCKER_FAIL_CREATE\" ]; then\n" +
+		"  echo \"docker: refused: $*\" >&2\n  exit 1\nfi\n"
 	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil { // #nosec G306 -- a test's own executable
 		t.Fatal(err)
 	}
@@ -345,15 +349,18 @@ var (
 	createdKey   = regexp.MustCompile(` -e ` + keyEnvName + `=([0-9a-f]{64})( |$)`)
 )
 
-// `drift file run --persist` hands `docker create` the key on every run, the same
-// one, and prints it nowhere: not while it builds, not when it reports the
-// container. The Docker daemon is replaced by a recorder, and the container by a
-// server that answers.
-func TestRunPersist_TheKeyReachesDockerOnEveryRunAndIsInNothingTheCommandPrints(t *testing.T) {
+// rigged sets up what `drift file run` needs to run a one-slice project in a unit
+// test: the platform's answers, the Driftfile schema, the project as the working
+// directory, a recorder in place of the Docker daemon and a server in place of
+// the container. It returns the path of the record of docker's calls and a
+// function that runs the command with the flags it is given and returns
+// everything the command printed and how it ended.
+func rigged(t *testing.T) (record string, run func(flags ...string) (string, error)) {
+	t.Helper()
 	quotaStub(t, http.StatusOK, sliceQuotaBody)
 	withRealSchema(t)
 	applyIn(t, "slice \"lab\" {}\n")
-	record := fakeDocker(t)
+	record = fakeDocker(t)
 	container := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -362,21 +369,36 @@ func TestRunPersist_TheKeyReachesDockerOnEveryRunAndIsInNothingTheCommandPrints(
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := func(flags ...string) string {
-		t.Helper()
-		return outputOf(t, func() {
+	return record, func(flags ...string) (string, error) {
+		var err error
+		out := outputOf(t, func() {
 			cmd := getRunCmd()
 			cmd.SetArgs(append([]string{"--no-env-file", "--port", served.Port()}, flags...))
 			cmd.SilenceUsage, cmd.SilenceErrors = true, true
-			if err := cmd.Execute(); err != nil {
-				t.Fatalf("drift file run %s: %v", strings.Join(flags, " "), err)
-			}
+			err = cmd.Execute()
 		})
+		return out, err
+	}
+}
+
+// `drift file run --persist` hands `docker create` the key on every run, the same
+// one, and prints it nowhere: not while it builds, not when it reports the
+// container. The Docker daemon is replaced by a recorder, and the container by a
+// server that answers.
+func TestRunPersist_TheKeyReachesDockerOnEveryRunAndIsInNothingTheCommandPrints(t *testing.T) {
+	record, run := rigged(t)
+	succeeds := func(flags ...string) string {
+		t.Helper()
+		out, err := run(flags...)
+		if err != nil {
+			t.Fatalf("drift file run %s: %v", strings.Join(flags, " "), err)
+		}
+		return out
 	}
 
-	firstOutput := run("--persist")
-	secondOutput := run("--persist")
-	plainOutput := run()
+	firstOutput := succeeds("--persist")
+	secondOutput := succeeds("--persist")
+	plainOutput := succeeds()
 
 	calls, err := os.ReadFile(record)
 	if err != nil {
@@ -413,5 +435,36 @@ func TestRunPersist_TheKeyReachesDockerOnEveryRunAndIsInNothingTheCommandPrints(
 		if strings.Contains(printed, first) {
 			t.Errorf("%s printed the key", who)
 		}
+	}
+}
+
+// A daemon that quotes the command it refused would put the key into the error
+// the command returns. The command takes it out and still says the create was
+// refused, so the run does not read as a success.
+func TestRunPersist_ARefusedCreateDoesNotCarryTheKeyIntoTheError(t *testing.T) {
+	record, run := rigged(t)
+	t.Setenv("FAKE_DOCKER_FAIL_CREATE", "1")
+
+	out, err := run("--persist")
+
+	if err == nil {
+		t.Fatal("a run whose docker create was refused reported success")
+	}
+	calls, readErr := os.ReadFile(record)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	handed := createdKey.FindStringSubmatch(string(calls))
+	if handed == nil {
+		t.Fatalf("docker create was not handed -e %s=<64 hexadecimal characters>", keyEnvName)
+	}
+	if !strings.Contains(err.Error(), "docker create failed") {
+		t.Error("the error does not say the create was refused")
+	}
+	if strings.Contains(err.Error(), handed[1]) {
+		t.Error("the error carries the key the daemon quoted")
+	}
+	if strings.Contains(out, handed[1]) {
+		t.Error("the command printed the key the daemon quoted")
 	}
 }

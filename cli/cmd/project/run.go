@@ -76,7 +76,7 @@ DRIFT_RUN_HOST_BUILD=1 to use your host toolchains instead (faster, no pulls).`,
 	}
 	cmd.Flags().StringVar(&envName, "env", "", "Environment to run (same as the positional argument)")
 	cmd.Flags().IntVar(&hostPort, "port", 0, "Host port to map Canvas (:8002) to (default: 8002, or the next free port)")
-	cmd.Flags().BoolVar(&persist, "persist", false, "Keep Backbone data in a named volume across runs")
+	cmd.Flags().BoolVar(&persist, "persist", false, "Keep Backbone data in a named volume across runs; the key that opens it is made once and lives beside the project, in .drift/")
 	cmd.Flags().BoolVar(&noEnvFile, "no-env-file", false, "Do not read the .env / .env.<env> file")
 	return cmd
 }
@@ -125,6 +125,15 @@ func startLocal(selectedEnv string, hostPort int, persist, noEnvFile bool) (app,
 	}
 	app = m.Name()
 	container = "drift-" + app
+
+	// A project that cannot keep its key is refused here, before the build and
+	// before the previous container is replaced, and not when the container is
+	// created. localRunArgs reads the same key again.
+	if persist {
+		if _, err := persistedBackboneKey(m.BaseDir()); err != nil {
+			return "", "", "", err
+		}
+	}
 
 	// ── Build into a temp slot layout ───────────────────────────────
 	work, err := os.MkdirTemp("", "drift-run-"+app+"-")
@@ -178,7 +187,7 @@ func startLocal(selectedEnv string, hostPort int, persist, noEnvFile bool) (app,
 		return "", "", "", err
 	}
 	if out, err := exec.Command("docker", runArgs...).CombinedOutput(); err != nil {
-		return "", "", "", fmt.Errorf("docker create failed: %s", string(out))
+		return "", "", "", fmt.Errorf("docker create failed: %s", withoutKey(string(out), runArgs))
 	}
 	// The declared queues exist before the slice starts, as `drift apply` makes
 	// them exist on a slice before any slot is deployed.
@@ -187,7 +196,7 @@ func startLocal(selectedEnv string, hostPort int, persist, noEnvFile bool) (app,
 		return "", "", "", err
 	}
 	if out, err := exec.Command("docker", "start", container).CombinedOutput(); err != nil {
-		return "", "", "", fmt.Errorf("docker start failed: %s", string(out))
+		return "", "", "", fmt.Errorf("docker start failed: %s", withoutKey(string(out), runArgs))
 	}
 
 	// ── Health-poll so the closeout is true, not hopeful ────────────
@@ -195,7 +204,7 @@ func startLocal(selectedEnv string, hostPort int, persist, noEnvFile bool) (app,
 	if !waitHealthy(url, 8*time.Second) {
 		logs, _ := exec.Command("docker", "logs", "--tail", "20", container).CombinedOutput()
 		return "", "", "", fmt.Errorf("%s started but isn't responding on %s — last log lines:\n%s",
-			app, url, string(logs))
+			app, url, withoutKey(string(logs), runArgs))
 	}
 	return app, container, url, nil
 }
@@ -208,6 +217,9 @@ func startLocal(selectedEnv string, hostPort int, persist, noEnvFile bool) (app,
 // without a Docker daemon. An environment variable either reaches the container
 // or silently does not, and this list is the only place that difference is
 // visible before the process exists.
+//
+// It fails only when a persisted run's key cannot be kept or read, and a run
+// does not start without it: the data it stores would be unreadable at the next.
 func localRunArgs(m *Manifest, container, image string, port int, persist bool, quotaJSON string) ([]string, error) {
 	args := []string{
 		"create", "--name", container,
@@ -234,8 +246,17 @@ func localRunArgs(m *Manifest, container, image string, port int, persist bool, 
 		args = append(args, "-e", fmt.Sprintf("DRIFT_SECRET_%s=%s", name, val))
 	}
 
+	// A persisted run is handed the project's own key, so the data the last run
+	// stored can be read by this one; see run_key.go. It rides as -e like the
+	// declared secrets above, so `docker inspect` shows it on this host, and the
+	// process list does while docker runs. Without --persist the data is gone
+	// with the container and the image makes a key of its own.
 	if persist {
-		args = append(args, "-v", container+"-data:/data")
+		key, err := persistedBackboneKey(m.BaseDir())
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "-e", backboneKeyEnv+"="+key, "-v", container+"-data:/data")
 	}
 	return append(args, image), nil
 }

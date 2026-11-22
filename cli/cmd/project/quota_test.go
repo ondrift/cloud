@@ -120,17 +120,17 @@ func TestLocalRunArgs_OmitsTheVariableWhenNoLimitsWereRead(t *testing.T) {
 
 // Declared secrets still ride in beside the limits.
 func TestLocalRunArgs_KeepsTheDeclaredSecrets(t *testing.T) {
-	m := manifestFrom(Node{"slice": "lab", "backbone": map[string]any{
+	m := manifestRooted(Node{"slice": "lab", "backbone": map[string]any{
 		"secrets": map[string]any{"STRIPE_KEY": "sk_test_1"},
-	}})
+	}}, t.TempDir())
 
 	args := mustLocalRunArgs(t, m, "drift-lab", "drift-run-lab", 8002, true, sliceQuotaBody)
 
 	if !containsArg(args, "DRIFT_SECRET_STRIPE_KEY=sk_test_1") {
-		t.Errorf("a declared secret must still be passed, got %v", args)
+		t.Errorf("a declared secret must still be passed, got %v", masked(args))
 	}
 	if !containsArg(args, "drift-lab-data:/data") {
-		t.Errorf("--persist must still mount the volume, got %v", args)
+		t.Errorf("--persist must still mount the volume, got %v", masked(args))
 	}
 }
 
