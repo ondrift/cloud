@@ -58,6 +58,11 @@ type SliceEntry struct {
 	// finished. It is read and never computed: the rule that decides it is the
 	// platform's. A platform that does not send the key reads as false.
 	NeverProvisioned bool `json:"never_provisioned,omitempty"`
+
+	// Exempt is the platform's word that this slice's account is exempt from
+	// booking in this environment: its stored price is not a figure anyone is
+	// billed, and `drift slice list` says so instead of showing it.
+	Exempt bool `json:"exempt,omitempty"`
 }
 
 // FetchSlices returns the caller's slices. Data-only (no printing) so both the
@@ -181,7 +186,11 @@ func listRows(slices []SliceEntry, active string) string {
 		if s.NeverProvisioned {
 			note = "  " + NeverProvisioned(s.Name, ListRow)
 		}
-		fmt.Fprintf(&b, "%s%-20s %s%s\n", marker, s.Name, PriceLabel(s.Tier, s.MonthlyCostCents), note)
+		price := PriceLabel(s.Tier, s.MonthlyCostCents)
+		if s.Exempt {
+			price = "exempt"
+		}
+		fmt.Fprintf(&b, "%s%-20s %s%s\n", marker, s.Name, price, note)
 		// On its own line, and only when there are any. Labels are free
 		// text up to 256 bytes each and a slice may carry 32 of them, so
 		// appending them to the row above would wrap the one column a

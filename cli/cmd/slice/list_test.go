@@ -6,6 +6,29 @@ import (
 	"testing"
 )
 
+// An exempt slice's row says "exempt" instead of its stored price: that price
+// is not a figure anyone is billed while the exemption holds.
+func TestListRows_AnExemptSliceSaysExemptNotAPrice(t *testing.T) {
+	const body = `[` +
+		`{"name":"alphaslice","tier":"custom","monthly_cost_cents":723,"exempt":true},` +
+		`{"name":"realone","tier":"custom","monthly_cost_cents":723}]`
+
+	var got []SliceEntry
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	rows := listRows(got, "")
+
+	for _, line := range strings.Split(strings.TrimRight(rows, "\n"), "\n") {
+		switch {
+		case strings.Contains(line, "alphaslice") && !strings.Contains(line, "exempt"):
+			t.Errorf("an exempt slice's row does not say exempt: %q", line)
+		case strings.Contains(line, "realone") && strings.Contains(line, "exempt"):
+			t.Errorf("a non-exempt slice's row says exempt: %q", line)
+		}
+	}
+}
+
 // The number a user wants from `slice list` is what the slice costs. The label
 // it replaces, "configured", restates the tier they already chose.
 //
