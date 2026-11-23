@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/ondrift/cloud/cli/common"
@@ -113,16 +114,30 @@ func GetCreateCmd() *cobra.Command {
 				return fmt.Errorf("username must be 2-32 lowercase letters and numbers (no hyphens or special characters)")
 			}
 
+			// No account without reading and explicitly accepting the terms
+			// first. There is no flag that skips this — unlike a cost prompt
+			// or a destructive confirmation, there is no script that gets to
+			// decide on a person's behalf that they accept.
+			fmt.Printf("\nDrift's terms of service incorporate the acceptable-use policy by reference: %s\n", common.TermsURL)
+			accepted := strings.ToLower(strings.TrimSpace(
+				common.PromptForInput("Do you accept the terms of service and acceptable-use policy? [y/N]"),
+			))
+			if accepted != "y" && accepted != "yes" {
+				return fmt.Errorf("account creation requires accepting the terms of service")
+			}
+
 			// Step 1: initiate signup — sends OTP to the user's email.
 			// Password travels in plaintext over TLS; the auth service
 			// bcrypts on receipt before persisting.
 			fmt.Println("\nSending verification code...")
 
-			initiatePayload, _ := json.Marshal(map[string]string{
-				"username":    username,
-				"password":    password,
-				"email":       email,
-				"invite_code": inviteCode,
+			initiatePayload, _ := json.Marshal(map[string]any{
+				"username":       username,
+				"password":       password,
+				"email":          email,
+				"invite_code":    inviteCode,
+				"terms_accepted": true,
+				"terms_version":  common.TermsVersion,
 			})
 
 			client := &http.Client{Timeout: 30 * time.Second}
