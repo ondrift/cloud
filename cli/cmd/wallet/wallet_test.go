@@ -23,6 +23,7 @@ type fakeAPI struct {
 	topUpStatus int
 	topUpBody   string
 	balance     int64
+	exempt      bool
 	history     string
 }
 
@@ -41,7 +42,7 @@ func (f *fakeAPI) serve(t *testing.T) {
 	}
 	mux.HandleFunc("/ops/wallet/balance", func(w http.ResponseWriter, r *http.Request) {
 		record(r)
-		_ = json.NewEncoder(w).Encode(map[string]any{"account": "tester", "balance_cents": f.balance})
+		_ = json.NewEncoder(w).Encode(map[string]any{"account": "tester", "balance_cents": f.balance, "exempt": f.exempt})
 	})
 	mux.HandleFunc("/ops/wallet/history", func(w http.ResponseWriter, r *http.Request) {
 		record(r)
@@ -110,6 +111,20 @@ func TestBalance_PrintsTheBalanceInEuros(t *testing.T) {
 	out, _ = run(t, "balance")
 	if strings.TrimSpace(out) != "€0.00" {
 		t.Errorf("an empty balance printed %q, want €0.00", out)
+	}
+}
+
+// An exempt account's balance is not a figure to show as real money: the
+// platform's "exempt" wins over whatever BalanceCents it also sent.
+func TestBalance_AnExemptAccountSaysExemptNotAFigure(t *testing.T) {
+	f := &fakeAPI{balance: 1250, exempt: true}
+	f.serve(t)
+	out, err := run(t, "balance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "exempt" {
+		t.Errorf("an exempt balance printed %q, want exempt", out)
 	}
 }
 

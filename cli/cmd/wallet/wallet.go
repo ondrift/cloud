@@ -44,6 +44,9 @@ func GetCmd() *cobra.Command {
 type balanceReply struct {
 	Account      string `json:"account"`
 	BalanceCents int64  `json:"balance_cents"`
+	// Exempt is true when the platform never refuses this account's debits for
+	// want of balance: BalanceCents is not a figure to show as real money.
+	Exempt bool `json:"exempt,omitempty"`
 }
 
 func getBalanceCmd() *cobra.Command {
@@ -66,6 +69,10 @@ func getBalanceCmd() *cobra.Command {
 			var b balanceReply
 			if err := json.Unmarshal(body, &b); err != nil {
 				return fmt.Errorf("the platform returned a balance this version cannot read: %w", err)
+			}
+			if b.Exempt {
+				fmt.Println("exempt")
+				return nil
 			}
 			fmt.Println(formatEuros(b.BalanceCents))
 			return nil
