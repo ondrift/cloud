@@ -37,6 +37,15 @@ type SliceEntry struct {
 		State string `json:"state"`
 	} `json:"hibernation,omitempty"`
 
+	// ExpiresAt is when the slice's booked prepaid period ends, absent on a free
+	// slice, which has no booked period. GraceUntil is when the grace after an
+	// unpaid expiry ends, and Reason says why the slice is in that state.
+	// Suspended is set while the platform has stopped the slice from serving.
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	GraceUntil *time.Time `json:"grace_until,omitempty"`
+	Reason     string     `json:"reason,omitempty"`
+	Suspended  bool       `json:"suspended,omitempty"`
+
 	// Config is the slice's declared shape, decoded only as far as the tenant's
 	// own labels.
 	//
@@ -157,6 +166,24 @@ func cooledNote(s SliceEntry) string {
 	return ""
 }
 
+// expiryNote says, after a slice's price, where its prepaid period stands: the
+// date it is paid until, a grace in progress, or a suspension with its reason.
+// A free slice has no booked period and says nothing extra.
+func expiryNote(s SliceEntry) string {
+	switch {
+	case s.Suspended:
+		if s.Reason != "" {
+			return "  suspended: " + s.Reason
+		}
+		return "  suspended"
+	case s.GraceUntil != nil:
+		return "  grace until " + s.GraceUntil.Local().Format("2 Jan 2006")
+	case s.ExpiresAt != nil && s.Tier != "hacker":
+		return "  paid until " + s.ExpiresAt.Local().Format("2 Jan 2006")
+	}
+	return ""
+}
+
 func getListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
@@ -185,6 +212,9 @@ func listRows(slices []SliceEntry, active string) string {
 		note := cooledNote(s)
 		if s.NeverProvisioned {
 			note = "  " + NeverProvisioned(s.Name, ListRow)
+		}
+		if en := expiryNote(s); en != "" {
+			note += en
 		}
 		price := PriceLabel(s.Tier, s.MonthlyCostCents)
 		if s.Exempt {
