@@ -174,3 +174,38 @@ func TestListRows_ANeverProvisionedSliceNamesItsDelete(t *testing.T) {
 		}
 	}
 }
+
+// A priced slice's row shows where its prepaid period stands: the paid-until
+// date, a grace in progress, or a suspension with its reason. A free slice shows
+// nothing extra.
+func TestListRows_APricedSliceShowsItsPeriodAndAFreeOneShowsNothing(t *testing.T) {
+	const body = `[` +
+		`{"name":"paid","tier":"custom","monthly_cost_cents":272,"expires_at":"2027-01-10T00:00:00Z"},` +
+		`{"name":"graced","tier":"custom","monthly_cost_cents":272,"expires_at":"2026-11-01T00:00:00Z","grace_until":"2026-11-08T00:00:00Z","reason":"the prepaid period ended unpaid; the slice is in its grace period"},` +
+		`{"name":"stopped","tier":"custom","monthly_cost_cents":272,"expires_at":"2026-10-01T00:00:00Z","suspended":true,"reason":"suspended: the prepaid period ended unpaid and the grace period passed; the data is kept, and a snapshot can be downloaded, until 7 January 2027, when the slice is deleted"},` +
+		`{"name":"freebie","tier":"hacker"}]`
+
+	var got []SliceEntry
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	rows := listRows(got, "")
+
+	if !strings.Contains(rows, "paid until") || !strings.Contains(rows, "10 Jan 2027") {
+		t.Errorf("the running slice's row does not show its paid-until date:\n%s", rows)
+	}
+	if !strings.Contains(rows, "grace until") || !strings.Contains(rows, "8 Nov 2026") {
+		t.Errorf("the graced slice's row does not show its grace until:\n%s", rows)
+	}
+	if !strings.Contains(rows, "suspended: the prepaid period ended unpaid") || !strings.Contains(rows, "until 7 January 2027, when the slice is deleted") {
+		t.Errorf("the suspended slice's row does not show the suspension, its reason and the day it is deleted:\n%s", rows)
+	}
+	if strings.Contains(rows, "suspended: suspended:") {
+		t.Errorf("the platform's reason opens with \"suspended:\" itself and is shown with a second one:\n%s", rows)
+	}
+	for _, line := range strings.Split(strings.TrimRight(rows, "\n"), "\n") {
+		if strings.Contains(line, "freebie") && (strings.Contains(line, "paid until") || strings.Contains(line, "grace until") || strings.Contains(line, "suspended")) {
+			t.Errorf("a free slice's row shows a period state: %q", line)
+		}
+	}
+}
