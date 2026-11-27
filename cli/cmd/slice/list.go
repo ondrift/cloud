@@ -172,8 +172,11 @@ func cooledNote(s SliceEntry) string {
 func expiryNote(s SliceEntry) string {
 	switch {
 	case s.Suspended:
-		if s.Reason != "" {
-			return "  suspended: " + s.Reason
+		// The platform's reason for a suspension after an unpaid period opens with
+		// "suspended:" itself, and says until when the data is kept; it is shown
+		// once, not after a second "suspended:".
+		if reason := strings.TrimPrefix(s.Reason, "suspended: "); reason != "" {
+			return "  suspended: " + reason
 		}
 		return "  suspended"
 	case s.GraceUntil != nil:
